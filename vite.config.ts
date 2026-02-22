@@ -40,31 +40,36 @@ export default defineConfig(({ mode }) => {
   const securityHeaders = getSecurityHeaders(mode);
 
   return {
-  server: {
-    host: "::",
-    port: 8080,
-    headers: securityHeaders,
-    hmr: {
-      overlay: false,
+    server: {
+      host: "::",
+      port: 8080,
+      headers: securityHeaders,
+      hmr: {
+        overlay: false,
+      },
     },
-  },
-  preview: {
-    headers: securityHeaders,
-  },
-  plugins: [
-    wasm(),
-    topLevelAwait(),
-    react(),
-    mode === "development" && componentTagger()
-  ].filter(Boolean),
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+    preview: {
+      headers: securityHeaders,
     },
-  },
-  build: {
-    target: "esnext",
-  },
+    plugins: [
+      wasm(),
+      topLevelAwait(),
+      react(),
+      mode === "development" && componentTagger()
+    ].filter(Boolean),
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "./src"),
+      },
+    },
+    build: {
+      target: "esnext",
+    },
+    test: {
+      env: {
+        VITE_SUPABASE_URL: "https://mock.supabase.co",
+        VITE_SUPABASE_ANON_KEY: "mock-anon-key",
+      },
+    },
   };
 });
-
