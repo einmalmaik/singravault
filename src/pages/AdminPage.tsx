@@ -24,7 +24,7 @@ import { getTeamAccess, type TeamAccess } from '@/services/adminService';
 export default function AdminPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
-    const { user, loading } = useAuth();
+    const { user, loading, authReady } = useAuth();
     const { billingDisabled } = useSubscription();
 
     const [access, setAccess] = useState<TeamAccess | null>(null);
@@ -38,16 +38,19 @@ export default function AdminPage() {
     }, [loading, navigate, user]);
 
     useEffect(() => {
-        const loadAccess = async () => {
-            if (!user) {
-                setAccess(null);
-                setIsLoadingAccess(false);
-                return;
-            }
+        // Guard: wait for auth to be fully synchronized (token server-validated)
+        // Prevents 401s when INITIAL_SESSION sets user before getSession() completes
+        if (!user || !authReady) {
+            setAccess(null);
+            setIsLoadingAccess(false);
+            return;
+        }
 
+        const loadAccess = async () => {
             setIsLoadingAccess(true);
             setAccessError(null);
 
+            console.debug('[AdminPage] authReady is true, fetching admin access...');
             const { access: accessPayload, error } = await getTeamAccess();
             setIsLoadingAccess(false);
 
@@ -61,7 +64,7 @@ export default function AdminPage() {
         };
 
         void loadAccess();
-    }, [t, user]);
+    }, [t, user, authReady]);
 
     const canSupportTab = useMemo(() => {
         // Subscription permissions are handled in Team tab, not here
