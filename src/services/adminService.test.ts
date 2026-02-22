@@ -2,13 +2,13 @@
 // Licensed under the Business Source License 1.1 — see LICENSE
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetUser, mockInvoke, supabaseMock } = vi.hoisted(() => {
+const { mockGetSession, mockInvoke, supabaseMock } = vi.hoisted(() => {
   const mockInvoke = vi.fn();
-  const mockGetUser = vi.fn();
+  const mockGetSession = vi.fn();
 
   const supabaseMock = {
     auth: {
-      getUser: mockGetUser,
+      getSession: mockGetSession,
     },
     functions: {
       invoke: mockInvoke,
@@ -16,7 +16,7 @@ const { mockGetUser, mockInvoke, supabaseMock } = vi.hoisted(() => {
   };
 
   return {
-    mockGetUser,
+    mockGetSession,
     mockInvoke,
     supabaseMock,
   };
@@ -36,18 +36,15 @@ import {
   setRolePermission,
   setTeamMemberRole,
 } from "@/services/adminService";
+import { supabase } from "@/integrations/supabase/client";
 
 describe("adminService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetUser.mockResolvedValue({
-      data: {
-        user: {
-          id: "test-user",
-        },
-      },
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { user: { id: 'test-user-id' } } },
       error: null,
-    });
+    } as any);
   });
 
   it("loads team access from admin-team function", async () => {
@@ -161,6 +158,16 @@ describe("adminService", () => {
     });
     expect(result.error).toBeNull();
     expect(result.detail?.messages).toHaveLength(1);
+  });
+
+  it('returns error when user session is missing', async () => {
+    vi.mocked(supabase.auth.getSession).mockResolvedValueOnce({
+      data: { session: null },
+      error: null,
+    } as any);
+    const result = await listTeamMembers();
+    expect(result.error).toBeDefined();
+    expect(result.error?.message).toBe('Authentication required to access admin functions');
   });
 
   it("loads team lists from their edge functions", async () => {

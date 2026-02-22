@@ -8,7 +8,6 @@
  * without hitting a real database.
  */
 
-// ============ Hoisted Mocks ============
 
 const mockSupabase = vi.hoisted(() => {
   /**
@@ -73,7 +72,7 @@ const mockSupabase = vi.hoisted(() => {
   return {
     from: vi.fn().mockImplementation(() => createChainable()),
     rpc: vi.fn(),
-    auth: { getUser: vi.fn() },
+    auth: { getSession: vi.fn() },
     functions: { invoke: vi.fn() },
     storage: { from: vi.fn() },
     _createChainable: createChainable,
