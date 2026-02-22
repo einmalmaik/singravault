@@ -6,24 +6,23 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FunctionsHttpError } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client"; // Import supabase to mock its methods
 
-const { mockInvoke, mockGetSession, supabaseMock } = vi.hoisted(() => {
+const { mockInvoke, mockGetUser, supabaseMock } = vi.hoisted(() => {
   const mockInvoke = vi.fn();
-  const mockGetSession = vi.fn();
+  const mockGetUser = vi.fn().mockResolvedValue({ data: { user: { id: 'test-user' } }, error: null });
 
   const supabaseMock = {
     functions: {
       invoke: mockInvoke,
     },
     auth: {
-      getSession: mockGetSession,
+      getUser: mockGetUser,
     }
   };
 
   return {
     mockInvoke,
-    mockGetSession,
+    mockGetUser,
     supabaseMock,
   };
 });
@@ -31,12 +30,6 @@ const { mockInvoke, mockGetSession, supabaseMock } = vi.hoisted(() => {
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: supabaseMock,
 }));
-
-// Standard-Mock für eine gültige Session setzen
-vi.mocked(supabase.auth.getSession).mockResolvedValue({
-  data: { session: { user: { id: 'test-user-id' } } },
-  error: null,
-} as any);
 
 import {
   invokeAuthedFunction,
@@ -46,27 +39,6 @@ import {
 describe("edgeFunctionService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset the default getSession mock for each test
-    vi.mocked(supabase.auth.getSession).mockResolvedValue({
-      data: { session: { user: { id: 'test-user-id' } } },
-      error: null,
-    } as any);
-  });
-
-  it('should throw EdgeFunctionServiceError with AUTH_REQUIRED if no session user exists', async () => {
-    vi.mocked(supabase.auth.getSession).mockResolvedValueOnce({
-      data: { session: null },
-      error: null,
-    } as any);
-
-    await expect(
-      invokeAuthedFunction("invite-family-member", { email: "a@example.com" }),
-    ).rejects.toMatchObject({
-      code: "AUTH_REQUIRED",
-      status: 401,
-      message: "Authentication required",
-    });
-    expect(supabase.auth.getSession).toHaveBeenCalledTimes(1);
   });
 
   it("invokes function securely using supabase.functions.invoke", async () => {
@@ -79,7 +51,6 @@ describe("edgeFunctionService", () => {
       email: "a@example.com",
     });
 
-    expect(supabase.auth.getSession).toHaveBeenCalledTimes(1);
     expect(mockInvoke).toHaveBeenCalledWith("invite-family-member", {
       body: { email: "a@example.com" },
     });

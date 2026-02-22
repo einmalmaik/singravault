@@ -10,11 +10,6 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     fileParallelism: false,
-    env: {
-      VITE_SUPABASE_URL: "https://mock.supabase.co",
-      VITE_SUPABASE_ANON_KEY: "mock-anon-key",
-      VITE_SUPABASE_PUBLISHABLE_KEY: "mock-anon-key",
-    },
   },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
