@@ -35,7 +35,7 @@ class FakeIDBIndex {
   constructor(
     private data: Map<string, unknown>,
     private indexField: string,
-  ) {}
+  ) { }
 
   getAll(key?: unknown): FakeIDBRequest {
     const results: unknown[] = [];
@@ -52,7 +52,7 @@ class FakeIDBObjectStore {
   constructor(
     private meta: StoreMeta,
     public transaction: FakeIDBTransaction,
-  ) {}
+  ) { }
 
   createIndex(name: string, keyPath: string, _options?: unknown): FakeIDBIndex {
     this.meta.indexes.set(name, keyPath);
@@ -87,7 +87,7 @@ class FakeIDBTransaction {
   onerror: ((event: unknown) => void) | null = null;
   error: DOMException | null = null;
 
-  constructor(private db: FakeIDBDatabase) {}
+  constructor(private db: FakeIDBDatabase) { }
 
   objectStore(name: string): FakeIDBObjectStore {
     const meta = this.db._storeMeta.get(name);
@@ -206,7 +206,7 @@ const mockSupabase = vi.hoisted(() => {
   return {
     from: vi.fn().mockImplementation(fromImpl),
     rpc: vi.fn(),
-    auth: { getUser: vi.fn() },
+    auth: { getUser: vi.fn(), getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "test-token" } }, error: null }) },
     functions: { invoke: vi.fn() },
     storage: { from: vi.fn() },
     _setChains: (newChains: unknown[]) => {

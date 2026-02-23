@@ -68,6 +68,7 @@ vi.mock("@/integrations/supabase/client", () => ({
         rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
         auth: {
             getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-user-1" } }, error: null }),
+            getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "test-token" } }, error: null }),
         },
     },
 }));

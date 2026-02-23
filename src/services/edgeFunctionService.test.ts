@@ -7,22 +7,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 
-const { mockInvoke, mockGetUser, supabaseMock } = vi.hoisted(() => {
+const { mockInvoke, mockGetSession, supabaseMock } = vi.hoisted(() => {
   const mockInvoke = vi.fn();
-  const mockGetUser = vi.fn().mockResolvedValue({ data: { user: { id: 'test-user' } }, error: null });
+  const mockGetSession = vi.fn().mockResolvedValue({
+    data: { session: { access_token: 'mock-token' } },
+    error: null
+  });
 
   const supabaseMock = {
     functions: {
       invoke: mockInvoke,
     },
     auth: {
-      getUser: mockGetUser,
+      getSession: mockGetSession,
     }
   };
 
   return {
     mockInvoke,
-    mockGetUser,
+    mockGetSession,
     supabaseMock,
   };
 });
@@ -53,6 +56,7 @@ describe("edgeFunctionService", () => {
 
     expect(mockInvoke).toHaveBeenCalledWith("invite-family-member", {
       body: { email: "a@example.com" },
+      headers: { Authorization: "Bearer mock-token" }
     });
     expect(result.success).toBe(true);
   });

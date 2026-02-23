@@ -66,6 +66,10 @@ const mockSupabase = vi.hoisted(() => {
                 data: { user: { id: "mock-user-id", email: "user@test.com" } },
                 error: null,
             }),
+            getSession: vi.fn().mockResolvedValue({
+                data: { session: { access_token: "mock-token" } },
+                error: null,
+            }),
         },
         functions: { invoke: vi.fn() },
         storage: { from: vi.fn() },

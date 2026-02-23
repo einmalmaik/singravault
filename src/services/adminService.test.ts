@@ -2,13 +2,13 @@
 // Licensed under the Business Source License 1.1 — see LICENSE
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetUser, mockInvoke, supabaseMock } = vi.hoisted(() => {
+const { mockGetSession, mockInvoke, supabaseMock } = vi.hoisted(() => {
   const mockInvoke = vi.fn();
-  const mockGetUser = vi.fn();
+  const mockGetSession = vi.fn();
 
   const supabaseMock = {
     auth: {
-      getUser: mockGetUser,
+      getSession: mockGetSession,
     },
     functions: {
       invoke: mockInvoke,
@@ -16,7 +16,7 @@ const { mockGetUser, mockInvoke, supabaseMock } = vi.hoisted(() => {
   };
 
   return {
-    mockGetUser,
+    mockGetSession,
     mockInvoke,
     supabaseMock,
   };
@@ -40,10 +40,10 @@ import {
 describe("adminService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetUser.mockResolvedValue({
+    mockGetSession.mockResolvedValue({
       data: {
-        user: {
-          id: "test-user",
+        session: {
+          access_token: "mock-token",
         },
       },
       error: null,
@@ -70,6 +70,7 @@ describe("adminService", () => {
       body: {
         action: "get_access",
       },
+      headers: { Authorization: "Bearer mock-token" }
     });
     expect(result.error).toBeNull();
     expect(result.access?.can_access_admin).toBe(true);
@@ -97,6 +98,7 @@ describe("adminService", () => {
         search: "Issue",
         limit: 10,
       },
+      headers: { Authorization: "Bearer mock-token" }
     });
     expect(result.error).toBeNull();
     expect(result.tickets).toHaveLength(1);
@@ -131,6 +133,7 @@ describe("adminService", () => {
         permission_key: "support.tickets.status",
         enabled: true,
       },
+      headers: { Authorization: "Bearer mock-token" }
     });
     expect(result.success).toBe(true);
     expect(result.error).toBeNull();
@@ -158,6 +161,7 @@ describe("adminService", () => {
         action: "get_ticket",
         ticket_id: "ticket-1",
       },
+      headers: { Authorization: "Bearer mock-token" }
     });
     expect(result.error).toBeNull();
     expect(result.detail?.messages).toHaveLength(1);
@@ -210,6 +214,7 @@ describe("adminService", () => {
         reason: "Manual support upgrade",
         ticket_id: "ticket-1",
       },
+      headers: { Authorization: "Bearer mock-token" }
     });
     expect(result.success).toBe(true);
     expect(result.error).toBeNull();

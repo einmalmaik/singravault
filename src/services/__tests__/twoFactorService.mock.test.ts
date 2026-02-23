@@ -73,7 +73,7 @@ const mockSupabase = vi.hoisted(() => {
   return {
     from: vi.fn().mockImplementation(() => createChainable()),
     rpc: vi.fn(),
-    auth: { getUser: vi.fn() },
+    auth: { getUser: vi.fn(), getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "test-token" } }, error: null }) },
     functions: { invoke: vi.fn() },
     storage: { from: vi.fn() },
     _createChainable: createChainable,

@@ -149,14 +149,8 @@ export default function VaultPage() {
         };
     }, [authReady, user, isLocked, isSetupRequired]);
 
-    // Redirect if not authenticated
-    if (!authLoading && !user) {
-        navigate('/auth');
-        return null;
-    }
-
     // Loading state
-    if (authLoading || vaultLoading) {
+    if (vaultLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-background">
                 <div className="text-center space-y-4">
