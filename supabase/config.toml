@@ -4,7 +4,7 @@ project_id = "rjlzmcwdjwlgnhljbipg"
 verify_jwt = true
 
 [functions.admin-support]
-verify_jwt = true
+verify_jwt = false
 
 [functions.admin-team]
 verify_jwt = false
