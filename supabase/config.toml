@@ -7,7 +7,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.admin-team]
-verify_jwt = true
+verify_jwt = false
 
 [functions.cancel-subscription]
 verify_jwt = true
@@ -43,4 +43,4 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.webauthn]
-verify_jwt = true
+verify_jwt = false
