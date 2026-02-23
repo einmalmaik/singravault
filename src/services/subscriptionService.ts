@@ -8,6 +8,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
+import { invokeAuthedFunction } from '@/services/edgeFunctionService';
 import type { PlanKey } from '@/config/planConfig';
 
 export interface SubscriptionData {
@@ -60,7 +61,7 @@ export async function createCheckoutSession(
         return { url: null, error: 'WIDERRUF_CONSENT_REQUIRED' };
     }
 
-    const { data, error } = await supabase.functions.invoke('create-checkout-session', {
+    const { data, error } = await invokeAuthedFunction('create-checkout-session', {
         body: {
             plan_key: planKey,
             widerruf_consent_execution: widerrufConsent.execution,
@@ -81,7 +82,7 @@ export async function createCheckoutSession(
  * Returns the portal URL for managing billing.
  */
 export async function createPortalSession(): Promise<{ url: string | null; error: string | null }> {
-    const { data, error } = await supabase.functions.invoke('create-portal-session', {
+    const { data, error } = await invokeAuthedFunction('create-portal-session', {
         body: {},
     });
 
@@ -103,7 +104,7 @@ export async function cancelSubscription(): Promise<{
     current_period_end?: string;
     error?: string;
 }> {
-    const { data, error } = await supabase.functions.invoke('cancel-subscription', {
+    const { data, error } = await invokeAuthedFunction('cancel-subscription', {
         body: {},
     });
 

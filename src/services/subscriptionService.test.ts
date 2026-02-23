@@ -39,6 +39,10 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: supabaseMock,
 }));
 
+vi.mock("@/services/edgeFunctionService", () => ({
+  invokeAuthedFunction: mockInvoke,
+}));
+
 import {
   cancelSubscription,
   createCheckoutSession,
