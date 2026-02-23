@@ -28,14 +28,13 @@ async function invokeAdminFunction(
     functionName: string,
     body: Record<string, unknown>,
 ): Promise<{ data: Record<string, unknown> | null; error: Error | null }> {
-    // Gatekeeper: await getUser() to guarantee any background token refresh 
-    // completes before we invoke the function, preventing race condition 401s.
-    // getUser validates server-side instead of just checking localStorage.
-    console.debug(`[AdminService] invokeAdminFunction('${functionName}') started. Awaiting getUser()...`);
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    console.debug(`[AdminService] getUser() returned for '${functionName}'. Has user:`, !!user);
+    // Gatekeeper: await getSession() to guarantee storage hydration completes 
+    // before we invoke the function, preventing race condition 401s.
+    console.debug(`[AdminService] invokeAdminFunction('${functionName}') started. Awaiting getSession()...`);
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    console.debug(`[AdminService] getSession() returned for '${functionName}'. Has session:`, !!session);
 
-    if (userError || !user) {
+    if (sessionError || !session?.access_token) {
         return { data: null, error: new Error('Authentication required to access admin functions') };
     }
 
@@ -43,6 +42,9 @@ async function invokeAdminFunction(
     const startTime = Date.now();
     const { data, error } = await supabase.functions.invoke(functionName, {
         body,
+        headers: {
+            Authorization: `Bearer ${session.access_token}`
+        }
     });
     console.debug(`[AdminService] Invoked '${functionName}' in ${Date.now() - startTime}ms. Error:`, error);
 

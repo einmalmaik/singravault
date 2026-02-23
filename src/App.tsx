@@ -34,6 +34,7 @@ import PrivacyPolicy from "./pages/PrivacyPolicy";
 import AdminPage from "./pages/AdminPage";
 import { CookieConsent } from "./components/CookieConsent";
 import { SupportWidget } from "./components/SupportWidget";
+import { ProtectedRoute } from "./components/layout/ProtectedRoute";
 import Impressum from "./pages/Impressum";
 import GrantorVaultPage from "./pages/GrantorVaultPage";
 import SecurityWhitepaper from "./pages/SecurityWhitepaper";
@@ -56,13 +57,13 @@ const App = () => (
                   <Routes>
                     <Route path="/" element={<Index />} />
                     <Route path="/auth" element={<Auth />} />
-                    <Route path="/vault" element={<VaultPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
+                    <Route path="/vault" element={<ProtectedRoute><VaultPage /></ProtectedRoute>} />
+                    <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
                     <Route path="/pricing" element={<PricingPage />} />
-                    <Route path="/vault-health" element={<VaultHealthPage />} />
-                    <Route path="/authenticator" element={<AuthenticatorPage />} />
-                    <Route path="/admin" element={<AdminPage />} />
-                    <Route path="/vault/emergency/:id" element={<GrantorVaultPage />} />
+                    <Route path="/vault-health" element={<ProtectedRoute><VaultHealthPage /></ProtectedRoute>} />
+                    <Route path="/authenticator" element={<ProtectedRoute><AuthenticatorPage /></ProtectedRoute>} />
+                    <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+                    <Route path="/vault/emergency/:id" element={<ProtectedRoute><GrantorVaultPage /></ProtectedRoute>} />
                     <Route path="/security" element={<SecurityWhitepaper />} />
                     <Route path="/privacy" element={<PrivacyPolicy />} />
                     <Route path="/impressum" element={<Impressum />} />

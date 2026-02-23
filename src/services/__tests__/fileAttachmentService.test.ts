@@ -41,7 +41,7 @@ const mockSupabase = vi.hoisted(() => {
       return chains[idx] || createChainable();
     }),
     rpc: vi.fn(),
-    auth: { getUser: vi.fn() },
+    auth: { getUser: vi.fn(), getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "test-token" } }, error: null }) },
     functions: { invoke: vi.fn() },
     storage: {
       from: vi.fn().mockReturnValue(mockStorageBucket),
@@ -219,7 +219,7 @@ describe("downloadAttachment()", () => {
       (URL as unknown as Record<string, unknown>).revokeObjectURL = vi.fn();
     } else {
       vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
-      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => { });
     }
 
     await downloadAttachment(attachment, decryptFn);
