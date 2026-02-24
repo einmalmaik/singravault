@@ -79,6 +79,43 @@ serve(async (req) => {
             });
         }
 
+        // --- PUT: Sync OAuth/External Session to Cookie ---
+        if (req.method === "PUT") {
+            const authHeader = req.headers.get("Authorization");
+            if (!authHeader || !authHeader.startsWith("Bearer ")) {
+                return new Response(JSON.stringify({ error: "Missing token" }), { status: 401, headers: { ...headers, "Content-Type": "application/json" } });
+            }
+
+            const jwt = authHeader.replace("Bearer ", "");
+            // Verify that the JWT is actually valid and belongs to a user
+            const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(jwt);
+
+            if (authError || !user) {
+                return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: { ...headers, "Content-Type": "application/json" } });
+            }
+
+            const { refresh_token } = await req.json();
+
+            if (!refresh_token) {
+                return new Response(JSON.stringify({ error: "Missing refresh_token" }), { status: 400, headers: { ...headers, "Content-Type": "application/json" } });
+            }
+
+            setCookie(headers, {
+                name: "sb-bff-session",
+                value: refresh_token,
+                path: "/",
+                httpOnly: true,
+                secure: true,
+                sameSite: "None",
+                maxAge: 60 * 60 * 24 * 7, // 7 Days
+            });
+
+            return new Response(JSON.stringify({ success: true }), {
+                status: 200,
+                headers: { ...headers, "Content-Type": "application/json" }
+            });
+        }
+
         // --- POST: Login (Credentials Verification) ---
         if (req.method !== "POST") {
             return new Response("Method not allowed", { status: 405, headers });
@@ -283,43 +320,6 @@ serve(async (req) => {
             status: 200,
             headers: { ...headers, "Content-Type": "application/json" }
         });
-
-        // --- PUT: Sync OAuth/External Session to Cookie ---
-        if (req.method === "PUT") {
-            const authHeader = req.headers.get("Authorization");
-            if (!authHeader || !authHeader.startsWith("Bearer ")) {
-                return new Response(JSON.stringify({ error: "Missing token" }), { status: 401, headers: { ...headers, "Content-Type": "application/json" } });
-            }
-
-            const jwt = authHeader.replace("Bearer ", "");
-            // Verify that the JWT is actually valid and belongs to a user
-            const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(jwt);
-
-            if (authError || !user) {
-                return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: { ...headers, "Content-Type": "application/json" } });
-            }
-
-            const { refresh_token } = await req.json();
-
-            if (!refresh_token) {
-                return new Response(JSON.stringify({ error: "Missing refresh_token" }), { status: 400, headers: { ...headers, "Content-Type": "application/json" } });
-            }
-
-            setCookie(headers, {
-                name: "sb-bff-session",
-                value: refresh_token,
-                path: "/",
-                httpOnly: true,
-                secure: true,
-                sameSite: "None",
-                maxAge: 60 * 60 * 24 * 7, // 7 Days
-            });
-
-            return new Response(JSON.stringify({ success: true }), {
-                status: 200,
-                headers: { ...headers, "Content-Type": "application/json" }
-            });
-        }
 
     } catch (err: any) {
         console.error("Auth Session Error:", err);
