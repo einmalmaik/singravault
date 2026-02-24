@@ -3,6 +3,7 @@ CREATE OR REPLACE FUNCTION get_user_id_by_email(p_email TEXT)
 RETURNS TABLE (id UUID, email TEXT) 
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
   RETURN QUERY
@@ -12,3 +13,6 @@ BEGIN
   LIMIT 1;
 END;
 $$;
+
+REVOKE ALL ON FUNCTION get_user_id_by_email(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION get_user_id_by_email(TEXT) TO service_role;

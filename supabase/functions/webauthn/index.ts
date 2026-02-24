@@ -1,20 +1,22 @@
 import { getCookies, setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
- * @fileoverview WebAuthn Edge Function for Passkey Registration & Authentication
-    *
- * Handles all WebAuthn server - side operations:
- * - generate - registration - options: Creates a challenge for passkey registration
-    * - verify - registration: Verifies the registration response from the browser
-        * - generate - authentication - options: Creates a challenge for passkey authentication
-            * - verify - authentication: Verifies the authentication response
-                * - activate - prf: Verifies authentication and stores wrapped master key for PRF unlock
-                    * - list - credentials: Lists all registered passkeys for a user
-                        * - delete -credential: Removes a registered passkey
-                            *
+
+/**
+ * @fileoverview WebAuthn Edge Function for Passkey Registration & Authentication 
+ *
+ * Handles all WebAuthn server-side operations:
+ * - generate-registration-options: Creates a challenge for passkey registration
+ * - verify-registration: Verifies the registration response from the browser
+ * - generate-authentication-options: Creates a challenge for passkey authentication
+ * - verify-authentication: Verifies the authentication response
+ * - activate-prf: Verifies authentication and stores wrapped master key for PRF unlock
+ * - list-credentials: Lists all registered passkeys for a user
+ * - delete-credential: Removes a registered passkey
+ *
  * Uses @simplewebauthn/server v13 via JSR for Deno compatibility.
-    *
+ *
  * SECURITY: All operations require a valid Supabase JWT.
- * Challenge storage is server - side with 5 - minute TTL.
- * PRF salt is generated server - side with CSPRNG.
+ * Challenge storage is server-side with 5-minute TTL.
+ * PRF salt is generated server-side with CSPRNG.
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -83,37 +85,47 @@ Deno.serve(async (req: Request) => {
 
         let user: { id: string; email?: string } | null = null;
 
-        // Bestimme, ob ein gültiges JWT nötig ist.
-        // Für reines Anmelden (Auth) reicht die Angabe der E-Mail.
-        const requiresAuth = !["generate-authentication-options", "verify-authentication"].includes(action);
+        const authHeader = req.headers.get("Authorization");
+        const accessToken = authHeader ? extractBearerToken(authHeader) : null;
+        let authErrorDetails = null;
 
-        if (requiresAuth) {
-            const authHeader = req.headers.get("Authorization");
-            if (!authHeader) {
-                return jsonResponse({ error: "Missing authorization header" }, 401, corsHeaders);
-            }
-
-            const accessToken = extractBearerToken(authHeader);
-            if (!accessToken) {
-                return jsonResponse({ error: "Missing bearer token" }, 401, corsHeaders);
-            }
-
+        if (accessToken) {
             const { data: { user: authUser }, error: authError } = await supabaseAdmin.auth.getUser(accessToken);
-            if (authError || !authUser) {
-                return jsonResponse({ error: "Unauthorized", details: authError?.message }, 401, corsHeaders);
+            if (!authError && authUser) {
+                user = { id: authUser.id, email: authUser.email };
+            } else {
+                authErrorDetails = authError?.message;
             }
-            user = { id: authUser.id, email: authUser.email };
-        } else {
+        }
+
+        if (!user) {
+            // Bestimme, ob ein gültiges JWT nötig ist.
+            const requiresAuth = !["generate-authentication-options", "verify-authentication"].includes(action);
+
+            if (requiresAuth) {
+                return jsonResponse({ error: "Unauthorized", details: authErrorDetails }, 401, corsHeaders);
+            }
+
             // Für Login: Hole die User ID anhand der E-Mail aus der RPC
             if (!email) {
                 return jsonResponse({ error: "Missing email for authentication" }, 400, corsHeaders);
             }
             const { data: users, error: rpcError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: email });
             if (rpcError || !users || users.length === 0) {
-                console.warn("Passkey login: email not found");
-                // Wir brechen hier noch nicht ab, um User Enumeration vorzubeugen, 
-                // aber die Passkey Library schlägt eh beim Fehlen der Options fehl.
-                return jsonResponse({ error: "Invalid user" }, 400, corsHeaders);
+                // Enumeration Guard
+                if (action === "generate-authentication-options") {
+                    const fakeChallenge = new Uint8Array(32);
+                    crypto.getRandomValues(fakeChallenge);
+                    const fakeChallengeB64 = isoBase64URL.fromBuffer(fakeChallenge);
+                    return jsonResponse({
+                        options: { rpId: getRpConfig(req).rpID, challenge: fakeChallengeB64, allowCredentials: [], userVerification: "required" },
+                        prfSalts: {}
+                    }, 200, corsHeaders);
+                } else if (action === "verify-authentication") {
+                    return jsonResponse({ error: "Verification failed" }, 400, corsHeaders);
+                } else {
+                    return jsonResponse({ error: "Invalid user" }, 400, corsHeaders);
+                }
             }
             user = { id: users[0].id, email: email };
         }
@@ -522,6 +534,7 @@ async function handleVerifyAuthentication(
             sessionDataToClient = sessionData.session;
         } catch (e) {
             console.error("Failed to generate BFF session after webauthn:", e);
+            throw new Error("Session generation aborted");
         }
 
         const responseHeaders = new Headers({
@@ -536,7 +549,7 @@ async function handleVerifyAuthentication(
                 path: "/",
                 httpOnly: true,
                 secure: true,
-                sameSite: "Strict",
+                sameSite: "None",
                 maxAge: 60 * 60 * 24 * 7, // 7 Days
             });
         }

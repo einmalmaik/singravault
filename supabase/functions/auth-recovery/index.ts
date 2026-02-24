@@ -33,54 +33,58 @@ serve(async (req) => {
         // 3. TTL: 15 Minuten
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-        // 4. Upsert (Nur Hash speichern!)
-        // Enumeration Guard: Ob die E-Mail existiert, prüfen wir bewusst nach dem Hash generieren
-        // um Timing Unterschiede gering zu halten.
-        await supabaseAdmin.from('recovery_tokens').delete().eq('email', email); // Alte löschen
-        await supabaseAdmin.from('recovery_tokens').insert({
-            email,
-            token_hash: dbTokenHash,
-            expires_at: expiresAt
-        });
+        // 4. Check if user actually exists before proceeding with DB and Mail
+        const { data: users, error: rpcError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: email });
+        const userExists = !rpcError && users && users.length > 0;
 
-        // E-Mail Versand mit Resend
-        if (RESEND_API_KEY) {
-            const origin = req.headers.get("origin") || "https://singravault.mauntingstudios.de";
-            const resetLink = `${origin}/auth?mode=recover&token=${resetTokenClient}`;
+        if (userExists) {
+            // Ursprünglichen Flow ausführen (DB abspeichern + Email senden)
+            await supabaseAdmin.from('recovery_tokens').delete().eq('email', email); // Alte löschen
+            await supabaseAdmin.from('recovery_tokens').insert({
+                email,
+                token_hash: dbTokenHash,
+                expires_at: expiresAt
+            });
 
-            try {
-                const mailRes = await fetch("https://api.resend.com/emails", {
-                    method: "POST",
-                    headers: {
-                        "Authorization": `Bearer ${RESEND_API_KEY}`,
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({
-                        from: "Singra Vault <noreply@mauntingstudios.de>",
-                        to: email,
-                        subject: "Singra Vault - Passwort zurücksetzen",
-                        html: `
-                            <div style="font-family: sans-serif; color: #333;">
-                                <h2>Passwort zurücksetzen</h2>
-                                <p>Du hast angefordert, dein Passwort zurückzusetzen.</p>
-                                <p>Klicke auf den folgenden Link, um ein neues Passwort zu vergeben:</p>
-                                <p><a href="${resetLink}" style="background-color: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Passwort zurücksetzen</a></p>
-                                <p>Dieser Link ist für 15 Minuten gültig.</p>
-                                <p>Wenn du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.</p>
-                                <br/>
-                                <p><small>Alternativ: Kopiere diesen Token in das Formular: <code>${resetTokenClient}</code></small></p>
-                            </div>
-                        `
-                    })
-                });
+            // E-Mail Versand mit Resend
+            if (RESEND_API_KEY) {
+                const siteUrl = Deno.env.get("SITE_URL") || "https://singravault.mauntingstudios.de";
+                const resetLink = `${siteUrl}/auth?mode=recover&token=${resetTokenClient}`;
 
-                if (!mailRes.ok) {
-                    console.error("Resend API error:", await mailRes.text());
-                } else {
-                    console.log("Recovery email sent to:", email);
+                try {
+                    const mailRes = await fetch("https://api.resend.com/emails", {
+                        method: "POST",
+                        headers: {
+                            "Authorization": `Bearer ${RESEND_API_KEY}`,
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            from: "Singra Vault <noreply@mauntingstudios.de>",
+                            to: email,
+                            subject: "Singra Vault - Passwort zurücksetzen",
+                            html: `
+                                <div style="font-family: sans-serif; color: #333;">
+                                    <h2>Passwort zurücksetzen</h2>
+                                    <p>Du hast angefordert, dein Passwort zurückzusetzen.</p>
+                                    <p>Klicke auf den folgenden Link, um ein neues Passwort zu vergeben:</p>
+                                    <p><a href="${resetLink}" style="background-color: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Passwort zurücksetzen</a></p>
+                                    <p>Dieser Link ist für 15 Minuten gültig.</p>
+                                    <p>Wenn du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.</p>
+                                    <br/>
+                                    <p><small>Alternativ: Kopiere diesen Token in das Formular: <code>${resetTokenClient}</code></small></p>
+                                </div>
+                            `
+                        })
+                    });
+
+                    if (!mailRes.ok) {
+                        console.error("Resend API error:", await mailRes.text());
+                    } else {
+                        console.log("Recovery email sent to:", email);
+                    }
+                } catch (err) {
+                    console.error("Failed to send recovery email:", err);
                 }
-            } catch (err) {
-                console.error("Failed to send recovery email:", err);
             }
         }
 

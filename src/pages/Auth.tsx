@@ -45,9 +45,18 @@ const recoverSchema = z.object({
   email: z.string().email('auth.errors.invalidEmail'),
 });
 
+const updatePasswordSchema = z.object({
+  password: z.string().min(12, 'Passwort muss mindestens 12 Zeichen haben.'),
+  confirmPassword: z.string(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: 'auth.errors.passwordMismatch',
+  path: ['confirmPassword'],
+});
+
 type LoginFormData = z.infer<typeof loginSchema>;
 type SignupFormData = z.infer<typeof signupSchema>;
 type RecoverFormData = z.infer<typeof recoverSchema>;
+type UpdatePasswordFormData = z.infer<typeof updatePasswordSchema>;
 
 export default function Auth() {
   const { t } = useTranslation();
@@ -55,14 +64,18 @@ export default function Auth() {
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
 
-  const [mode, setMode] = useState<'login' | 'signup' | 'recover'>(
-    searchParams.get('mode') === 'signup' ? 'signup' : 'login'
+  const urlToken = searchParams.get('token') || (window.location.hash.includes('type=recovery') ? 'supabase-recovery' : null);
+  const [mode, setMode] = useState<'login' | 'signup' | 'recover' | 'update_password'>(
+    urlToken ? 'update_password' :
+      searchParams.get('mode') === 'signup' ? 'signup' :
+        searchParams.get('mode') === 'recover' ? 'recover' : 'login'
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   // Note: 2FA Logik (TOTP) bleibt bestehen, wird hier vereinfacht
   const [show2FAModal, setShow2FAModal] = useState(false);
+  const [pendingLoginData, setPendingLoginData] = useState<LoginFormData | null>(null);
 
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -79,10 +92,15 @@ export default function Auth() {
     defaultValues: { email: '' },
   });
 
+  const updatePasswordForm = useForm<UpdatePasswordFormData>({
+    resolver: zodResolver(updatePasswordSchema),
+    defaultValues: { password: '', confirmPassword: '' },
+  });
+
   // Supabase REST Edge Function Base URL
   const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
 
-  const handleLogin = async (data: LoginFormData) => {
+  const handleLogin = async (data: LoginFormData, totpCode?: string, isBackupCode?: boolean) => {
     setLoading(true);
     try {
       // BFF: Login an Edge Function
@@ -93,14 +111,21 @@ export default function Auth() {
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
         },
         credentials: 'include',
-        body: JSON.stringify({ email: data.email, password: data.password })
+        body: JSON.stringify({ email: data.email, password: data.password, totpCode, isBackupCode })
       });
 
       if (!res.ok) {
         throw new Error('Invalid credentials');
       }
 
-      const { session } = await res.json();
+      const { session, requires2FA } = await res.json();
+
+      if (requires2FA) {
+        setPendingLoginData(data);
+        setShow2FAModal(true);
+        return;
+      }
+
       if (session) {
         await supabase.auth.setSession({
           access_token: session.access_token,
@@ -108,9 +133,12 @@ export default function Auth() {
         });
       }
 
+      setShow2FAModal(false);
+      setPendingLoginData(null);
       // Success! Das HttpOnly Cookie wurde gesetzt.
       toast({ title: t('common.success'), description: t('auth.success') });
       navigate('/vault');
+      return true;
 
     } catch (error) {
       toast({
@@ -118,9 +146,15 @@ export default function Auth() {
         title: t('common.error'),
         description: t('auth.errors.invalidCredentials'),
       });
+      return false;
     } finally {
-      setLoading(false);
+      if (!show2FAModal) setLoading(false);
     }
+  };
+
+  const handle2FAVerify = async (code: string, isBackupCode: boolean) => {
+    if (!pendingLoginData) return false;
+    return await handleLogin(pendingLoginData, code, isBackupCode);
   };
 
   const handleSignup = async (data: SignupFormData) => {
@@ -136,16 +170,21 @@ export default function Auth() {
         body: JSON.stringify({ email: data.email, password: data.password })
       });
 
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Registration failed');
+      }
+
       // User Enumeration Prevention: Immer Erfolgsmeldung zeigen
       toast({
         title: t('common.success'),
         description: 'Falls diese E-Mail noch nicht registriert ist, wurde ein Bestätigungslink gesendet.',
       });
-    } catch (error) {
+    } catch (error: any) {
       toast({
         variant: 'destructive',
         title: t('common.error'),
-        description: 'Ein Fehler ist aufgetreten. Bitte versuche es später erneut.',
+        description: error.message || 'Ein Fehler ist aufgetreten. Bitte versuche es später erneut.',
       });
     } finally {
       setLoading(false);
@@ -179,6 +218,47 @@ export default function Auth() {
     } finally {
       setLoading(false);
       setMode('login');
+    }
+  };
+
+  const handleUpdatePassword = async (data: UpdatePasswordFormData) => {
+    setLoading(true);
+    try {
+      // If token is missing from URL, fallback to implicit session (if mapped by Supabase)
+      const token = searchParams.get('token');
+      if (token) {
+        // BFF Custom Reset implementation if token matches db
+        const email = searchParams.get('email') || recoverForm.getValues().email;
+        const res = await fetch(`${API_URL}/auth-reset-password`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          },
+          credentials: 'include',
+          body: JSON.stringify({ email: email, token, newPassword: data.password })
+        });
+        if (!res.ok) throw new Error('Reset failed');
+      } else {
+        // Fallback or GoTrue explicit implicit flow
+        const { error } = await supabase.auth.updateUser({ password: data.password });
+        if (error) throw error;
+      }
+      toast({ title: t('common.success'), description: 'Passwort erfolgreich aktualisiert.' });
+
+      // Navigate cleanly
+      if (searchParams.get('token') && !searchParams.get('type')) {
+        // Full token reset flow without automatic hydration -> force explicit manual login
+        navigate('/', { replace: true });
+        setMode('login');
+      } else {
+        // GoTrue handled hydrating the session (in-app updates or magic explicit flow)
+        navigate('/vault');
+      }
+    } catch (error) {
+      toast({ variant: 'destructive', title: t('common.error'), description: 'Fehler beim Aktualisieren des Passworts.' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -254,6 +334,71 @@ export default function Auth() {
           </CardHeader>
 
           <CardContent>
+            {/* Update Password Form */}
+            {mode === 'update_password' && (
+              <Form {...updatePasswordForm}>
+                <form onSubmit={updatePasswordForm.handleSubmit(handleUpdatePassword)} className="space-y-4">
+                  {(searchParams.get('email') || !searchParams.get('token')) ? null : (
+                    <FormField
+                      control={recoverForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Bestätige E-Mail für Reset</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                              <Input {...field} type="email" className="pl-10" />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                  <FormField
+                    control={updatePasswordForm.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Neues Passwort</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input {...field} type={showPassword ? 'text' : 'password'} className="pl-10 pr-10" />
+                            <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
+                              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </Button>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={updatePasswordForm.control}
+                    name="confirmPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Neues Passwort bestätigen</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input {...field} type="password" className="pl-10" />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Passwort Speichern
+                  </Button>
+                </form>
+              </Form>
+            )}
+
             {/* Recover Form */}
             {mode === 'recover' && (
               <Form {...recoverForm}>
@@ -285,7 +430,7 @@ export default function Auth() {
             {/* Login Form */}
             {mode === 'login' && (
               <Form {...loginForm}>
-                <form onSubmit={loginForm.handleSubmit(handleLogin)} className="space-y-4">
+                <form onSubmit={loginForm.handleSubmit((d) => handleLogin(d))} className="space-y-4">
                   <FormField
                     control={loginForm.control}
                     name="email"
@@ -423,6 +568,16 @@ export default function Auth() {
           </CardContent>
         </Card>
       </div>
+
+      <TwoFactorVerificationModal
+        open={show2FAModal}
+        onVerify={handle2FAVerify}
+        onCancel={() => {
+          setShow2FAModal(false);
+          setPendingLoginData(null);
+          setLoading(false);
+        }}
+      />
     </div>
   );
 }

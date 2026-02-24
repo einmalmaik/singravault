@@ -60,7 +60,8 @@ export function getCorsHeaders(req: Request): Record<string, string> {
             "Access-Control-Allow-Origin": productionOrigins[0],
             "Access-Control-Allow-Headers":
                 "authorization, x-client-info, apikey, content-type",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
+            "Access-Control-Allow-Credentials": "true",
         };
     }
 
@@ -71,7 +72,8 @@ export function getCorsHeaders(req: Request): Record<string, string> {
         "Access-Control-Allow-Origin": allowed,
         "Access-Control-Allow-Headers":
             "authorization, x-client-info, apikey, content-type",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
+        "Access-Control-Allow-Credentials": "true",
     };
 }
 
@@ -80,5 +82,6 @@ export const corsHeaders: Record<string, string> = {
     "Access-Control-Allow-Origin": productionOrigins[0] || "https://singravault.mauntingstudios.de",
     "Access-Control-Allow-Headers":
         "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
+    "Access-Control-Allow-Credentials": "true",
 };

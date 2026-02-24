@@ -21,6 +21,6 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     storage: inMemoryStorage,
     persistSession: false,
     autoRefreshToken: false,
-    detectSessionInUrl: false,
+    detectSessionInUrl: true,
   }
 });

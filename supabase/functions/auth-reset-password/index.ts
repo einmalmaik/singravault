@@ -20,6 +20,23 @@ serve(async (req) => {
             return new Response(JSON.stringify({ error: "Invalid data" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
+        // HIBP K-Anonymity Check
+        const encoder = new TextEncoder();
+        const hexHashBuffer = await crypto.subtle.digest("SHA-1", encoder.encode(newPassword));
+        const hexHash = encodeHex(hexHashBuffer).toUpperCase();
+        const prefix = hexHash.substring(0, 5);
+        const suffix = hexHash.substring(5);
+
+        const hibpReq = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
+        const hibpRes = await hibpReq.text();
+
+        if (hibpRes.includes(suffix)) {
+            return new Response(JSON.stringify({ error: "Password found in data breaches." }), {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+
         // 1. Deno's std crypto: Das Token kommt vom Client als Hex-String
         // auth-recovery hashte das rawToken (Uint8Array).
         // Um das zu rekonstruieren, müssten wir hex_decode machen.

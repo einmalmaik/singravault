@@ -11,11 +11,10 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
 
-    // Credentials explizit für Cookies erlauben
-    const origin = req.headers.get("Origin") || "*";
+    // Credentials explizit für Cookies erlauben, aber Origin NICHT reflektieren!
+    // getCorsHeaders liefert den strikten CORS-Header bereits sicher zurück.
     const headers = new Headers({
         ...corsHeaders,
-        "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Credentials": "true",
     });
 
@@ -24,6 +23,23 @@ serve(async (req) => {
     }
 
     try {
+        // --- DELETE: Session Invalidation ---
+        if (req.method === "DELETE") {
+            setCookie(headers, {
+                name: "sb-bff-session",
+                value: "",
+                path: "/",
+                httpOnly: true,
+                secure: true,
+                sameSite: "None",
+                maxAge: 0, // expire immediately
+            });
+            return new Response(JSON.stringify({ success: true }), {
+                status: 200,
+                headers: { ...headers, "Content-Type": "application/json" }
+            });
+        }
+
         // --- GET: Session Hydration & Refresh ---
         if (req.method === "GET") {
             const cookies = getCookies(req.headers);
@@ -53,7 +69,7 @@ serve(async (req) => {
                 path: "/",
                 httpOnly: true,
                 secure: true,
-                sameSite: "Strict",
+                sameSite: "None",
                 maxAge: 60 * 60 * 24 * 7, // 7 days
             });
 
@@ -67,7 +83,7 @@ serve(async (req) => {
         if (req.method !== "POST") {
             return new Response("Method not allowed", { status: 405, headers });
         }
-        const { email, password } = await req.json();
+        const { email, password, totpCode, isBackupCode } = await req.json();
 
         if (!email || !password) {
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
@@ -100,23 +116,128 @@ serve(async (req) => {
             .eq('id', user.id)
             .single();
 
+        let credentialsValid = false;
+
         if (secError || !secData) {
-            // Wenn der Hash fehlt, simulieren wir die Zeit, um Enumeration abzuwehren
-            await new Promise(r => setTimeout(r, 500 - (Date.now() - startTime)));
+            // Legacy GoTrue Fallback (Bug 15)
+            const { data: fallbackAuth, error: fallbackError } = await supabaseAdmin.auth.signInWithPassword({
+                email,
+                password
+            });
+
+            if (fallbackError || !fallbackAuth.user) {
+                await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - startTime))));
+                return new Response(JSON.stringify({ error: "Invalid credentials" }), {
+                    status: 401,
+                    headers: { ...headers, "Content-Type": "application/json" }
+                });
+            }
+            credentialsValid = true;
+        } else {
+            // 3. Verifiziere das Passwort mit Argon2id
+            credentialsValid = await argon2Verify({ password, hash: secData.argon2_hash });
+        }
+
+        if (!credentialsValid) {
+            await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - startTime))));
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                 status: 401,
                 headers: { ...headers, "Content-Type": "application/json" }
             });
         }
 
-        // 3. Verifiziere das Passwort mit Argon2id
-        const isValid = await argon2Verify({ password, hash: secData.argon2_hash });
-
-        if (!isValid) {
-            return new Response(JSON.stringify({ error: "Invalid credentials" }), {
-                status: 401,
+        // 3.2. Email Confirm Guard (Bug 16)
+        const { data: adminUser, error: adminUserError } = await supabaseAdmin.auth.admin.getUserById(user.id);
+        if (adminUserError || !adminUser.user.email_confirmed_at) {
+            return new Response(JSON.stringify({ error: "Email verification required" }), {
+                status: 403,
                 headers: { ...headers, "Content-Type": "application/json" }
             });
+        }
+
+        // 3.5. 2FA Check (Enforce 2FA before issuing session)
+        const { data: user2fa } = await supabaseAdmin
+            .from('user_2fa')
+            .select('is_enabled, totp_secret')
+            .eq('user_id', user.id)
+            .single();
+
+        if (user2fa?.is_enabled) {
+            if (!totpCode && !isBackupCode) {
+                // Password correct, but 2FA required. Do NOT issue BFF session yet.
+                return new Response(JSON.stringify({
+                    requires2FA: true,
+                    userId: user.id
+                }), {
+                    status: 200,
+                    headers: { ...headers, "Content-Type": "application/json" }
+                });
+            }
+
+            if (!isBackupCode) {
+                const OTPAuth = await import("npm:otpauth");
+                const totp = new OTPAuth.TOTP({
+                    issuer: 'Singra Vault',
+                    algorithm: 'SHA1',
+                    digits: 6,
+                    period: 30,
+                    secret: OTPAuth.Secret.fromBase32(user2fa.totp_secret.replace(/\s/g, '')),
+                });
+
+                const delta = totp.validate({ token: totpCode.replace(/\s/g, ''), window: 1 });
+                if (delta === null) {
+                    await new Promise(r => setTimeout(r, 500));
+                    return new Response(JSON.stringify({ error: "Invalid 2FA code" }), {
+                        status: 401,
+                        headers: { ...headers, "Content-Type": "application/json" }
+                    });
+                }
+
+                await supabaseAdmin.from('user_2fa').update({ last_verified_at: new Date().toISOString() }).eq('user_id', user.id);
+            } else if (isBackupCode && totpCode) {
+                // Backup Code Verification Path
+                const { data: backupCodes } = await supabaseAdmin
+                    .from('backup_codes')
+                    .select('id, code_hash')
+                    .eq('user_id', user.id)
+                    .eq('used', false);
+
+                let validCodeId = null;
+
+                if (backupCodes && backupCodes.length > 0) {
+                    for (const bc of backupCodes) {
+                        const isMatch = await argon2Verify({ password: totpCode.replace(/\s/g, ''), hash: bc.code_hash });
+                        if (isMatch) {
+                            validCodeId = bc.id;
+                            break;
+                        }
+                    }
+                }
+
+                if (!validCodeId) {
+                    await new Promise(r => setTimeout(r, 500));
+                    return new Response(JSON.stringify({ error: "Invalid backup code" }), {
+                        status: 401,
+                        headers: { ...headers, "Content-Type": "application/json" }
+                    });
+                }
+
+                // Mark the specific Backup Code as used
+                await supabaseAdmin
+                    .from('backup_codes')
+                    .update({
+                        used: true,
+                        used_at: new Date().toISOString()
+                    })
+                    .eq('id', validCodeId);
+
+                await supabaseAdmin.from('user_2fa').update({ last_verified_at: new Date().toISOString() }).eq('user_id', user.id);
+            } else {
+                return new Response(JSON.stringify({ error: "Invalid request payload" }), {
+                    status: 400,
+                    headers: { ...headers, "Content-Type": "application/json" }
+                });
+            }
         }
 
         // 4. Session generieren (BFF Pattern - OTP Hack)
@@ -154,7 +275,7 @@ serve(async (req) => {
             path: "/",
             httpOnly: true,
             secure: true,
-            sameSite: "Strict",
+            sameSite: "None",
             maxAge: 60 * 60 * 24 * 7, // 7 Days
         });
 

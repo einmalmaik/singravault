@@ -81,11 +81,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     // 1. Supabase Memory-Session löschen
-    await supabase.auth.signOut();
+    const { error: signOutError } = await supabase.auth.signOut();
+    if (signOutError) {
+      console.error('[AuthContext] Failed to terminate GoTrue session:', signOutError);
+      throw signOutError;
+    }
 
     // 2. Cookie im Backend killen (BFF Logout Endpoint aufrufen)
-    // Wir löschen den Cookie Client Seitig (da wir keinen /auth-logout Endpunkt haben gerade)
-    document.cookie = "sb-bff-session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
+    const res = await fetch(`${API_URL}/auth-session`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+      },
+      credentials: 'include'
+    });
+
+    if (!res.ok) {
+      console.error('[AuthContext] Failed to invalidate BFF session, status:', res.status);
+      throw new Error('Failed to completely sign out from the secured backend context');
+    }
   };
 
   return (

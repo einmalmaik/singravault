@@ -86,9 +86,26 @@ serve(async (req) => {
         }
 
         // 4. Echten Hash speichern (ideal in einer separaten Tabelle `user_security`)
-        await supabaseAdmin.from('user_security').upsert({
+        const { error: upsertError } = await supabaseAdmin.from('user_security').upsert({
             id: newUser.user.id,
             argon2_hash: hash,
+        });
+
+        if (upsertError) {
+            console.error("Critical: Failed to save Argon2 hash, rolling back GoTrue user.", upsertError);
+            // Cleanup the dead ghost account from core Auth context
+            await supabaseAdmin.auth.admin.deleteUser(newUser.user.id);
+            return new Response(JSON.stringify({ error: "Failed to persist security profile" }), {
+                status: 500,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+
+        // 5. Trigger Resend Auth Notification über GoTrue
+        await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+            redirectTo: Deno.env.get("SITE_URL") || "https://singravault.mauntingstudios.de/auth",
+        }).catch(err => {
+            console.error("Warning: Failed to dispatch welcome invite through standard admin:", err)
         });
 
         return new Response(JSON.stringify({ success: true }), {
