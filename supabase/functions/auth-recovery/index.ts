@@ -1,13 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
-import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 
 serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
@@ -21,70 +18,22 @@ serve(async (req) => {
 
         const startTime = Date.now();
 
-        // 1. CSPRNG Token
-        const rawToken = new Uint8Array(32);
-        crypto.getRandomValues(rawToken);
-        const resetTokenClient = encodeHex(rawToken);
-
-        // 2. Hash(Token)
-        const tokenHashBuffer = await crypto.subtle.digest("SHA-256", rawToken);
-        const dbTokenHash = encodeHex(new Uint8Array(tokenHashBuffer));
-
-        // 3. TTL: 15 Minuten
-        const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-
         // 4. Check if user actually exists before proceeding with DB and Mail
         const { data: users, error: rpcError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: email });
         const userExists = !rpcError && users && users.length > 0;
 
         if (userExists) {
-            // Ursprünglichen Flow ausführen (DB abspeichern + Email senden)
-            await supabaseAdmin.from('recovery_tokens').delete().eq('email', email); // Alte löschen
-            await supabaseAdmin.from('recovery_tokens').insert({
-                email,
-                token_hash: dbTokenHash,
-                expires_at: expiresAt
+            // Rufen wir GoTrue's resetPasswordForEmail auf.
+            // Dies sendet die Email mit dem konfigurierten Template aus dem Supabase Dashboard.
+            const siteUrl = Deno.env.get("SITE_URL") || "https://singravault.mauntingstudios.de";
+            const { error: resetError } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
+                redirectTo: `${siteUrl}/vault`,
             });
 
-            // E-Mail Versand mit Resend
-            if (RESEND_API_KEY) {
-                const siteUrl = Deno.env.get("SITE_URL") || "https://singravault.mauntingstudios.de";
-                const resetLink = `${siteUrl}/auth?mode=recover&token=${resetTokenClient}`;
-
-                try {
-                    const mailRes = await fetch("https://api.resend.com/emails", {
-                        method: "POST",
-                        headers: {
-                            "Authorization": `Bearer ${RESEND_API_KEY}`,
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({
-                            from: "Singra Vault <noreply@mauntingstudios.de>",
-                            to: email,
-                            subject: "Singra Vault - Passwort zurücksetzen",
-                            html: `
-                                <div style="font-family: sans-serif; color: #333;">
-                                    <h2>Passwort zurücksetzen</h2>
-                                    <p>Du hast angefordert, dein Passwort zurückzusetzen.</p>
-                                    <p>Klicke auf den folgenden Link, um ein neues Passwort zu vergeben:</p>
-                                    <p><a href="${resetLink}" style="background-color: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Passwort zurücksetzen</a></p>
-                                    <p>Dieser Link ist für 15 Minuten gültig.</p>
-                                    <p>Wenn du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.</p>
-                                    <br/>
-                                    <p><small>Alternativ: Kopiere diesen Token in das Formular: <code>${resetTokenClient}</code></small></p>
-                                </div>
-                            `
-                        })
-                    });
-
-                    if (!mailRes.ok) {
-                        console.error("Resend API error:", await mailRes.text());
-                    } else {
-                        console.log("Recovery email sent to:", email);
-                    }
-                } catch (err) {
-                    console.error("Failed to send recovery email:", err);
-                }
+            if (resetError) {
+                console.error("Failed to trigger reset password:", resetError);
+            } else {
+                console.log("Recovery email triggered via GoTrue for:", email);
             }
         }
 

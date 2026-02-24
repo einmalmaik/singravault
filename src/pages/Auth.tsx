@@ -224,39 +224,34 @@ export default function Auth() {
   const handleUpdatePassword = async (data: UpdatePasswordFormData) => {
     setLoading(true);
     try {
-      // If token is missing from URL, fallback to implicit session (if mapped by Supabase)
-      const token = searchParams.get('token');
-      if (token) {
-        // BFF Custom Reset implementation if token matches db
-        const email = searchParams.get('email') || recoverForm.getValues().email;
-        const res = await fetch(`${API_URL}/auth-reset-password`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-          },
-          credentials: 'include',
-          body: JSON.stringify({ email: email, token, newPassword: data.password })
-        });
-        if (!res.ok) throw new Error('Reset failed');
-      } else {
-        // Fallback or GoTrue explicit implicit flow
-        const { error } = await supabase.auth.updateUser({ password: data.password });
-        if (error) throw error;
-      }
-      toast({ title: t('common.success'), description: 'Passwort erfolgreich aktualisiert.' });
+      // WICHTIG: GoTrue (Supabase) liest den Hash (#access_token=...) und erzeugt daraus eine
+      // valide Session. Wir nutzen diese, um unser Backend zu autorisieren!
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
-      // Navigate cleanly
-      if (searchParams.get('token') && !searchParams.get('type')) {
-        // Full token reset flow without automatic hydration -> force explicit manual login
-        navigate('/', { replace: true });
-        setMode('login');
-      } else {
-        // GoTrue handled hydrating the session (in-app updates or magic explicit flow)
-        navigate('/vault');
+      if (sessionError || !sessionData.session) {
+        throw new Error('Keine aktive Sitzung gefunden. Bitte den Link erneut anfordern.');
       }
-    } catch (error) {
-      toast({ variant: 'destructive', title: t('common.error'), description: 'Fehler beim Aktualisieren des Passworts.' });
+
+      const res = await fetch(`${API_URL}/auth-reset-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionData.session.access_token}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({ newPassword: data.password })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Reset failed');
+      }
+
+      toast({ title: t('common.success'), description: 'Passwort erfolgreich aktualisiert.' });
+      navigate('/vault');
+
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: t('common.error'), description: error.message || 'Fehler beim Aktualisieren des Passworts.' });
     } finally {
       setLoading(false);
     }
@@ -320,7 +315,7 @@ export default function Auth() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">
-      <SEO title="Anmelden / Registrieren" noIndex={true} />
+      <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
       <div className="w-full max-w-md">
         <Link to="/" className="flex items-center justify-center gap-2 mb-8">
           <Shield className="w-8 h-8 text-primary" />
@@ -338,24 +333,7 @@ export default function Auth() {
             {mode === 'update_password' && (
               <Form {...updatePasswordForm}>
                 <form onSubmit={updatePasswordForm.handleSubmit(handleUpdatePassword)} className="space-y-4">
-                  {(searchParams.get('email') || !searchParams.get('token')) ? null : (
-                    <FormField
-                      control={recoverForm.control}
-                      name="email"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Bestätige E-Mail für Reset</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                              <Input {...field} type="email" className="pl-10" />
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
+                  {/* Remove the unnecessary email field for reset password, as identity comes from JWT */}
                   <FormField
                     control={updatePasswordForm.control}
                     name="password"
