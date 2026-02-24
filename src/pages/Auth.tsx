@@ -92,11 +92,20 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
         },
+        credentials: 'include',
         body: JSON.stringify({ email: data.email, password: data.password })
       });
 
       if (!res.ok) {
         throw new Error('Invalid credentials');
+      }
+
+      const { session } = await res.json();
+      if (session) {
+        await supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token || '',
+        });
       }
 
       // Success! Das HttpOnly Cookie wurde gesetzt.
@@ -123,6 +132,7 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
         },
+        credentials: 'include',
         body: JSON.stringify({ email: data.email, password: data.password })
       });
 
@@ -151,6 +161,7 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
         },
+        credentials: 'include',
         body: JSON.stringify({ email: data.email })
       });
 
@@ -187,6 +198,7 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
         },
+        credentials: 'include',
         body: JSON.stringify({ action: 'generate-authentication-options', email })
       });
 
@@ -203,10 +215,18 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
         },
+        credentials: 'include',
         body: JSON.stringify({ action: 'verify-authentication', credential: authResult, email })
       });
 
       if (verifyRes.ok) {
+        const { session } = await verifyRes.json();
+        if (session) {
+          await supabase.auth.setSession({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token || '',
+          });
+        }
         navigate('/vault');
       } else {
         throw new Error('Verification failed');

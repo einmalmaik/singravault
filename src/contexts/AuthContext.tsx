@@ -48,12 +48,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Wir mocken diesen Aufruf für den Prototyp hier, da der Fokus auf dem Code-Structure liegt.
     const fetchSessionFromHttpOnlyCookie = async () => {
       try {
-        // Beispiel-Code für BFF:
-        // const res = await fetch('/api/auth/refresh');
-        // if (res.ok) {
-        //   const { access_token } = await res.json();
-        //   await supabase.auth.setSession({ access_token, refresh_token: '' });
-        // }
+        const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
+        const res = await fetch(`${API_URL}/auth-session`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          },
+          credentials: 'include'
+        });
+
+        if (res.ok) {
+          const { session } = await res.json();
+          if (session && session.access_token) {
+            await supabase.auth.setSession({
+              access_token: session.access_token,
+              refresh_token: session.refresh_token || '',
+            });
+          }
+        }
       } catch (err) {
         console.warn('No active session found from BFF.');
       } finally {
@@ -72,7 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
 
     // 2. Cookie im Backend killen (BFF Logout Endpoint aufrufen)
-    // await fetch('/api/auth/logout', { method: 'POST' });
+    // Wir löschen den Cookie Client Seitig (da wir keinen /auth-logout Endpunkt haben gerade)
+    document.cookie = "sb-bff-session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
   };
 
   return (

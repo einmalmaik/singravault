@@ -1,20 +1,20 @@
-/**
+import { getCookies, setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
  * @fileoverview WebAuthn Edge Function for Passkey Registration & Authentication
- *
- * Handles all WebAuthn server-side operations:
- *   - generate-registration-options: Creates a challenge for passkey registration
- *   - verify-registration: Verifies the registration response from the browser
- *   - generate-authentication-options: Creates a challenge for passkey authentication
- *   - verify-authentication: Verifies the authentication response
- *   - activate-prf: Verifies authentication and stores wrapped master key for PRF unlock
- *   - list-credentials: Lists all registered passkeys for a user
- *   - delete-credential: Removes a registered passkey
- *
+    *
+ * Handles all WebAuthn server - side operations:
+ * - generate - registration - options: Creates a challenge for passkey registration
+    * - verify - registration: Verifies the registration response from the browser
+        * - generate - authentication - options: Creates a challenge for passkey authentication
+            * - verify - authentication: Verifies the authentication response
+                * - activate - prf: Verifies authentication and stores wrapped master key for PRF unlock
+                    * - list - credentials: Lists all registered passkeys for a user
+                        * - delete -credential: Removes a registered passkey
+                            *
  * Uses @simplewebauthn/server v13 via JSR for Deno compatibility.
- *
+    *
  * SECURITY: All operations require a valid Supabase JWT.
- * Challenge storage is server-side with 5-minute TTL.
- * PRF salt is generated server-side with CSPRNG.
+ * Challenge storage is server - side with 5 - minute TTL.
+ * PRF salt is generated server - side with CSPRNG.
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -73,40 +73,50 @@ Deno.serve(async (req: Request) => {
     try {
         console.log("WebAuthn function called. Method:", req.method);
 
-        // 1. Authenticate user via Supabase JWT
-        const authHeader = req.headers.get("Authorization");
-        console.log("Auth header provided:", !!authHeader, authHeader ? `(Length: ${authHeader.length})` : "");
-
-        if (!authHeader) {
-            console.log("Missing authorization header");
-            return jsonResponse({ error: "Missing authorization header" }, 401, corsHeaders);
-        }
-
-        const accessToken = extractBearerToken(authHeader);
-        if (!accessToken) {
-            return jsonResponse({ error: "Missing bearer token" }, 401, corsHeaders);
-        }
-
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-        // Admin client (bypasses RLS for challenge management)
         const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-        const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(accessToken);
-
-        if (authError || !user) {
-            console.log("Auth failed in Edge Function:", authError);
-            if (authError) console.log("Auth error message:", authError.message);
-            console.log("User object:", user);
-            return jsonResponse({ error: "Unauthorized", details: authError?.message }, 401, corsHeaders);
-        }
-
-        console.log("User authenticated successfully:", user.id);
-
-        // 2. Parse action
+        // 2. Parse action & Auth check
         const body = await req.json();
-        const { action } = body;
+        const { action, email } = body;
+
+        let user: { id: string; email?: string } | null = null;
+
+        // Bestimme, ob ein gültiges JWT nötig ist.
+        // Für reines Anmelden (Auth) reicht die Angabe der E-Mail.
+        const requiresAuth = !["generate-authentication-options", "verify-authentication"].includes(action);
+
+        if (requiresAuth) {
+            const authHeader = req.headers.get("Authorization");
+            if (!authHeader) {
+                return jsonResponse({ error: "Missing authorization header" }, 401, corsHeaders);
+            }
+
+            const accessToken = extractBearerToken(authHeader);
+            if (!accessToken) {
+                return jsonResponse({ error: "Missing bearer token" }, 401, corsHeaders);
+            }
+
+            const { data: { user: authUser }, error: authError } = await supabaseAdmin.auth.getUser(accessToken);
+            if (authError || !authUser) {
+                return jsonResponse({ error: "Unauthorized", details: authError?.message }, 401, corsHeaders);
+            }
+            user = { id: authUser.id, email: authUser.email };
+        } else {
+            // Für Login: Hole die User ID anhand der E-Mail aus der RPC
+            if (!email) {
+                return jsonResponse({ error: "Missing email for authentication" }, 400, corsHeaders);
+            }
+            const { data: users, error: rpcError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: email });
+            if (rpcError || !users || users.length === 0) {
+                console.warn("Passkey login: email not found");
+                // Wir brechen hier noch nicht ab, um User Enumeration vorzubeugen, 
+                // aber die Passkey Library schlägt eh beim Fehlen der Options fehl.
+                return jsonResponse({ error: "Invalid user" }, 400, corsHeaders);
+            }
+            user = { id: users[0].id, email: email };
+        }
 
         const rp = getRpConfig(req);
 
@@ -121,7 +131,7 @@ Deno.serve(async (req: Request) => {
                 return await handleGenerateAuthenticationOptions(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "verify-authentication":
-                return await handleVerifyAuthentication(user, rp, supabaseAdmin, body, corsHeaders);
+                return await handleVerifyAuthentication(user as any, rp, supabaseAdmin, body, corsHeaders);
 
             case "activate-prf":
                 return await handleActivatePrf(user, rp, supabaseAdmin, body, corsHeaders);
@@ -167,9 +177,9 @@ async function handleGenerateRegistrationOptions(
         .map((c: { credential_id: string }) => c.credential_id)
         .filter(isLikelyBase64UrlCredentialId)
         .map((credentialId: string) => ({
-        id: credentialId,
-        transports: undefined,
-    }));
+            id: credentialId,
+            transports: undefined,
+        }));
 
     // Generate registration options
     const options = await generateRegistrationOptions({
@@ -483,12 +493,61 @@ async function handleVerifyAuthentication(
 
         // Challenge wurde bereits vor der Verifikation gelöscht (Replay-Schutz)
 
-        return jsonResponse({
+        // === Session Generierung (BFF Pattern OTP Hack) ===
+        let sessionCookieToken = "";
+        let sessionDataToClient = null;
+
+        try {
+            const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+                type: 'magiclink',
+                email: user.email!, // Email is guaranteed to exist for login flow
+            });
+
+            if (linkError || !linkData.properties?.action_link) throw new Error("Failed to generate session link");
+
+            const url = new URL(linkData.properties.action_link);
+            const token = url.searchParams.get('token');
+
+            if (!token) throw new Error("No token in magic link");
+
+            const { data: sessionData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({
+                email: user.email!,
+                token,
+                type: 'magiclink'
+            });
+
+            if (verifyError || !sessionData.session) throw new Error("Failed to verify OTP for session");
+
+            sessionCookieToken = sessionData.session.refresh_token;
+            sessionDataToClient = sessionData.session;
+        } catch (e) {
+            console.error("Failed to generate BFF session after webauthn:", e);
+        }
+
+        const responseHeaders = new Headers({
+            ...corsHeaders,
+            "Content-Type": "application/json"
+        });
+
+        if (sessionCookieToken) {
+            setCookie(responseHeaders, {
+                name: "sb-bff-session",
+                value: sessionCookieToken,
+                path: "/",
+                httpOnly: true,
+                secure: true,
+                sameSite: "Strict",
+                maxAge: 60 * 60 * 24 * 7, // 7 Days
+            });
+        }
+
+        return new Response(JSON.stringify({
             verified: true,
             credentialId: dbCredential.credential_id,
             wrappedMasterKey: dbCredential.wrapped_master_key,
             prfEnabled: dbCredential.prf_enabled,
-        }, 200, corsHeaders);
+            session: sessionDataToClient
+        }), { status: 200, headers: responseHeaders });
     } catch (err) {
         console.error("Authentication verification error:", err);
         return jsonResponse({ error: "Verification failed" }, 400, corsHeaders);

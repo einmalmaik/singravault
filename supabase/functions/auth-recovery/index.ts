@@ -43,10 +43,45 @@ serve(async (req) => {
             expires_at: expiresAt
         });
 
-        // Dummy für E-Mail Versand mit Resend (aus Performance- und Auth-Architektur)
+        // E-Mail Versand mit Resend
         if (RESEND_API_KEY) {
-            // Mock: Link wäre z.B. https://domain.com/auth/reset?token=xyz...
-            console.log("Email Recovery Token generated for:", email, "Token:", resetTokenClient);
+            const origin = req.headers.get("origin") || "https://singravault.mauntingstudios.de";
+            const resetLink = `${origin}/auth?mode=recover&token=${resetTokenClient}`;
+
+            try {
+                const mailRes = await fetch("https://api.resend.com/emails", {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Bearer ${RESEND_API_KEY}`,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        from: "Singra Vault <noreply@mauntingstudios.de>",
+                        to: email,
+                        subject: "Singra Vault - Passwort zurücksetzen",
+                        html: `
+                            <div style="font-family: sans-serif; color: #333;">
+                                <h2>Passwort zurücksetzen</h2>
+                                <p>Du hast angefordert, dein Passwort zurückzusetzen.</p>
+                                <p>Klicke auf den folgenden Link, um ein neues Passwort zu vergeben:</p>
+                                <p><a href="${resetLink}" style="background-color: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Passwort zurücksetzen</a></p>
+                                <p>Dieser Link ist für 15 Minuten gültig.</p>
+                                <p>Wenn du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.</p>
+                                <br/>
+                                <p><small>Alternativ: Kopiere diesen Token in das Formular: <code>${resetTokenClient}</code></small></p>
+                            </div>
+                        `
+                    })
+                });
+
+                if (!mailRes.ok) {
+                    console.error("Resend API error:", await mailRes.text());
+                } else {
+                    console.log("Recovery email sent to:", email);
+                }
+            } catch (err) {
+                console.error("Failed to send recovery email:", err);
+            }
         }
 
         // Konstante Antwortzeit simulieren

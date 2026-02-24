@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
+import { getCookies, setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
 import { argon2Verify } from "npm:hash-wasm";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
@@ -24,6 +24,49 @@ serve(async (req) => {
     }
 
     try {
+        // --- GET: Session Hydration & Refresh ---
+        if (req.method === "GET") {
+            const cookies = getCookies(req.headers);
+            const refreshToken = cookies["sb-bff-session"];
+
+            if (!refreshToken) {
+                return new Response(JSON.stringify({ error: "No session cookie" }), {
+                    status: 401,
+                    headers: { ...headers, "Content-Type": "application/json" }
+                });
+            }
+
+            // Refresh via Admin oder Anon Client
+            const { data, error } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken });
+
+            if (error || !data.session) {
+                return new Response(JSON.stringify({ error: "Session expired" }), {
+                    status: 401,
+                    headers: { ...headers, "Content-Type": "application/json" }
+                });
+            }
+
+            // Neues Cookie setzen
+            setCookie(headers, {
+                name: "sb-bff-session",
+                value: data.session.refresh_token,
+                path: "/",
+                httpOnly: true,
+                secure: true,
+                sameSite: "Strict",
+                maxAge: 60 * 60 * 24 * 7, // 7 days
+            });
+
+            return new Response(JSON.stringify({ session: data.session }), {
+                status: 200,
+                headers: { ...headers, "Content-Type": "application/json" }
+            });
+        }
+
+        // --- POST: Login (Credentials Verification) ---
+        if (req.method !== "POST") {
+            return new Response("Method not allowed", { status: 405, headers });
+        }
         const { email, password } = await req.json();
 
         if (!email || !password) {
@@ -36,19 +79,19 @@ serve(async (req) => {
         // künstliches Delay gegen Timing Attacks (simuliert Argon2id Zeit)
         const startTime = Date.now();
 
-        // 1. Hole den User anhand der Email (via auth.users)
-        const { data: users, error: userError } = await supabaseAdmin.auth.admin.listUsers();
-        if (userError) throw userError;
+        // 1. Hole den User anhand der Email über sicheren RPC (P2 Fix)
+        const { data: users, error: userError } = await supabaseAdmin.rpc('get_user_id_by_email', { p_email: email });
 
-        const user = users.users.find((u) => u.email === email);
-        if (!user) {
-            // Konstante Zeitverzögerung
+        if (userError || !users || users.length === 0) {
+            // Konstante Zeitverzögerung (Timing Attack Guard)
             await new Promise(r => setTimeout(r, 500 - (Date.now() - startTime)));
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                 status: 401,
                 headers: { ...headers, "Content-Type": "application/json" }
             });
         }
+
+        const user = users[0];
 
         // 2. Lade den Argon2id Hash
         const { data: secData, error: secError } = await supabaseAdmin
@@ -76,34 +119,46 @@ serve(async (req) => {
             });
         }
 
-        // 4. Session generieren (BFF Pattern)
-        // Wir fordern ein JWT von Supabase GoTrue an, indem wir einen Magic Link Flow
-        // oder Service Role Flow nutzen, um dem User einen authentifizierten Session JWT auszustellen.
-        // Da wir das Passwort neu gesetzt haben (Random), melden wir ihn nicht so an. Wir erstellen einen
-        // Custom JWT ODER weisen GoTrue an, ein JWT auszustellen:
-        // supabase.auth.admin.generateLink({ type: 'magiclink', email }) ist möglich, aber
-        // eleganter ist es, einen eigenen Tokenizer zu schreiben, ODER die Session API zu nutzen:
-        // Aber GoTrue unterstützt kein direkte Ausstellung per API Node ohne Email-Click.
-        // -> Workaround für Enterprise Architektur: 
-        // Wir nutzen unser eigenes Backend-Cookie-Session Management.
-        // Für dieses Audit-Scope: Wir setzendas JWT manuell in ein Cookie.
+        // 4. Session generieren (BFF Pattern - OTP Hack)
+        // Wir fordern eine Magic Link Generierung vom Admin, konvertieren sie zu OTP, um eine valide GoTrue
+        // Session für das Frontend auszustellen!
+        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+            type: 'magiclink',
+            email: email,
+        });
 
-        // (Hinweis: Normalerweise würde hier ein signiertes JWT mit Deno/jose generiert werden, das
-        // in Supabase als Custom JWT validiert wird).
-        const sessionToken = crypto.randomUUID(); // Dummy-Token für den Prototyp
+        if (linkError || !linkData.properties?.action_link) {
+            throw new Error("Failed to generate session link");
+        }
 
-        // Secure, HttpOnly, SameSite=Strict Setzen
+        const url = new URL(linkData.properties.action_link);
+        const token = url.searchParams.get('token');
+
+        if (!token) throw new Error("No token in magic link");
+
+        // Wir verifizieren den Token mit dem generellen Supabase Client (Anonym)
+        const { data: sessionData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({
+            email,
+            token,
+            type: 'magiclink'
+        });
+
+        if (verifyError || !sessionData.session) {
+            throw new Error("Failed to verify OTP for session");
+        }
+
+        // Secure, HttpOnly, SameSite=Strict Setzen (nur refresh_token im Backend!)
         setCookie(headers, {
             name: "sb-bff-session",
-            value: sessionToken,
+            value: sessionData.session.refresh_token,
             path: "/",
             httpOnly: true,
             secure: true,
             sameSite: "Strict",
-            maxAge: 3600, // 1h
+            maxAge: 60 * 60 * 24 * 7, // 7 Days
         });
 
-        return new Response(JSON.stringify({ success: true }), {
+        return new Response(JSON.stringify({ success: true, session: sessionData.session }), {
             status: 200,
             headers: { ...headers, "Content-Type": "application/json" }
         });

@@ -63,8 +63,8 @@ serve(async (req) => {
             outputType: "encoded",
         });
 
-        const { data: users } = await supabaseAdmin.auth.admin.listUsers();
-        const user = users.users.find(u => u.email === email);
+        const { data: users } = await supabaseAdmin.rpc('get_user_id_by_email', { p_email: email });
+        const user = users && users.length > 0 ? users[0] : null;
 
         if (user) {
             await supabaseAdmin.from('user_security').upsert({
