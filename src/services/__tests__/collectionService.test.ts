@@ -84,16 +84,12 @@ vi.mock("@/integrations/supabase/client", () => ({
 // Mock cryptoService functions
 const mockCryptoService = vi.hoisted(() => ({
     generateSharedKey: vi.fn(),
-    wrapKey: vi.fn(),
-    unwrapKey: vi.fn(),
     encryptWithSharedKey: vi.fn(),
     decryptWithSharedKey: vi.fn(),
 }));
 
 vi.mock("../cryptoService", () => ({
     generateSharedKey: mockCryptoService.generateSharedKey,
-    wrapKey: mockCryptoService.wrapKey,
-    unwrapKey: mockCryptoService.unwrapKey,
     encryptWithSharedKey: mockCryptoService.encryptWithSharedKey,
     decryptWithSharedKey: mockCryptoService.decryptWithSharedKey,
 }));
@@ -139,8 +135,6 @@ describe("collectionService", () => {
 
         // Default mock implementations
         mockCryptoService.generateSharedKey.mockResolvedValue("mock-shared-key");
-        mockCryptoService.wrapKey.mockResolvedValue("wrapped-key-base64");
-        mockCryptoService.unwrapKey.mockResolvedValue("unwrapped-shared-key");
         mockCryptoService.encryptWithSharedKey.mockResolvedValue("encrypted-data");
         mockCryptoService.decryptWithSharedKey.mockResolvedValue({ title: "Item" });
 
@@ -353,7 +347,8 @@ describe("collectionService", () => {
             );
             expect(mockCryptoService.encryptWithSharedKey).toHaveBeenCalledWith(
                 itemData,
-                "unwrapped-pq-key"
+                "unwrapped-pq-key",
+                "vault-item-id"
             );
         });
 

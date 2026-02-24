@@ -37,7 +37,7 @@ vi.mock("hash-wasm", () => ({
     const enc = new TextEncoder();
     const passwordBytes = enc.encode(password);
     const saltBytes =
-      typeof salt === "string" ? enc.encode(salt) : salt;
+      typeof salt === "string" ? enc.encode(salt) : new Uint8Array(salt);
 
     // Import password as a raw key for PBKDF2
     const baseKey = await crypto.subtle.importKey(
@@ -84,8 +84,7 @@ import {
   decryptRSA,
   generateUserKeyPair,
   generateSharedKey,
-  wrapKey,
-  unwrapKey,
+
   encryptWithSharedKey,
   decryptWithSharedKey,
   CURRENT_KDF_VERSION,
@@ -452,95 +451,23 @@ describe("Integration: Core Cryptographic Pipeline", () => {
   // Shared collection key wrapping pipeline
   // ------------------------------------------------------------------
   describe("Shared collection key wrap / unwrap", () => {
-    it("should generate, wrap, unwrap, and use a shared key", async () => {
-      const masterPassword = "collection-owner-password";
 
-      // 1. Owner generates user key pair
-      const { publicKey, encryptedPrivateKey } =
-        await generateUserKeyPair(masterPassword);
-      expect(publicKey).toBeTruthy();
-      expect(encryptedPrivateKey).toContain(":");
-
-      const keyParts = encryptedPrivateKey.split(":");
-      expect(keyParts).toHaveLength(3);
-      expect(Number.parseInt(keyParts[0], 10)).toBe(CURRENT_KDF_VERSION);
-
-      // 2. Generate a shared collection key
-      const sharedKey = await generateSharedKey();
-      expect(sharedKey).toBeTruthy();
-      const parsed = JSON.parse(sharedKey);
-      expect(parsed.kty).toBe("oct");
-
-      // 3. Wrap the shared key with the owner's public key
-      const wrappedKey = await wrapKey(sharedKey, publicKey);
-      expect(wrappedKey).toBeTruthy();
-
-      // 4. Unwrap with the owner's encrypted private key + master password
-      const unwrappedKey = await unwrapKey(
-        wrappedKey,
-        encryptedPrivateKey,
-        masterPassword
-      );
-      expect(unwrappedKey).toBe(sharedKey);
-    }, 60000);
 
     it("should encrypt and decrypt vault items with shared key", async () => {
       const sharedKey = await generateSharedKey();
+      const aad = "vault-item-123";
       const item: VaultItemData = {
         title: "Shared Login",
         username: "team-user",
         password: "shared-pw-123",
       };
 
-      const encrypted = await encryptWithSharedKey(item, sharedKey);
-      const decrypted = await decryptWithSharedKey(encrypted, sharedKey);
+      const encrypted = await encryptWithSharedKey(item, sharedKey, aad);
+      const decrypted = await decryptWithSharedKey(encrypted, sharedKey, aad);
       expect(decrypted).toEqual(item);
     });
 
-    it("should fail to unwrap with wrong master password", async () => {
-      const { publicKey, encryptedPrivateKey } =
-        await generateUserKeyPair("correct-password");
 
-      const sharedKey = await generateSharedKey();
-      const wrappedKey = await wrapKey(sharedKey, publicKey);
-
-      await expect(
-        unwrapKey(wrappedKey, encryptedPrivateKey, "wrong-password")
-      ).rejects.toThrow();
-    }, 60000);
-
-    it("should unwrap shared keys with hybrid pq-v2 private key format", async () => {
-      const masterPassword = "hybrid-collection-owner-password";
-      const { publicKey, encryptedPrivateKey } = await generateUserKeyPair(masterPassword, 2);
-      expect(encryptedPrivateKey.startsWith("pq-v2:")).toBe(true);
-
-      const sharedKey = await generateSharedKey();
-      const wrappedKey = await wrapKey(sharedKey, publicKey);
-
-      const unwrapped = await unwrapKey(
-        wrappedKey,
-        encryptedPrivateKey,
-        masterPassword
-      );
-      expect(unwrapped).toBe(sharedKey);
-    }, 90000);
-
-    it("should unwrap legacy private key format without kdf version prefix", async () => {
-      const masterPassword = "legacy-password";
-      const { publicKey, encryptedPrivateKey } = await generateUserKeyPair(masterPassword);
-      const [, salt, encrypted] = encryptedPrivateKey.split(":");
-      const legacyEncryptedPrivateKey = `${salt}:${encrypted}`;
-
-      const sharedKey = await generateSharedKey();
-      const wrappedKey = await wrapKey(sharedKey, publicKey);
-
-      const unwrapped = await unwrapKey(
-        wrappedKey,
-        legacyEncryptedPrivateKey,
-        masterPassword
-      );
-      expect(unwrapped).toBe(sharedKey);
-    }, 60000);
   });
 
   // ------------------------------------------------------------------

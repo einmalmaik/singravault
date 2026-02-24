@@ -28,7 +28,7 @@ vi.mock("hash-wasm", () => ({
     }) => {
         const enc = new TextEncoder();
         const passwordBytes = enc.encode(password);
-        const saltBytes = typeof salt === "string" ? enc.encode(salt) : salt;
+        const saltBytes = typeof salt === "string" ? enc.encode(salt) : new Uint8Array(salt);
         const baseKey = await crypto.subtle.importKey(
             "raw",
             passwordBytes,
@@ -58,8 +58,6 @@ import {
     decryptVaultItem,
     generateUserKeyPair,
     generateSharedKey,
-    wrapKey,
-    unwrapKey,
     encryptWithSharedKey,
     decryptWithSharedKey,
     CURRENT_KDF_VERSION,
@@ -260,47 +258,24 @@ describe("E2E: Vault Operations", () => {
     // ========== Shared Collection Key Wrapping ==========
 
     describe("Shared Collection E2E", () => {
-        it("should generate key pair, shared key, wrap/unwrap, encrypt/decrypt", async () => {
-            // Step 1: Generate user key pair
-            const keyPair = await generateUserKeyPair(MASTER_PASSWORD);
-            expect(keyPair.publicKey).toBeTruthy();
-            expect(keyPair.encryptedPrivateKey).toBeTruthy();
-            expect(keyPair.encryptedPrivateKey.split(':').length).toBe(3); // kdfVersion:salt:encryptedData
-
-            // Step 2: Generate shared collection key
+        it("should encrypt and decrypt shared collection items with a generated shared key", async () => {
+            // Step 1: Generate shared collection key
             const sharedKey = await generateSharedKey();
             expect(sharedKey).toBeTruthy();
 
-            // Step 3: Wrap shared key with user's public key
-            const wrappedKey = await wrapKey(sharedKey, keyPair.publicKey);
-            expect(wrappedKey).toBeTruthy();
-
-            // Step 4: Unwrap shared key with user's encrypted private key + master password
-            const unwrappedKey = await unwrapKey(wrappedKey, keyPair.encryptedPrivateKey, MASTER_PASSWORD);
-            expect(unwrappedKey).toBe(sharedKey);
-
-            // Step 5: Encrypt/decrypt with shared key
+            // Step 2: Encrypt/decrypt with shared key
             const itemData: VaultItemData = {
                 title: "Shared Login",
                 username: "team@example.com",
                 password: "SharedP@ss123",
             };
 
-            const encrypted = await encryptWithSharedKey(itemData, sharedKey);
-            const decrypted = await decryptWithSharedKey(encrypted, sharedKey);
+            const aad = "shared-item-123";
+            const encrypted = await encryptWithSharedKey(itemData, sharedKey, aad);
+            const decrypted = await decryptWithSharedKey(encrypted, sharedKey, aad);
             expect(decrypted.title).toBe("Shared Login");
             expect(decrypted.username).toBe("team@example.com");
             expect(decrypted.password).toBe("SharedP@ss123");
-        }, 30000);
-
-        it("should fail to unwrap with wrong master password", async () => {
-            const keyPair = await generateUserKeyPair(MASTER_PASSWORD);
-            const sharedKey = await generateSharedKey();
-            const wrappedKey = await wrapKey(sharedKey, keyPair.publicKey);
-
-            await expect(
-                unwrapKey(wrappedKey, keyPair.encryptedPrivateKey, "WrongPassword!")
-            ).rejects.toThrow();
         }, 30000);
     });
 

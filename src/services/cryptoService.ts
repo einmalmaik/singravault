@@ -969,127 +969,23 @@ export async function generateSharedKey(): Promise<string> {
     return JSON.stringify(keyJwk);
 }
 
-/**
- * Wraps (encrypts) a shared key with a user's public key
- * 
- * @param sharedKey - JWK string of the shared AES key
- * @param publicKey - JWK string of the user's RSA public key
- * @returns Base64-encoded wrapped key
- */
-export async function wrapKey(sharedKey: string, publicKey: string): Promise<string> {
-    // 1. Import Public Key
-    const publicKeyJwk = JSON.parse(publicKey);
-    const publicKeyCrypto = await crypto.subtle.importKey(
-        'jwk',
-        publicKeyJwk,
-        { name: 'RSA-OAEP', hash: 'SHA-256' },
-        false,
-        ['encrypt']
-    );
 
-    // 2. Encrypt Shared Key
-    const sharedKeyBytes = new TextEncoder().encode(sharedKey);
-    const wrappedKeyBytes = await crypto.subtle.encrypt(
-        { name: 'RSA-OAEP' },
-        publicKeyCrypto,
-        sharedKeyBytes
-    );
-
-    // 3. Base64-encode
-    return uint8ArrayToBase64(new Uint8Array(wrappedKeyBytes));
-}
-
-/**
- * Unwraps (decrypts) a shared key with a user's private key
- * 
- * @param wrappedKey - Base64-encoded wrapped key
- * @param encryptedPrivateKey - Encrypted private key
- *                              (legacy `salt:encryptedData`, current `kdfVersion:salt:encryptedData`,
- *                               or hybrid `pq-v2:kdfVersion:salt:encryptedRsaKey:encryptedPqKey`)
- * @param masterPassword - User's master password
- * @returns JWK string of the shared AES key
- * @throws Error if decryption fails (wrong password or corrupted key)
- */
-export async function unwrapKey(
-    wrappedKey: string,
-    encryptedPrivateKey: string,
-    masterPassword: string
-): Promise<string> {
-    // 1. Decrypt Private Key
-    const parts = encryptedPrivateKey.split(':');
-    let kdfVersion = 1;
-    let salt: string | null = null;
-    let encryptedData: string | null = null;
-
-    if (encryptedPrivateKey.startsWith('pq-v2:')) {
-        // Hybrid format: pq-v2:kdfVersion:salt:encryptedRsaKey:encryptedPqKey
-        if (parts.length !== 5) {
-            throw new Error('Invalid encrypted private key format');
-        }
-
-        const parsedVersion = Number.parseInt(parts[1], 10);
-        if (!Number.isInteger(parsedVersion) || parsedVersion < 1) {
-            throw new Error('Invalid encrypted private key KDF version');
-        }
-
-        kdfVersion = parsedVersion;
-        salt = parts[2];
-        // RSA key remains the wrapping key for shared-key decrypt path.
-        encryptedData = parts[3];
-    } else if (parts.length === 2) {
-        // Legacy format: salt:encryptedData (implicitly KDF v1)
-        salt = parts[0];
-        encryptedData = parts[1];
-    } else if (parts.length === 3) {
-        // Current format: kdfVersion:salt:encryptedData
-        const parsedVersion = Number.parseInt(parts[0], 10);
-        if (!Number.isInteger(parsedVersion) || parsedVersion < 1) {
-            throw new Error('Invalid encrypted private key KDF version');
-        }
-
-        kdfVersion = parsedVersion;
-        salt = parts[1];
-        encryptedData = parts[2];
-    }
-
-    if (!salt || !encryptedData) {
-        throw new Error('Invalid encrypted private key format');
-    }
-
-    const key = await deriveKey(masterPassword, salt, kdfVersion);
-    const privateKey = await decrypt(encryptedData, key);
-
-    // 2. Import Private Key
-    const privateKeyJwk = JSON.parse(privateKey);
-    const privateKeyCrypto = await crypto.subtle.importKey(
-        'jwk',
-        privateKeyJwk,
-        { name: 'RSA-OAEP', hash: 'SHA-256' },
-        false,
-        ['decrypt']
-    );
-
-    // 3. Decrypt Shared Key
-    const wrappedKeyBytes = base64ToUint8Array(wrappedKey);
-    const sharedKeyBytes = await crypto.subtle.decrypt(
-        { name: 'RSA-OAEP' },
-        privateKeyCrypto,
-        wrappedKeyBytes
-    );
-
-    return new TextDecoder().decode(sharedKeyBytes);
-}
 
 /**
  * Encrypts vault item data with a shared key
  * 
+ * SECURITY: When aad is provided (e.g., vault item ID), it binds the
+ * ciphertext to that specific context, preventing ciphertext-swap attacks.
+ * 
  * @param data - Vault item data to encrypt
  * @param sharedKey - JWK string of the shared AES key
+ * @param aad - Optional Additional Authenticated Data (e.g. entry ID)
  * @returns Base64-encoded encrypted data
  */
 export async function encryptWithSharedKey(
     data: VaultItemData,
-    sharedKey: string
+    sharedKey: string,
+    aad?: string
 ): Promise<string> {
     // Import Shared Key
     const keyJwk = JSON.parse(sharedKey);
@@ -1103,19 +999,26 @@ export async function encryptWithSharedKey(
 
     // Encrypt data
     const json = JSON.stringify(data);
-    return encrypt(json, key);
+    return encrypt(json, key, aad);
 }
 
 /**
  * Decrypts vault item data with a shared key
  * 
+ * SECURITY: When aad is provided, tries decryption with AAD first.
+ * Falls back to decryption without AAD for backward compatibility with
+ * existing shared items encrypted before the AAD fix.
+ * 
  * @param encryptedData - Base64-encoded encrypted data
  * @param sharedKey - JWK string of the shared AES key
+ * @param aad - Optional Additional Authenticated Data (e.g. entry ID)
  * @returns Decrypted vault item data
+ * @throws Error if decryption fails with both AAD and no-AAD attempts
  */
 export async function decryptWithSharedKey(
     encryptedData: string,
-    sharedKey: string
+    sharedKey: string,
+    aad?: string
 ): Promise<VaultItemData> {
     // Import Shared Key
     const keyJwk = JSON.parse(sharedKey);
@@ -1128,7 +1031,18 @@ export async function decryptWithSharedKey(
     );
 
     // Decrypt data
-    const json = await decrypt(encryptedData, key);
+    let json: string;
+    if (aad) {
+        try {
+            // Try with AAD first (new swap-protected format)
+            json = await decrypt(encryptedData, key, aad);
+        } catch {
+            // Backward compat: entry was encrypted without AAD
+            json = await decrypt(encryptedData, key);
+        }
+    } else {
+        json = await decrypt(encryptedData, key);
+    }
     return JSON.parse(json) as VaultItemData;
 }
 
