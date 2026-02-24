@@ -103,10 +103,7 @@ describe("subscriptionService", () => {
   });
 
   it("creates checkout session through edge function", async () => {
-    mockInvoke.mockResolvedValue({
-      data: { url: "https://stripe.example/session" },
-      error: null,
-    });
+    mockInvoke.mockResolvedValue({ url: "https://stripe.example/session" });
 
     const result = await createCheckoutSession("families_yearly", {
       execution: true,
@@ -114,11 +111,9 @@ describe("subscriptionService", () => {
     });
 
     expect(mockInvoke).toHaveBeenCalledWith("create-checkout-session", {
-      body: {
-        plan_key: "families_yearly",
-        widerruf_consent_execution: true,
-        widerruf_consent_loss: true,
-      },
+      plan_key: "families_yearly",
+      widerruf_consent_execution: true,
+      widerruf_consent_loss: true,
     });
     expect(result).toEqual({
       url: "https://stripe.example/session",
@@ -127,10 +122,7 @@ describe("subscriptionService", () => {
   });
 
   it("returns function error for portal session failures", async () => {
-    mockInvoke.mockResolvedValue({
-      data: null,
-      error: { message: "portal failed" },
-    });
+    mockInvoke.mockRejectedValue(new Error("portal failed"));
 
     const result = await createPortalSession();
 
@@ -141,10 +133,7 @@ describe("subscriptionService", () => {
   });
 
   it("returns normalized cancel result on failures", async () => {
-    mockInvoke.mockResolvedValue({
-      data: null,
-      error: { message: "cancel failed" },
-    });
+    mockInvoke.mockRejectedValue(new Error("cancel failed"));
 
     const result = await cancelSubscription();
 
@@ -156,12 +145,9 @@ describe("subscriptionService", () => {
 
   it("returns cancel metadata on success", async () => {
     mockInvoke.mockResolvedValue({
-      data: {
-        success: true,
-        cancel_at_period_end: true,
-        current_period_end: "2026-12-31T00:00:00.000Z",
-      },
-      error: null,
+      success: true,
+      cancel_at_period_end: true,
+      current_period_end: "2026-12-31T00:00:00.000Z",
     });
 
     const result = await cancelSubscription();

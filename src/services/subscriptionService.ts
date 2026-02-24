@@ -61,20 +61,18 @@ export async function createCheckoutSession(
         return { url: null, error: 'WIDERRUF_CONSENT_REQUIRED' };
     }
 
-    const { data, error } = await invokeAuthedFunction('create-checkout-session', {
-        body: {
+    try {
+        const data = await invokeAuthedFunction<{ url: string }>('create-checkout-session', {
             plan_key: planKey,
             widerruf_consent_execution: widerrufConsent.execution,
             widerruf_consent_loss: widerrufConsent.loss,
-        },
-    });
+        });
 
-    if (error) {
+        return { url: data?.url || null, error: null };
+    } catch (error: any) {
         console.error('Checkout session error:', error);
         return { url: null, error: error.message || 'Failed to create checkout session' };
     }
-
-    return { url: data?.url || null, error: null };
 }
 
 /**
@@ -82,16 +80,13 @@ export async function createCheckoutSession(
  * Returns the portal URL for managing billing.
  */
 export async function createPortalSession(): Promise<{ url: string | null; error: string | null }> {
-    const { data, error } = await invokeAuthedFunction('create-portal-session', {
-        body: {},
-    });
-
-    if (error) {
+    try {
+        const data = await invokeAuthedFunction<{ url: string }>('create-portal-session', {});
+        return { url: data?.url || null, error: null };
+    } catch (error: any) {
         console.error('Portal session error:', error);
         return { url: null, error: error.message || 'Failed to create portal session' };
     }
-
-    return { url: data?.url || null, error: null };
 }
 
 /**
@@ -104,18 +99,20 @@ export async function cancelSubscription(): Promise<{
     current_period_end?: string;
     error?: string;
 }> {
-    const { data, error } = await invokeAuthedFunction('cancel-subscription', {
-        body: {},
-    });
+    try {
+        const data = await invokeAuthedFunction<{
+            success: boolean;
+            cancel_at_period_end?: boolean;
+            current_period_end?: string;
+        }>('cancel-subscription', {});
 
-    if (error) {
+        return {
+            success: data?.success || false,
+            cancel_at_period_end: data?.cancel_at_period_end,
+            current_period_end: data?.current_period_end,
+        };
+    } catch (error: any) {
         console.error('Cancel subscription error:', error);
         return { success: false, error: error.message || 'Failed to cancel subscription' };
     }
-
-    return {
-        success: data?.success || false,
-        cancel_at_period_end: data?.cancel_at_period_end,
-        current_period_end: data?.current_period_end,
-    };
 }
