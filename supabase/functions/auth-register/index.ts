@@ -102,11 +102,21 @@ serve(async (req) => {
         }
 
         // 5. Trigger Resend Auth Notification über GoTrue
-        await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-            redirectTo: Deno.env.get("SITE_URL") || "https://singravault.mauntingstudios.de/auth",
-        }).catch(err => {
-            console.error("Warning: Failed to dispatch welcome invite through standard admin:", err)
+        // Da wir den User mit email_confirm: false erstellt haben, wird automatisiert keine E-Mail gesendet.
+        // Um das "Confirm Signup" Template (welches den {{ .Token }} für das 6-stellige OTP enthält) 
+        // zu verschicken, müssen wir supabase.auth.resend() aufrufen.
+        const anonClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!);
+        const { error: resendError } = await anonClient.auth.resend({
+            type: 'signup',
+            email: email,
+            options: {
+                emailRedirectTo: Deno.env.get("SITE_URL") || "https://singravault.mauntingstudios.de/auth",
+            }
         });
+
+        if (resendError) {
+            console.error("Warning: Failed to trigger OTP email after registration:", resendError);
+        }
 
         return new Response(JSON.stringify({ success: true }), {
             status: 200,

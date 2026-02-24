@@ -6,14 +6,13 @@
  * Handles login, passkey, and signup flows via Custom Edge Functions (BFF Pattern).
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Shield, Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { startAuthentication } from '@simplewebauthn/browser';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,15 +62,22 @@ export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const urlToken = searchParams.get('token') || (window.location.hash.includes('type=recovery') ? 'supabase-recovery' : null);
-  const [mode, setMode] = useState<'login' | 'signup' | 'recover' | 'update_password'>(
+  const [mode, setMode] = useState<'login' | 'signup' | 'verify_signup' | 'recover' | 'verify_recover' | 'update_password'>(
     urlToken ? 'update_password' :
       searchParams.get('mode') === 'signup' ? 'signup' :
         searchParams.get('mode') === 'recover' ? 'recover' : 'login'
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (user && mode !== 'update_password') {
+      navigate('/vault', { replace: true });
+    }
+  }, [user, mode, navigate]);
 
   // Note: 2FA Logik (TOTP) bleibt bestehen, wird hier vereinfacht
   const [show2FAModal, setShow2FAModal] = useState(false);
@@ -85,6 +91,28 @@ export default function Auth() {
   const signupForm = useForm<SignupFormData>({
     resolver: zodResolver(signupSchema),
     defaultValues: { email: '', password: '', confirmPassword: '' },
+  });
+
+  const verifySignupSchema = z.object({
+    code: z.string().length(8, 'Der Code muss 8 Zeichen lang sein.'),
+  });
+
+  type VerifySignupFormData = z.infer<typeof verifySignupSchema>;
+
+  const verifySignupForm = useForm<VerifySignupFormData>({
+    resolver: zodResolver(verifySignupSchema),
+    defaultValues: { code: '' },
+  });
+
+  const verifyRecoverSchema = z.object({
+    code: z.string().length(8, 'Der Code muss 8 Zeichen lang sein.'),
+  });
+
+  type VerifyRecoverFormData = z.infer<typeof verifyRecoverSchema>;
+
+  const verifyRecoverForm = useForm<VerifyRecoverFormData>({
+    resolver: zodResolver(verifyRecoverSchema),
+    defaultValues: { code: '' },
   });
 
   const recoverForm = useForm<RecoverFormData>({
@@ -175,16 +203,62 @@ export default function Auth() {
         throw new Error(errorData.error || 'Registration failed');
       }
 
-      // User Enumeration Prevention: Immer Erfolgsmeldung zeigen
-      toast({
-        title: t('common.success'),
-        description: 'Falls diese E-Mail noch nicht registriert ist, wurde ein Bestätigungslink gesendet.',
-      });
-    } catch (error: any) {
+      const responseData = await res.json();
+
+      if (responseData.message === "User exists") {
+        // User Enumeration Prevention: Fake success, but don't ask for OTP if they already exist, 
+        // OR ask for OTP but it will fail. Better to just reset or show generic message.
+        // Actually, if we require verify, let's just show verify to not leak existence.
+        setMode('verify_signup');
+        toast({
+          title: t('common.success'),
+          description: 'Bitte gib den 8-stelligen Code ein, der dir per E-Mail gesendet wurde.',
+        });
+      } else {
+        setMode('verify_signup');
+        toast({
+          title: t('common.success'),
+          description: 'Bitte gib den 8-stelligen Code ein, den wir dir soeben gesendet haben.',
+        });
+      }
+    } catch (error: unknown) {
       toast({
         variant: 'destructive',
         title: t('common.error'),
-        description: error.message || 'Ein Fehler ist aufgetreten. Bitte versuche es später erneut.',
+        description: error instanceof Error ? error.message : 'Ein Fehler ist aufgetreten. Bitte versuche es später erneut.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifySignup = async (data: VerifySignupFormData) => {
+    setLoading(true);
+    try {
+      const email = signupForm.getValues('email');
+      const password = signupForm.getValues('password'); // Needed for auto-login
+
+      // 1. Verify OTP with Supabase GoTrue
+      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        email,
+        token: data.code,
+        type: 'signup'
+      });
+
+      if (verifyError || !verifyData.session) {
+        throw new Error('Ungültiger oder abgelaufener Code.');
+      }
+
+      // 2. We now have a session! Since we use BFF HttpOnly cookies, we should
+      // login via Edge Function to set the cookie. We can use the handleLogin helper 
+      // with the credentials we saved in the form.
+      await handleLogin({ email, password });
+
+    } catch (error: unknown) {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: error instanceof Error ? error.message : 'Verifizierung fehlgeschlagen.',
       });
     } finally {
       setLoading(false);
@@ -207,8 +281,9 @@ export default function Auth() {
       // User Enumeration Prevention: Timing Attack Safe Response
       toast({
         title: 'E-Mail gesendet',
-        description: 'Falls ein Konto mit dieser E-Mail existiert, haben wir einen Link zum Zurücksetzen gesendet.',
+        description: 'Falls ein Konto mit dieser E-Mail existiert, haben wir einen Code zum Zurücksetzen gesendet.',
       });
+      setMode('verify_recover');
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -217,7 +292,38 @@ export default function Auth() {
       });
     } finally {
       setLoading(false);
-      setMode('login');
+    }
+  };
+
+  const handleVerifyRecover = async (data: VerifyRecoverFormData) => {
+    setLoading(true);
+    try {
+      const email = recoverForm.getValues('email');
+
+      // 1. Verify OTP with Supabase GoTrue
+      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        email,
+        token: data.code,
+        type: 'recovery'
+      });
+
+      if (verifyError || !verifyData.session) {
+        throw new Error('Ungültiger oder abgelaufener Code.');
+      }
+
+      setMode('update_password');
+      toast({
+        title: t('common.success'),
+        description: 'Code verifiziert. Bitte gib ein neues Passwort ein.',
+      });
+    } catch (error: unknown) {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: error instanceof Error ? error.message : 'Verifizierung fehlgeschlagen.',
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -250,68 +356,13 @@ export default function Auth() {
       toast({ title: t('common.success'), description: 'Passwort erfolgreich aktualisiert.' });
       navigate('/vault');
 
-    } catch (error: any) {
-      toast({ variant: 'destructive', title: t('common.error'), description: error.message || 'Fehler beim Aktualisieren des Passworts.' });
+    } catch (error: unknown) {
+      toast({ variant: 'destructive', title: t('common.error'), description: error instanceof Error ? error.message : 'Fehler beim Aktualisieren des Passworts.' });
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePasskeyAuth = async () => {
-    const email = loginForm.getValues().email;
-    if (!email) {
-      toast({ title: t('common.error'), description: 'Bitte gib zuerst deine E-Mail ein.' });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Passkey Challenge abrufen
-      const optionsRes = await fetch(`${API_URL}/webauthn`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-        },
-        credentials: 'include',
-        body: JSON.stringify({ action: 'generate-authentication-options', email })
-      });
-
-      if (!optionsRes.ok) throw new Error('Challenge fetch failed');
-      const { options } = await optionsRes.json();
-
-      // Nutze WebAuthn API
-      const authResult = await startAuthentication(options);
-
-      // Token beim Server verifizieren
-      const verifyRes = await fetch(`${API_URL}/webauthn`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-        },
-        credentials: 'include',
-        body: JSON.stringify({ action: 'verify-authentication', credential: authResult, email })
-      });
-
-      if (verifyRes.ok) {
-        const { session } = await verifyRes.json();
-        if (session) {
-          await supabase.auth.setSession({
-            access_token: session.access_token,
-            refresh_token: session.refresh_token || '',
-          });
-        }
-        navigate('/vault');
-      } else {
-        throw new Error('Verification failed');
-      }
-    } catch (error) {
-      toast({ variant: 'destructive', title: t('common.error'), description: 'Passkey Auth fehlgeschlagen.' });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleOAuth = async (provider: 'google' | 'discord' | 'github') => {
     setLoading(true);
@@ -343,7 +394,11 @@ export default function Auth() {
         <Card className="shadow-xl">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">
-              {mode === 'login' ? t('auth.login.title') : mode === 'signup' ? t('auth.signup.title') : 'Passwort vergessen'}
+              {mode === 'login' ? t('auth.login.title')
+                : mode === 'signup' ? t('auth.signup.title')
+                  : mode === 'verify_signup' || mode === 'verify_recover' ? 'Code bestätigen'
+                    : mode === 'update_password' ? 'Neues Passwort'
+                      : 'Passwort vergessen'}
             </CardTitle>
           </CardHeader>
 
@@ -395,7 +450,7 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type={showPassword ? 'text' : 'password'} className="pl-10 pr-10" />
+                            <Input {...field} type={showPassword ? 'text' : 'password'} placeholder="••••••••••••" className="pl-10 pr-10" />
                             <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
@@ -414,7 +469,7 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type="password" className="pl-10" />
+                            <Input {...field} type="password" placeholder="••••••••••••" className="pl-10" />
                           </div>
                         </FormControl>
                         <FormMessage />
@@ -442,7 +497,7 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type="email" className="pl-10" />
+                            <Input {...field} type="email" placeholder="name@beispiel.de" className="pl-10" />
                           </div>
                         </FormControl>
                         <FormMessage />
@@ -470,7 +525,7 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type="email" className="pl-10" />
+                            <Input {...field} type="email" placeholder="name@beispiel.de" className="pl-10" />
                           </div>
                         </FormControl>
                         <FormMessage />
@@ -486,7 +541,7 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type={showPassword ? 'text' : 'password'} className="pl-10 pr-10" />
+                            <Input {...field} type={showPassword ? 'text' : 'password'} placeholder="••••••••••••" className="pl-10 pr-10" />
                             <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
@@ -499,16 +554,6 @@ export default function Auth() {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     {t('auth.login.submit')}
-                  </Button>
-
-                  <div className="relative mb-6 mt-4">
-                    <Separator />
-                    <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-xs text-muted-foreground">Alternativ</span>
-                  </div>
-
-                  <Button type="button" onClick={handlePasskeyAuth} variant="outline" className="w-full">
-                    <Shield className="w-4 h-4 mr-2" />
-                    Mit Passkey anmelden
                   </Button>
                 </form>
               </Form>
@@ -527,7 +572,7 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type="email" className="pl-10" />
+                            <Input {...field} type="email" placeholder="name@beispiel.de" className="pl-10" />
                           </div>
                         </FormControl>
                         <FormMessage />
@@ -543,7 +588,7 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type={showPassword ? 'text' : 'password'} className="pl-10 pr-10" />
+                            <Input {...field} type={showPassword ? 'text' : 'password'} placeholder="••••••••••••" className="pl-10 pr-10" />
                             <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
@@ -562,7 +607,7 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type="password" className="pl-10" />
+                            <Input {...field} type="password" placeholder="••••••••••••" className="pl-10" />
                           </div>
                         </FormControl>
                         <FormMessage />
@@ -572,6 +617,62 @@ export default function Auth() {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     {t('auth.signup.submit')}
+                  </Button>
+                </form>
+              </Form>
+            )}
+
+            {/* Verify Signup Form */}
+            {mode === 'verify_signup' && (
+              <Form {...verifySignupForm}>
+                <form onSubmit={verifySignupForm.handleSubmit(handleVerifySignup)} className="space-y-4">
+                  <div className="text-sm text-muted-foreground mb-4 text-center">
+                    Wir haben einen 8-stelligen Code an {signupForm.getValues('email') || 'deine E-Mail'} gesendet.
+                  </div>
+                  <FormField
+                    control={verifySignupForm.control}
+                    name="code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Bestätigungscode</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="text" placeholder="12345678" className="text-center tracking-widest text-lg" maxLength={8} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Code bestätigen
+                  </Button>
+                </form>
+              </Form>
+            )}
+
+            {/* Verify Recover Form */}
+            {mode === 'verify_recover' && (
+              <Form {...verifyRecoverForm}>
+                <form onSubmit={verifyRecoverForm.handleSubmit(handleVerifyRecover)} className="space-y-4">
+                  <div className="text-sm text-muted-foreground mb-4 text-center">
+                    Wir haben einen 8-stelligen Code an {recoverForm.getValues('email') || 'deine E-Mail'} gesendet.
+                  </div>
+                  <FormField
+                    control={verifyRecoverForm.control}
+                    name="code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Bestätigungscode</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="text" placeholder="12345678" className="text-center tracking-widest text-lg" maxLength={8} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Code bestätigen
                   </Button>
                 </form>
               </Form>

@@ -16,7 +16,6 @@ serve(async (req) => {
     const headers = new Headers({
         ...corsHeaders,
         "Access-Control-Allow-Credentials": "true",
-        "Content-Type": "application/json"
     });
 
     if (req.method === "OPTIONS") {
@@ -37,7 +36,7 @@ serve(async (req) => {
             });
             return new Response(JSON.stringify({ success: true }), {
                 status: 200,
-                headers
+                headers: { ...headers, "Content-Type": "application/json" }
             });
         }
 
@@ -49,7 +48,7 @@ serve(async (req) => {
             if (!refreshToken) {
                 return new Response(JSON.stringify({ error: "No session cookie" }), {
                     status: 401,
-                    headers
+                    headers: { ...headers, "Content-Type": "application/json" }
                 });
             }
 
@@ -59,7 +58,7 @@ serve(async (req) => {
             if (error || !data.session) {
                 return new Response(JSON.stringify({ error: "Session expired" }), {
                     status: 401,
-                    headers
+                    headers: { ...headers, "Content-Type": "application/json" }
                 });
             }
 
@@ -76,44 +75,7 @@ serve(async (req) => {
 
             return new Response(JSON.stringify({ session: data.session }), {
                 status: 200,
-                headers
-            });
-        }
-
-        // --- PUT: Sync OAuth/External Session to Cookie ---
-        if (req.method === "PUT") {
-            const authHeader = req.headers.get("Authorization");
-            if (!authHeader || !authHeader.startsWith("Bearer ")) {
-                return new Response(JSON.stringify({ error: "Missing token" }), { status: 401, headers });
-            }
-
-            const jwt = authHeader.replace("Bearer ", "");
-            // Verify that the JWT is actually valid and belongs to a user
-            const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(jwt);
-
-            if (authError || !user) {
-                return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers });
-            }
-
-            const { refresh_token } = await req.json();
-
-            if (!refresh_token) {
-                return new Response(JSON.stringify({ error: "Missing refresh_token" }), { status: 400, headers });
-            }
-
-            setCookie(headers, {
-                name: "sb-bff-session",
-                value: refresh_token,
-                path: "/",
-                httpOnly: true,
-                secure: true,
-                sameSite: "None",
-                maxAge: 60 * 60 * 24 * 7, // 7 Days
-            });
-
-            return new Response(JSON.stringify({ success: true }), {
-                status: 200,
-                headers
+                headers: { ...headers, "Content-Type": "application/json" }
             });
         }
 
@@ -126,7 +88,7 @@ serve(async (req) => {
         if (!email || !password) {
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                 status: 400,
-                headers
+                headers: { ...headers, "Content-Type": "application/json" }
             });
         }
 
@@ -141,7 +103,7 @@ serve(async (req) => {
             await new Promise(r => setTimeout(r, 500 - (Date.now() - startTime)));
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                 status: 401,
-                headers
+                headers: { ...headers, "Content-Type": "application/json" }
             });
         }
 
@@ -167,7 +129,7 @@ serve(async (req) => {
                 await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - startTime))));
                 return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                     status: 401,
-                    headers
+                    headers: { ...headers, "Content-Type": "application/json" }
                 });
             }
             credentialsValid = true;
@@ -180,7 +142,7 @@ serve(async (req) => {
             await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - startTime))));
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                 status: 401,
-                headers
+                headers: { ...headers, "Content-Type": "application/json" }
             });
         }
 
@@ -189,7 +151,7 @@ serve(async (req) => {
         if (adminUserError || !adminUser.user.email_confirmed_at) {
             return new Response(JSON.stringify({ error: "Email verification required" }), {
                 status: 403,
-                headers
+                headers: { ...headers, "Content-Type": "application/json" }
             });
         }
 
@@ -208,7 +170,7 @@ serve(async (req) => {
                     userId: user.id
                 }), {
                     status: 200,
-                    headers
+                    headers: { ...headers, "Content-Type": "application/json" }
                 });
             }
 
@@ -227,7 +189,7 @@ serve(async (req) => {
                     await new Promise(r => setTimeout(r, 500));
                     return new Response(JSON.stringify({ error: "Invalid 2FA code" }), {
                         status: 401,
-                        headers
+                        headers: { ...headers, "Content-Type": "application/json" }
                     });
                 }
 
@@ -256,7 +218,7 @@ serve(async (req) => {
                     await new Promise(r => setTimeout(r, 500));
                     return new Response(JSON.stringify({ error: "Invalid backup code" }), {
                         status: 401,
-                        headers
+                        headers: { ...headers, "Content-Type": "application/json" }
                     });
                 }
 
@@ -273,7 +235,7 @@ serve(async (req) => {
             } else {
                 return new Response(JSON.stringify({ error: "Invalid request payload" }), {
                     status: 400,
-                    headers
+                    headers: { ...headers, "Content-Type": "application/json" }
                 });
             }
         }
@@ -319,14 +281,14 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({ success: true, session: sessionData.session }), {
             status: 200,
-            headers
+            headers: { ...headers, "Content-Type": "application/json" }
         });
 
     } catch (err: any) {
         console.error("Auth Session Error:", err);
         return new Response(JSON.stringify({ error: "Internal Server Error" }), {
             status: 500,
-            headers
+            headers: { ...headers, "Content-Type": "application/json" }
         });
     }
 });
