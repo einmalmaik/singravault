@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import * as argon2 from "https://deno.land/x/argon2@0.1.0/mod.ts";
+import { argon2id } from "npm:hash-wasm";
 import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
@@ -48,12 +48,14 @@ serve(async (req) => {
         const salt = new Uint8Array(16);
         crypto.getRandomValues(salt);
 
-        const hash = await argon2.hash(password, {
+        const hash = await argon2id({
+            password,
             salt,
-            variant: argon2.Variant.Argon2id,
-            memoryCost: 19456, // 19 MiB RAM
-            timeCost: 2,       // 2 Iterationen
             parallelism: 1,
+            iterations: 2,
+            memorySize: 19456, // 19 MiB RAM
+            hashLength: 32,
+            outputType: "encoded"
         });
 
         // 3. User in Supabase erstellen (Admin API) - GoTrue speichert standardmäßig auch Passwörter,

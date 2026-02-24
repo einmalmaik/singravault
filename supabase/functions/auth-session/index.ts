@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
-import * as argon2 from "https://deno.land/x/argon2@0.1.0/mod.ts";
+import { argon2Verify } from "npm:hash-wasm";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
@@ -67,7 +67,7 @@ serve(async (req) => {
         }
 
         // 3. Verifiziere das Passwort mit Argon2id
-        const isValid = await argon2.verify(secData.argon2_hash, password);
+        const isValid = await argon2Verify({ password, hash: secData.argon2_hash });
 
         if (!isValid) {
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {

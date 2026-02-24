@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 import { encodeHex, decodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
-import * as argon2 from "https://deno.land/x/argon2@0.1.0/mod.ts";
+import { argon2id } from "npm:hash-wasm";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
@@ -53,12 +53,14 @@ serve(async (req) => {
         // 4. Setze neues Passwort (Argon2id)
         const salt = new Uint8Array(16);
         crypto.getRandomValues(salt);
-        const hash = await argon2.hash(newPassword, {
+        const hash = await argon2id({
+            password: newPassword,
             salt,
-            variant: argon2.Variant.Argon2id,
-            memoryCost: 19456,
-            timeCost: 2,
             parallelism: 1,
+            iterations: 2,
+            memorySize: 19456,
+            hashLength: 32,
+            outputType: "encoded",
         });
 
         const { data: users } = await supabaseAdmin.auth.admin.listUsers();
