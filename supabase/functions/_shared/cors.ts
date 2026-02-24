@@ -22,6 +22,12 @@ const productionOrigins = configuredOrigin
 
 function isAllowedOrigin(origin: string): boolean {
     if (productionOrigins.includes(origin)) return true;
+
+    // Fallback: Erlaube immer alle lokalen Entwicklungs-Server
+    if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
+        return true;
+    }
+
     return false;
 }
 
