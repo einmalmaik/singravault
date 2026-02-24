@@ -30,10 +30,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // 1. Initialer Auth-Status aus Memory
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      async (event, session) => {
         console.debug(`[AuthContext] Memory auth state changed: ${event}`);
         setSession(session);
         setUser(session?.user ?? null);
+
+        // Falls wir uns durch OAuth o.ä. implizit einloggen (GoTrue Redirect),
+        // MÜSSEN wir die BFF Session syncen, damit das Cookie gesetzt wird.
+        if (event === 'SIGNED_IN' && session) {
+          try {
+            const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
+            await fetch(`${API_URL}/auth-session`, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`
+              },
+              credentials: 'include',
+              body: JSON.stringify({ refresh_token: session.refresh_token })
+            });
+            console.debug('[AuthContext] Synced OAuth session to BFF cookie');
+          } catch (err) {
+            console.error('[AuthContext] Failed to sync session to BFF API:', err);
+          }
+        }
 
         if (event !== 'INITIAL_SESSION') {
           setLoading(false);
