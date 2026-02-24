@@ -14,7 +14,7 @@
  */
 
 const configuredOrigin = Deno.env.get("ALLOWED_ORIGIN")?.trim()
-    || "https://singrapw.mauntingstudios.de";
+    || "https://singravault.mauntingstudios.de";
 const productionOrigins = configuredOrigin
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
@@ -77,7 +77,7 @@ export function getCorsHeaders(req: Request): Record<string, string> {
 
 /** Static CORS headers (legacy — prefer getCorsHeaders for dynamic origin matching). */
 export const corsHeaders: Record<string, string> = {
-    "Access-Control-Allow-Origin": productionOrigins[0] || "*",
+    "Access-Control-Allow-Origin": productionOrigins[0] || "https://singravault.mauntingstudios.de",
     "Access-Control-Allow-Headers":
         "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",

@@ -9,6 +9,18 @@ verify_jwt = false
 [functions.admin-team]
 verify_jwt = false
 
+[functions.auth-register]
+verify_jwt = false
+
+[functions.auth-session]
+verify_jwt = false
+
+[functions.auth-recovery]
+verify_jwt = false
+
+[functions.auth-reset-password]
+verify_jwt = false
+
 [functions.cancel-subscription]
 verify_jwt = false
 
