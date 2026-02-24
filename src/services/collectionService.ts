@@ -77,16 +77,16 @@ export interface AuditLogEntry {
 export async function getAllCollections(): Promise<SharedCollection[]> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return [];
-    
+
     // Get owned collections
     const { data: ownedCollections, error: ownedError } = await supabase
         .from('shared_collections')
         .select('*')
         .eq('owner_id', user.id)
         .order('created_at', { ascending: false });
-    
+
     if (ownedError) throw ownedError;
-    
+
     // Get collections where user is a member
     const { data: memberCollections, error: memberError } = await supabase
         .from('shared_collection_members')
@@ -95,22 +95,22 @@ export async function getAllCollections(): Promise<SharedCollection[]> {
             shared_collections (*)
         `)
         .eq('user_id', user.id);
-    
+
     if (memberError) throw memberError;
-    
+
     // Combine and mark ownership
     const owned = (ownedCollections || []).map(c => ({
         ...c,
         is_owner: true,
         user_permission: undefined,
     }));
-    
+
     const member = (memberCollections || []).map(m => ({
-        ...(m.shared_collections as Record<string, unknown>),
+        ...(m.shared_collections as any),
         is_owner: false,
         user_permission: m.permission,
     }));
-    
+
     return [...owned, ...member];
 }
 
@@ -124,7 +124,7 @@ export async function deleteCollection(collectionId: string): Promise<void> {
         .from('shared_collections')
         .delete()
         .eq('id', collectionId);
-    
+
     if (error) throw error;
 }
 
@@ -146,16 +146,16 @@ export async function removeMemberFromCollection(
         .delete()
         .eq('collection_id', collectionId)
         .eq('user_id', userId);
-    
+
     if (memberError) throw memberError;
-    
+
     // 2. Delete wrapped Key
     const { error: keyError } = await supabase
         .from('collection_keys')
         .delete()
         .eq('collection_id', collectionId)
         .eq('user_id', userId);
-    
+
     if (keyError) throw keyError;
 }
 
@@ -176,9 +176,9 @@ export async function getCollectionMembers(collectionId: string): Promise<Collec
             profiles!inner(email)
         `)
         .eq('collection_id', collectionId);
-    
+
     if (error) throw error;
-    
+
     return (data || []).map(m => ({
         id: m.id,
         user_id: m.user_id,
@@ -205,7 +205,7 @@ export async function updateMemberPermission(
         .update({ permission })
         .eq('collection_id', collectionId)
         .eq('user_id', userId);
-    
+
     if (error) throw error;
 }
 
@@ -231,7 +231,7 @@ export async function addItemToCollection(
 ): Promise<void> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
-    
+
     // 1. Load wrapped Shared Key
     const { data: keyData, error: keyError } = await supabase
         .from('collection_keys')
@@ -242,9 +242,9 @@ export async function addItemToCollection(
             data: { wrapped_key: string; pq_wrapped_key: string | null } | null;
             error: unknown;
         };
-    
+
     if (keyError || !keyData) throw new Error('Collection key not found');
-    
+
     // 2. Unwrap Shared Key (Security Standard v1 hybrid path only)
     const sharedKey = await unwrapCollectionKey(
         keyData.wrapped_key,
@@ -253,10 +253,10 @@ export async function addItemToCollection(
         pqSecretKey,
         masterPassword,
     );
-    
+
     // 3. Encrypt Item with Shared Key
-    const encryptedData = await encryptWithSharedKey(itemData, sharedKey);
-    
+    const encryptedData = await encryptWithSharedKey(itemData, sharedKey, vaultItemId);
+
     // 4. Add Item
     const { error } = await supabase
         .from('shared_collection_items')
@@ -266,7 +266,7 @@ export async function addItemToCollection(
             encrypted_data: encryptedData,
             added_by: user.id,
         });
-    
+
     if (error) throw error;
 }
 
@@ -285,7 +285,7 @@ export async function removeItemFromCollection(
         .delete()
         .eq('id', itemId)
         .eq('collection_id', collectionId);
-    
+
     if (error) throw error;
 }
 
@@ -306,7 +306,7 @@ export async function getCollectionItems(
 ): Promise<CollectionItem[]> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
-    
+
     // 1. Load wrapped Shared Key
     const { data: keyData, error: keyError } = await supabase
         .from('collection_keys')
@@ -317,9 +317,9 @@ export async function getCollectionItems(
             data: { wrapped_key: string; pq_wrapped_key: string | null } | null;
             error: unknown;
         };
-    
+
     if (keyError || !keyData) throw new Error('Collection key not found');
-    
+
     // 2. Unwrap Shared Key (Security Standard v1 hybrid path only)
     const sharedKey = await unwrapCollectionKey(
         keyData.wrapped_key,
@@ -328,20 +328,20 @@ export async function getCollectionItems(
         pqSecretKey,
         masterPassword,
     );
-    
+
     // 3. Load Items
     const { data: items, error } = await supabase
         .from('shared_collection_items')
         .select('*')
         .eq('collection_id', collectionId);
-    
+
     if (error) throw error;
-    
+
     // 4. Decrypt Items
     const decryptedItems = await Promise.all(
         (items || []).map(async (item) => {
             try {
-                const decrypted_data = await decryptWithSharedKey(item.encrypted_data, sharedKey);
+                const decrypted_data = await decryptWithSharedKey(item.encrypted_data, sharedKey, item.vault_item_id);
                 return {
                     ...item,
                     decrypted_data,
@@ -355,7 +355,7 @@ export async function getCollectionItems(
             }
         })
     );
-    
+
     return decryptedItems;
 }
 
@@ -374,10 +374,10 @@ export async function getCollectionAuditLog(collectionId: string): Promise<Audit
         .eq('collection_id', collectionId)
         .order('created_at', { ascending: false })
         .limit(100);
-    
+
     if (error) throw error;
-    
-    return data || [];
+
+    return (data || []) as any;
 }
 
 // ============ Key Rotation ============
@@ -399,7 +399,7 @@ export async function rotateCollectionKey(
 ): Promise<void> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
-    
+
     // 1. Load old wrapped key
     const { data: oldKeyData, error: oldKeyError } = await supabase
         .from('collection_keys')
@@ -410,9 +410,9 @@ export async function rotateCollectionKey(
             data: { wrapped_key: string; pq_wrapped_key: string | null } | null;
             error: unknown;
         };
-    
+
     if (oldKeyError || !oldKeyData) throw new Error('Collection key not found');
-    
+
     // 2. Unwrap old key (Security Standard v1 hybrid path only)
     const oldSharedKey = await unwrapCollectionKey(
         oldKeyData.wrapped_key,
@@ -421,38 +421,38 @@ export async function rotateCollectionKey(
         pqSecretKey,
         masterPassword,
     );
-    
+
     // 3. Load all items
     const { data: items, error: itemsError } = await supabase
         .from('shared_collection_items')
         .select('*')
         .eq('collection_id', collectionId);
-    
+
     if (itemsError) throw itemsError;
-    
+
     // 4. Generate new shared key
     const newSharedKey = await generateSharedKey();
-    
+
     // 5. Re-encrypt all items
     const reencryptedItems = await Promise.all(
         (items || []).map(async (item) => {
-            const decrypted = await decryptWithSharedKey(item.encrypted_data, oldSharedKey);
-            const encrypted = await encryptWithSharedKey(decrypted, newSharedKey);
+            const decrypted = await decryptWithSharedKey(item.encrypted_data, oldSharedKey, item.vault_item_id);
+            const encrypted = await encryptWithSharedKey(decrypted, newSharedKey, item.vault_item_id);
             return {
                 id: item.id,
                 encrypted_data: encrypted,
             };
         })
     );
-    
+
     // 6. Load all members (including owner)
     const { data: members, error: membersError } = await supabase
         .from('collection_keys')
         .select('user_id')
         .eq('collection_id', collectionId);
-    
+
     if (membersError) throw membersError;
-    
+
     // 7. Load RSA public keys for all members
     const { data: publicKeys, error: publicKeysError } = await supabase
         .from('user_keys')
@@ -527,20 +527,20 @@ export async function createCollectionWithHybridKey(
 ): Promise<string> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
-    
+
     // 1. Create Collection
     const { data: collection, error: collectionError } = await supabase
         .from('shared_collections')
         .insert({ name, description, owner_id: user.id })
         .select()
         .single();
-    
+
     if (collectionError) throw collectionError;
-    
+
     try {
         // 2. Generate Shared Key
         const sharedKey = await generateSharedKey();
-        
+
         // 3. Wrap Shared Key with hybrid encryption (PQ + RSA)
         const hybridWrappedKey = await hybridWrapKey(sharedKey, pqPublicKey, rsaPublicKey);
 
@@ -553,10 +553,10 @@ export async function createCollectionWithHybridKey(
                 user_id: user.id,
                 wrapped_key: hybridWrappedKey,
                 pq_wrapped_key: hybridWrappedKey,
-            } as Record<string, unknown>);
-        
+            });
+
         if (keyError) throw keyError;
-        
+
         return collection.id;
     } catch (error) {
         // Rollback: Delete collection if key creation failed
@@ -593,7 +593,7 @@ export async function addMemberWithHybridKey(
 ): Promise<void> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
-    
+
     // 1. Load owner's wrapped keys
     const { data: ownerKey, error: keyError } = await supabase
         .from('collection_keys')
@@ -601,9 +601,9 @@ export async function addMemberWithHybridKey(
         .eq('collection_id', collectionId)
         .eq('user_id', user.id)
         .single() as { data: { wrapped_key: string; pq_wrapped_key: string | null } | null; error: unknown };
-    
+
     if (keyError || !ownerKey) throw new Error('Collection key not found');
-    
+
     // 2. Unwrap shared key (Security Standard v1 requires hybrid key material)
     if (!ownerKey.pq_wrapped_key || !isHybridEncrypted(ownerKey.pq_wrapped_key)) {
         throw new Error(SECURITY_STANDARD_V1_ERROR);
@@ -614,11 +614,11 @@ export async function addMemberWithHybridKey(
         ownerPqSecretKey,
         ownerPrivateKey
     );
-    
+
     // 3. Wrap for new member with hybrid encryption
     const hybridWrappedKey = await hybridWrapKey(sharedKey, memberPqPublicKey, memberRsaPublicKey);
     const rsaWrappedKey = hybridWrappedKey;
-    
+
     // 4. Add Member
     const { error: memberError } = await supabase
         .from('shared_collection_members')
@@ -627,9 +627,9 @@ export async function addMemberWithHybridKey(
             user_id: userId,
             permission,
         });
-    
+
     if (memberError) throw memberError;
-    
+
     // 5. Store wrapped keys for member
     const { error: memberKeyError } = await supabase
         .from('collection_keys')
@@ -638,8 +638,8 @@ export async function addMemberWithHybridKey(
             user_id: userId,
             wrapped_key: rsaWrappedKey,
             pq_wrapped_key: hybridWrappedKey,
-        } as Record<string, unknown>);
-    
+        } as any);
+
     if (memberKeyError) {
         // Rollback
         await supabase
@@ -660,14 +660,14 @@ export async function addMemberWithHybridKey(
 export async function collectionUsesPQ(collectionId: string): Promise<boolean> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return false;
-    
+
     const { data: keyData } = await supabase
         .from('collection_keys')
         .select('pq_wrapped_key')
         .eq('collection_id', collectionId)
         .eq('user_id', user.id)
         .single() as { data: { pq_wrapped_key: string | null } | null };
-    
+
     return !!(keyData?.pq_wrapped_key && isHybridEncrypted(keyData.pq_wrapped_key));
 }
 
