@@ -3,7 +3,7 @@
 /**
  * @fileoverview Authentication Page
  * 
- * Handles login and signup flows with optional 2FA verification.
+ * Handles login, passkey, and signup flows via Custom Edge Functions (BFF Pattern).
  */
 
 import { useState, useEffect } from 'react';
@@ -22,11 +22,9 @@ import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { TwoFactorVerificationModal } from '@/components/auth/TwoFactorVerificationModal';
-import { get2FAStatus, verifyTwoFactorForLogin } from '@/services/twoFactorService';
 import { supabase } from '@/integrations/supabase/client';
 import { SEO } from '@/components/SEO';
 
-// Validation schemas
 const loginSchema = z.object({
   email: z.string().email('auth.errors.invalidEmail'),
   password: z.string().min(1, 'auth.errors.invalidCredentials'),
@@ -34,13 +32,20 @@ const loginSchema = z.object({
 
 const signupSchema = z.object({
   email: z.string().email('auth.errors.invalidEmail'),
-  password: z
-    .string()
-    .min(8, 'auth.errors.passwordTooShort')
-    .regex(/[A-Z]/, 'auth.errors.passwordNoUppercase')
-    .regex(/[a-z]/, 'auth.errors.passwordNoLowercase')
-    .regex(/[0-9]/, 'auth.errors.passwordNoDigit')
-    .regex(/[^A-Za-z0-9]/, 'auth.errors.passwordNoSymbol'),
+  // NIST 800-63B Mindestlänge von 12 Zeichen
+  password: z.string().min(12, 'Passwort muss mindestens 12 Zeichen haben.'),
+  confirmPassword: z.string(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: 'auth.errors.passwordMismatch',
+  path: ['confirmPassword'],
+});
+
+const recoverSchema = z.object({
+  email: z.string().email('auth.errors.invalidEmail'),
+});
+
+const updatePasswordSchema = z.object({
+  password: z.string().min(12, 'Passwort muss mindestens 12 Zeichen haben.'),
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: 'auth.errors.passwordMismatch',
@@ -49,227 +54,468 @@ const signupSchema = z.object({
 
 type LoginFormData = z.infer<typeof loginSchema>;
 type SignupFormData = z.infer<typeof signupSchema>;
+type RecoverFormData = z.infer<typeof recoverSchema>;
+type UpdatePasswordFormData = z.infer<typeof updatePasswordSchema>;
 
 export default function Auth() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const { user, signIn, signUp, signInWithOAuth } = useAuth();
+  const { user } = useAuth();
 
-  const [mode, setMode] = useState<'login' | 'signup'>(
-    searchParams.get('mode') === 'signup' ? 'signup' : 'login'
+  const urlToken = searchParams.get('token') || (window.location.hash.includes('type=recovery') ? 'supabase-recovery' : null);
+  const [mode, setMode] = useState<'login' | 'signup' | 'verify_signup' | 'recover' | 'verify_recover' | 'update_password'>(
+    urlToken ? 'update_password' :
+      searchParams.get('mode') === 'signup' ? 'signup' :
+        searchParams.get('mode') === 'recover' ? 'recover' : 'login'
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // 2FA state
-  const [show2FAModal, setShow2FAModal] = useState(false);
-  const [pending2FAUserId, setPending2FAUserId] = useState<string | null>(null);
-
-  // Redirect if already logged in
   useEffect(() => {
-    if (user) {
-      navigate('/vault');
+    if (user && mode !== 'update_password') {
+      navigate('/vault', { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, mode, navigate]);
 
-  // Login form
+  // Note: 2FA Logik (TOTP) bleibt bestehen, wird hier vereinfacht
+  const [show2FAModal, setShow2FAModal] = useState(false);
+  const [pendingLoginData, setPendingLoginData] = useState<LoginFormData | null>(null);
+
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: '', password: '' },
   });
 
-  // Signup form
   const signupForm = useForm<SignupFormData>({
     resolver: zodResolver(signupSchema),
     defaultValues: { email: '', password: '', confirmPassword: '' },
   });
 
-  const handleLogin = async (data: LoginFormData) => {
-    setLoading(true);
-    const { error } = await signIn(data.email, data.password);
+  const verifySignupSchema = z.object({
+    code: z.string().length(8, 'Der Code muss 8 Zeichen lang sein.'),
+  });
 
-    if (error) {
-      setLoading(false);
+  type VerifySignupFormData = z.infer<typeof verifySignupSchema>;
+
+  const verifySignupForm = useForm<VerifySignupFormData>({
+    resolver: zodResolver(verifySignupSchema),
+    defaultValues: { code: '' },
+  });
+
+  const verifyRecoverSchema = z.object({
+    code: z.string().length(8, 'Der Code muss 8 Zeichen lang sein.'),
+  });
+
+  type VerifyRecoverFormData = z.infer<typeof verifyRecoverSchema>;
+
+  const verifyRecoverForm = useForm<VerifyRecoverFormData>({
+    resolver: zodResolver(verifyRecoverSchema),
+    defaultValues: { code: '' },
+  });
+
+  const recoverForm = useForm<RecoverFormData>({
+    resolver: zodResolver(recoverSchema),
+    defaultValues: { email: '' },
+  });
+
+  const updatePasswordForm = useForm<UpdatePasswordFormData>({
+    resolver: zodResolver(updatePasswordSchema),
+    defaultValues: { password: '', confirmPassword: '' },
+  });
+
+  // Supabase REST Edge Function Base URL
+  const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
+
+  const handleLogin = async (data: LoginFormData, totpCode?: string, isBackupCode?: boolean) => {
+    setLoading(true);
+    try {
+      // BFF: Login an Edge Function
+      const res = await fetch(`${API_URL}/auth-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({ email: data.email, password: data.password, totpCode, isBackupCode })
+      });
+
+      if (!res.ok) {
+        throw new Error('Invalid credentials');
+      }
+
+      const { session, requires2FA } = await res.json();
+
+      if (requires2FA) {
+        setPendingLoginData(data);
+        setShow2FAModal(true);
+        return;
+      }
+
+      if (session) {
+        await supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token || '',
+        });
+      }
+
+      setShow2FAModal(false);
+      setPendingLoginData(null);
+      // Success! Das HttpOnly Cookie wurde gesetzt.
+      toast({ title: t('common.success'), description: t('auth.success') });
+      navigate('/vault');
+      return true;
+
+    } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common.error'),
         description: t('auth.errors.invalidCredentials'),
       });
-      return;
-    }
-
-    // After successful sign-in, check session for 2FA
-    const { data: sessionData } = await supabase.auth.getSession();
-    const loggedInUser = sessionData?.session?.user;
-
-    if (loggedInUser) {
-      try {
-        const status = await get2FAStatus(loggedInUser.id);
-        if (status && status.isEnabled) {
-          // User has 2FA enabled - show verification modal
-          setPending2FAUserId(loggedInUser.id);
-          setShow2FAModal(true);
-          setLoading(false);
-          return;
-        }
-      } catch (err) {
-        console.error('Error checking 2FA status:', err);
-        // Continue with login if 2FA check fails
-      }
-    }
-
-    setLoading(false);
-    navigate('/vault');
-  };
-
-  const handle2FAVerify = async (code: string, isBackupCode: boolean): Promise<boolean> => {
-    if (!pending2FAUserId) return false;
-
-    try {
-      const isValid = await verifyTwoFactorForLogin(pending2FAUserId, code, isBackupCode);
-
-      if (isValid) {
-        setShow2FAModal(false);
-        setPending2FAUserId(null);
-        navigate('/vault');
-        return true;
-      }
       return false;
-    } catch (err) {
-      console.error('2FA verification error:', err);
-      return false;
+    } finally {
+      if (!show2FAModal) setLoading(false);
     }
   };
 
-  const handle2FACancel = async () => {
-    // User cancelled 2FA - sign them out
-    setShow2FAModal(false);
-    setPending2FAUserId(null);
-    // Sign out the partially authenticated user
-    await supabase.auth.signOut();
+  const handle2FAVerify = async (code: string, isBackupCode: boolean) => {
+    if (!pendingLoginData) return false;
+    return await handleLogin(pendingLoginData, code, isBackupCode);
   };
 
   const handleSignup = async (data: SignupFormData) => {
     setLoading(true);
-    const { error } = await signUp(data.email, data.password);
-    setLoading(false);
+    try {
+      const res = await fetch(`${API_URL}/auth-register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({ email: data.email, password: data.password })
+      });
 
-    if (error) {
-      const errorMessage = error.message.includes('already registered')
-        ? t('auth.errors.emailInUse')
-        : t('auth.errors.generic');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Registration failed');
+      }
+
+      const responseData = await res.json();
+
+      if (responseData.message === "User exists") {
+        // User Enumeration Prevention: Fake success, but don't ask for OTP if they already exist, 
+        // OR ask for OTP but it will fail. Better to just reset or show generic message.
+        // Actually, if we require verify, let's just show verify to not leak existence.
+        setMode('verify_signup');
+        toast({
+          title: t('common.success'),
+          description: 'Bitte gib den 8-stelligen Code ein, der dir per E-Mail gesendet wurde.',
+        });
+      } else {
+        setMode('verify_signup');
+        toast({
+          title: t('common.success'),
+          description: 'Bitte gib den 8-stelligen Code ein, den wir dir soeben gesendet haben.',
+        });
+      }
+    } catch (error: unknown) {
       toast({
         variant: 'destructive',
         title: t('common.error'),
-        description: errorMessage,
+        description: error instanceof Error ? error.message : 'Ein Fehler ist aufgetreten. Bitte versuche es später erneut.',
       });
-    } else {
-      toast({
-        title: t('common.success'),
-        description: 'Bitte überprüfe deine E-Mail, um die Registrierung abzuschließen.',
-      });
+    } finally {
+      setLoading(false);
     }
   };
 
+  const handleVerifySignup = async (data: VerifySignupFormData) => {
+    setLoading(true);
+    try {
+      const email = signupForm.getValues('email');
+      const password = signupForm.getValues('password'); // Needed for auto-login
+
+      // 1. Verify OTP with Supabase GoTrue
+      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        email,
+        token: data.code,
+        type: 'signup'
+      });
+
+      if (verifyError || !verifyData.session) {
+        throw new Error('Ungültiger oder abgelaufener Code.');
+      }
+
+      // 2. We now have a session! Since we use BFF HttpOnly cookies, we should
+      // login via Edge Function to set the cookie. We can use the handleLogin helper 
+      // with the credentials we saved in the form.
+      await handleLogin({ email, password });
+
+    } catch (error: unknown) {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: error instanceof Error ? error.message : 'Verifizierung fehlgeschlagen.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRecover = async (data: RecoverFormData) => {
+    setLoading(true);
+    try {
+      await fetch(`${API_URL}/auth-recovery`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({ email: data.email })
+      });
+
+      // User Enumeration Prevention: Timing Attack Safe Response
+      toast({
+        title: 'E-Mail gesendet',
+        description: 'Falls ein Konto mit dieser E-Mail existiert, haben wir einen Code zum Zurücksetzen gesendet.',
+      });
+      setMode('verify_recover');
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: 'Ein Fehler ist aufgetreten.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyRecover = async (data: VerifyRecoverFormData) => {
+    setLoading(true);
+    try {
+      const email = recoverForm.getValues('email');
+
+      // 1. Verify OTP with Supabase GoTrue
+      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        email,
+        token: data.code,
+        type: 'recovery'
+      });
+
+      if (verifyError || !verifyData.session) {
+        throw new Error('Ungültiger oder abgelaufener Code.');
+      }
+
+      setMode('update_password');
+      toast({
+        title: t('common.success'),
+        description: 'Code verifiziert. Bitte gib ein neues Passwort ein.',
+      });
+    } catch (error: unknown) {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: error instanceof Error ? error.message : 'Verifizierung fehlgeschlagen.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdatePassword = async (data: UpdatePasswordFormData) => {
+    setLoading(true);
+    try {
+      // WICHTIG: GoTrue (Supabase) liest den Hash (#access_token=...) und erzeugt daraus eine
+      // valide Session. Wir nutzen diese, um unser Backend zu autorisieren!
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError || !sessionData.session) {
+        throw new Error('Keine aktive Sitzung gefunden. Bitte den Link erneut anfordern.');
+      }
+
+      const res = await fetch(`${API_URL}/auth-reset-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionData.session.access_token}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({ newPassword: data.password })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Reset failed');
+      }
+
+      toast({ title: t('common.success'), description: 'Passwort erfolgreich aktualisiert.' });
+      navigate('/vault');
+
+    } catch (error: unknown) {
+      toast({ variant: 'destructive', title: t('common.error'), description: error instanceof Error ? error.message : 'Fehler beim Aktualisieren des Passworts.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
   const handleOAuth = async (provider: 'google' | 'discord' | 'github') => {
-    const { error } = await signInWithOAuth(provider);
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${window.location.origin}/auth`,
+      }
+    });
+
     if (error) {
       toast({
         variant: 'destructive',
         title: t('common.error'),
         description: t('auth.errors.generic'),
       });
+      setLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">
-      <SEO
-        title={mode === 'login' ? 'Anmelden' : 'Registrieren'}
-        description="Melde dich bei Singra Vault an oder erstelle ein neues Konto. Sicherer Zero-Knowledge Passwort Manager mit clientseitiger Verschlüsselung."
-        path="/auth"
-        noIndex={true}
-      />
+      <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
       <div className="w-full max-w-md">
-        {/* Logo */}
         <Link to="/" className="flex items-center justify-center gap-2 mb-8">
           <Shield className="w-8 h-8 text-primary" />
           <span className="text-2xl font-bold">Singra Vault</span>
         </Link>
-
         <Card className="shadow-xl">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">
-              {mode === 'login' ? t('auth.login.title') : t('auth.signup.title')}
+              {mode === 'login' ? t('auth.login.title')
+                : mode === 'signup' ? t('auth.signup.title')
+                  : mode === 'verify_signup' || mode === 'verify_recover' ? 'Code bestätigen'
+                    : mode === 'update_password' ? 'Neues Passwort'
+                      : 'Passwort vergessen'}
             </CardTitle>
-            <CardDescription>
-              {mode === 'login' ? t('auth.login.subtitle') : t('auth.signup.subtitle')}
-            </CardDescription>
           </CardHeader>
 
           <CardContent>
             {/* OAuth Buttons */}
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              <Button
-                variant="outline"
-                onClick={() => handleOAuth('google')}
-                disabled={loading}
-                className="w-full"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                  <path
-                    fill="currentColor"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                  />
-                </svg>
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => handleOAuth('discord')}
-                disabled={loading}
-                className="w-full"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
-                </svg>
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => handleOAuth('github')}
-                disabled={loading}
-                className="w-full"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                </svg>
-              </Button>
-            </div>
+            {(mode === 'login' || mode === 'signup') && (
+              <>
+                <div className="grid grid-cols-3 gap-3 mb-6">
+                  <Button variant="outline" onClick={() => handleOAuth('google')} disabled={loading} className="w-full">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                      <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                    </svg>
+                  </Button>
+                  <Button variant="outline" onClick={() => handleOAuth('discord')} disabled={loading} className="w-full">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
+                    </svg>
+                  </Button>
+                  <Button variant="outline" onClick={() => handleOAuth('github')} disabled={loading} className="w-full">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+                    </svg>
+                  </Button>
+                </div>
 
-            <div className="relative mb-6">
-              <Separator />
-              <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-xs text-muted-foreground">
-                {t(mode === 'login' ? 'auth.login.orContinueWith' : 'auth.signup.orContinueWith')}
-              </span>
-            </div>
+                <div className="relative mb-6">
+                  <Separator />
+                  <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-xs text-muted-foreground">
+                    {t(mode === 'login' ? 'auth.login.orContinueWith' : 'auth.signup.orContinueWith')}
+                  </span>
+                </div>
+              </>
+            )}
+
+            {/* Update Password Form */}
+            {mode === 'update_password' && (
+              <Form {...updatePasswordForm}>
+                <form onSubmit={updatePasswordForm.handleSubmit(handleUpdatePassword)} className="space-y-4">
+                  {/* Remove the unnecessary email field for reset password, as identity comes from JWT */}
+                  <FormField
+                    control={updatePasswordForm.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Neues Passwort</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input {...field} type={showPassword ? 'text' : 'password'} placeholder="••••••••••••" className="pl-10 pr-10" />
+                            <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
+                              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </Button>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={updatePasswordForm.control}
+                    name="confirmPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Neues Passwort bestätigen</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input {...field} type="password" placeholder="••••••••••••" className="pl-10" />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Passwort Speichern
+                  </Button>
+                </form>
+              </Form>
+            )}
+
+            {/* Recover Form */}
+            {mode === 'recover' && (
+              <Form {...recoverForm}>
+                <form onSubmit={recoverForm.handleSubmit(handleRecover)} className="space-y-4">
+                  <FormField
+                    control={recoverForm.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('auth.login.email')}</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input {...field} type="email" placeholder="name@beispiel.de" className="pl-10" />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Passwort zurücksetzen
+                  </Button>
+                </form>
+              </Form>
+            )}
 
             {/* Login Form */}
             {mode === 'login' && (
               <Form {...loginForm}>
-                <form onSubmit={loginForm.handleSubmit(handleLogin)} className="space-y-4">
+                <form onSubmit={loginForm.handleSubmit((d) => handleLogin(d))} className="space-y-4">
                   <FormField
                     control={loginForm.control}
                     name="email"
@@ -279,14 +525,13 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type="email" className="pl-10" placeholder="max@example.com" />
+                            <Input {...field} type="email" placeholder="name@beispiel.de" className="pl-10" />
                           </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-
                   <FormField
                     control={loginForm.control}
                     name="password"
@@ -296,18 +541,8 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input
-                              {...field}
-                              type={showPassword ? 'text' : 'password'}
-                              className="pl-10 pr-10"
-                            />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                              onClick={() => setShowPassword(!showPassword)}
-                            >
+                            <Input {...field} type={showPassword ? 'text' : 'password'} placeholder="••••••••••••" className="pl-10 pr-10" />
+                            <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
                           </div>
@@ -316,7 +551,6 @@ export default function Auth() {
                       </FormItem>
                     )}
                   />
-
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     {t('auth.login.submit')}
@@ -338,14 +572,13 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type="email" className="pl-10" placeholder="max@example.com" />
+                            <Input {...field} type="email" placeholder="name@beispiel.de" className="pl-10" />
                           </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-
                   <FormField
                     control={signupForm.control}
                     name="password"
@@ -355,18 +588,8 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input
-                              {...field}
-                              type={showPassword ? 'text' : 'password'}
-                              className="pl-10 pr-10"
-                            />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                              onClick={() => setShowPassword(!showPassword)}
-                            >
+                            <Input {...field} type={showPassword ? 'text' : 'password'} placeholder="••••••••••••" className="pl-10 pr-10" />
+                            <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
                           </div>
@@ -375,7 +598,6 @@ export default function Auth() {
                       </FormItem>
                     )}
                   />
-
                   <FormField
                     control={signupForm.control}
                     name="confirmPassword"
@@ -385,18 +607,13 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type="password" className="pl-10" />
+                            <Input {...field} type="password" placeholder="••••••••••••" className="pl-10" />
                           </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-
-                  <p className="text-xs text-muted-foreground">
-                    {t('auth.signup.passwordRequirements')}
-                  </p>
-
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     {t('auth.signup.submit')}
@@ -405,41 +622,92 @@ export default function Auth() {
               </Form>
             )}
 
+            {/* Verify Signup Form */}
+            {mode === 'verify_signup' && (
+              <Form {...verifySignupForm}>
+                <form onSubmit={verifySignupForm.handleSubmit(handleVerifySignup)} className="space-y-4">
+                  <div className="text-sm text-muted-foreground mb-4 text-center">
+                    Wir haben einen 8-stelligen Code an {signupForm.getValues('email') || 'deine E-Mail'} gesendet.
+                  </div>
+                  <FormField
+                    control={verifySignupForm.control}
+                    name="code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Bestätigungscode</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="text" placeholder="12345678" className="text-center tracking-widest text-lg" maxLength={8} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Code bestätigen
+                  </Button>
+                </form>
+              </Form>
+            )}
+
+            {/* Verify Recover Form */}
+            {mode === 'verify_recover' && (
+              <Form {...verifyRecoverForm}>
+                <form onSubmit={verifyRecoverForm.handleSubmit(handleVerifyRecover)} className="space-y-4">
+                  <div className="text-sm text-muted-foreground mb-4 text-center">
+                    Wir haben einen 8-stelligen Code an {recoverForm.getValues('email') || 'deine E-Mail'} gesendet.
+                  </div>
+                  <FormField
+                    control={verifyRecoverForm.control}
+                    name="code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Bestätigungscode</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="text" placeholder="12345678" className="text-center tracking-widest text-lg" maxLength={8} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Code bestätigen
+                  </Button>
+                </form>
+              </Form>
+            )}
+
             {/* Toggle mode */}
-            <div className="mt-6 text-center text-sm">
-              {mode === 'login' ? (
-                <p>
-                  {t('auth.login.noAccount')}{' '}
-                  <button
-                    type="button"
-                    className="text-primary hover:underline font-medium"
-                    onClick={() => setMode('signup')}
-                  >
+            <div className="mt-6 text-center text-sm flex flex-col gap-2">
+              {mode !== 'login' && (
+                <button type="button" className="text-primary hover:underline font-medium" onClick={() => setMode('login')}>
+                  Zurück zum Login
+                </button>
+              )}
+              {mode === 'login' && (
+                <>
+                  <button type="button" className="text-primary hover:underline font-medium" onClick={() => setMode('signup')}>
                     {t('auth.login.signupLink')}
                   </button>
-                </p>
-              ) : (
-                <p>
-                  {t('auth.signup.hasAccount')}{' '}
-                  <button
-                    type="button"
-                    className="text-primary hover:underline font-medium"
-                    onClick={() => setMode('login')}
-                  >
-                    {t('auth.signup.loginLink')}
+                  <button type="button" className="text-muted-foreground hover:underline font-medium" onClick={() => setMode('recover')}>
+                    Passwort vergessen?
                   </button>
-                </p>
+                </>
               )}
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Two-Factor Verification Modal */}
       <TwoFactorVerificationModal
         open={show2FAModal}
         onVerify={handle2FAVerify}
-        onCancel={handle2FACancel}
+        onCancel={() => {
+          setShow2FAModal(false);
+          setPendingLoginData(null);
+          setLoading(false);
+        }}
       />
     </div>
   );

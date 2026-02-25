@@ -148,9 +148,12 @@
                 <p>Vielen Dank für deine Registrierung. Um dein Konto zu aktivieren und deine E-Mail-Adresse zu
                     bestätigen, klicke bitte auf den Button unten:</p>
 
-                <p style="text-align: center;">
-                    <a href="{{ .ConfirmationURL }}" class="btn">E-Mail bestätigen</a>
-                </p>
+                <div style="text-align: center; margin: 32px 0;">
+                    <div
+                        style="display: inline-block; background: #f4f4f8; padding: 16px 32px; border-radius: 12px; border: 2px dashed #6366f1; letter-spacing: 4px; font-size: 32px; font-weight: 700; color: #1a1a2e; font-family: monospace;">
+                        {{ .Token }}
+                    </div>
+                </div>
 
                 <div class="divider"></div>
 
