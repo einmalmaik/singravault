@@ -5,7 +5,7 @@ import App from "./App.tsx";
 import "./index.css";
 
 // Premium extensions disabled for Core-only testing
-import { initPremium } from "@/extensions/initPremium";
+import { initPremium } from '@singra/premium';
 initPremium();
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
