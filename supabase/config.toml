@@ -1,5 +1,7 @@
 project_id = "lcrtadxlojaucwapgzmy"
 
+# ============ Core Functions (öffentlich) ============
+
 [functions.auth-opaque]
 verify_jwt = false
 
@@ -21,8 +23,12 @@ verify_jwt = false
 [functions.webauthn]
 verify_jwt = false
 
-[functions.stripe-webhook]
+[functions.admin-team]
 verify_jwt = false
+
+# ============ Premium Functions (@singra/premium) ============
+# Diese Einträge werden beim Repo-Split in das Premium-Repo verschoben.
+# Siehe: supabase/functions/EDGE_FUNCTION_MANIFEST.md
 
 [functions.create-checkout-session]
 verify_jwt = false
@@ -31,6 +37,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.cancel-subscription]
+verify_jwt = false
+
+[functions.stripe-webhook]
 verify_jwt = false
 
 [functions.invite-family-member]
@@ -42,12 +51,6 @@ verify_jwt = false
 [functions.invite-emergency-access]
 verify_jwt = false
 
-[functions.admin-support]
-verify_jwt = false
-
-[functions.admin-team]
-verify_jwt = false
-
 [functions.support-submit]
 verify_jwt = false
 
@@ -55,6 +58,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.support-metrics]
+verify_jwt = false
+
+[functions.admin-support]
 verify_jwt = false
 
 [functions.send-test-mail]

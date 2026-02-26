@@ -1,9 +1,11 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 /**
- * @fileoverview Settings Page — Redesigned
+ * @fileoverview Settings Page — Open Core Architecture
  *
- * Searchable, filterable settings page with better visual organization
+ * Searchable, filterable settings page. Premium sections are loaded
+ * dynamically via the Extension Registry — if no premium package is
+ * installed, those sections simply don't appear.
  */
 
 import { useEffect, useState, useMemo } from 'react';
@@ -19,14 +21,12 @@ import { AccountSettings } from '@/components/settings/AccountSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { DataSettings } from '@/components/settings/DataSettings';
-import { SubscriptionSettings } from '@/components/Subscription/SubscriptionSettings';
-import EmergencyAccessSettings from '@/components/settings/EmergencyAccessSettings';
-import { FamilyOrganizationSettings } from '@/components/settings/FamilyOrganizationSettings';
-import { SharedCollectionsSettings } from '@/components/settings/SharedCollectionsSettings';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
 import { getTeamAccess } from '@/services/adminService';
+import { getExtension, isPremiumActive } from '@/extensions/registry';
+import type { SettingsSlotProps } from '@/extensions/types';
 
 type SettingsSection = {
     id: string;
@@ -88,8 +88,10 @@ export default function SettingsPage() {
         };
     }, [authReady, user]);
 
-    const sections: SettingsSection[] = useMemo(
-        () => [
+    // ============ Build Sections (Core + Premium Slots) ============
+
+    const sections: SettingsSection[] = useMemo(() => {
+        const result: SettingsSection[] = [
             {
                 id: 'appearance',
                 component: <AppearanceSettings />,
@@ -108,42 +110,73 @@ export default function SettingsPage() {
                 title: t('settings.data.title'),
                 keywords: ['data', 'daten', 'export', 'import', 'backup', 'sicherung'],
             },
-            {
+        ];
+
+        // --- Premium Slots (only rendered if registered) ---
+
+        const SubscriptionSection = getExtension<SettingsSlotProps>('settings.subscription');
+        if (SubscriptionSection) {
+            result.push({
                 id: 'subscription',
-                component: <SubscriptionSettings />,
+                component: <SubscriptionSection />,
                 title: t('subscription.settings_title'),
                 keywords: ['subscription', 'billing', 'abonnement', 'zahlung', 'premium', 'families', 'plan'],
-            },
-            {
-                id: 'account',
-                component: <AccountSettings />,
-                title: t('settings.account.title'),
-                keywords: ['account', 'konto', 'email', 'logout', 'delete', 'löschen'],
-            },
-            {
+            });
+        }
+
+        // Account always present (core)
+        result.push({
+            id: 'account',
+            component: <AccountSettings />,
+            title: t('settings.account.title'),
+            keywords: ['account', 'konto', 'email', 'logout', 'delete', 'löschen'],
+        });
+
+        const EmergencySection = getExtension<SettingsSlotProps>('settings.emergency');
+        if (EmergencySection) {
+            result.push({
                 id: 'emergency',
-                component: <EmergencyAccessSettings bypassFeatureGate={isAdminUser} />,
+                component: <EmergencySection bypassFeatureGate={isAdminUser} />,
                 title: t('emergency.title'),
                 keywords: ['emergency', 'notfall', 'trustee', 'recovery', 'wiederherstellung', 'zugriff'],
                 premium: true,
-            },
-            {
+            });
+        }
+
+        const FamilySection = getExtension<SettingsSlotProps>('settings.family');
+        if (FamilySection) {
+            result.push({
                 id: 'family',
-                component: <FamilyOrganizationSettings bypassFeatureGate={isAdminUser} />,
+                component: <FamilySection bypassFeatureGate={isAdminUser} />,
                 title: t('settings.family.title'),
                 keywords: ['family', 'familie', 'organization', 'members', 'mitglieder', 'invite', 'einladen'],
                 families: true,
-            },
-            {
+            });
+        }
+
+        const SharedCollectionsSection = getExtension<SettingsSlotProps>('settings.shared-collections');
+        if (SharedCollectionsSection) {
+            result.push({
                 id: 'shared-collections',
-                component: <SharedCollectionsSettings bypassFeatureGate={isAdminUser} />,
+                component: <SharedCollectionsSection bypassFeatureGate={isAdminUser} />,
                 title: t('settings.sharedCollections.title'),
                 keywords: ['shared', 'collections', 'geteilt', 'sammlungen', 'share', 'teilen'],
                 families: true,
-            },
-        ],
-        [isAdminUser, t],
-    );
+            });
+        }
+
+        const SupportSection = getExtension<SettingsSlotProps>('settings.support');
+        if (SupportSection) {
+            result.push({
+                id: 'support',
+                component: <SupportSection />,
+                title: t('settings.support.title', 'Support'),
+                keywords: ['support', 'hilfe', 'help', 'ticket'],
+            });
+        }
+
+        return result;
+    }, [isAdminUser, t]);
 
     const filteredSections = useMemo(() => {
         const query = searchQuery.toLowerCase().trim();
@@ -181,7 +214,7 @@ export default function SettingsPage() {
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        {showAdminButton && (
+                        {showAdminButton && isPremiumActive() && (
                             <Button
                                 variant="outline"
                                 size="sm"

@@ -24,8 +24,8 @@ import { Separator } from '@/components/ui/separator';
 
 import { TwoFactorSettings } from './TwoFactorSettings';
 import { PasskeySettings } from './PasskeySettings';
-import { DuressSettings } from './DuressSettings';
 import { DeviceKeySettings } from './DeviceKeySettings';
+import { getExtension } from '@/extensions/registry';
 import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -43,6 +43,7 @@ export function SecuritySettings() {
     const { toast } = useToast();
     const navigate = useNavigate();
     const { autoLockTimeout, setAutoLockTimeout, lock, isLocked } = useVault();
+    const DuressSettings = getExtension('settings.duress');
 
     const handleAutoLockChange = (value: string) => {
         const timeout = parseInt(value, 10);
@@ -135,9 +136,13 @@ export function SecuritySettings() {
             <Separator className="my-6" />
             <PasskeySettings />
 
-            {/* Panic/Duress Password */}
-            <Separator className="my-6" />
-            <DuressSettings />
+            {/* Panic/Duress Password (Premium) */}
+            {DuressSettings && (
+                <>
+                    <Separator className="my-6" />
+                    <DuressSettings />
+                </>
+            )}
 
             {/* Device Key Protection */}
             <Separator className="my-6" />

@@ -50,6 +50,7 @@ import {
     upsertOfflineCategoryRow,
     upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
+import { isPremiumActive } from '@/extensions/registry';
 
 interface Category {
     id: string;
@@ -375,26 +376,30 @@ export function VaultSidebar({
                             navigate('/vault');
                         }}
                     />
-                    <SidebarItem
-                        icon={<Activity className="w-4 h-4" />}
-                        label={t('vaultHealth.title')}
-                        collapsed={collapsed}
-                        active={location.pathname === '/vault-health'}
-                        onClick={() => {
-                            navigate('/vault-health');
-                            onActionComplete?.();
-                        }}
-                    />
-                    <SidebarItem
-                        icon={<QrCode className="w-4 h-4" />}
-                        label={t('authenticator.title')}
-                        collapsed={collapsed}
-                        active={location.pathname === '/authenticator'}
-                        onClick={() => {
-                            navigate('/authenticator');
-                            onActionComplete?.();
-                        }}
-                    />
+                    {isPremiumActive() && (
+                        <SidebarItem
+                            icon={<Activity className="w-4 h-4" />}
+                            label={t('vaultHealth.title')}
+                            collapsed={collapsed}
+                            active={location.pathname === '/vault-health'}
+                            onClick={() => {
+                                navigate('/vault-health');
+                                onActionComplete?.();
+                            }}
+                        />
+                    )}
+                    {isPremiumActive() && (
+                        <SidebarItem
+                            icon={<QrCode className="w-4 h-4" />}
+                            label={t('authenticator.title')}
+                            collapsed={collapsed}
+                            active={location.pathname === '/authenticator'}
+                            onClick={() => {
+                                navigate('/authenticator');
+                                onActionComplete?.();
+                            }}
+                        />
+                    )}
                 </div>
 
                 <Separator />

@@ -68,9 +68,8 @@ import { PasswordGenerator } from './PasswordGenerator';
 import { CategoryIcon } from './CategoryIcon';
 import { CategoryDialog } from './CategoryDialog';
 import { QRScanner } from './QRScanner';
-import { FileAttachments } from './FileAttachments';
 import { cn } from '@/lib/utils';
-import { markAsDecoyItem } from '@/services/duressService';
+import { getExtension, getServiceHooks } from '@/extensions/registry';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import {
@@ -374,8 +373,9 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             };
 
             // If in duress mode, mark as decoy item (internal marker inside encrypted data)
-            const finalItemData = isDuressMode
-                ? markAsDecoyItem(itemDataToEncrypt)
+            const hooks = getServiceHooks();
+            const finalItemData = (isDuressMode && hooks.markAsDecoyItem)
+                ? hooks.markAsDecoyItem(itemDataToEncrypt)
                 : itemDataToEncrypt;
 
             // SECURITY: Generate or reuse item ID BEFORE encryption so it can
@@ -716,11 +716,14 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                             )}
 
                             {/* File Attachments (Premium) */}
-                            {normalizedItemId && (
-                                <div className="pt-4">
-                                    <FileAttachments vaultItemId={normalizedItemId} />
-                                </div>
-                            )}
+                            {normalizedItemId && (() => {
+                                const FileAttachmentsComp = getExtension<{ vaultItemId: string }>('vault.file-attachments');
+                                return FileAttachmentsComp ? (
+                                    <div className="pt-4">
+                                        <FileAttachmentsComp vaultItemId={normalizedItemId} />
+                                    </div>
+                                ) : null;
+                            })()}
 
                             {/* Notes */}
                             <FormField

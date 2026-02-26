@@ -1,0 +1,128 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+/**
+ * @fileoverview Extension Slot Type Definitions
+ *
+ * Defines all named slots where premium components can be registered,
+ * as well as service hook types for premium business logic.
+ */
+
+import type { ComponentType, ReactNode } from 'react';
+
+// ============ Settings Slots ============
+
+/** Slots for settings page sections */
+export type SettingsSlot =
+    | 'settings.family'
+    | 'settings.shared-collections'
+    | 'settings.emergency'
+    | 'settings.duress'
+    | 'settings.subscription'
+    | 'settings.support';
+
+// ============ Page Slots ============
+
+/** Slots for full premium pages */
+export type PageSlot =
+    | 'page.pricing'
+    | 'page.vault-health'
+    | 'page.authenticator'
+    | 'page.grantor-vault';
+
+// ============ Component Slots ============
+
+/** Slots for inline premium components */
+export type ComponentSlot =
+    | 'vault.file-attachments'
+    | 'vault.pending-invitations'
+    | 'subscription.feature-gate'
+    | 'subscription.checkout-dialog'
+    | 'layout.support-widget';
+
+// ============ Combined Slot Type ============
+
+/** All available extension slots */
+export type ExtensionSlot = SettingsSlot | PageSlot | ComponentSlot;
+
+// ============ Extension Component Types ============
+
+/** Props that settings slot components may receive */
+export interface SettingsSlotProps {
+    bypassFeatureGate?: boolean;
+}
+
+/** A registered extension component (any React component) */
+export type ExtensionComponent = ComponentType<any>;
+
+// ============ Route Registration ============
+
+/** A route registered by the premium package */
+export interface ExtensionRoute {
+    path: string;
+    component: ComponentType<any>;
+    /** Whether the route requires authentication */
+    protected?: boolean;
+}
+
+// ============ Service Hook Types ============
+
+/**
+ * Duress (panic password) configuration returned by the premium service.
+ */
+export interface DuressConfigHook {
+    enabled: boolean;
+    salt: string;
+    verifier: string;
+    kdfVersion: number;
+}
+
+/**
+ * Result of a dual-unlock attempt (real vs duress password).
+ */
+export interface DualUnlockResult {
+    mode: 'real' | 'duress' | 'invalid';
+    key: CryptoKey | null;
+}
+
+/**
+ * Service hooks that premium can register to inject business logic
+ * into the core without direct imports.
+ */
+export interface ServiceHooks {
+    /**
+     * Load the duress configuration for a user.
+     * Returns null if duress is not configured.
+     */
+    getDuressConfig?: (userId: string) => Promise<DuressConfigHook | null>;
+
+    /**
+     * Attempt dual unlock with both real and duress passwords.
+     */
+    attemptDualUnlock?: (
+        password: string,
+        salt: string,
+        verifier: string,
+        kdfVersion: number,
+        duressConfig: DuressConfigHook,
+    ) => Promise<DualUnlockResult>;
+
+    /**
+     * Mark a vault item as a decoy item (duress mode).
+     */
+    markAsDecoyItem?: <T extends Record<string, unknown>>(itemData: T) => T;
+
+    /**
+     * Check if a decrypted vault item is a decoy (duress mode).
+     * Returns false if duress is not configured / premium not installed.
+     */
+    isDecoyItem?: (decryptedData: Record<string, unknown>) => boolean;
+
+    /**
+     * Load subscription data for the current user.
+     * Returns null if no subscription found.
+     */
+    getSubscription?: () => Promise<any | null>;
+}
+
+/** Named service hook keys */
+export type ServiceHookName = keyof ServiceHooks;

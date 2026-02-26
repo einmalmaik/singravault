@@ -13,6 +13,7 @@ import { Menu, X, Download, CreditCard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription } from '@/contexts/SubscriptionContext';
+import { isPremiumActive } from '@/extensions/registry';
 
 // Type for the BeforeInstallPromptEvent
 interface BeforeInstallPromptEvent extends Event {
@@ -89,7 +90,7 @@ export function Header() {
             <a href="/#comparison" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
               Vergleich
             </a>
-            {!billingDisabled && (
+            {!billingDisabled && isPremiumActive() && (
               <Link to="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
                 <CreditCard className="w-3.5 h-3.5" />
                 {t('subscription.pricing_title', 'Preise')}
@@ -169,7 +170,7 @@ export function Header() {
               >
               Vergleich
               </a>
-              {!billingDisabled && (
+              {!billingDisabled && isPremiumActive() && (
                 <Link
                   to="/pricing"
                   className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"

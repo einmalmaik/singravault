@@ -19,7 +19,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { VaultItemData } from '@/services/cryptoService';
 import { cn } from '@/lib/utils';
-import { isDecoyItem } from '@/services/duressService';
+import { getServiceHooks } from '@/extensions/registry';
 import {
     isAppOnline,
     loadVaultSnapshot,
@@ -210,7 +210,8 @@ export function VaultItemList({
 
             // Duress mode filter: only show decoy items in duress mode, real items otherwise
             // This is critical for plausible deniability — the filter happens AFTER decryption
-            const itemIsDecoy = isDecoyItem(item.decryptedData);
+            const hooks = getServiceHooks();
+            const itemIsDecoy = hooks.isDecoyItem ? hooks.isDecoyItem(item.decryptedData as unknown as Record<string, unknown>) : false;
             if (isDuressMode && !itemIsDecoy) return false;
             if (!isDuressMode && itemIsDecoy) return false;
 

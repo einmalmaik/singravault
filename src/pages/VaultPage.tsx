@@ -39,6 +39,7 @@ import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { getTeamAccess } from '@/services/adminService';
+import { isPremiumActive } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
 
@@ -119,7 +120,7 @@ export default function VaultPage() {
         // 2. User ist Supabase-authentifiziert
         // 3. Vault ist entsperrt (nicht im Setup/Lock-State)
         // Verhindert race condition 401s beim App-Start
-        if (!authReady || !user || isLocked || isSetupRequired) {
+        if (!isPremiumActive() || !authReady || !user || isLocked || isSetupRequired) {
             setShowAdminButton(false);
             return;
         }

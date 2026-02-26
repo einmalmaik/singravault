@@ -44,12 +44,8 @@ import {
     authenticatePasskey,
     isWebAuthnAvailable,
 } from '@/services/passkeyService';
-import {
-    getDuressConfig,
-    attemptDualUnlock,
-    isDecoyItem,
-    DuressConfig,
-} from '@/services/duressService';
+import { getServiceHooks } from '@/extensions/registry';
+import type { DuressConfigHook } from '@/extensions/types';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './AuthContext';
 import {
@@ -186,7 +182,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
     const webAuthnAvailable = isWebAuthnAvailable();
     // Duress (panic password) state
     const [isDuressMode, setIsDuressMode] = useState(false);
-    const [duressConfig, setDuressConfig] = useState<DuressConfig | null>(null);
+    const [duressConfig, setDuressConfig] = useState<DuressConfigHook | null>(null);
     // Device Key state
     const [deviceKeyActive, setDeviceKeyActive] = useState(false);
     const [currentDeviceKey, setCurrentDeviceKey] = useState<Uint8Array | null>(null);
@@ -321,12 +317,15 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
                     await refreshPasskeyUnlockStatus();
 
-                    // Load duress (panic password) configuration
-                    try {
-                        const duress = await getDuressConfig(user.id);
-                        setDuressConfig(duress);
-                    } catch {
-                        // Non-fatal: duress config can fail silently
+                    // Load duress (panic password) configuration via premium hook
+                    const hooks = getServiceHooks();
+                    if (hooks.getDuressConfig) {
+                        try {
+                            const duress = await hooks.getDuressConfig(user.id);
+                            setDuressConfig(duress);
+                        } catch {
+                            // Non-fatal: duress config can fail silently
+                        }
                     }
 
                     // Check if device key exists on this device
@@ -514,8 +513,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
             // If duress mode is enabled, we check both passwords to determine
             // which vault to open. This is done in parallel to maintain
             // constant timing (prevent timing attacks).
-            if (duressConfig?.enabled) {
-                const result = await attemptDualUnlock(
+            if (duressConfig?.enabled && getServiceHooks().attemptDualUnlock) {
+                const result = await getServiceHooks().attemptDualUnlock!(
                     masterPassword,
                     salt,
                     verifier,

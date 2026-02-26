@@ -10,8 +10,24 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
-import { getSubscription, type SubscriptionData } from '@/services/subscriptionService';
 import { FEATURE_MATRIX, type FeatureName, type SubscriptionTier } from '@/config/planConfig';
+import { getServiceHooks } from '@/extensions/registry';
+
+/** Subscription data shape (matches subscriptionService.SubscriptionData) */
+export interface SubscriptionData {
+    id: string;
+    user_id: string;
+    stripe_customer_id: string | null;
+    stripe_subscription_id: string | null;
+    stripe_price_id: string | null;
+    status: string | null;
+    tier: 'free' | 'premium' | 'families' | null;
+    current_period_end: string | null;
+    cancel_at_period_end: boolean;
+    has_used_intro_discount: boolean;
+    created_at: string;
+    updated_at: string;
+}
 
 const BILLING_DISABLED = import.meta.env.VITE_DISABLE_BILLING === 'true';
 
@@ -58,8 +74,16 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
             return;
         }
 
+        const hooks = getServiceHooks();
+        if (!hooks.getSubscription) {
+            // Premium not installed — stay on free tier
+            setSubscription(null);
+            setLoading(false);
+            return;
+        }
+
         try {
-            const data = await getSubscription();
+            const data = await hooks.getSubscription();
             setSubscription(data);
         } catch (err) {
             console.error('Error loading subscription:', err);
