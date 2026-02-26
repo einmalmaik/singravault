@@ -18,7 +18,6 @@ export type Database = {
         Row: {
           code_hash: string
           created_at: string | null
-          hash_version: number | null
           id: string
           is_used: boolean | null
           used_at: string | null
@@ -27,7 +26,6 @@ export type Database = {
         Insert: {
           code_hash: string
           created_at?: string | null
-          hash_version?: number | null
           id?: string
           is_used?: boolean | null
           used_at?: string | null
@@ -36,7 +34,6 @@ export type Database = {
         Update: {
           code_hash?: string
           created_at?: string | null
-          hash_version?: number | null
           id?: string
           is_used?: boolean | null
           used_at?: string | null
@@ -409,6 +406,66 @@ export type Database = {
           theme?: string | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      rate_limit_attempts: {
+        Row: {
+          action: string
+          attempted_at: string
+          created_at: string
+          id: string
+          identifier: string
+          ip_address: string | null
+          locked_until: string | null
+          success: boolean
+          user_agent: string | null
+        }
+        Insert: {
+          action: string
+          attempted_at?: string
+          created_at?: string
+          id?: string
+          identifier: string
+          ip_address?: string | null
+          locked_until?: string | null
+          success?: boolean
+          user_agent?: string | null
+        }
+        Update: {
+          action?: string
+          attempted_at?: string
+          created_at?: string
+          id?: string
+          identifier?: string
+          ip_address?: string | null
+          locked_until?: string | null
+          success?: boolean
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
+      recovery_tokens: {
+        Row: {
+          created_at: string | null
+          email: string
+          expires_at: string
+          id: string
+          token_hash: string
+        }
+        Insert: {
+          created_at?: string | null
+          email: string
+          expires_at: string
+          id?: string
+          token_hash: string
+        }
+        Update: {
+          created_at?: string | null
+          email?: string
+          expires_at?: string
+          id?: string
+          token_hash?: string
         }
         Relationships: []
       }
@@ -891,6 +948,27 @@ export type Database = {
         }
         Relationships: []
       }
+      user_security: {
+        Row: {
+          argon2_hash: string
+          created_at: string | null
+          id: string
+          updated_at: string | null
+        }
+        Insert: {
+          argon2_hash: string
+          created_at?: string | null
+          id: string
+          updated_at?: string | null
+        }
+        Update: {
+          argon2_hash?: string
+          created_at?: string | null
+          id?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       vault_item_tags: {
         Row: {
           created_at: string
@@ -1055,9 +1133,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      auto_close_stale_support_tickets: { Args: never; Returns: number }
       check_family_size: { Args: { owner_id: string }; Returns: number }
       check_subscription_tier: { Args: { user_id: string }; Returns: string }
       cleanup_expired_webauthn_challenges: { Args: never; Returns: undefined }
+      cleanup_old_rate_limit_attempts: { Args: never; Returns: undefined }
       delete_my_account: { Args: never; Returns: Json }
       get_my_permissions: {
         Args: never
@@ -1091,6 +1171,13 @@ export type Database = {
         Args: { p_require_enabled?: boolean; p_user_id: string }
         Returns: string
       }
+      get_user_id_by_email: {
+        Args: { p_email: string }
+        Returns: {
+          email: string
+          id: string
+        }[]
+      }
       has_permission: {
         Args: { _permission_key: string; _user_id: string }
         Returns: boolean
@@ -1106,6 +1193,10 @@ export type Database = {
         Args: { p_secret: string; p_user_id: string }
         Returns: undefined
       }
+      is_shared_collection_member: {
+        Args: { _collection_id: string; _user_id: string }
+        Returns: boolean
+      }
       rotate_collection_key_atomic: {
         Args: { p_collection_id: string; p_items: Json; p_new_keys: Json }
         Returns: undefined
@@ -1119,6 +1210,10 @@ export type Database = {
         Returns: string
       }
       user_2fa_encrypt_secret: { Args: { _secret: string }; Returns: string }
+      user_has_active_paid_subscription: {
+        Args: { p_user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"

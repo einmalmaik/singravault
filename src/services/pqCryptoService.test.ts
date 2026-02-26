@@ -13,6 +13,7 @@ import {
     hybridWrapKey,
     hybridUnwrapKey,
     isHybridEncrypted,
+    isCurrentStandardEncrypted,
     migrateToHybrid,
     SECURITY_STANDARD_VERSION,
     HYBRID_VERSION,
@@ -207,7 +208,94 @@ describe('pqCryptoService', () => {
                 legacyHybrid,
                 hybridKeys.pqSecretKey,
                 hybridKeys.rsaPrivateKey
-            )).rejects.toThrow('Security Standard v1 requires hybrid ciphertext version 3.');
+            )).rejects.toThrow('Security Standard v1 requires hybrid ciphertext version 3 or 4.');
+        });
+    });
+
+    describe('hybridEncrypt / hybridDecrypt with AAD', () => {
+        let hybridKeys: Awaited<ReturnType<typeof generateHybridKeyPair>>;
+
+        beforeAll(async () => {
+            hybridKeys = await generateHybridKeyPair();
+        });
+
+        it('should encrypt and decrypt with AAD', async () => {
+            const plaintext = 'AAD-protected data';
+            const aad = 'collection-id-12345';
+
+            const ciphertext = await hybridEncrypt(
+                plaintext,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                aad
+            );
+
+            const decrypted = await hybridDecrypt(
+                ciphertext,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey,
+                aad
+            );
+
+            expect(decrypted).toBe(plaintext);
+        });
+
+        it('should fail when AAD does not match', async () => {
+            const plaintext = 'AAD-protected data';
+            const aad = 'collection-id-12345';
+
+            const ciphertext = await hybridEncrypt(
+                plaintext,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                aad
+            );
+
+            await expect(hybridDecrypt(
+                ciphertext,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey,
+                'wrong-aad'
+            )).rejects.toThrow();
+        });
+
+        it('should fail when AAD is expected but not provided', async () => {
+            const plaintext = 'AAD-protected data';
+            const aad = 'collection-id-12345';
+
+            const ciphertext = await hybridEncrypt(
+                plaintext,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                aad
+            );
+
+            await expect(hybridDecrypt(
+                ciphertext,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey
+                // no AAD
+            )).rejects.toThrow();
+        });
+
+        it('should decrypt without AAD when encrypted without AAD', async () => {
+            const plaintext = 'No AAD data';
+
+            const ciphertext = await hybridEncrypt(
+                plaintext,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey
+                // no AAD
+            );
+
+            const decrypted = await hybridDecrypt(
+                ciphertext,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey
+                // no AAD
+            );
+
+            expect(decrypted).toBe(plaintext);
         });
     });
 
@@ -238,10 +326,36 @@ describe('pqCryptoService', () => {
             
             expect(unwrapped).toBe(mockSharedKey);
         });
+
+        it('should wrap and unwrap with AAD', async () => {
+            const hybridKeys = await generateHybridKeyPair();
+            const mockSharedKey = JSON.stringify({
+                kty: 'oct',
+                k: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                alg: 'A256GCM',
+            });
+            const collectionId = 'col-abc-123';
+
+            const wrapped = await hybridWrapKey(
+                mockSharedKey,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                collectionId
+            );
+
+            const unwrapped = await hybridUnwrapKey(
+                wrapped,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey,
+                collectionId
+            );
+
+            expect(unwrapped).toBe(mockSharedKey);
+        });
     });
 
     describe('isHybridEncrypted', () => {
-        it('should return true for hybrid encrypted data', async () => {
+        it('should return true for current v4 hybrid encrypted data', async () => {
             const hybridKeys = await generateHybridKeyPair();
             
             const ciphertext = await hybridEncrypt(
@@ -251,6 +365,16 @@ describe('pqCryptoService', () => {
             );
             
             expect(isHybridEncrypted(ciphertext)).toBe(true);
+        });
+
+        it('should return true for legacy v3 hybrid data', () => {
+            const v3Data = btoa(String.fromCharCode(0x03) + 'some-v3-ciphertext');
+            expect(isHybridEncrypted(v3Data)).toBe(true);
+        });
+
+        it('should return true for legacy v2 hybrid data', () => {
+            const v2Data = btoa(String.fromCharCode(0x02) + 'some-v2-ciphertext');
+            expect(isHybridEncrypted(v2Data)).toBe(true);
         });
 
         it('should return false for invalid base64', () => {
@@ -264,8 +388,36 @@ describe('pqCryptoService', () => {
         });
     });
 
+    describe('isCurrentStandardEncrypted', () => {
+        it('should return true for v4 ciphertext', async () => {
+            const hybridKeys = await generateHybridKeyPair();
+
+            const ciphertext = await hybridEncrypt(
+                'test',
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey
+            );
+
+            expect(isCurrentStandardEncrypted(ciphertext)).toBe(true);
+        });
+
+        it('should return false for v3 ciphertext', () => {
+            const v3Data = btoa(String.fromCharCode(0x03) + 'some-v3-data');
+            expect(isCurrentStandardEncrypted(v3Data)).toBe(false);
+        });
+
+        it('should return false for v2 ciphertext', () => {
+            const v2Data = btoa(String.fromCharCode(0x02) + 'some-v2-data');
+            expect(isCurrentStandardEncrypted(v2Data)).toBe(false);
+        });
+
+        it('should return false for invalid base64', () => {
+            expect(isCurrentStandardEncrypted('not-valid!!!')).toBe(false);
+        });
+    });
+
     describe('migrateToHybrid', () => {
-        it('should return already-hybrid data unchanged', async () => {
+        it('should return already-v4 data unchanged', async () => {
             const hybridKeys = await generateHybridKeyPair();
             
             const ciphertext = await hybridEncrypt(
@@ -282,20 +434,35 @@ describe('pqCryptoService', () => {
                 hybridKeys.rsaPublicKey
             );
             
-            // Should return same ciphertext since it's already hybrid
+            // Should return same ciphertext since it's already v4
             expect(migrated).toBe(ciphertext);
         });
     });
 
     describe('HYBRID_VERSION constant', () => {
-        it('should be version 3', () => {
-            expect(HYBRID_VERSION).toBe(3);
+        it('should be version 4', () => {
+            expect(HYBRID_VERSION).toBe(4);
         });
     });
 
     describe('SECURITY_STANDARD_VERSION constant', () => {
         it('should be version 1', () => {
             expect(SECURITY_STANDARD_VERSION).toBe(1);
+        });
+    });
+
+    describe('version byte in ciphertext', () => {
+        it('should produce ciphertext with version 0x04', async () => {
+            const hybridKeys = await generateHybridKeyPair();
+
+            const ciphertext = await hybridEncrypt(
+                'test',
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey
+            );
+
+            const raw = atob(ciphertext);
+            expect(raw.charCodeAt(0)).toBe(0x04);
         });
     });
 });

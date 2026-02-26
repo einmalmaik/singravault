@@ -13,7 +13,7 @@
  *   import { corsHeaders } from "../_shared/cors.ts";
  */
 
-const configuredOrigin = Deno.env.get("ALLOWED_ORIGIN")?.trim()
+const configuredOrigin = (globalThis as any).Deno?.env?.get("ALLOWED_ORIGIN")?.trim()
     || "https://singravault.mauntingstudios.de";
 const productionOrigins = configuredOrigin
     .split(",")
@@ -25,6 +25,11 @@ function isAllowedOrigin(origin: string): boolean {
 
     // Fallback: Erlaube immer alle lokalen Entwicklungs-Server
     if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
+        return true;
+    }
+
+    // Lovable Preview-Umgebung erlauben
+    if (origin.endsWith(".lovable.app") || origin.endsWith(".lovableproject.com")) {
         return true;
     }
 

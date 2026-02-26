@@ -74,7 +74,7 @@ import {
   verifyKey,
   importMasterKey,
   attemptKdfUpgrade,
-  secureClear,
+  clearReferences,
   generateRSAKeyPair,
   exportPublicKey,
   importPublicKey,
@@ -306,7 +306,7 @@ describe("Integration: Core Cryptographic Pipeline", () => {
     it("should verify correct key", async () => {
       const key = await testKey("my-password");
       const hash = await createVerificationHash(key);
-      expect(hash.startsWith("v2:")).toBe(true);
+      expect(hash.startsWith("v3:")).toBe(true);
       const result = await verifyKey(hash, key);
       expect(result).toBe(true);
     });
@@ -362,7 +362,7 @@ describe("Integration: Core Cryptographic Pipeline", () => {
   // ------------------------------------------------------------------
   // secureClear
   // ------------------------------------------------------------------
-  describe("secureClear", () => {
+  describe("clearReferences", () => {
     it("should zero all sensitive fields", () => {
       const data: VaultItemData = {
         title: "Test",
@@ -374,7 +374,7 @@ describe("Integration: Core Cryptographic Pipeline", () => {
         customFields: { key: "value" },
       };
 
-      secureClear(data);
+      clearReferences(data);
 
       expect(data.title).toBe("");
       expect(data.username).toBe("");

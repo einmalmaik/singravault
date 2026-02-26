@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Shield, Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -24,6 +24,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { TwoFactorVerificationModal } from '@/components/auth/TwoFactorVerificationModal';
 import { supabase } from '@/integrations/supabase/client';
 import { SEO } from '@/components/SEO';
+import { usePasswordCheck } from '@/hooks/usePasswordCheck';
+import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 
 const loginSchema = z.object({
   email: z.string().email('auth.errors.invalidEmail'),
@@ -83,6 +85,8 @@ export default function Auth() {
   const [show2FAModal, setShow2FAModal] = useState(false);
   const [pendingLoginData, setPendingLoginData] = useState<LoginFormData | null>(null);
 
+  const passwordCheck = usePasswordCheck({ enforceStrong: true });
+
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: '', password: '' },
@@ -128,18 +132,38 @@ export default function Auth() {
   // Supabase REST Edge Function Base URL
   const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
 
+  /**
+   * Erkennt ob die App in einem Iframe läuft (z.B. Lovable Preview).
+   * In Iframes werden Third-Party Cookies blockiert.
+   */
+  const inIframe = (() => {
+    try { return window.self !== window.top; } catch { return true; }
+  })();
+
   const handleLogin = async (data: LoginFormData, totpCode?: string, isBackupCode?: boolean) => {
     setLoading(true);
     try {
       // BFF: Login an Edge Function
+      // Im Iframe: skipCookie=true, damit das Backend kein Cookie setzt
+      // und die Session nur als JSON zurückgibt.
+      const bodyPayload: Record<string, unknown> = {
+        email: data.email,
+        password: data.password,
+        totpCode,
+        isBackupCode,
+      };
+      if (inIframe) {
+        bodyPayload.skipCookie = true;
+      }
+
       const res = await fetch(`${API_URL}/auth-session`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
         },
-        credentials: 'include',
-        body: JSON.stringify({ email: data.email, password: data.password, totpCode, isBackupCode })
+        credentials: inIframe ? 'omit' : 'include',
+        body: JSON.stringify(bodyPayload)
       });
 
       if (!res.ok) {
@@ -163,7 +187,6 @@ export default function Auth() {
 
       setShow2FAModal(false);
       setPendingLoginData(null);
-      // Success! Das HttpOnly Cookie wurde gesetzt.
       toast({ title: t('common.success'), description: t('auth.success') });
       navigate('/vault');
       return true;
@@ -188,13 +211,26 @@ export default function Auth() {
   const handleSignup = async (data: SignupFormData) => {
     setLoading(true);
     try {
+      // Full password check (strength + HIBP) before submitting
+      const checkResult = await passwordCheck.onPasswordSubmit(data.password);
+      if (!checkResult.isAcceptable) {
+        toast({
+          variant: 'destructive',
+          title: t('common.error'),
+          description: checkResult.isPwned
+            ? t('passwordStrength.pwned', { count: checkResult.pwnedCount })
+            : t('passwordStrength.veryWeak'),
+        });
+        setLoading(false);
+        return;
+      }
       const res = await fetch(`${API_URL}/auth-register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
         },
-        credentials: 'include',
+        credentials: inIframe ? 'omit' : 'include',
         body: JSON.stringify({ email: data.email, password: data.password })
       });
 
@@ -272,9 +308,9 @@ export default function Auth() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
         },
-        credentials: 'include',
+        credentials: inIframe ? 'omit' : 'include',
         body: JSON.stringify({ email: data.email })
       });
 
@@ -300,15 +336,30 @@ export default function Auth() {
     try {
       const email = recoverForm.getValues('email');
 
-      // 1. Verify OTP with Supabase GoTrue
-      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
-        email,
-        token: data.code,
-        type: 'recovery'
+      // Verify recovery code via our custom auth-recovery endpoint
+      const res = await fetch(`${API_URL}/auth-recovery`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+        },
+        credentials: inIframe ? 'omit' : 'include',
+        body: JSON.stringify({ email, action: 'verify', code: data.code })
       });
 
-      if (verifyError || !verifyData.session) {
-        throw new Error('Ungültiger oder abgelaufener Code.');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Ungültiger oder abgelaufener Code.');
+      }
+
+      const { session } = await res.json();
+
+      // Session setzen für das Passwort-Update
+      if (session) {
+        await supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token || '',
+        });
       }
 
       setMode('update_password');
@@ -387,9 +438,9 @@ export default function Auth() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">
       <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
       <div className="w-full max-w-md">
-        <Link to="/" className="flex items-center justify-center gap-2 mb-8">
-          <Shield className="w-8 h-8 text-primary" />
-          <span className="text-2xl font-bold">Singra Vault</span>
+        <Link to="/" className="flex items-center justify-center gap-3 mb-8">
+          <img src="/singra-icon.png" alt="Singra Vault" className="w-8 h-8 rounded-full shadow-lg shadow-primary/20 ring-1 ring-border/70" />
+          <span className="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/80">Singra Vault</span>
         </Link>
         <Card className="shadow-xl">
           <CardHeader className="text-center">
@@ -588,12 +639,36 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type={showPassword ? 'text' : 'password'} placeholder="••••••••••••" className="pl-10 pr-10" />
+                            <Input
+                              {...field}
+                              type={showPassword ? 'text' : 'password'}
+                              placeholder="••••••••••••"
+                              className="pl-10 pr-10"
+                              onFocus={passwordCheck.onFieldFocus}
+                              onChange={(e) => {
+                                field.onChange(e);
+                                passwordCheck.onPasswordChange(e.target.value);
+                              }}
+                              onBlur={(e) => {
+                                field.onBlur();
+                                passwordCheck.onPasswordBlur(e.target.value);
+                              }}
+                            />
                             <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
                           </div>
                         </FormControl>
+                        {passwordCheck.strengthResult && (
+                          <PasswordStrengthMeter
+                            score={passwordCheck.strengthResult.score}
+                            feedback={passwordCheck.strengthResult.feedback}
+                            crackTimeDisplay={passwordCheck.strengthResult.crackTimeDisplay}
+                            isPwned={passwordCheck.pwnedResult?.isPwned ?? false}
+                            pwnedCount={passwordCheck.pwnedResult?.pwnedCount ?? 0}
+                            isChecking={passwordCheck.isChecking}
+                          />
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}

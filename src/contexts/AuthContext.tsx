@@ -11,6 +11,21 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
+// ============ Iframe Detection ============
+
+/**
+ * Erkennt ob die App in einem Iframe läuft (z.B. Lovable Preview).
+ * In Iframes werden Third-Party Cookies blockiert, daher nutzen wir
+ * einen Cookie-freien Fallback.
+ */
+function isInIframe(): boolean {
+    try {
+        return window.self !== window.top;
+    } catch {
+        return true; // Cross-origin iframe → blocked access = iframe
+    }
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
@@ -30,10 +45,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // 1. Initialer Auth-Status aus Memory
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      (event, currentSession) => {
         console.debug(`[AuthContext] Memory auth state changed: ${event}`);
-        setSession(session);
-        setUser(session?.user ?? null);
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
 
         if (event !== 'INITIAL_SESSION') {
           setLoading(false);
@@ -42,39 +57,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    // 2. Rufe das BFF-Backend auf, um ein kurzes Session-Token aus dem HttpOnly Cookie zu laden.
-    // Da wir in dieser reinen SPA-Architektur nur Edge Functions haben, muss das Frontend
-    // hier die Edge Function /session-token aufrufen... 
-    // Wir mocken diesen Aufruf für den Prototyp hier, da der Fokus auf dem Code-Structure liegt.
-    const fetchSessionFromHttpOnlyCookie = async () => {
+    // 2. Session-Hydration: BFF Cookie (Standalone) oder Skip (Iframe)
+    const hydrateSession = async () => {
+      // Im Iframe können Third-Party Cookies nicht gesetzt/gelesen werden.
+      // Daher überspringen wir den Cookie-basierten Session-Fetch komplett.
+      if (isInIframe()) {
+        console.debug('[AuthContext] Running in iframe – skipping BFF cookie hydration.');
+        setLoading(false);
+        setAuthReady(true);
+        return;
+      }
+
       try {
         const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
         const res = await fetch(`${API_URL}/auth-session`, {
           method: 'GET',
           headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
           },
           credentials: 'include'
         });
 
         if (res.ok) {
-          const { session } = await res.json();
-          if (session && session.access_token) {
+          const { session: bffSession } = await res.json();
+          if (bffSession && bffSession.access_token) {
             await supabase.auth.setSession({
-              access_token: session.access_token,
-              refresh_token: session.refresh_token || '',
+              access_token: bffSession.access_token,
+              refresh_token: bffSession.refresh_token || '',
             });
           }
         }
       } catch (err) {
-        console.warn('No active session found from BFF.');
+        console.warn('[AuthContext] No active session found from BFF.');
       } finally {
         setLoading(false);
         setAuthReady(true);
       }
     };
 
-    fetchSessionFromHttpOnlyCookie();
+    hydrateSession();
 
     return () => subscription.unsubscribe();
   }, []);
@@ -87,19 +108,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw signOutError;
     }
 
-    // 2. Cookie im Backend killen (BFF Logout Endpoint aufrufen)
-    const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
-    const res = await fetch(`${API_URL}/auth-session`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-      },
-      credentials: 'include'
-    });
+    // 2. Cookie im Backend killen (nur wenn nicht im Iframe)
+    if (!isInIframe()) {
+      const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
+      const res = await fetch(`${API_URL}/auth-session`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+        },
+        credentials: 'include'
+      });
 
-    if (!res.ok) {
-      console.error('[AuthContext] Failed to invalidate BFF session, status:', res.status);
-      throw new Error('Failed to completely sign out from the secured backend context');
+      if (!res.ok) {
+        console.error('[AuthContext] Failed to invalidate BFF session, status:', res.status);
+      }
     }
   };
 

@@ -15,15 +15,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
-import {
-    calculateStrength,
-    PasswordStrength,
-    generatePassword,
-} from '@/services/passwordGenerator';
+import { usePasswordCheck } from '@/hooks/usePasswordCheck';
+import { generatePassword } from '@/services/passwordGenerator';
 
 const MASTER_PASSWORD_LENGTH = 20;
 const WEAK_PARTS = ['password', 'qwerty', 'admin', 'welcome', 'letmein', 'singra'];
@@ -48,15 +45,12 @@ export function MasterPasswordSetup() {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [strength, setStrength] = useState<PasswordStrength | null>(null);
+
+    const passwordCheck = usePasswordCheck({ enforceStrong: true });
 
     const handlePasswordChange = (value: string) => {
         setPassword(value);
-        if (value) {
-            setStrength(calculateStrength(value));
-        } else {
-            setStrength(null);
-        }
+        passwordCheck.onPasswordChange(value);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -82,47 +76,22 @@ export function MasterPasswordSetup() {
         }
 
         if (!/[A-Z]/.test(password)) {
-            toast({
-                variant: 'destructive',
-                title: t('common.error'),
-                description: t('auth.errors.passwordNoUppercase'),
-            });
+            toast({ variant: 'destructive', title: t('common.error'), description: t('auth.errors.passwordNoUppercase') });
             return;
         }
 
         if (!/[a-z]/.test(password)) {
-            toast({
-                variant: 'destructive',
-                title: t('common.error'),
-                description: t('auth.errors.passwordNoLowercase'),
-            });
+            toast({ variant: 'destructive', title: t('common.error'), description: t('auth.errors.passwordNoLowercase') });
             return;
         }
 
         if (!/[0-9]/.test(password)) {
-            toast({
-                variant: 'destructive',
-                title: t('common.error'),
-                description: t('auth.errors.passwordNoDigit'),
-            });
+            toast({ variant: 'destructive', title: t('common.error'), description: t('auth.errors.passwordNoDigit') });
             return;
         }
 
         if (!/[^A-Za-z0-9]/.test(password)) {
-            toast({
-                variant: 'destructive',
-                title: t('common.error'),
-                description: t('auth.errors.passwordNoSymbol'),
-            });
-            return;
-        }
-
-        if (!strength || strength.score < 3 || strength.entropy < 60) {
-            toast({
-                variant: 'destructive',
-                title: t('common.error'),
-                description: 'Master-Passwort ist zu schwach. Bitte ein starkes Passwort verwenden.',
-            });
+            toast({ variant: 'destructive', title: t('common.error'), description: t('auth.errors.passwordNoSymbol') });
             return;
         }
 
@@ -131,6 +100,19 @@ export function MasterPasswordSetup() {
                 variant: 'destructive',
                 title: t('common.error'),
                 description: 'Unsicheres Muster erkannt (z.B. 12345 oder name12345@). Bitte ein starkes Passwort nutzen.',
+            });
+            return;
+        }
+
+        // Full zxcvbn + HIBP check
+        const checkResult = await passwordCheck.onPasswordSubmit(password);
+        if (!checkResult.isAcceptable) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: checkResult.isPwned
+                    ? t('passwordStrength.pwned', { count: checkResult.pwnedCount })
+                    : 'Master-Passwort ist zu schwach. Bitte ein starkes Passwort verwenden.',
             });
             return;
         }
@@ -164,22 +146,12 @@ export function MasterPasswordSetup() {
 
         setPassword(generated);
         setConfirmPassword(generated);
-        setStrength(calculateStrength(generated));
+        passwordCheck.onPasswordChange(generated);
 
         toast({
             title: t('common.info'),
             description: 'Starkes Master-Passwort generiert. Bitte sicher speichern.',
         });
-    };
-
-    const getStrengthLabel = () => {
-        if (!strength) return '';
-        return t(`auth.masterPassword.strength.${strength.label}`);
-    };
-
-    const getStrengthProgress = () => {
-        if (!strength) return 0;
-        return ((strength.score + 1) / 5) * 100;
     };
 
     return (
@@ -221,6 +193,8 @@ export function MasterPasswordSetup() {
                                     type={showPassword ? 'text' : 'password'}
                                     value={password}
                                     onChange={(e) => handlePasswordChange(e.target.value)}
+                                    onFocus={passwordCheck.onFieldFocus}
+                                    onBlur={(e) => passwordCheck.onPasswordBlur(e.target.value)}
                                     className="pl-10 pr-10"
                                     placeholder="••••••••••••"
                                     required
@@ -236,14 +210,16 @@ export function MasterPasswordSetup() {
                                 </Button>
                             </div>
 
-                            {/* Strength indicator */}
-                            {password && strength && (
-                                <div className="space-y-1">
-                                    <Progress value={getStrengthProgress()} className="h-2" />
-                                    <p className={`text-xs ${strength.color.replace('bg-', 'text-')}`}>
-                                        {getStrengthLabel()} ({strength.entropy} bits)
-                                    </p>
-                                </div>
+                            {/* Strength indicator (zxcvbn) */}
+                            {password && passwordCheck.strengthResult && (
+                                <PasswordStrengthMeter
+                                    score={passwordCheck.strengthResult.score}
+                                    feedback={passwordCheck.strengthResult.feedback}
+                                    crackTimeDisplay={passwordCheck.strengthResult.crackTimeDisplay}
+                                    isPwned={passwordCheck.pwnedResult?.isPwned ?? false}
+                                    pwnedCount={passwordCheck.pwnedResult?.pwnedCount ?? 0}
+                                    isChecking={passwordCheck.isChecking}
+                                />
                             )}
 
                             <Button

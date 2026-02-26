@@ -59,6 +59,7 @@ vi.mock("@/services/cryptoService", () => ({
   verifyKey: (...args: unknown[]) => mockVerifyKey(...args),
   encryptVaultItem: (...args: unknown[]) => mockEncryptVaultItem(...args),
   decryptVaultItem: (...args: unknown[]) => mockDecryptVaultItem(...args),
+  clearReferences: vi.fn(),
   secureClear: vi.fn(),
   attemptKdfUpgrade: (...args: unknown[]) => mockAttemptKdfUpgrade(...args),
   CURRENT_KDF_VERSION: 2,
@@ -66,6 +67,7 @@ vi.mock("@/services/cryptoService", () => ({
 
 // Mock offline vault service
 vi.mock("@/services/offlineVaultService", () => ({
+  isAppOnline: vi.fn(() => true),
   isLikelyOfflineError: vi.fn(() => false),
   getOfflineCredentials: vi.fn(() => Promise.resolve(null)),
   saveOfflineCredentials: vi.fn(() => Promise.resolve()),

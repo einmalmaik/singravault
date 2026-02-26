@@ -43,6 +43,12 @@ const SALT_LENGTH = 16; // 128 bits
 const IV_LENGTH = 12; // 96 bits (standard for AES-GCM)
 const TAG_LENGTH = 128; // 128 bits authentication tag
 
+/** Constant used in v3 verification hashes (no plaintext stored in DB) */
+const VERIFICATION_CONSTANT_V3 = 'SINGRA_VAULT_VERIFY_V3';
+
+/** Internal counter for legacy (no-AAD) decryption fallbacks (Phase 1 monitoring) */
+let _legacyDecryptCount = 0;
+
 /**
  * Generates a cryptographically secure random salt
  * @returns Base64-encoded salt string
@@ -57,13 +63,13 @@ export function generateSalt(): string {
  * 
  * @param masterPassword - The user's master password
  * @param saltBase64 - Base64-encoded salt from profiles table
- * @param kdfVersion - KDF parameter version (defaults to 1 for backward compat)
+ * @param kdfVersion - KDF parameter version (defaults to current version)
  * @returns Raw key bytes (caller is responsible for wiping with .fill(0))
  */
 export async function deriveRawKey(
     masterPassword: string,
     saltBase64: string,
-    kdfVersion: number = 1
+    kdfVersion: number = CURRENT_KDF_VERSION
 ): Promise<Uint8Array> {
     const params = KDF_PARAMS[kdfVersion];
     if (!params) {
@@ -133,13 +139,13 @@ export async function deriveRawKey(
  *
  * @param masterPassword - The user's master password
  * @param saltBase64 - Base64-encoded salt from profiles table
- * @param kdfVersion - KDF parameter version (defaults to 1 for backward compat)
+ * @param kdfVersion - KDF parameter version (defaults to current version)
  * @returns SecureBuffer containing raw key bytes (caller MUST call .destroy())
  */
 export async function deriveRawKeySecure(
     masterPassword: string,
     saltBase64: string,
-    kdfVersion: number = 1
+    kdfVersion: number = CURRENT_KDF_VERSION
 ): Promise<SecureBuffer> {
     const rawBytes = await deriveRawKey(masterPassword, saltBase64, kdfVersion);
     const secure = SecureBuffer.fromBytes(rawBytes);
@@ -153,13 +159,13 @@ export async function deriveRawKeySecure(
  * 
  * @param masterPassword - The user's master password
  * @param saltBase64 - Base64-encoded salt from profiles table
- * @param kdfVersion - KDF parameter version (defaults to 1 for backward compat)
+ * @param kdfVersion - KDF parameter version (defaults to current version)
  * @returns CryptoKey suitable for AES-GCM operations
  */
 export async function deriveKey(
     masterPassword: string,
     saltBase64: string,
-    kdfVersion: number = 1
+    kdfVersion: number = CURRENT_KDF_VERSION
 ): Promise<CryptoKey> {
     const keyBytes = await deriveRawKey(masterPassword, saltBase64, kdfVersion);
     try {
@@ -309,12 +315,17 @@ export async function decryptVaultItem(
     entryId?: string
 ): Promise<VaultItemData> {
     let json: string;
+    let isLegacy = false;
     if (entryId) {
         try {
             // Try with AAD first (new format, swap-protected)
             json = await decrypt(encryptedData, key, entryId);
         } catch {
             // Backward compat: entry was encrypted without AAD (legacy format)
+            // WARNING: Legacy entries are vulnerable to ciphertext-swap attacks
+            console.warn(`Legacy entry without AAD detected: ${entryId}`);
+            _legacyDecryptCount++;
+            isLegacy = true;
             json = await decrypt(encryptedData, key);
         }
     } else {
@@ -331,14 +342,9 @@ export async function decryptVaultItem(
  * @returns Base64-encoded verification hash
  */
 export async function createVerificationHash(key: CryptoKey): Promise<string> {
-    const challengeBytes = crypto.getRandomValues(new Uint8Array(32));
-    try {
-        const challenge = uint8ArrayToBase64(challengeBytes);
-        const encryptedChallenge = await encrypt(challenge, key);
-        return `v2:${challenge}:${encryptedChallenge}`;
-    } finally {
-        challengeBytes.fill(0);
-    }
+    // v3: Encrypt a known constant with random IV. No plaintext stored.
+    const encrypted = await encrypt(VERIFICATION_CONSTANT_V3, key);
+    return `v3:${encrypted}`;
 }
 
 /**
@@ -353,6 +359,14 @@ export async function verifyKey(
     key: CryptoKey
 ): Promise<boolean> {
     try {
+        // v3: Decrypt and compare against known constant (no plaintext stored)
+        if (verificationHash.startsWith('v3:')) {
+            const encrypted = verificationHash.slice(3);
+            const decrypted = await decrypt(encrypted, key);
+            return decrypted === VERIFICATION_CONSTANT_V3;
+        }
+
+        // v2: Legacy format with plaintext challenge (backward compat)
         if (verificationHash.startsWith('v2:')) {
             const parts = verificationHash.split(':');
             if (parts.length !== 3) {
@@ -364,6 +378,7 @@ export async function verifyKey(
             return decrypted === challenge;
         }
 
+        // v1: Legacy format (backward compat)
         const decrypted = await decrypt(verificationHash, key);
         return decrypted === 'SINGRA_PW_VERIFICATION';
     } catch {
@@ -511,6 +526,8 @@ export interface ReEncryptionResult {
     itemUpdates: Array<{ id: string; encrypted_data: string }>;
     /** Category updates to persist: array of { id, name, icon, color } */
     categoryUpdates: Array<{ id: string; name: string; icon: string | null; color: string | null }>;
+    /** Number of legacy items found without AAD protection (Phase 1 monitoring) */
+    legacyItemsFound: number;
 }
 
 /**
@@ -594,11 +611,16 @@ export async function reEncryptVault(
         }
     }
 
+    // Capture legacy count before reset
+    const legacyFound = _legacyDecryptCount;
+    _legacyDecryptCount = 0;
+
     return {
         itemsReEncrypted: itemUpdates.length,
         categoriesReEncrypted: categoryUpdates.length,
         itemUpdates,
         categoryUpdates,
+        legacyItemsFound: legacyFound,
     };
 }
 
@@ -662,16 +684,19 @@ export interface VaultItemData {
 }
 
 /**
- * Clears sensitive data from memory.
+ * Clears sensitive data references from a VaultItemData object.
  *
- * SECURITY NOTE: JavaScript strings are immutable and cannot be
- * overwritten in-place.  Setting fields to empty strings removes
- * the reference so the original can be garbage-collected sooner,
- * but the old string content may linger in the heap until the GC
- * reclaims it.  For binary key material, use Uint8Array.fill(0)
- * instead (see deriveKey).
+ * ⚠️ WARNING: This function does NOT securely wipe memory!
+ * JavaScript strings are immutable. This only removes references
+ * so the GC can collect the original strings sooner.
+ * The old string content MAY linger in the heap until the GC
+ * reclaims it — there is no way to prevent this in JavaScript.
+ *
+ * For binary key material, use Uint8Array.fill(0) instead.
+ *
+ * @param data - VaultItemData object whose fields will be set to empty/default values
  */
-export function secureClear(data: VaultItemData): void {
+export function clearReferences(data: VaultItemData): void {
     if (data.title) data.title = '';
     if (data.websiteUrl) data.websiteUrl = '';
     if (data.itemType) data.itemType = 'password';
@@ -687,6 +712,9 @@ export function secureClear(data: VaultItemData): void {
         });
     }
 }
+
+/** @deprecated Use clearReferences instead. secureClear suggests memory wiping which JS cannot do. */
+export const secureClear = clearReferences;
 
 // ==========================================
 // Asymmetric Encryption for Emergency Access
@@ -784,6 +812,9 @@ export async function decryptRSA(
  *          Format v1: `kdfVersion:salt:encryptedData`
  *          Format v2: `pq-v2:kdfVersion:salt:encryptedRsaKey:encryptedPqKey`
  */
+// TODO(security): Set default to 2 (hybrid PQ+RSA) once pqCryptoService
+// is validated in production. Track: SINGRA-PQ-DEFAULT
+// Current: version 1 (RSA-only) for stability during rollout.
 export async function generateUserKeyPair(
     masterPassword: string,
     version: 1 | 2 = 1
@@ -1038,6 +1069,9 @@ export async function decryptWithSharedKey(
             json = await decrypt(encryptedData, key, aad);
         } catch {
             // Backward compat: entry was encrypted without AAD
+            // WARNING: Legacy entries are vulnerable to ciphertext-swap attacks
+            console.warn(`Legacy shared entry without AAD detected: ${aad}`);
+            _legacyDecryptCount++;
             json = await decrypt(encryptedData, key);
         }
     } else {

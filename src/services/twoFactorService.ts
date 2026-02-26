@@ -429,7 +429,7 @@ export async function verifyAndConsumeBackupCode(
     // Get all unused backup codes for this user
     const { data: codes, error: fetchError } = await supabase
         .from('backup_codes')
-        .select('id, code_hash, hash_version')
+        .select('id, code_hash')
         .eq('user_id', userId)
         .eq('is_used', false);
 
@@ -447,7 +447,7 @@ export async function verifyAndConsumeBackupCode(
         let isMatch = false;
 
         // Check based on hash version
-        if (storedCode.hash_version === 3 || storedCode.code_hash.startsWith('v3:')) {
+        if (storedCode.code_hash.startsWith('v3:')) {
             // Argon2id verification
             isMatch = await verifyBackupCodeHash(code, storedCode.code_hash);
         } else {

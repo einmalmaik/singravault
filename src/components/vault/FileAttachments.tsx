@@ -94,9 +94,17 @@ export function FileAttachments({ vaultItemId }: FileAttachmentsProps) {
                 );
                 successCount++;
             } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                let description = msg;
+                if (msg.startsWith('FILE_TOO_LARGE:')) {
+                    description = t('fileAttachments.fileTooLarge', { size: msg.split(':')[1] });
+                } else if (msg.startsWith('STORAGE_LIMIT_REACHED:')) {
+                    const parts = msg.split(':');
+                    description = t('fileAttachments.storageLimitReached', { used: parts[1], limit: parts[2] });
+                }
                 toast({
                     title: t('fileAttachments.uploadError'),
-                    description: err instanceof Error ? err.message : String(err),
+                    description,
                     variant: 'destructive',
                 });
             }

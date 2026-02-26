@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import Stripe from "https://esm.sh/stripe@17.7.0?target=deno";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import Stripe from "npm:stripe@17.7.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 // Server-side price → tier mapping
 const PRICE_TO_TIER: Record<string, string> = {
@@ -18,7 +18,7 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
-        const stripeApiKey = Deno.env.get("STRIPE_API_KEY")!;
+        const stripeApiKey = Deno.env.get("STRIPE_SECRET_KEY")!;
         const webhookSecret = Deno.env.get("STRIPE_WEBHOOK_SECRET")!;
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;

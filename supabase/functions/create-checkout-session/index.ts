@@ -1,28 +1,30 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import Stripe from "https://esm.sh/stripe@17.7.0?target=deno";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { corsHeaders } from "../_shared/cors.ts";
+import Stripe from "npm:stripe@17.7.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
 // Server-side plan mapping — client CANNOT override prices
 const PLAN_CONFIG: Record<string, { priceId: string; tier: string }> = {
-    premium_monthly: { priceId: "price_1Sz4ydPOxkvnea3yiUS9yZsV", tier: "premium" },
-    premium_yearly: { priceId: "price_1Sz4ydPOxkvnea3yjs4Tfnzt", tier: "premium" },
-    families_monthly: { priceId: "price_1Sz4yePOxkvnea3ywl0Ggaqj", tier: "families" },
-    families_yearly: { priceId: "price_1Sz4ygPOxkvnea3yy7lrqSmP", tier: "families" },
+    premium_monthly: { priceId: "price_1T3zaxAIZiA8j1RxU3F498yI", tier: "premium" },
+    premium_yearly: { priceId: "price_1T3zaxAIZiA8j1RxwKQTXQKL", tier: "premium" },
+    families_monthly: { priceId: "price_1T3zayAIZiA8j1RxP9Xv1sbS", tier: "families" },
+    families_yearly: { priceId: "price_1T3zayAIZiA8j1RxLZiwiA3X", tier: "families" },
 };
 
 const INTRO_COUPON_ID = "K3tViKjk";
 
 Deno.serve(async (req: Request) => {
+    const cors = getCorsHeaders(req);
+
     // Handle CORS preflight
     if (req.method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: corsHeaders });
+        return new Response(null, { status: 204, headers: cors });
     }
 
     if (req.method !== "POST") {
         return new Response(JSON.stringify({ error: "Method not allowed" }), {
             status: 405,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            headers: { ...cors, "Content-Type": "application/json" },
         });
     }
 
@@ -32,13 +34,13 @@ Deno.serve(async (req: Request) => {
         if (!authHeader) {
             return new Response(JSON.stringify({ error: "Missing authorization header" }), {
                 status: 401,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             });
         }
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const stripeApiKey = Deno.env.get("STRIPE_API_KEY")!;
+        const stripeApiKey = Deno.env.get("STRIPE_SECRET_KEY")!;
 
         const supabaseClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
             global: { headers: { Authorization: authHeader } },
@@ -48,7 +50,7 @@ Deno.serve(async (req: Request) => {
         if (authError || !user) {
             return new Response(JSON.stringify({ error: "Unauthorized" }), {
                 status: 401,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             });
         }
 
@@ -60,7 +62,7 @@ Deno.serve(async (req: Request) => {
         if (!plan_key || !(plan_key in PLAN_CONFIG)) {
             return new Response(JSON.stringify({ error: "Invalid plan_key" }), {
                 status: 400,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             });
         }
 
@@ -73,7 +75,7 @@ Deno.serve(async (req: Request) => {
                 }),
                 {
                     status: 400,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
+                    headers: { ...cors, "Content-Type": "application/json" },
                 }
             );
         }
@@ -91,6 +93,17 @@ Deno.serve(async (req: Request) => {
             .single();
 
         let stripeCustomerId = subscription?.stripe_customer_id;
+
+        // Validate existing customer ID still exists in Stripe
+        if (stripeCustomerId) {
+            try {
+                await stripe.customers.retrieve(stripeCustomerId);
+            } catch {
+                // Customer doesn't exist in Stripe (e.g. different account) — reset
+                console.warn(`Stale stripe_customer_id ${stripeCustomerId}, creating new customer`);
+                stripeCustomerId = null;
+            }
+        }
 
         if (!stripeCustomerId) {
             // Create new Stripe customer
@@ -143,7 +156,12 @@ Deno.serve(async (req: Request) => {
 
         // Apply 50% intro coupon only for monthly plans if user hasn't used it yet
         if (!hasUsedDiscount && plan_key.endsWith("_monthly")) {
-            sessionParams.discounts = [{ coupon: INTRO_COUPON_ID }];
+            try {
+                await stripe.coupons.retrieve(INTRO_COUPON_ID);
+                sessionParams.discounts = [{ coupon: INTRO_COUPON_ID }];
+            } catch {
+                console.warn(`Intro coupon ${INTRO_COUPON_ID} not found in Stripe, skipping discount`);
+            }
         }
 
         // 6. Create Stripe Checkout Session
@@ -153,7 +171,7 @@ Deno.serve(async (req: Request) => {
             JSON.stringify({ url: checkoutSession.url }),
             {
                 status: 200,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             }
         );
     } catch (err) {
@@ -162,7 +180,7 @@ Deno.serve(async (req: Request) => {
             JSON.stringify({ error: "Internal server error" }),
             {
                 status: 500,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
             }
         );
     }

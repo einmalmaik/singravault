@@ -39,18 +39,18 @@ const FREE_FEATURES = [
     'subscription.features.external_2fa',
     'subscription.features.argon2id_encryption',
     'subscription.features.clipboard_auto_clear',
+    'subscription.features.post_quantum',
+    'subscription.features.passkey_unlock',
+    'subscription.features.vault_integrity',
     'subscription.features.core_features',
 ];
 
 const PREMIUM_FEATURES = [
-    'subscription.features.post_quantum',
     'subscription.features.duress_password',
     'subscription.features.file_attachments',
     'subscription.features.builtin_authenticator',
     'subscription.features.emergency_access',
     'subscription.features.vault_health',
-    'subscription.features.passkey_unlock',
-    'subscription.features.vault_integrity',
     'subscription.features.priority_support',
 ];
 

@@ -22,13 +22,14 @@ import {
     verifyKey,
     encryptVaultItem,
     decryptVaultItem,
-    secureClear,
+    clearReferences,
     attemptKdfUpgrade,
     reEncryptVault,
     CURRENT_KDF_VERSION,
     VaultItemData
 } from '@/services/cryptoService';
 import {
+    isAppOnline,
     isLikelyOfflineError,
     getOfflineCredentials,
     saveOfflineCredentials,
@@ -243,6 +244,29 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }
 
             console.debug('[VaultContext] authReady is true, fetching user profiles...');
+
+            // ============ Offline-First: skip network if offline ============
+            if (!isAppOnline()) {
+                console.debug('[VaultContext] App is offline, loading cached credentials...');
+                const cached = await getOfflineCredentials(user.id);
+                if (cached) {
+                    setIsSetupRequired(false);
+                    setSalt(cached.salt);
+                    setVerificationHash(cached.verifier);
+                    if (cached.kdfVersion !== null) {
+                        setKdfVersion(cached.kdfVersion);
+                    }
+                    setIsLoading(false);
+                    return;
+                }
+                // No cache available while offline — cannot determine setup state
+                setIsSetupRequired(true);
+                setIsLocked(true);
+                setIsLoading(false);
+                return;
+            }
+
+            // ============ Online path ============
             try {
                 // NOTE: kdf_version may not exist in generated Supabase types until
                 // types are regenerated. Using explicit column list + type assertion.
@@ -253,31 +277,33 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     .single() as { data: Record<string, unknown> | null; error: unknown };
 
                 if (error || !profile?.encryption_salt) {
-                    // Online but no profile found - check if it's a network error
-                    if (error && isLikelyOfflineError(error)) {
-                        // Offline: try to use cached credentials
-                        const cached = await getOfflineCredentials(user.id);
-                        if (cached) {
-                            setIsSetupRequired(false);
-                            setSalt(cached.salt);
-                            setVerificationHash(cached.verifier);
-                            setIsLoading(false);
-                            return;
+                    // No profile found — try cache fallback for any error
+                    const cached = await getOfflineCredentials(user.id);
+                    if (cached) {
+                        setIsSetupRequired(false);
+                        setSalt(cached.salt);
+                        setVerificationHash(cached.verifier);
+                        if (cached.kdfVersion !== null) {
+                            setKdfVersion(cached.kdfVersion);
                         }
+                        setIsLoading(false);
+                        return;
                     }
                     // No cached data or truly no profile - setup required
                     setIsSetupRequired(true);
                     setIsLocked(true);
                 } else {
+                    const profileKdfVersion = (profile.kdf_version as number) ?? 1;
                     setIsSetupRequired(false);
                     setSalt(profile.encryption_salt as string);
                     setVerificationHash((profile.master_password_verifier as string) || null);
-                    setKdfVersion((profile.kdf_version as number) ?? 1);
-                    // Cache credentials for offline use
+                    setKdfVersion(profileKdfVersion);
+                    // Cache credentials (including kdfVersion) for offline use
                     await saveOfflineCredentials(
                         user.id,
                         profile.encryption_salt as string,
-                        (profile.master_password_verifier as string) || null
+                        (profile.master_password_verifier as string) || null,
+                        profileKdfVersion,
                     );
 
                     await refreshPasskeyUnlockStatus();
@@ -292,16 +318,17 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 }
             } catch (err) {
                 console.error('Error checking vault setup:', err);
-                // Try offline fallback on any error
-                if (isLikelyOfflineError(err)) {
-                    const cached = await getOfflineCredentials(user.id);
-                    if (cached) {
-                        setIsSetupRequired(false);
-                        setSalt(cached.salt);
-                        setVerificationHash(cached.verifier);
-                        setIsLoading(false);
-                        return;
+                // Robust fallback: try cache on ANY error (not just offline errors)
+                const cached = await getOfflineCredentials(user.id);
+                if (cached) {
+                    setIsSetupRequired(false);
+                    setSalt(cached.salt);
+                    setVerificationHash(cached.verifier);
+                    if (cached.kdfVersion !== null) {
+                        setKdfVersion(cached.kdfVersion);
                     }
+                    setIsLoading(false);
+                    return;
                 }
                 setIsSetupRequired(true);
             } finally {
@@ -418,7 +445,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setPendingSessionRestore(false);
 
             // Cache credentials for offline use
-            await saveOfflineCredentials(user.id, newSalt, verifyHash);
+            await saveOfflineCredentials(user.id, newSalt, verifyHash, CURRENT_KDF_VERSION);
 
             return { error: null };
         } catch (err) {

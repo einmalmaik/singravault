@@ -1,14 +1,14 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { getCookies, setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
 import { argon2Verify } from "npm:hash-wasm";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-serve(async (req) => {
+Deno.serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
 
     // Credentials explizit für Cookies erlauben, aber Origin NICHT reflektieren!
@@ -83,7 +83,7 @@ serve(async (req) => {
         if (req.method !== "POST") {
             return new Response("Method not allowed", { status: 405, headers });
         }
-        const { email, password, totpCode, isBackupCode } = await req.json();
+        const { email, password, totpCode, isBackupCode, skipCookie } = await req.json();
 
         if (!email || !password) {
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
@@ -158,7 +158,7 @@ serve(async (req) => {
         // 3.5. 2FA Check (Enforce 2FA before issuing session)
         const { data: user2fa } = await supabaseAdmin
             .from('user_2fa')
-            .select('is_enabled, totp_secret')
+            .select('is_enabled')
             .eq('user_id', user.id)
             .single();
 
@@ -175,13 +175,26 @@ serve(async (req) => {
             }
 
             if (!isBackupCode) {
+                // Fetch TOTP secret via secure RPC (decrypts server-side, never reads plaintext column)
+                const { data: totpSecret, error: totpSecretError } = await supabaseAdmin.rpc('get_user_2fa_secret', {
+                    p_user_id: user.id,
+                    p_require_enabled: true,
+                });
+
+                if (totpSecretError || !totpSecret) {
+                    return new Response(JSON.stringify({ error: "2FA configuration error" }), {
+                        status: 500,
+                        headers: { ...headers, "Content-Type": "application/json" }
+                    });
+                }
+
                 const OTPAuth = await import("npm:otpauth");
                 const totp = new OTPAuth.TOTP({
                     issuer: 'Singra Vault',
                     algorithm: 'SHA1',
                     digits: 6,
                     period: 30,
-                    secret: OTPAuth.Secret.fromBase32(user2fa.totp_secret.replace(/\s/g, '')),
+                    secret: OTPAuth.Secret.fromBase32(totpSecret.replace(/\s/g, '')),
                 });
 
                 const delta = totp.validate({ token: totpCode.replace(/\s/g, ''), window: 1 });
@@ -200,7 +213,7 @@ serve(async (req) => {
                     .from('backup_codes')
                     .select('id, code_hash')
                     .eq('user_id', user.id)
-                    .eq('used', false);
+                    .eq('is_used', false);
 
                 let validCodeId = null;
 
@@ -252,15 +265,14 @@ serve(async (req) => {
             throw new Error("Failed to generate session link");
         }
 
-        const url = new URL(linkData.properties.action_link);
-        const token = url.searchParams.get('token');
+        // Nutze den hashed_token aus generateLink (PKCE-kompatibel)
+        const tokenHash = linkData.properties.hashed_token;
 
-        if (!token) throw new Error("No token in magic link");
+        if (!tokenHash) throw new Error("No hashed_token in generateLink response");
 
-        // Wir verifizieren den Token mit dem generellen Supabase Client (Anonym)
+        // Verifiziere den Token über token_hash (korrekte API seit Supabase PKCE)
         const { data: sessionData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({
-            email,
-            token,
+            token_hash: tokenHash,
             type: 'magiclink'
         });
 
@@ -268,16 +280,18 @@ serve(async (req) => {
             throw new Error("Failed to verify OTP for session");
         }
 
-        // Secure, HttpOnly, SameSite=Strict Setzen (nur refresh_token im Backend!)
-        setCookie(headers, {
-            name: "sb-bff-session",
-            value: sessionData.session.refresh_token,
-            path: "/",
-            httpOnly: true,
-            secure: true,
-            sameSite: "None",
-            maxAge: 60 * 60 * 24 * 7, // 7 Days
-        });
+        // Secure, HttpOnly Cookie nur setzen wenn nicht im Iframe-Modus
+        if (!skipCookie) {
+            setCookie(headers, {
+                name: "sb-bff-session",
+                value: sessionData.session.refresh_token,
+                path: "/",
+                httpOnly: true,
+                secure: true,
+                sameSite: "None",
+                maxAge: 60 * 60 * 24 * 7, // 7 Days
+            });
+        }
 
         return new Response(JSON.stringify({ success: true, session: sessionData.session }), {
             status: 200,

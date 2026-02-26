@@ -274,7 +274,7 @@ export async function ensureUserPqKeyMaterial(
 
     const { error: insertError } = await supabase
         .from('profiles')
-        .insert(profilePayload as Record<string, unknown>);
+        .insert(profilePayload as any);
 
     if (!insertError) {
         return {

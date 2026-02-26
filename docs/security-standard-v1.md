@@ -6,15 +6,16 @@ Security Standard v1 enforces hybrid key exchange for shared and emergency flows
 
 1. ML-KEM-768 (post-quantum KEM)
 2. RSA-4096 (classical asymmetric layer)
-3. HKDF-SHA-256 key combination with ciphertext binding (`Singra Vault-HybridKDF-v1`)
+3. HKDF-SHA-256 key combination (v2: both secrets as IKM, zero-byte salt, `Singra Vault-HybridKDF-v2:` info)
 
 Vault payload encryption remains AES-256-GCM with Argon2id-derived keys.
 
 ## Enforcement
 
-1. Runtime decryption for hybrid ciphertext accepts only ciphertext version `0x03`.
-2. Legacy RSA-only key exchange paths are blocked in application services.
-3. Shared collection and emergency setup flows require PQ key material.
+1. Runtime decryption for hybrid ciphertext accepts versions `0x03` (HKDF-v1, legacy) and `0x04` (HKDF-v2, current).
+2. New encryptions always produce version `0x04`.
+3. Legacy RSA-only key exchange paths are blocked in application services.
+4. Shared collection and emergency setup flows require PQ key material.
 
 ## Profile Metadata
 

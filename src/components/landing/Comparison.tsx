@@ -75,7 +75,7 @@ const competitors: Competitor[] = [
         details: {
             kdf: 'PBKDF2 600K / Argon2id 64 MiB',
             clipboardClear: '10–300s',
-            pricing: '$0 / $1.65/mo',
+            pricing: '$0 / <$1/mo',
         },
     },
     {
@@ -109,7 +109,7 @@ const competitors: Competitor[] = [
             free: 'partial',
             kdf: 'partial',
             postQuantum: 'no',
-            passkeyUnlock: 'partial',
+            passkeyUnlock: 'yes',
             duressPassword: 'no',
             vaultIntegrity: 'no',
             clipboardClear: 'yes',
@@ -118,7 +118,7 @@ const competitors: Competitor[] = [
         },
         details: {
             kdf: 'PBKDF2 600K',
-            clipboardClear: '120s',
+            
             pricing: '$3/mo',
         },
     },

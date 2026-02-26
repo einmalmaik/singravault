@@ -52,8 +52,8 @@ serve(async (req) => {
             password,
             salt,
             parallelism: 1,
-            iterations: 2,
-            memorySize: 19456, // 19 MiB RAM
+            iterations: 3,
+            memorySize: 65536, // 64 MiB RAM (aligned with client-side security level)
             hashLength: 32,
             outputType: "encoded"
         });

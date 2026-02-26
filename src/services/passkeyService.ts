@@ -526,7 +526,7 @@ async function deriveWrappingKey(prfOutput: Uint8Array): Promise<CryptoKey> {
     // Import PRF output as HKDF key material
     const baseKey = await crypto.subtle.importKey(
         'raw',
-        prfOutput,
+        prfOutput as any,
         'HKDF',
         false,
         ['deriveKey'],
@@ -566,7 +566,7 @@ async function encryptRawKeyBytes(
     const ciphertext = await crypto.subtle.encrypt(
         { name: 'AES-GCM', iv, tagLength: 128 },
         wrappingKey,
-        rawKeyBytes,
+        rawKeyBytes as any,
     );
 
     // Combine IV + ciphertext (includes auth tag appended by AES-GCM)

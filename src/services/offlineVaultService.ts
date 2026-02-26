@@ -31,6 +31,7 @@ export interface OfflineVaultSnapshot {
   // Credentials for offline unlock
   encryptionSalt?: string | null;
   masterPasswordVerifier?: string | null;
+  kdfVersion?: number | null;
 }
 
 type OfflineMutation =
@@ -205,10 +206,14 @@ export async function saveOfflineCredentials(
   userId: string,
   encryptionSalt: string,
   masterPasswordVerifier: string | null,
+  kdfVersion?: number,
 ): Promise<void> {
   const snapshot = await ensureSnapshot(userId);
   snapshot.encryptionSalt = encryptionSalt;
   snapshot.masterPasswordVerifier = masterPasswordVerifier;
+  if (kdfVersion !== undefined) {
+    snapshot.kdfVersion = kdfVersion;
+  }
   snapshot.updatedAt = nowIso();
   await saveOfflineSnapshot(snapshot);
 }
@@ -218,7 +223,7 @@ export async function saveOfflineCredentials(
  */
 export async function getOfflineCredentials(
   userId: string,
-): Promise<{ salt: string; verifier: string | null } | null> {
+): Promise<{ salt: string; verifier: string | null; kdfVersion: number | null } | null> {
   const snapshot = await getOfflineSnapshot(userId);
   if (!snapshot?.encryptionSalt) {
     return null;
@@ -226,6 +231,7 @@ export async function getOfflineCredentials(
   return {
     salt: snapshot.encryptionSalt,
     verifier: snapshot.masterPasswordVerifier ?? null,
+    kdfVersion: snapshot.kdfVersion ?? null,
   };
 }
 
@@ -287,11 +293,11 @@ export async function enqueueOfflineMutation(
   mutation: Omit<OfflineMutation, 'id' | 'createdAt'>,
 ): Promise<string> {
   const id = crypto.randomUUID();
-  const fullMutation: OfflineMutation = {
+  const fullMutation = {
     ...mutation,
     id,
     createdAt: nowIso(),
-  };
+  } as OfflineMutation;
 
   await withStore<void>(MUTATIONS_STORE, 'readwrite', (store, resolve, reject) => {
     const req = store.put(fullMutation);

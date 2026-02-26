@@ -41,7 +41,7 @@ vi.mock("hash-wasm", () => ({
             ["deriveBits"],
         );
         const bits = await crypto.subtle.deriveBits(
-            { name: "PBKDF2", salt: saltBytes, iterations: 1000, hash: "SHA-256" },
+            { name: "PBKDF2", salt: saltBytes as any, iterations: 1000, hash: "SHA-256" },
             baseKey,
             hashLength * 8,
         );

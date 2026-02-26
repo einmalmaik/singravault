@@ -13,8 +13,12 @@ Singra Vault offers three subscription tiers: **FREE**, **PREMIUM**, and **FAMIL
 | Password Generator | ✅ | ✅ | ✅ |
 | Secure Notes | ✅ | ✅ | ✅ |
 | External 2FA | ✅ | ✅ | ✅ |
+| Post-Quantum Key Protection | ✅ | ✅ | ✅ |
+| Passkey Vault Unlock (PRF) | ✅ | ✅ | ✅ |
+| Vault Integrity Check | ✅ | ✅ | ✅ |
 | 1 GB File Attachments | ❌ | ✅ | ✅ |
 | Built-in Authenticator | ❌ | ✅ | ✅ |
+| Duress Password | ❌ | ✅ | ✅ |
 | Emergency Access | ❌ | ✅ | ✅ |
 | Vault Health Reports | ❌ | ✅ | ✅ |
 | Priority Support | ❌ | ✅ | ✅ |

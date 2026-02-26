@@ -986,7 +986,9 @@
     "uploadError": "Fehler beim Hochladen",
     "downloadError": "Fehler beim Herunterladen",
     "deleted": "Anhang gelöscht",
-    "deleteError": "Fehler beim Löschen"
+    "deleteError": "Fehler beim Löschen",
+    "fileTooLarge": "Datei zu groß. Maximum: {{size}}",
+    "storageLimitReached": "Speicherlimit erreicht. Belegt: {{used}} / {{limit}}"
   },
   "categories": {
     "add": "Kategorie hinzufÃ¼gen",
@@ -1293,6 +1295,17 @@
     "changeSuccess": "Panik-Passwort geändert",
     "changeSuccessDescription": "Dein Panik-Passwort wurde aktualisiert.",
     "changeFailed": "Panik-Passwort konnte nicht geändert werden"
+  },
+  "passwordStrength": {
+    "veryWeak": "Sehr schwach",
+    "weak": "Schwach",
+    "acceptable": "Akzeptabel",
+    "strong": "Stark",
+    "crackTime": "Geschätzte Knackzeit: {{time}}",
+    "pwned": "Dieses Passwort wurde in {{count}} Datenlecks gefunden!",
+    "pwnedWarning": "Wir empfehlen dringend ein anderes Passwort.",
+    "checking": "Prüfe Sicherheit...",
+    "loading": "Passwort-Prüfung wird geladen..."
   },
   "integrity": {
     "title": "Tresor-Integrität",

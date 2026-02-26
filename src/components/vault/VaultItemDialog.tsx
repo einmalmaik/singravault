@@ -71,6 +71,8 @@ import { QRScanner } from './QRScanner';
 import { FileAttachments } from './FileAttachments';
 import { cn } from '@/lib/utils';
 import { markAsDecoyItem } from '@/services/duressService';
+import { usePasswordCheck } from '@/hooks/usePasswordCheck';
+import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import {
     buildVaultItemRowFromInsert,
     enqueueOfflineMutation,
@@ -146,6 +148,8 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
     const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+
+    const vaultPasswordCheck = usePasswordCheck({ enforceStrong: false });
 
     const normalizedItemId = sanitizeOptionalUuid(itemId);
     const isEditing = !!normalizedItemId;
@@ -620,6 +624,15 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                                             type={showPassword ? 'text' : 'password'}
                                                             className="pr-10 font-mono"
                                                             {...field}
+                                                            onFocus={vaultPasswordCheck.onFieldFocus}
+                                                            onChange={(e) => {
+                                                                field.onChange(e);
+                                                                vaultPasswordCheck.onPasswordChange(e.target.value);
+                                                            }}
+                                                            onBlur={(e) => {
+                                                                field.onBlur();
+                                                                vaultPasswordCheck.onPasswordBlur(e.target.value);
+                                                            }}
                                                         />
                                                         <Button
                                                             type="button"
@@ -641,6 +654,17 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                                     </Button>
                                                 </div>
                                             </FormControl>
+                                            {field.value && vaultPasswordCheck.strengthResult && (
+                                                <PasswordStrengthMeter
+                                                    score={vaultPasswordCheck.strengthResult.score}
+                                                    feedback={vaultPasswordCheck.strengthResult.feedback}
+                                                    crackTimeDisplay={vaultPasswordCheck.strengthResult.crackTimeDisplay}
+                                                    isPwned={vaultPasswordCheck.pwnedResult?.isPwned ?? false}
+                                                    pwnedCount={vaultPasswordCheck.pwnedResult?.pwnedCount ?? 0}
+                                                    isChecking={vaultPasswordCheck.isChecking}
+                                                    compact
+                                                />
+                                            )}
                                             <FormMessage />
                                         </FormItem>
                                     )}

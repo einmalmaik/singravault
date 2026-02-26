@@ -163,12 +163,13 @@ Entschlüsselt die sensiblen Felder eines Vault-Eintrags.
 Erstellt einen Verifikations-Hash, um Unlock-Versuche zu prüfen, ohne das Passwort zu speichern.
 
 **Ablauf:**
-1. Verschlüsselt den festen String `'SINGRA_PW_VERIFICATION'` mit dem übergebenen Key
-2. Das Ergebnis wird in der `profiles`-Tabelle als `master_password_verifier` gespeichert
+1. Verschlüsselt die Konstante `'SINGRA_VAULT_VERIFY_V3'` mit dem übergebenen Key und zufälliger IV
+2. Gibt `v3:${encrypted}` zurück — kein Klartext in der DB
+3. Das Ergebnis wird in der `profiles`-Tabelle als `master_password_verifier` gespeichert
 
-**Rückgabe:** Base64-kodierter, verschlüsselter Verifikations-String
+**Rückgabe:** `v3:${encryptedConstant}`
 
-> **Hinweis:** Dies ist keine Hash-Funktion im klassischen Sinne. Es wird AES-256-GCM-Verschlüsselung eines bekannten Plaintexts verwendet. Bei korrektem Schlüssel kann der Plaintext wiederhergestellt werden.
+> **Hinweis:** Ältere Formate (`v2:challenge:encrypted` und Legacy ohne Prefix) werden beim Verify weiterhin akzeptiert.
 
 ---
 
@@ -191,9 +192,14 @@ Prüft, ob ein Schlüssel korrekt ist.
 
 ---
 
-### `secureClear(data): void`
+### `clearReferences(data): void`
 
-Überschreibt sensible Daten im Speicher.
+Entfernt Referenzen auf sensible Daten aus einem VaultItemData-Objekt.
+
+> ⚠️ **WARNING:** Diese Funktion löscht KEINEN Speicher sicher!
+> JavaScript-Strings sind immutable. Es werden nur Referenzen entfernt,
+> damit der GC die originalen Strings früher einsammeln kann.
+> Für binäres Schlüsselmaterial stattdessen `Uint8Array.fill(0)` verwenden.
 
 **Parameter:**
 | Param | Typ | Beschreibung |
@@ -208,7 +214,7 @@ Setzt alle vorhandenen Felder auf leere Strings / Standardwerte:
 - `categoryId` → `null`
 - `customFields` → alle Values auf `''`
 
-> **Hinweis:** JavaScript kann Speicher nicht garantiert löschen (GC-abhängig). Diese Funktion ist eine Best-Effort-Maßnahme.
+> **Hinweis:** Der alte Name `secureClear` ist als deprecated Alias weiterhin verfügbar.
 
 ---
 

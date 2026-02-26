@@ -963,7 +963,9 @@
     "uploadError": "Upload failed",
     "downloadError": "Download failed",
     "deleted": "Attachment deleted",
-    "deleteError": "Failed to delete attachment"
+    "deleteError": "Failed to delete attachment",
+    "fileTooLarge": "File too large. Maximum: {{size}}",
+    "storageLimitReached": "Storage limit reached. Used: {{used}} / {{limit}}"
   },
   "categories": {
     "add": "Add Category",
@@ -1272,6 +1274,17 @@
     "changeSuccess": "Panic password changed",
     "changeSuccessDescription": "Your panic password has been updated.",
     "changeFailed": "Failed to change panic password"
+  },
+  "passwordStrength": {
+    "veryWeak": "Very weak",
+    "weak": "Weak",
+    "acceptable": "Acceptable",
+    "strong": "Strong",
+    "crackTime": "Estimated crack time: {{time}}",
+    "pwned": "This password was found in {{count}} data breaches!",
+    "pwnedWarning": "We strongly recommend using a different password.",
+    "checking": "Checking security...",
+    "loading": "Loading password check..."
   },
   "integrity": {
     "title": "Vault Integrity",

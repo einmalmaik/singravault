@@ -1,17 +1,19 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import Stripe from "https://esm.sh/stripe@17.7.0?target=deno";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { corsHeaders } from "../_shared/cors.ts";
+import Stripe from "npm:stripe@17.7.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
 Deno.serve(async (req: Request) => {
+    const cors = getCorsHeaders(req);
+
     if (req.method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: corsHeaders });
+        return new Response(null, { status: 204, headers: cors });
     }
 
     if (req.method !== "POST") {
         return new Response(JSON.stringify({ error: "Method not allowed" }), {
             status: 405,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            headers: { ...cors, "Content-Type": "application/json" },
         });
     }
 
@@ -21,13 +23,13 @@ Deno.serve(async (req: Request) => {
         if (!authHeader) {
             return new Response(JSON.stringify({ error: "Missing authorization" }), {
                 status: 401,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             });
         }
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        const stripeApiKey = Deno.env.get("STRIPE_API_KEY")!;
+        const stripeApiKey = Deno.env.get("STRIPE_SECRET_KEY")!;
 
         const supabaseClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
             global: { headers: { Authorization: authHeader } },
@@ -37,7 +39,7 @@ Deno.serve(async (req: Request) => {
         if (authError || !user) {
             return new Response(JSON.stringify({ error: "Unauthorized" }), {
                 status: 401,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             });
         }
 
@@ -52,14 +54,14 @@ Deno.serve(async (req: Request) => {
         if (!subscription?.stripe_subscription_id) {
             return new Response(JSON.stringify({ error: "No active subscription found" }), {
                 status: 404,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             });
         }
 
         if (subscription.status === "canceled") {
             return new Response(JSON.stringify({ error: "Subscription already canceled" }), {
                 status: 400,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             });
         }
 
@@ -87,14 +89,14 @@ Deno.serve(async (req: Request) => {
             }),
             {
                 status: 200,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                headers: { ...cors, "Content-Type": "application/json" },
             }
         );
     } catch (err) {
         console.error("Error canceling subscription:", err);
         return new Response(JSON.stringify({ error: "Internal server error" }), {
             status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
         });
     }
 });

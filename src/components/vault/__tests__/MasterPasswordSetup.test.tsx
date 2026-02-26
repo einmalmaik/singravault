@@ -29,12 +29,34 @@ vi.mock("@/contexts/VaultContext", () => ({
 }));
 
 vi.mock("@/services/passwordGenerator", () => ({
-  calculateStrength: (password: string) => {
-    if (password.length < 12) return { score: 1, entropy: 30, label: "weak", color: "bg-red-500" };
-    if (password.length < 16) return { score: 2, entropy: 50, label: "fair", color: "bg-yellow-500" };
-    return { score: 4, entropy: 80, label: "strong", color: "bg-green-500" };
-  },
   generatePassword: () => "Xy9!kL#mP2qR@wZv8nBj",
+}));
+
+// Mock usePasswordCheck hook
+const mockOnPasswordChange = vi.fn();
+const mockOnFieldFocus = vi.fn();
+const mockOnPasswordBlur = vi.fn();
+const mockOnPasswordSubmit = vi.fn().mockResolvedValue({
+  score: 4,
+  isStrong: true,
+  isPwned: false,
+  pwnedCount: 0,
+  feedback: [],
+  crackTimeDisplay: "centuries",
+  isAcceptable: true,
+});
+
+vi.mock("@/hooks/usePasswordCheck", () => ({
+  usePasswordCheck: () => ({
+    strengthResult: { score: 4, isStrong: true, feedback: [], crackTimeDisplay: "centuries" },
+    pwnedResult: { isPwned: false, pwnedCount: 0 },
+    isChecking: false,
+    isZxcvbnReady: true,
+    onFieldFocus: mockOnFieldFocus,
+    onPasswordChange: mockOnPasswordChange,
+    onPasswordBlur: mockOnPasswordBlur,
+    onPasswordSubmit: mockOnPasswordSubmit,
+  }),
 }));
 
 // ============ Tests ============
@@ -43,6 +65,10 @@ describe("MasterPasswordSetup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSetupMasterPassword.mockResolvedValue({ error: null });
+    mockOnPasswordSubmit.mockResolvedValue({
+      score: 4, isStrong: true, isPwned: false, pwnedCount: 0,
+      feedback: [], crackTimeDisplay: "centuries", isAcceptable: true,
+    });
   });
 
   it("should render password input, confirm input, and submit button", () => {
@@ -136,14 +162,30 @@ describe("MasterPasswordSetup", () => {
     });
   });
 
-  it("should display strength meter when password is entered", () => {
-    render(<MasterPasswordSetup />);
-
-    fireEvent.change(screen.getByLabelText("auth.masterPassword.password"), {
-      target: { value: "Xy9!kL#mP2qR@wZv8nBj" },
+  it("should block submit when password check returns not acceptable", async () => {
+    mockOnPasswordSubmit.mockResolvedValue({
+      score: 1, isStrong: false, isPwned: true, pwnedCount: 500,
+      feedback: ["Too common"], crackTimeDisplay: "3 hours", isAcceptable: false,
     });
 
-    // Strength label shows with bits
-    expect(screen.getByText(/80 bits/)).toBeInTheDocument();
+    render(<MasterPasswordSetup />);
+
+    // A password that passes regex checks but fails zxcvbn/HIBP
+    fireEvent.change(screen.getByLabelText("auth.masterPassword.password"), {
+      target: { value: "ValidFormat1!Aa" },
+    });
+    fireEvent.change(screen.getByLabelText("auth.masterPassword.confirmPassword"), {
+      target: { value: "ValidFormat1!Aa" },
+    });
+
+    const form = screen.getByLabelText("auth.masterPassword.password").closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({ variant: "destructive" })
+      );
+    });
+    expect(mockSetupMasterPassword).not.toHaveBeenCalled();
   });
 });

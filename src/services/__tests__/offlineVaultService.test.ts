@@ -364,10 +364,17 @@ describe("Snapshot round-trip", () => {
 
 describe("Offline credentials", () => {
   it("saveOfflineCredentials → getOfflineCredentials round-trips", async () => {
+    await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz", 2);
+
+    const creds = await svc.getOfflineCredentials(USER_ID);
+    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: 2 });
+  });
+
+  it("saveOfflineCredentials without kdfVersion returns null kdfVersion", async () => {
     await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz");
 
     const creds = await svc.getOfflineCredentials(USER_ID);
-    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz" });
+    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: null });
   });
 
   it("getOfflineCredentials returns null when not saved", async () => {

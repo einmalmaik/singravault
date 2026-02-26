@@ -196,13 +196,13 @@ export async function uploadAttachment(
 ): Promise<FileAttachment> {
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
-        throw new Error(`File too large. Maximum: ${formatFileSize(MAX_FILE_SIZE)}`);
+        throw new Error(`FILE_TOO_LARGE:${formatFileSize(MAX_FILE_SIZE)}`);
     }
 
     // Check total usage
     const { used } = await getStorageUsage(userId);
     if (used + file.size > MAX_TOTAL_SIZE) {
-        throw new Error(`Storage limit reached. Used: ${formatFileSize(used)} / ${formatFileSize(MAX_TOTAL_SIZE)}`);
+        throw new Error(`STORAGE_LIMIT_REACHED:${formatFileSize(used)}:${formatFileSize(MAX_TOTAL_SIZE)}`);
     }
 
     // Read file as base64
