@@ -382,7 +382,7 @@ describe("VaultContext", () => {
       });
 
       expect(unlockResult?.error).toBeNull();
-      expect(mockDeriveKey).toHaveBeenCalledWith("CorrectPassword!", "existing-salt", 2);
+      expect(mockDeriveKey).toHaveBeenCalledWith("CorrectPassword!", "existing-salt", 2, undefined);
       expect(mockVerifyKey).toHaveBeenCalled();
       expect(result.current.isLocked).toBe(false);
     });

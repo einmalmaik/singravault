@@ -142,7 +142,9 @@
         "vaultIntegrity": "Vault Integrity Check",
         "clipboardClear": "Clipboard Auto-Clear",
         "totp": "TOTP/2FA Authenticator",
-        "pricing": "Starting Price"
+        "pricing": "Starting Price",
+        "loginProtocol": "Login Protocol (PW leaves client?)",
+        "deviceKey": "Device Key / Secret Key"
       },
       "legend": {
         "full": "Full support",
@@ -1285,6 +1287,33 @@
     "pwnedWarning": "We strongly recommend using a different password.",
     "checking": "Checking security...",
     "loading": "Loading password check..."
+  },
+  "deviceKey": {
+    "title": "Device Key",
+    "description": "An additional 256-bit key stored on your device that protects your vault even if the server is compromised.",
+    "active": "Device Key is active on this device. Your vault has additional protection.",
+    "inactive": "No Device Key on this device. Enable protection to secure your vault against server compromise.",
+    "enable": "Enable protection",
+    "enableTitle": "Enable Device Key",
+    "enableDesc": "A 256-bit random key will be generated and stored locally. Your vault will be re-encrypted with the combined key.",
+    "enableWarning": "IMPORTANT: If you lose the Device Key and have no export, your vault becomes permanently unrecoverable. Create an export IMMEDIATELY after enabling!",
+    "enableFailed": "Failed to enable Device Key.",
+    "enableSuccess": "Device Key enabled. Create an export now for other devices!",
+    "export": "Export",
+    "exportTitle": "Export Device Key",
+    "exportDesc": "The Device Key will be encrypted with a PIN. Enter this code on the new device.",
+    "exportFailed": "Export failed.",
+    "exportInstructions": "Copy this code and enter it along with your PIN on the new device. The code contains your encrypted Device Key.",
+    "import": "Import",
+    "importTitle": "Import Device Key",
+    "importDesc": "Enter the export code and PIN from the other device.",
+    "importSuccess": "Device Key imported successfully.",
+    "importFailed": "Import failed. Check the code and PIN.",
+    "transferPin": "Transfer PIN",
+    "pinPlaceholder": "At least 4 characters",
+    "transferCode": "Transfer code",
+    "codePlaceholder": "Base64 code from other device",
+    "generateCode": "Generate code"
   },
   "integrity": {
     "title": "Vault Integrity",

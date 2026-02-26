@@ -16,6 +16,7 @@
 
 import { argon2id } from 'hash-wasm';
 import { SecureBuffer } from './secureBuffer';
+import { deriveWithDeviceKey } from './deviceKeyService';
 
 // ============ KDF Parameter Definitions ============
 
@@ -60,16 +61,20 @@ export function generateSalt(): string {
 
 /**
  * Derives raw AES-256 key bytes from master password using Argon2id.
+ * When a deviceKey is provided, the result is additionally strengthened
+ * via HKDF-Expand with the Device Key as salt.
  * 
  * @param masterPassword - The user's master password
  * @param saltBase64 - Base64-encoded salt from profiles table
  * @param kdfVersion - KDF parameter version (defaults to current version)
+ * @param deviceKey - Optional 256-bit device key for additional strengthening
  * @returns Raw key bytes (caller is responsible for wiping with .fill(0))
  */
 export async function deriveRawKey(
     masterPassword: string,
     saltBase64: string,
-    kdfVersion: number = CURRENT_KDF_VERSION
+    kdfVersion: number = CURRENT_KDF_VERSION,
+    deviceKey?: Uint8Array,
 ): Promise<Uint8Array> {
     const params = KDF_PARAMS[kdfVersion];
     if (!params) {
@@ -93,21 +98,20 @@ export async function deriveRawKey(
     // - Uint8Array (preferred for outputType 'binary')
     // - ArrayBuffer (convert to Uint8Array)
     // - string (hex) from older mocks - convert to bytes with secure cleanup
+    let argon2Bytes: Uint8Array;
     if (result instanceof Uint8Array) {
-        return result;
-    }
-    if (result instanceof ArrayBuffer) {
-        return new Uint8Array(result);
-    }
-    if (typeof result === 'string') {
+        argon2Bytes = result;
+    } else if (result instanceof ArrayBuffer) {
+        argon2Bytes = new Uint8Array(result);
+    } else if (typeof result === 'string') {
         // SECURITY: Hex string conversion with immediate cleanup
         // Use SecureBuffer to minimize heap exposure
         const hex = result;
-        const keyBytes = new Uint8Array(hex.length / 2);
+        argon2Bytes = new Uint8Array(hex.length / 2);
 
         // Convert hex to bytes
-        for (let i = 0; i < keyBytes.length; i++) {
-            keyBytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        for (let i = 0; i < argon2Bytes.length; i++) {
+            argon2Bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
         }
 
         // Attempt to clear the hex string from memory
@@ -120,17 +124,26 @@ export async function deriveRawKey(
         } catch {
             // Best effort - strings are immutable in JS
         }
-
-        return keyBytes;
+    } else {
+        // Fallback: try to construct Uint8Array
+        try {
+            // @ts-ignore
+            argon2Bytes = new Uint8Array(result);
+        } catch {
+            throw new Error('argon2id returned unsupported type');
+        }
     }
 
-    // Fallback: try to construct Uint8Array
-    try {
-        // @ts-ignore
-        return new Uint8Array(result);
-    } catch {
-        throw new Error('argon2id returned unsupported type');
+    // If a Device Key is provided, strengthen via HKDF-Expand.
+    // This produces a key that requires BOTH the master password AND the device key.
+    if (deviceKey) {
+        const combined = await deriveWithDeviceKey(argon2Bytes, deviceKey);
+        // Wipe the intermediate Argon2id output
+        argon2Bytes.fill(0);
+        return combined;
     }
+
+    return argon2Bytes;
 }
 
 /**
@@ -140,14 +153,16 @@ export async function deriveRawKey(
  * @param masterPassword - The user's master password
  * @param saltBase64 - Base64-encoded salt from profiles table
  * @param kdfVersion - KDF parameter version (defaults to current version)
+ * @param deviceKey - Optional 256-bit device key for additional strengthening
  * @returns SecureBuffer containing raw key bytes (caller MUST call .destroy())
  */
 export async function deriveRawKeySecure(
     masterPassword: string,
     saltBase64: string,
-    kdfVersion: number = CURRENT_KDF_VERSION
+    kdfVersion: number = CURRENT_KDF_VERSION,
+    deviceKey?: Uint8Array,
 ): Promise<SecureBuffer> {
-    const rawBytes = await deriveRawKey(masterPassword, saltBase64, kdfVersion);
+    const rawBytes = await deriveRawKey(masterPassword, saltBase64, kdfVersion, deviceKey);
     const secure = SecureBuffer.fromBytes(rawBytes);
     // Zero the temporary copy immediately
     rawBytes.fill(0);
@@ -155,19 +170,23 @@ export async function deriveRawKeySecure(
 }
 
 /**
- * Derives an AES-256 encryption key from master password using Argon2id
+ * Derives an AES-256 encryption key from master password using Argon2id.
+ * When a deviceKey is provided, the result is additionally strengthened
+ * via HKDF-Expand with the Device Key as salt.
  * 
  * @param masterPassword - The user's master password
  * @param saltBase64 - Base64-encoded salt from profiles table
  * @param kdfVersion - KDF parameter version (defaults to current version)
+ * @param deviceKey - Optional 256-bit device key for additional strengthening
  * @returns CryptoKey suitable for AES-GCM operations
  */
 export async function deriveKey(
     masterPassword: string,
     saltBase64: string,
-    kdfVersion: number = CURRENT_KDF_VERSION
+    kdfVersion: number = CURRENT_KDF_VERSION,
+    deviceKey?: Uint8Array,
 ): Promise<CryptoKey> {
-    const keyBytes = await deriveRawKey(masterPassword, saltBase64, kdfVersion);
+    const keyBytes = await deriveRawKey(masterPassword, saltBase64, kdfVersion, deviceKey);
     try {
         return await importMasterKey(keyBytes);
     } finally {
@@ -431,12 +450,14 @@ export interface KdfUpgradeResult {
  * @param masterPassword - The user's master password (still in memory from unlock)
  * @param saltBase64 - The user's encryption salt
  * @param currentVersion - The user's current KDF version from profiles
+ * @param deviceKey - Optional 256-bit device key for additional strengthening
  * @returns Upgrade result
  */
 export async function attemptKdfUpgrade(
     masterPassword: string,
     saltBase64: string,
     currentVersion: number,
+    deviceKey?: Uint8Array,
 ): Promise<KdfUpgradeResult> {
     if (currentVersion >= CURRENT_KDF_VERSION) {
         return { upgraded: false, activeVersion: currentVersion };
@@ -444,10 +465,10 @@ export async function attemptKdfUpgrade(
 
     try {
         // Derive key with the new, stronger parameters
-        const newKey = await deriveKey(masterPassword, saltBase64, CURRENT_KDF_VERSION);
+        const newKey = await deriveKey(masterPassword, saltBase64, CURRENT_KDF_VERSION, deviceKey);
 
         // Also derive the old key so the caller can re-encrypt data
-        const oldKey = await deriveKey(masterPassword, saltBase64, currentVersion);
+        const oldKey = await deriveKey(masterPassword, saltBase64, currentVersion, deviceKey);
 
         // Create a new verification hash so future unlocks use the new key
         const newVerifier = await createVerificationHash(newKey);

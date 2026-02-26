@@ -1,15 +1,19 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 /**
- * @fileoverview Tests for AuthContext
+ * @fileoverview Tests for AuthContext (BFF Pattern)
  * 
  * Phase 6: Context Provider and Hook Tests
  * Tests authentication context, state management, and auth methods.
+ * 
+ * The AuthContext now uses a BFF (Backend-for-Frontend) pattern:
+ * - Session hydration via fetch() to auth-session edge function
+ * - State changes via supabase.auth.onAuthStateChange
+ * - No direct supabase.auth.getSession() calls
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { renderHook, act } from "@testing-library/react";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { AuthProvider, useAuth } from "./AuthContext";
 import { ReactNode } from "react";
 
@@ -17,18 +21,19 @@ import { ReactNode } from "react";
 
 const mockSupabase = vi.hoisted(() => ({
     auth: {
-        getSession: vi.fn(),
         onAuthStateChange: vi.fn(),
-        signUp: vi.fn(),
-        signInWithPassword: vi.fn(),
-        signInWithOAuth: vi.fn(),
         signOut: vi.fn(),
+        setSession: vi.fn(),
     },
 }));
 
 vi.mock("@/integrations/supabase/client", () => ({
     supabase: mockSupabase,
 }));
+
+// Mock fetch for BFF calls
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 // ============ Test Setup ============
 
@@ -49,22 +54,39 @@ const mockSession = {
     user: mockUser,
 };
 
+let authCallback: (event: string, session: unknown) => void;
+
 beforeEach(() => {
     vi.clearAllMocks();
 
-    // Default: no session, auth state listener returns unsubscribe fn
-    mockSupabase.auth.getSession.mockResolvedValue({
+    // Default: auth state listener returns unsubscribe fn and captures callback
+    mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
+        authCallback = callback;
+        return {
+            data: {
+                subscription: {
+                    unsubscribe: vi.fn(),
+                },
+            },
+        };
+    });
+
+    // Default: BFF fetch returns no session (iframe environment in jsdom)
+    // In jsdom, window.self === window.top, so isInIframe() returns false
+    // and it tries to fetch from BFF.
+    mockFetch.mockResolvedValue({
+        ok: false,
+        status: 401,
+    });
+
+    mockSupabase.auth.setSession.mockResolvedValue({
         data: { session: null },
         error: null,
     });
+});
 
-    mockSupabase.auth.onAuthStateChange.mockReturnValue({
-        data: {
-            subscription: {
-                unsubscribe: vi.fn(),
-            },
-        },
-    });
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 // ============ Helper: Wrapper Component ============
@@ -98,20 +120,21 @@ describe("AuthContext", () => {
             expect(result.current.user).toBeNull();
             expect(result.current.session).toBeNull();
 
-            // Wait for getSession to resolve
+            // Wait for BFF hydration to complete
             await waitFor(() => {
                 expect(result.current.loading).toBe(false);
             });
         });
 
-        it("sets loading=false after getSession resolves", async () => {
+        it("sets loading=false after BFF hydration completes", async () => {
             const { result } = renderHook(() => useAuth(), { wrapper });
 
             await waitFor(() => {
                 expect(result.current.loading).toBe(false);
             });
 
-            expect(mockSupabase.auth.getSession).toHaveBeenCalled();
+            // BFF fetch was attempted (not iframe in jsdom)
+            expect(result.current.authReady).toBe(true);
         });
     });
 
@@ -154,7 +177,7 @@ describe("AuthContext", () => {
 
             expect(errorThrown).toBe(mockError);
             expect(consoleError).toHaveBeenCalledWith(
-                expect.stringContaining("[AuthContext] signOut failed"),
+                expect.stringContaining("[AuthContext] Failed to terminate GoTrue session"),
                 mockError,
             );
 
@@ -164,19 +187,6 @@ describe("AuthContext", () => {
 
     describe("Auth state changes", () => {
         it("updates user and session on SIGNED_IN event", async () => {
-            let authCallback: (event: string, session: unknown) => void;
-
-            mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
-                authCallback = callback;
-                return {
-                    data: {
-                        subscription: {
-                            unsubscribe: vi.fn(),
-                        },
-                    },
-                };
-            });
-
             const { result } = renderHook(() => useAuth(), { wrapper });
 
             await waitFor(() => expect(result.current.loading).toBe(false));
@@ -193,26 +203,14 @@ describe("AuthContext", () => {
         });
 
         it("clears user and session on SIGNED_OUT event", async () => {
-            let authCallback: (event: string, session: unknown) => void;
-
-            mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
-                authCallback = callback;
-                return {
-                    data: {
-                        subscription: {
-                            unsubscribe: vi.fn(),
-                        },
-                    },
-                };
-            });
-
-            // Start with a session
-            mockSupabase.auth.getSession.mockResolvedValue({
-                data: { session: mockSession },
-                error: null,
-            });
-
             const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            // First set a session via SIGNED_IN
+            act(() => {
+                authCallback("SIGNED_IN", mockSession);
+            });
 
             await waitFor(() => {
                 expect(result.current.user).toEqual(mockUser);
@@ -230,19 +228,6 @@ describe("AuthContext", () => {
         });
 
         it("updates session on TOKEN_REFRESHED event", async () => {
-            let authCallback: (event: string, session: unknown) => void;
-
-            mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
-                authCallback = callback;
-                return {
-                    data: {
-                        subscription: {
-                            unsubscribe: vi.fn(),
-                        },
-                    },
-                };
-            });
-
             const { result } = renderHook(() => useAuth(), { wrapper });
 
             await waitFor(() => expect(result.current.loading).toBe(false));
@@ -264,8 +249,14 @@ describe("AuthContext", () => {
     });
 
     describe("Session restoration", () => {
-        it("restores existing session on mount", async () => {
-            mockSupabase.auth.getSession.mockResolvedValue({
+        it("restores session via BFF cookie hydration", async () => {
+            // BFF returns a valid session
+            mockFetch.mockResolvedValue({
+                ok: true,
+                json: async () => ({ session: mockSession }),
+            });
+
+            mockSupabase.auth.setSession.mockResolvedValue({
                 data: { session: mockSession },
                 error: null,
             });
@@ -273,17 +264,24 @@ describe("AuthContext", () => {
             const { result } = renderHook(() => useAuth(), { wrapper });
 
             await waitFor(() => {
-                expect(result.current.user).toEqual(mockUser);
-                expect(result.current.session).toEqual(mockSession);
                 expect(result.current.loading).toBe(false);
+                expect(result.current.authReady).toBe(true);
+            });
+
+            // setSession should have been called with the BFF session tokens
+            expect(mockSupabase.auth.setSession).toHaveBeenCalledWith({
+                access_token: "test-token",
+                refresh_token: "test-refresh",
             });
         });
 
-        it("sets authReady=true and loading=false after getSession resolves (success path)", async () => {
-            // Regression test for Bug 5:
-            // authReady and loading must be resolved via the finally block,
-            // ensuring they are set even if only the success path runs.
-            mockSupabase.auth.getSession.mockResolvedValue({
+        it("sets authReady=true and loading=false after BFF hydration succeeds", async () => {
+            mockFetch.mockResolvedValue({
+                ok: true,
+                json: async () => ({ session: mockSession }),
+            });
+
+            mockSupabase.auth.setSession.mockResolvedValue({
                 data: { session: mockSession },
                 error: null,
             });
@@ -293,19 +291,13 @@ describe("AuthContext", () => {
             await waitFor(() => {
                 expect(result.current.authReady).toBe(true);
                 expect(result.current.loading).toBe(false);
-                expect(result.current.user).toEqual(mockUser);
             });
         });
 
-        it("sets authReady=true and loading=false even when getSession rejects (no permanent spinner)", async () => {
-            // Regression test for Bug 5 (P1): without .catch().finally(), a
-            // getSession() rejection (storage corruption, IndexedDB lock,
-            // network timeout) left loading=true and authReady=false forever.
-            // The app showed a permanent spinner with no recovery path.
-            const storageError = new Error("QuotaExceededError: localStorage is full");
-            mockSupabase.auth.getSession.mockRejectedValue(storageError);
+        it("sets authReady=true and loading=false even when BFF fetch fails (no permanent spinner)", async () => {
+            mockFetch.mockRejectedValue(new Error("Network error"));
 
-            const consoleError = vi.spyOn(console, "error").mockImplementation(() => { });
+            const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => { });
 
             const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -319,34 +311,42 @@ describe("AuthContext", () => {
             expect(result.current.user).toBeNull();
             expect(result.current.session).toBeNull();
 
-            // Error must be logged (not silently swallowed)
-            expect(consoleError).toHaveBeenCalledWith(
-                expect.stringContaining("[AuthContext] getSession() failed"),
-                storageError,
-            );
-
-            consoleError.mockRestore();
+            consoleWarn.mockRestore();
         });
 
-        it("preserves valid session when getSession resolves with soft-error", async () => {
-            let authCallback: (event: string, session: unknown) => void = () => { };
-            mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
-                authCallback = callback;
-                return {
-                    data: { subscription: { unsubscribe: vi.fn() } },
-                };
+        it("preserves valid session from onAuthStateChange when BFF returns no session", async () => {
+            // BFF returns 401 (no cookie)
+            mockFetch.mockResolvedValue({
+                ok: false,
+                status: 401,
             });
 
-            const softError = new Error("Auth session missing");
-            mockSupabase.auth.getSession.mockResolvedValue({
-                data: { session: null },
-                error: softError,
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            // INITIAL_SESSION fires with a valid session (e.g. from OAuth redirect)
+            act(() => {
+                authCallback("INITIAL_SESSION", mockSession);
             });
+
+            await waitFor(() => {
+                expect(result.current.authReady).toBe(true);
+                expect(result.current.loading).toBe(false);
+            });
+
+            // Session from onAuthStateChange should be preserved
+            expect(result.current.user).toEqual(mockUser);
+            expect(result.current.session).toEqual(mockSession);
+        });
+
+        it("preserves valid session when BFF fetch rejects after INITIAL_SESSION (no false-positive logout)", async () => {
+            // BFF fetch will reject (transient error)
+            mockFetch.mockRejectedValue(new Error("Network timeout"));
 
             const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => { });
 
             const { result } = renderHook(() => useAuth(), { wrapper });
 
+            // INITIAL_SESSION fires with a valid session before BFF settles
             act(() => {
                 authCallback("INITIAL_SESSION", mockSession);
             });
@@ -356,65 +356,12 @@ describe("AuthContext", () => {
                 expect(result.current.loading).toBe(false);
             });
 
+            // CRITICAL: user must NOT be null — BFF failure must not have
+            // overwritten the valid session from INITIAL_SESSION
             expect(result.current.user).toEqual(mockUser);
             expect(result.current.session).toEqual(mockSession);
-
-            expect(consoleWarn).toHaveBeenCalledWith(
-                expect.stringContaining("[AuthContext] getSession() resolved with error"),
-                softError,
-            );
 
             consoleWarn.mockRestore();
-        });
-
-        it("preserves valid session when getSession rejects after INITIAL_SESSION (no false-positive logout)", async () => {
-            // Regression test for Bug 6 (P1): the catch block from Bug 5 fix
-            // unconditionally called setUser(null)/setSession(null), logging out
-            // an already-authenticated user when getSession() had a transient
-            // rejection AFTER onAuthStateChange had already delivered INITIAL_SESSION.
-
-            // Step 1: Set up onAuthStateChange to fire INITIAL_SESSION with a valid session.
-            let authCallback: (event: string, session: unknown) => void = () => { };
-            mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
-                authCallback = callback;
-                return {
-                    data: { subscription: { unsubscribe: vi.fn() } },
-                };
-            });
-
-            // Step 2: getSession() will reject (transient storage error).
-            const transientError = new Error("IndexedDB: lock timeout");
-            mockSupabase.auth.getSession.mockRejectedValue(transientError);
-
-            const consoleError = vi.spyOn(console, "error").mockImplementation(() => { });
-
-            const { result } = renderHook(() => useAuth(), { wrapper });
-
-            // Step 3: Simulate INITIAL_SESSION firing BEFORE getSession() settles.
-            // In the real browser, this happens synchronously during the listener
-            // setup — here we fire it immediately after mount.
-            act(() => {
-                authCallback("INITIAL_SESSION", mockSession);
-            });
-
-            // Step 4: Wait for finally to flip authReady + loading.
-            await waitFor(() => {
-                expect(result.current.authReady).toBe(true);
-                expect(result.current.loading).toBe(false);
-            });
-
-            // CRITICAL: user must NOT be null — catch must not have overwritten
-            // the valid session that INITIAL_SESSION delivered.
-            expect(result.current.user).toEqual(mockUser);
-            expect(result.current.session).toEqual(mockSession);
-
-            // Error must still be logged (catch still runs, just no state change)
-            expect(consoleError).toHaveBeenCalledWith(
-                expect.stringContaining("[AuthContext] getSession() failed"),
-                transientError,
-            );
-
-            consoleError.mockRestore();
         });
     });
 });

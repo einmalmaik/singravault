@@ -26,6 +26,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { SEO } from '@/components/SEO';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
+import * as opaqueClient from '@/services/opaqueService';
 
 const loginSchema = z.object({
   email: z.string().email('auth.errors.invalidEmail'),
@@ -143,54 +144,27 @@ export default function Auth() {
   const handleLogin = async (data: LoginFormData, totpCode?: string, isBackupCode?: boolean) => {
     setLoading(true);
     try {
-      // BFF: Login an Edge Function
-      // Im Iframe: skipCookie=true, damit das Backend kein Cookie setzt
-      // und die Session nur als JSON zurückgibt.
-      const bodyPayload: Record<string, unknown> = {
-        email: data.email,
-        password: data.password,
-        totpCode,
-        isBackupCode,
-      };
-      if (inIframe) {
-        bodyPayload.skipCookie = true;
+      // Try OPAQUE first (password never leaves client)
+      const opaqueSession = await tryOpaqueLogin(data, totpCode, isBackupCode);
+      if (opaqueSession === 'legacy') {
+        // Fallback to legacy auth-session (Argon2id over TLS)
+        return await legacyLogin(data, totpCode, isBackupCode);
       }
-
-      const res = await fetch(`${API_URL}/auth-session`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
-        },
-        credentials: inIframe ? 'omit' : 'include',
-        body: JSON.stringify(bodyPayload)
-      });
-
-      if (!res.ok) {
-        throw new Error('Invalid credentials');
+      if (opaqueSession === '2fa') {
+        return; // 2FA modal shown
       }
-
-      const { session, requires2FA } = await res.json();
-
-      if (requires2FA) {
-        setPendingLoginData(data);
-        setShow2FAModal(true);
-        return;
-      }
-
-      if (session) {
+      if (opaqueSession) {
         await supabase.auth.setSession({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token || '',
+          access_token: opaqueSession.access_token,
+          refresh_token: opaqueSession.refresh_token || '',
         });
+        setShow2FAModal(false);
+        setPendingLoginData(null);
+        toast({ title: t('common.success'), description: t('auth.success') });
+        navigate('/vault');
+        return true;
       }
-
-      setShow2FAModal(false);
-      setPendingLoginData(null);
-      toast({ title: t('common.success'), description: t('auth.success') });
-      navigate('/vault');
-      return true;
-
+      throw new Error('Login failed');
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -200,6 +174,194 @@ export default function Auth() {
       return false;
     } finally {
       if (!show2FAModal) setLoading(false);
+    }
+  };
+
+  /**
+   * Attempts OPAQUE login. Returns session object, 'legacy' if user needs legacy auth,
+   * '2fa' if 2FA is required, or null on failure.
+   */
+  const tryOpaqueLogin = async (
+    data: LoginFormData,
+    totpCode?: string,
+    isBackupCode?: boolean,
+  ): Promise<any | 'legacy' | '2fa' | null> => {
+    try {
+      // Step 1: Client starts login (password is blinded, never sent)
+      const { clientLoginState, startLoginRequest } = await opaqueClient.startLogin(data.password);
+
+      // Step 2: Send blinded request to server
+      const startRes = await fetch(`${API_URL}/auth-opaque`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        credentials: inIframe ? 'omit' : 'include',
+        body: JSON.stringify({
+          action: 'login-start',
+          userIdentifier: data.email,
+          startLoginRequest,
+        }),
+      });
+
+      if (!startRes.ok) {
+        const errData = await startRes.json().catch(() => ({}));
+        if (errData.useLegacy) return 'legacy';
+        throw new Error('OPAQUE login-start failed');
+      }
+
+      const { loginResponse, loginId } = await startRes.json();
+
+      // Step 3: Client finishes login (derives session key locally)
+      const { finishLoginRequest } = await opaqueClient.finishLogin(
+        clientLoginState,
+        loginResponse,
+        data.password,
+      );
+
+      // Step 4: Send proof to server (password was NEVER sent)
+      // loginId is an opaque reference — serverLoginState stays server-side
+      const finishRes = await fetch(`${API_URL}/auth-opaque`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        credentials: inIframe ? 'omit' : 'include',
+        body: JSON.stringify({
+          action: 'login-finish',
+          userIdentifier: data.email,
+          finishLoginRequest,
+          loginId,
+          skipCookie: inIframe,
+        }),
+      });
+
+      if (!finishRes.ok) throw new Error('OPAQUE login-finish failed');
+
+      const result = await finishRes.json();
+
+      if (result.requires2FA) {
+        setPendingLoginData(data);
+        setShow2FAModal(true);
+        return '2fa';
+      }
+
+      return result.session;
+    } catch {
+      // OPAQUE failed — fall back to legacy
+      return 'legacy';
+    }
+  };
+
+  /**
+   * Legacy login path: sends password over TLS to auth-session (Argon2id verification).
+   * Used for users who haven't migrated to OPAQUE yet.
+   */
+  const legacyLogin = async (
+    data: LoginFormData,
+    totpCode?: string,
+    isBackupCode?: boolean,
+  ): Promise<boolean> => {
+    const bodyPayload: Record<string, unknown> = {
+      email: data.email,
+      password: data.password,
+      totpCode,
+      isBackupCode,
+    };
+    if (inIframe) {
+      bodyPayload.skipCookie = true;
+    }
+
+    const res = await fetch(`${API_URL}/auth-session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+      },
+      credentials: inIframe ? 'omit' : 'include',
+      body: JSON.stringify(bodyPayload),
+    });
+
+    if (!res.ok) throw new Error('Invalid credentials');
+
+    const { session, requires2FA } = await res.json();
+
+    if (requires2FA) {
+      setPendingLoginData(data);
+      setShow2FAModal(true);
+      return true;
+    }
+
+    if (session) {
+      await supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token || '',
+      });
+
+      // Auto-migrate to OPAQUE after successful legacy login
+      migrateToOpaque(data.email, data.password).catch(() => {
+        // Silent failure — migration will retry on next login
+      });
+    }
+
+    setShow2FAModal(false);
+    setPendingLoginData(null);
+    toast({ title: t('common.success'), description: t('auth.success') });
+    navigate('/vault');
+    return true;
+  };
+
+  /**
+   * Automatically migrates a legacy user to OPAQUE after successful Argon2id login.
+   * Runs in background — failure is non-critical.
+   */
+  const migrateToOpaque = async (email: string, password: string): Promise<void> => {
+    try {
+      // Migration requires an active Supabase session (just established by legacyLogin)
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) return; // No session, skip migration
+
+      const { clientRegistrationState, registrationRequest } = await opaqueClient.startRegistration(password);
+
+      const startRes = await fetch(`${API_URL}/auth-opaque`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          action: 'register-start',
+          userIdentifier: email,
+          registrationRequest,
+        }),
+      });
+
+      if (!startRes.ok) return;
+      const { registrationResponse } = await startRes.json();
+
+      const { registrationRecord } = await opaqueClient.finishRegistration(
+        clientRegistrationState,
+        registrationResponse,
+        password,
+      );
+
+      await fetch(`${API_URL}/auth-opaque`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          action: 'register-finish',
+          userIdentifier: email,
+          registrationRecord,
+        }),
+      });
+    } catch {
+      // Non-critical — will retry on next login
     }
   };
 

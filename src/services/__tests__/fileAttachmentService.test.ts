@@ -153,7 +153,7 @@ describe("uploadAttachment()", () => {
     const bigFile = new File(["x"], "big.bin");
     Object.defineProperty(bigFile, "size", { value: 101 * 1024 * 1024 });
 
-    await expect(uploadAttachment("user-1", "v1", bigFile, vi.fn())).rejects.toThrow("File too large");
+    await expect(uploadAttachment("user-1", "v1", bigFile, vi.fn())).rejects.toThrow("FILE_TOO_LARGE");
   });
 
   it("throws when storage limit reached", async () => {
@@ -164,7 +164,7 @@ describe("uploadAttachment()", () => {
     const file = new File(["content"], "test.txt", { type: "text/plain" });
     Object.defineProperty(file, "size", { value: 100 });
 
-    await expect(uploadAttachment("user-1", "v1", file, vi.fn())).rejects.toThrow("Storage limit reached");
+    await expect(uploadAttachment("user-1", "v1", file, vi.fn())).rejects.toThrow("STORAGE_LIMIT_REACHED");
   });
 
   it("encrypts file and metadata, stores in DB and storage", async () => {

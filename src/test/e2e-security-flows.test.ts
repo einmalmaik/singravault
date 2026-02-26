@@ -96,6 +96,7 @@ import {
     generateTOTPSecret,
     generateBackupCodes,
     hashBackupCode,
+    verifyBackupCodeHash,
     verifyTOTPCode,
     generateQRCodeUri,
     formatSecretForDisplay,
@@ -204,24 +205,25 @@ describe("E2E: Security Flows", () => {
             expect(unique.size).toBe(5);
         });
 
-        it("should hash backup codes consistently", async () => {
+        it("should hash backup codes and verify them", async () => {
             const code = "ABCD-EF23";
-            const salt = "test-salt-123";
 
-            const hash1 = await hashBackupCode(code, salt);
-            const hash2 = await hashBackupCode(code, salt);
-            expect(hash1).toBe(hash2);
+            const hash = await hashBackupCode(code);
+            expect(hash).toMatch(/^v3:/);
 
-            // Different salt → different hash
-            const hash3 = await hashBackupCode(code, "other-salt");
-            expect(hash3).not.toBe(hash1);
+            // Verify the hash
+            const valid = await verifyBackupCodeHash(code, hash);
+            expect(valid).toBe(true);
+
+            // Wrong code should not verify
+            const invalid = await verifyBackupCodeHash("XXXX-YYYY", hash);
+            expect(invalid).toBe(false);
         });
 
         it("should normalize backup codes before hashing (strip dashes, uppercase)", async () => {
-            const salt = "norm-salt";
-            const hash1 = await hashBackupCode("abcd-ef23", salt);
-            const hash2 = await hashBackupCode("ABCDEF23", salt);
-            expect(hash1).toBe(hash2);
+            const hash = await hashBackupCode("ABCD-EF23");
+            const valid = await verifyBackupCodeHash("abcdef23", hash);
+            expect(valid).toBe(true);
         });
 
         it("should parse otpauth URI correctly", () => {

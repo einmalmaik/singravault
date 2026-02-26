@@ -29,6 +29,12 @@ import {
     VaultItemData
 } from '@/services/cryptoService';
 import {
+    generateDeviceKey,
+    storeDeviceKey,
+    getDeviceKey as loadDeviceKey,
+    hasDeviceKey as checkHasDeviceKey,
+} from '@/services/deviceKeyService';
+import {
     isAppOnline,
     isLikelyOfflineError,
     getOfflineCredentials,
@@ -76,12 +82,16 @@ interface VaultContextType {
     pendingSessionRestore: boolean;
     /** Whether the vault is currently in duress (decoy) mode */
     isDuressMode: boolean;
+    /** Whether a Device Key is stored on this device */
+    deviceKeyActive: boolean;
 
     // Actions
     setupMasterPassword: (masterPassword: string) => Promise<{ error: Error | null }>;
     unlock: (masterPassword: string) => Promise<{ error: Error | null }>;
     unlockWithPasskey: () => Promise<{ error: Error | null }>;
     lock: () => void;
+    /** Enables Device Key protection: generates key, re-encrypts vault */
+    enableDeviceKey: (masterPassword: string) => Promise<{ error: Error | null }>;
 
     // Passkey support
     /** Whether the browser supports WebAuthn */
@@ -177,6 +187,9 @@ export function VaultProvider({ children }: VaultProviderProps) {
     // Duress (panic password) state
     const [isDuressMode, setIsDuressMode] = useState(false);
     const [duressConfig, setDuressConfig] = useState<DuressConfig | null>(null);
+    // Device Key state
+    const [deviceKeyActive, setDeviceKeyActive] = useState(false);
+    const [currentDeviceKey, setCurrentDeviceKey] = useState<Uint8Array | null>(null);
     // Vault integrity state
     const [integrityKey, setIntegrityKey] = useState<CryptoKey | null>(null);
     const [integrityVerified, setIntegrityVerified] = useState(false);
@@ -314,6 +327,18 @@ export function VaultProvider({ children }: VaultProviderProps) {
                         setDuressConfig(duress);
                     } catch {
                         // Non-fatal: duress config can fail silently
+                    }
+
+                    // Check if device key exists on this device
+                    try {
+                        const hasDK = await checkHasDeviceKey(user.id);
+                        setDeviceKeyActive(hasDK);
+                        if (hasDK) {
+                            const dk = await loadDeviceKey(user.id);
+                            setCurrentDeviceKey(dk);
+                        }
+                    } catch {
+                        // Non-fatal: device key check can fail silently
                     }
                 }
             } catch (err) {
@@ -793,7 +818,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
             // ── Standard Unlock (no duress configured) ──
             // Derive key from password using the user's CURRENT KDF version.
-            const key = await deriveKey(masterPassword, salt, kdfVersion);
+            const key = await deriveKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
 
             const isValid = await verifyKey(verifier, key);
             if (!isValid) {
@@ -1090,7 +1115,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             recordFailedAttempt();
             return { error: new Error('Invalid master password') };
         }
-    }, [user, salt, verificationHash, kdfVersion, duressConfig]);
+    }, [user, salt, verificationHash, kdfVersion, duressConfig, currentDeviceKey]);
 
     /**
      * Unlocks the vault using a registered passkey with PRF.
@@ -1181,7 +1206,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
         let rawKeyBytes: Uint8Array | null = null;
         try {
-            rawKeyBytes = await deriveRawKey(masterPassword, salt, kdfVersion);
+            rawKeyBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
 
             const legacyHash = localStorage.getItem(`singra_verify_${user.id}`);
             const verifier = verificationHash || legacyHash;
@@ -1221,6 +1246,110 @@ export function VaultProvider({ children }: VaultProviderProps) {
         sessionStorage.removeItem(SESSION_TIMESTAMP_KEY);
         setPendingSessionRestore(false);
     }, []);
+
+    /**
+     * Enables Device Key protection on this device.
+     * Generates a 256-bit device key, re-encrypts the vault with the
+     * combined key (Argon2id + HKDF-Expand), and stores the device key
+     * in IndexedDB.
+     *
+     * @param masterPassword - The user's master password (needed to re-derive keys)
+     */
+    const enableDeviceKey = useCallback(async (
+        masterPassword: string,
+    ): Promise<{ error: Error | null }> => {
+        if (!user || !salt || !encryptionKey) {
+            return { error: new Error('Vault must be unlocked') };
+        }
+
+        try {
+            // Generate new device key
+            const newDeviceKey = generateDeviceKey();
+
+            // Derive new key WITH device key
+            const newKey = await deriveKey(masterPassword, salt, kdfVersion, newDeviceKey);
+
+            // Create new verification hash with the device-key-enhanced key
+            const newVerifier = await createVerificationHash(newKey);
+
+            // Load all vault items and categories for re-encryption
+            const { data: vaultItems } = await supabase
+                .from('vault_items')
+                .select('id, encrypted_data')
+                .eq('user_id', user.id);
+
+            const { data: categories } = await supabase
+                .from('categories')
+                .select('id, name, icon, color')
+                .eq('user_id', user.id);
+
+            // Re-encrypt everything with the new key
+            const reEncResult = await reEncryptVault(
+                vaultItems || [],
+                categories || [],
+                encryptionKey, // old key (without device key)
+                newKey,
+            );
+
+            // Persist re-encrypted items
+            for (const itemUpdate of reEncResult.itemUpdates) {
+                const { error: itemError } = await supabase
+                    .from('vault_items')
+                    .update({ encrypted_data: itemUpdate.encrypted_data })
+                    .eq('id', itemUpdate.id)
+                    .eq('user_id', user.id);
+                if (itemError) {
+                    throw new Error(`Failed to update item ${itemUpdate.id}: ${itemError.message}`);
+                }
+            }
+
+            // Persist re-encrypted categories
+            for (const catUpdate of reEncResult.categoryUpdates) {
+                const { error: catError } = await supabase
+                    .from('categories')
+                    .update({ name: catUpdate.name, icon: catUpdate.icon, color: catUpdate.color })
+                    .eq('id', catUpdate.id)
+                    .eq('user_id', user.id);
+                if (catError) {
+                    throw new Error(`Failed to update category ${catUpdate.id}: ${catError.message}`);
+                }
+            }
+
+            // Update the verifier in profile
+            const { error: updateError } = await supabase
+                .from('profiles')
+                .update({
+                    master_password_verifier: newVerifier,
+                } as Record<string, unknown>)
+                .eq('user_id', user.id);
+
+            if (updateError) {
+                throw new Error(`Failed to update profile: ${updateError.message}`);
+            }
+
+            // Store device key in IndexedDB
+            await storeDeviceKey(user.id, newDeviceKey);
+
+            // Update state
+            setEncryptionKey(newKey);
+            setVerificationHash(newVerifier);
+            setCurrentDeviceKey(newDeviceKey);
+            setDeviceKeyActive(true);
+
+            // Update offline credentials
+            await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion);
+
+            console.info(
+                `Device Key enabled. Re-encrypted ${reEncResult.itemsReEncrypted} items, ` +
+                `${reEncResult.categoriesReEncrypted} categories.`
+            );
+
+            return { error: null };
+        } catch (err) {
+            console.error('Failed to enable Device Key:', err);
+            return { error: err as Error };
+        }
+    }, [user, salt, kdfVersion, encryptionKey]);
 
     /**
      * Verifies vault items against stored integrity root.
@@ -1317,10 +1446,12 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 isSetupRequired,
                 isLoading,
                 isDuressMode,
+                deviceKeyActive,
                 setupMasterPassword,
                 unlock,
                 unlockWithPasskey,
                 lock,
+                enableDeviceKey,
                 webAuthnAvailable,
                 hasPasskeyUnlock,
                 refreshPasskeyUnlockStatus,

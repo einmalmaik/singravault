@@ -25,6 +25,7 @@ import { Separator } from '@/components/ui/separator';
 import { TwoFactorSettings } from './TwoFactorSettings';
 import { PasskeySettings } from './PasskeySettings';
 import { DuressSettings } from './DuressSettings';
+import { DeviceKeySettings } from './DeviceKeySettings';
 import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -137,6 +138,10 @@ export function SecuritySettings() {
             {/* Panic/Duress Password */}
             <Separator className="my-6" />
             <DuressSettings />
+
+            {/* Device Key Protection */}
+            <Separator className="my-6" />
+            <DeviceKeySettings />
         </>
     );
 }

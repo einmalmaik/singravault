@@ -48,12 +48,16 @@ const competitors: Competitor[] = [
             clipboardClear: 'yes',
             totp: 'yes',
             pricing: 'yes',
+            loginProtocol: 'yes',
+            deviceKey: 'yes',
         },
         details: {
             kdf: 'Argon2id 128 MiB',
             postQuantum: 'Security Standard v1 (ML-KEM-768 + RSA-4096 hybrid for sharing/emergency)',
             clipboardClear: '30s',
             pricing: '€0 / €1,65/mo',
+            loginProtocol: 'OPAQUE (IETF PAKE)',
+            deviceKey: '256-bit HKDF',
         },
     },
     {
@@ -71,11 +75,14 @@ const competitors: Competitor[] = [
             clipboardClear: 'yes',
             totp: 'partial',
             pricing: 'partial',
+            loginProtocol: 'no',
+            deviceKey: 'no',
         },
         details: {
             kdf: 'PBKDF2 600K / Argon2id 64 MiB',
             clipboardClear: '10–300s',
             pricing: '$0 / <$1/mo',
+            loginProtocol: 'Passwort über TLS',
         },
     },
     {
@@ -93,11 +100,15 @@ const competitors: Competitor[] = [
             clipboardClear: 'yes',
             totp: 'yes',
             pricing: 'no',
+            loginProtocol: 'partial',
+            deviceKey: 'partial',
         },
         details: {
             kdf: 'PBKDF2 + Secret Key',
             clipboardClear: '90s',
             pricing: '$2.99/mo',
+            loginProtocol: 'SRP',
+            deviceKey: '128-bit Secret Key',
         },
     },
     {
@@ -115,11 +126,13 @@ const competitors: Competitor[] = [
             clipboardClear: 'yes',
             totp: 'partial',
             pricing: 'partial',
+            loginProtocol: 'no',
+            deviceKey: 'no',
         },
         details: {
             kdf: 'PBKDF2 600K',
-            
             pricing: '$3/mo',
+            loginProtocol: 'Passwort über TLS',
         },
     },
 ];
@@ -129,6 +142,8 @@ const featureKeys = [
     'e2ee',
     'zeroKnowledge',
     'kdf',
+    'deviceKey',
+    'loginProtocol',
     'postQuantum',
     'passkeyUnlock',
     'duressPassword',

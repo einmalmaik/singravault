@@ -389,6 +389,7 @@ import {
   verifyTOTPCode,
   generateBackupCodes,
   hashBackupCode,
+  verifyBackupCodeHash,
 } from "@/services/twoFactorService";
 
 describe("Integration: TwoFactorService — Pure Functions", () => {
@@ -411,7 +412,7 @@ describe("Integration: TwoFactorService — Pure Functions", () => {
       const secret = generateTOTPSecret();
       const uri = generateQRCodeUri(secret, "test@example.com");
       expect(uri).toContain("otpauth://totp/");
-      expect(uri).toContain("Singra%20PW");
+      expect(uri).toContain("Singra%20Vault");
       expect(uri).toContain(secret);
     });
   });
@@ -476,39 +477,46 @@ describe("Integration: TwoFactorService — Pure Functions", () => {
   });
 
   describe("hashBackupCode", () => {
-    it("should produce consistent hash for same input (unsalted)", async () => {
-      const hash1 = await hashBackupCode("ABCD-EFGH");
-      const hash2 = await hashBackupCode("ABCD-EFGH");
-      expect(hash1).toBe(hash2);
+    it("should produce v3 versioned hash with Argon2id", async () => {
+      const hash = await hashBackupCode("ABCD-EFGH");
+      expect(hash).toMatch(/^v3:[A-Za-z0-9+/=]+:[0-9a-f]{64}$/);
     });
 
-    it("should normalize dashes and case", async () => {
-      const hash1 = await hashBackupCode("ABCD-EFGH");
-      const hash2 = await hashBackupCode("abcdefgh"); // no dash, lowercase
-      expect(hash1).toBe(hash2);
+    it("should verify hash via verifyBackupCodeHash", async () => {
+      const hash = await hashBackupCode("ABCD-EFGH");
+      const valid = await verifyBackupCodeHash("ABCD-EFGH", hash);
+      expect(valid).toBe(true);
     });
 
-    it("should produce different hashes with different salts (HMAC)", async () => {
-      const hash1 = await hashBackupCode("ABCD-EFGH", "salt-a");
-      const hash2 = await hashBackupCode("ABCD-EFGH", "salt-b");
-      expect(hash1).not.toBe(hash2);
+    it("should normalize dashes and case during verification", async () => {
+      const hash = await hashBackupCode("ABCD-EFGH");
+      const valid = await verifyBackupCodeHash("abcdefgh", hash);
+      expect(valid).toBe(true);
     });
 
-    it("should produce different hashes for different codes", async () => {
+    it("should produce different hashes for different codes (unique salt)", async () => {
       const hash1 = await hashBackupCode("AAAA-BBBB");
       const hash2 = await hashBackupCode("CCCC-DDDD");
+      // Different codes → different hash portion
+      const hex1 = hash1.split(':')[2];
+      const hex2 = hash2.split(':')[2];
+      expect(hex1).not.toBe(hex2);
+    });
+
+    it("should reject wrong code during verification", async () => {
+      const hash = await hashBackupCode("ABCD-EFGH");
+      const valid = await verifyBackupCodeHash("XXXX-YYYY", hash);
+      expect(valid).toBe(false);
+    });
+
+    it("should produce non-deterministic hashes (random salt per call)", async () => {
+      const hash1 = await hashBackupCode("ABCD-EFGH");
+      const hash2 = await hashBackupCode("ABCD-EFGH");
+      // Same code but different random salts → different full hash strings
       expect(hash1).not.toBe(hash2);
-    });
-
-    it("should produce hex-encoded hash of correct length", async () => {
-      const hash = await hashBackupCode("TEST-CODE");
-      // SHA-256 = 64 hex chars
-      expect(hash).toMatch(/^[0-9a-f]{64}$/);
-    });
-
-    it("should produce HMAC hash of same length as SHA-256", async () => {
-      const hash = await hashBackupCode("TEST-CODE", "my-salt");
-      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+      // But both should verify
+      expect(await verifyBackupCodeHash("ABCD-EFGH", hash1)).toBe(true);
+      expect(await verifyBackupCodeHash("ABCD-EFGH", hash2)).toBe(true);
     });
   });
 });

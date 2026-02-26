@@ -1,1 +1,61 @@
 project_id = "lcrtadxlojaucwapgzmy"
+
+[functions.auth-opaque]
+verify_jwt = false
+
+[functions.auth-session]
+verify_jwt = false
+
+[functions.auth-register]
+verify_jwt = false
+
+[functions.auth-recovery]
+verify_jwt = false
+
+[functions.auth-reset-password]
+verify_jwt = false
+
+[functions.rate-limit]
+verify_jwt = false
+
+[functions.webauthn]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.create-checkout-session]
+verify_jwt = false
+
+[functions.create-portal-session]
+verify_jwt = false
+
+[functions.cancel-subscription]
+verify_jwt = false
+
+[functions.invite-family-member]
+verify_jwt = false
+
+[functions.accept-family-invitation]
+verify_jwt = false
+
+[functions.invite-emergency-access]
+verify_jwt = false
+
+[functions.admin-support]
+verify_jwt = false
+
+[functions.admin-team]
+verify_jwt = false
+
+[functions.support-submit]
+verify_jwt = false
+
+[functions.support-list]
+verify_jwt = false
+
+[functions.support-metrics]
+verify_jwt = false
+
+[functions.send-test-mail]
+verify_jwt = false

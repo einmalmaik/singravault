@@ -142,7 +142,9 @@
         "vaultIntegrity": "Tresor-Integritätsprüfung",
         "clipboardClear": "Zwischenablage Auto-Löschen",
         "totp": "TOTP/2FA Authenticator",
-        "pricing": "Ab-Preis"
+        "pricing": "Ab-Preis",
+        "loginProtocol": "Login-Protokoll (PW verlässt Client?)",
+        "deviceKey": "Device Key / Secret Key"
       },
       "legend": {
         "full": "Volle Unterstützung",
@@ -1306,6 +1308,33 @@
     "pwnedWarning": "Wir empfehlen dringend ein anderes Passwort.",
     "checking": "Prüfe Sicherheit...",
     "loading": "Passwort-Prüfung wird geladen..."
+  },
+  "deviceKey": {
+    "title": "Geräte-Schlüssel (Device Key)",
+    "description": "Ein zusätzlicher 256-Bit-Schlüssel auf deinem Gerät, der den Tresor selbst bei Server-Kompromittierung schützt.",
+    "active": "Device Key ist auf diesem Gerät aktiv. Dein Tresor ist zusätzlich geschützt.",
+    "inactive": "Kein Device Key auf diesem Gerät. Aktiviere den Schutz, um deinen Tresor gegen Server-Kompromittierung abzusichern.",
+    "enable": "Schutz aktivieren",
+    "enableTitle": "Device Key aktivieren",
+    "enableDesc": "Ein 256-Bit-Zufallsschlüssel wird generiert und lokal gespeichert. Dein Tresor wird mit dem kombinierten Schlüssel neu verschlüsselt.",
+    "enableWarning": "WICHTIG: Wenn du den Device Key verlierst und keinen Export hast, ist dein Tresor nicht mehr entschlüsselbar. Erstelle SOFORT nach der Aktivierung einen Export!",
+    "enableFailed": "Device Key konnte nicht aktiviert werden.",
+    "enableSuccess": "Device Key wurde aktiviert. Erstelle jetzt einen Export für andere Geräte!",
+    "export": "Exportieren",
+    "exportTitle": "Device Key exportieren",
+    "exportDesc": "Der Device Key wird mit einem PIN verschlüsselt. Gib diesen Code auf dem neuen Gerät ein.",
+    "exportFailed": "Export fehlgeschlagen.",
+    "exportInstructions": "Kopiere diesen Code und gib ihn zusammen mit deinem PIN auf dem neuen Gerät ein. Der Code enthält deinen verschlüsselten Device Key.",
+    "import": "Importieren",
+    "importTitle": "Device Key importieren",
+    "importDesc": "Gib den Export-Code und den PIN vom anderen Gerät ein.",
+    "importSuccess": "Device Key wurde erfolgreich importiert.",
+    "importFailed": "Import fehlgeschlagen. Prüfe den Code und den PIN.",
+    "transferPin": "Transfer-PIN",
+    "pinPlaceholder": "Mindestens 4 Zeichen",
+    "transferCode": "Transfer-Code",
+    "codePlaceholder": "Base64-Code vom anderen Gerät",
+    "generateCode": "Code generieren"
   },
   "integrity": {
     "title": "Tresor-Integrität",

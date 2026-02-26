@@ -289,6 +289,30 @@ export type Database = {
           },
         ]
       }
+      opaque_login_states: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          server_login_state: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          server_login_state: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          server_login_state?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       passkey_credentials: {
         Row: {
           aaguid: string | null
@@ -339,6 +363,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          auth_protocol: string
           avatar_url: string | null
           created_at: string
           display_name: string | null
@@ -362,6 +387,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          auth_protocol?: string
           avatar_url?: string | null
           created_at?: string
           display_name?: string | null
@@ -385,6 +411,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          auth_protocol?: string
           avatar_url?: string | null
           created_at?: string
           display_name?: string | null
@@ -927,6 +954,30 @@ export type Database = {
         }
         Relationships: []
       }
+      user_opaque_records: {
+        Row: {
+          created_at: string
+          id: string
+          registration_record: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          registration_record: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          registration_record?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -1136,6 +1187,7 @@ export type Database = {
       auto_close_stale_support_tickets: { Args: never; Returns: number }
       check_family_size: { Args: { owner_id: string }; Returns: number }
       check_subscription_tier: { Args: { user_id: string }; Returns: string }
+      cleanup_expired_opaque_login_states: { Args: never; Returns: undefined }
       cleanup_expired_webauthn_challenges: { Args: never; Returns: undefined }
       cleanup_old_rate_limit_attempts: { Args: never; Returns: undefined }
       delete_my_account: { Args: never; Returns: Json }
