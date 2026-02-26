@@ -122,6 +122,22 @@ export interface ServiceHooks {
      * Returns null if no subscription found.
      */
     getSubscription?: () => Promise<any | null>;
+
+    /**
+     * Load the current user's team access (roles + permissions).
+     * Returns null if the user has no team access or admin is not installed.
+     */
+    getTeamAccess?: () => Promise<{ access: TeamAccessHook | null; error: Error | null }>;
+}
+
+/**
+ * Minimal team access shape returned by the premium admin service.
+ */
+export interface TeamAccessHook {
+    roles: string[];
+    permissions: string[];
+    is_admin: boolean;
+    can_access_admin: boolean;
 }
 
 /** Named service hook keys */

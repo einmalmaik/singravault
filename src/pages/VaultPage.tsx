@@ -38,8 +38,7 @@ import { VaultItemList } from '@/components/vault/VaultItemList';
 import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { getTeamAccess } from '@/services/adminService';
-import { isPremiumActive } from '@/extensions/registry';
+import { isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
 
@@ -128,8 +127,13 @@ export default function VaultPage() {
         let cancelled = false;
 
         const loadAdminAccess = async () => {
+            const hooks = getServiceHooks();
+            if (!hooks.getTeamAccess) {
+                setShowAdminButton(false);
+                return;
+            }
             console.debug('[VaultPage] authReady is true, fetching admin access...');
-            const { access, error } = await getTeamAccess();
+            const { access, error } = await hooks.getTeamAccess();
 
             if (cancelled) {
                 return;

@@ -24,8 +24,7 @@ import { DataSettings } from '@/components/settings/DataSettings';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
-import { getTeamAccess } from '@/services/adminService';
-import { getExtension, isPremiumActive } from '@/extensions/registry';
+import { getExtension, isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import type { SettingsSlotProps } from '@/extensions/types';
 
 type SettingsSection = {
@@ -65,8 +64,14 @@ export default function SettingsPage() {
                 return;
             }
 
+            const hooks = getServiceHooks();
+            if (!hooks.getTeamAccess) {
+                setShowAdminButton(false);
+                setIsAdminUser(false);
+                return;
+            }
             console.debug('[SettingsPage] authReady is true, fetching admin access...');
-            const { access, error } = await getTeamAccess();
+            const { access, error } = await hooks.getTeamAccess();
             if (isCancelled) {
                 return;
             }

@@ -5,32 +5,31 @@ import App from "./App.tsx";
 import "./index.css";
 
 // Premium extensions disabled for Core-only testing
-import { initPremium } from '@singra/premium';
+import { initPremium } from "@/extensions/initPremium";
 initPremium();
 
-
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register('/sw.js')
+      .register("/sw.js")
       .then((registration) => {
         registration.update().catch(() => undefined);
 
-        registration.addEventListener('updatefound', () => {
+        registration.addEventListener("updatefound", () => {
           const installing = registration.installing;
           if (!installing) {
             return;
           }
 
-          installing.addEventListener('statechange', () => {
-            if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-              console.info('A new service worker version is waiting to activate.');
+          installing.addEventListener("statechange", () => {
+            if (installing.state === "installed" && navigator.serviceWorker.controller) {
+              console.info("A new service worker version is waiting to activate.");
             }
           });
         });
       })
       .catch((err) => {
-        console.error('Service worker registration failed:', err);
+        console.error("Service worker registration failed:", err);
       });
   });
 }
