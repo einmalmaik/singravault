@@ -59,7 +59,7 @@ function readState() {
 describe("SubscriptionContext", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    vi.stubEnv("VITE_DISABLE_BILLING", "false");
+    
     await loadContextModule();
   });
 

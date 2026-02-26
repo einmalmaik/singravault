@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import { Menu, X, Download, CreditCard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSubscription } from '@/contexts/SubscriptionContext';
+
 import { isPremiumActive } from '@/extensions/registry';
 
 // Type for the BeforeInstallPromptEvent
@@ -24,7 +24,7 @@ interface BeforeInstallPromptEvent extends Event {
 export function Header() {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const { billingDisabled } = useSubscription();
+  
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstallable, setIsInstallable] = useState(false);
@@ -90,7 +90,7 @@ export function Header() {
             <a href="/#comparison" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
               Vergleich
             </a>
-            {!billingDisabled && isPremiumActive() && (
+            {isPremiumActive() && (
               <Link to="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
                 <CreditCard className="w-3.5 h-3.5" />
                 {t('subscription.pricing_title', 'Preise')}
@@ -170,7 +170,7 @@ export function Header() {
               >
               Vergleich
               </a>
-              {!billingDisabled && isPremiumActive() && (
+              {isPremiumActive() && (
                 <Link
                   to="/pricing"
                   className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"

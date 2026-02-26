@@ -22,7 +22,7 @@ vi.mock("@/contexts/SubscriptionContext", () => ({
 
 // ============ Test Helpers ============
 
-function setupMockSubscription(tier: SubscriptionTier, billingDisabled = false) {
+function setupMockSubscription(tier: SubscriptionTier) {
     const featureMatrix: Record<string, Record<string, boolean>> = {
         unlimited_passwords: { free: true, premium: true, families: true },
         device_sync: { free: true, premium: true, families: true },
@@ -41,14 +41,12 @@ function setupMockSubscription(tier: SubscriptionTier, billingDisabled = false) 
     };
     
     const mockHasFeature = (feature: string) => {
-        if (billingDisabled) return true;
         return featureMatrix[feature]?.[tier] ?? false;
     };
 
     mockUseSubscription.mockReturnValue({
         tier,
         hasFeature: mockHasFeature,
-        billingDisabled,
         loading: false,
         status: tier !== "free" ? "active" : null,
     });
@@ -293,45 +291,6 @@ describe("useFeatureGate", () => {
         });
     });
 
-    describe("Billing disabled (self-host mode)", () => {
-        beforeEach(() => {
-            setupMockSubscription("free", true);
-        });
-
-        it("allows all features regardless of tier", () => {
-            const allFeatures = [
-                "unlimited_passwords",
-                "device_sync",
-                "password_generator",
-                "secure_notes",
-                "external_2fa",
-                "file_attachments",
-                "builtin_authenticator",
-                "emergency_access",
-                "vault_health_reports",
-                "priority_support",
-                "family_members",
-                "shared_collections",
-                "post_quantum_encryption",
-                "duress_password",
-            ] as const;
-            
-            allFeatures.forEach((feature) => {
-                const { result } = renderHook(() => useFeatureGate(feature));
-                
-                expect(result.current.allowed).toBe(true);
-                expect(result.current.billingDisabled).toBe(true);
-            });
-        });
-
-        it("sets billingDisabled flag correctly", () => {
-            const { result } = renderHook(() => useFeatureGate("file_attachments"));
-            
-            expect(result.current.billingDisabled).toBe(true);
-            expect(result.current.allowed).toBe(true);
-        });
-    });
-
     describe("Return value structure", () => {
         beforeEach(() => {
             setupMockSubscription("premium");
@@ -343,7 +302,6 @@ describe("useFeatureGate", () => {
             expect(result.current).toHaveProperty("allowed");
             expect(result.current).toHaveProperty("requiredTier");
             expect(result.current).toHaveProperty("currentTier");
-            expect(result.current).toHaveProperty("billingDisabled");
         });
 
         it("returns correct types", () => {
@@ -352,7 +310,6 @@ describe("useFeatureGate", () => {
             expect(typeof result.current.allowed).toBe("boolean");
             expect(typeof result.current.requiredTier).toBe("string");
             expect(typeof result.current.currentTier).toBe("string");
-            expect(typeof result.current.billingDisabled).toBe("boolean");
         });
     });
 });

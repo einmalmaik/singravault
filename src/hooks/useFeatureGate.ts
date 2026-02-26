@@ -17,8 +17,6 @@ interface FeatureGateResult {
     requiredTier: SubscriptionTier;
     /** The user's current tier */
     currentTier: SubscriptionTier;
-    /** Whether billing is disabled (self-host mode) */
-    billingDisabled: boolean;
 }
 
 /**
@@ -31,12 +29,11 @@ interface FeatureGateResult {
  * }
  */
 export function useFeatureGate(feature: FeatureName): FeatureGateResult {
-    const { tier, hasFeature, billingDisabled } = useSubscription();
+    const { tier, hasFeature } = useSubscription();
 
     return {
         allowed: hasFeature(feature),
         requiredTier: getRequiredTier(feature),
         currentTier: tier,
-        billingDisabled,
     };
 }

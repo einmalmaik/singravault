@@ -5,7 +5,7 @@
  *
  * Provides subscription state throughout the application.
  * Loads user's subscription tier and status from Supabase.
- * Respects VITE_DISABLE_BILLING for self-hosted instances.
+ * Loads subscription via Premium service hooks when available.
  */
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
@@ -29,8 +29,6 @@ export interface SubscriptionData {
     updated_at: string;
 }
 
-const BILLING_DISABLED = import.meta.env.VITE_DISABLE_BILLING === 'true';
-
 interface SubscriptionContextType {
     /** Current subscription tier */
     tier: SubscriptionTier;
@@ -44,8 +42,6 @@ interface SubscriptionContextType {
     currentPeriodEnd: string | null;
     /** Whether intro discount was already used */
     hasUsedIntroDiscount: boolean;
-    /** Whether billing is disabled (self-host mode) */
-    billingDisabled: boolean;
     /** Full subscription data */
     subscription: SubscriptionData | null;
     /** Loading state */
@@ -68,7 +64,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     const [loading, setLoading] = useState(true);
 
     const loadSubscription = useCallback(async () => {
-        if (!user || BILLING_DISABLED) {
+        if (!user) {
             setSubscription(null);
             setLoading(false);
             return;
@@ -96,23 +92,18 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         loadSubscription();
     }, [loadSubscription]);
 
-    const tier: SubscriptionTier = BILLING_DISABLED
-        ? 'premium' // Self-host mode: all features unlocked
-        : (subscription?.tier as SubscriptionTier) || 'free';
+    const tier: SubscriptionTier = (subscription?.tier as SubscriptionTier) || 'free';
 
     const status = subscription?.status || null;
 
-    const isActive = BILLING_DISABLED
-        ? true
-        : status === 'active' || status === 'trialing' || tier === 'free';
+    const isActive = status === 'active' || status === 'trialing' || tier === 'free';
 
     const cancelAtPeriodEnd = subscription?.cancel_at_period_end ?? false;
     const currentPeriodEnd = subscription?.current_period_end ?? null;
     const hasUsedIntroDiscount = subscription?.has_used_intro_discount ?? false;
 
     const hasFeature = useCallback((feature: FeatureName): boolean => {
-        if (BILLING_DISABLED) return true; // Self-host: all features
-        if (!isActive && tier !== 'free') return false; // Expired paid plan
+        if (!isActive && (tier as string) !== 'free') return false; // Expired paid plan
         return FEATURE_MATRIX[feature]?.[tier] ?? false;
     }, [tier, isActive]);
 
@@ -130,7 +121,6 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
                 cancelAtPeriodEnd,
                 currentPeriodEnd,
                 hasUsedIntroDiscount,
-                billingDisabled: BILLING_DISABLED,
                 subscription,
                 loading,
                 hasFeature,

@@ -4,13 +4,8 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 
-<<<<<<< Updated upstream
 // Premium extensions disabled for Core-only testing
 // import { initPremium } from "@/extensions/initPremium";
-=======
-// Initialize premium extensions (currently bundled; will become dynamic import later)
-// import { initPremium } from '@singra/premium';
->>>>>>> Stashed changes
 // initPremium();
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

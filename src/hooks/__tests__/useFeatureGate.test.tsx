@@ -42,7 +42,6 @@ describe("useFeatureGate", () => {
           ];
           return freeFeatures.includes(feature);
         },
-        billingDisabled: false,
       });
     });
 
@@ -52,7 +51,7 @@ describe("useFeatureGate", () => {
       expect(result.current.allowed).toBe(true);
       expect(result.current.currentTier).toBe("free");
       expect(result.current.requiredTier).toBe("free");
-      expect(result.current.billingDisabled).toBe(false);
+      
     });
 
     it("should block premium features on free tier", () => {
@@ -61,7 +60,7 @@ describe("useFeatureGate", () => {
       expect(result.current.allowed).toBe(false);
       expect(result.current.currentTier).toBe("free");
       expect(result.current.requiredTier).toBe("premium");
-      expect(result.current.billingDisabled).toBe(false);
+      
     });
 
     it("should block families-only features on free tier", () => {
@@ -70,7 +69,7 @@ describe("useFeatureGate", () => {
       expect(result.current.allowed).toBe(false);
       expect(result.current.currentTier).toBe("free");
       expect(result.current.requiredTier).toBe("families");
-      expect(result.current.billingDisabled).toBe(false);
+      
     });
   });
 
@@ -83,7 +82,6 @@ describe("useFeatureGate", () => {
           const blockedFeatures = ["family_members", "shared_collections"];
           return !blockedFeatures.includes(feature);
         },
-        billingDisabled: false,
       });
     });
 
@@ -116,7 +114,6 @@ describe("useFeatureGate", () => {
       mockUseSubscription.mockReturnValue({
         tier: "families" as SubscriptionTier,
         hasFeature: () => true, // All features available
-        billingDisabled: false,
       });
     });
 
@@ -129,27 +126,6 @@ describe("useFeatureGate", () => {
       expect(premiumResult.result.current.allowed).toBe(true);
       expect(familiesResult.result.current.allowed).toBe(true);
       expect(familiesResult.result.current.currentTier).toBe("families");
-    });
-  });
-
-  describe("Billing disabled (self-host mode)", () => {
-    beforeEach(() => {
-      mockUseSubscription.mockReturnValue({
-        tier: "premium" as SubscriptionTier,
-        hasFeature: () => true, // All features when billing disabled
-        billingDisabled: true,
-      });
-    });
-
-    it("should allow all features when billing is disabled", () => {
-      const freeResult = renderHook(() => useFeatureGate("unlimited_passwords"));
-      const premiumResult = renderHook(() => useFeatureGate("file_attachments"));
-      const familiesResult = renderHook(() => useFeatureGate("family_members"));
-
-      expect(freeResult.result.current.allowed).toBe(true);
-      expect(premiumResult.result.current.allowed).toBe(true);
-      expect(familiesResult.result.current.allowed).toBe(true);
-      expect(freeResult.result.current.billingDisabled).toBe(true);
     });
   });
 
@@ -167,7 +143,6 @@ describe("useFeatureGate", () => {
           ];
           return freeFeatures.includes(feature);
         },
-        billingDisabled: false,
       });
 
       const features = [
@@ -192,7 +167,6 @@ describe("useFeatureGate", () => {
           const blockedFeatures = ["family_members", "shared_collections"];
           return !blockedFeatures.includes(feature);
         },
-        billingDisabled: false,
       });
 
       const premiumFeatures = [
@@ -225,7 +199,6 @@ describe("useFeatureGate", () => {
           ];
           return freeFeatures.includes(feature);
         },
-        billingDisabled: false,
       });
 
       const { result } = renderHook(() => useFeatureGate("post_quantum_encryption"));
@@ -237,7 +210,6 @@ describe("useFeatureGate", () => {
       mockUseSubscription.mockReturnValue({
         tier: "families" as SubscriptionTier,
         hasFeature: () => true,
-        billingDisabled: false,
       });
 
       const familiesFeatures = ["family_members", "shared_collections"] as const;
