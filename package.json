@@ -57,7 +57,7 @@
     "@radix-ui/react-tooltip": "^1.2.7",
     "@serenity-kit/opaque": "^1.1.0",
     "@simplewebauthn/browser": "13.2.2",
-    "@singra/premium": "file:packages/singra-premium-1.0.0.tgz",
+    "@singra/premium": "github:einmalmaik/singra-premium",
     "@supabase/supabase-js": "2.95.3",
     "@tanstack/react-query": "^5.83.0",
     "@types/qrcode": "^1.5.6",
