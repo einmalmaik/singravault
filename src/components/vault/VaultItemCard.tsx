@@ -37,7 +37,6 @@ import { cn } from '@/lib/utils';
 import { ViewMode } from '@/pages/VaultPage';
 import { VaultItemData } from '@/services/cryptoService';
 import { writeClipboard } from '@/services/clipboardService';
-import { TOTPDisplay } from './TOTPDisplay';
 
 interface VaultItemCardProps {
     item: {
@@ -229,13 +228,6 @@ export function VaultItemCard({ item, viewMode, onEdit }: VaultItemCardProps) {
                         >
                             {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </Button>
-                    </div>
-                )}
-
-                {/* TOTP Display */}
-                {resolvedItemType === 'totp' && item.decryptedData?.totpSecret && (
-                    <div className="mb-3" onClick={(e) => e.stopPropagation()}>
-                        <TOTPDisplay secret={item.decryptedData.totpSecret} />
                     </div>
                 )}
 

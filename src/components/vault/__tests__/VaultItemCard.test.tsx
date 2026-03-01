@@ -131,7 +131,7 @@ describe("VaultItemCard", () => {
   });
 
   describe("TOTP item", () => {
-    it("should render TOTPDisplay for TOTP items", () => {
+    it("should render title for TOTP items without inline TOTPDisplay (codes are exclusive to AuthenticatorPage)", () => {
       const totpItem = {
         ...baseItem,
         item_type: "totp" as const,
@@ -144,7 +144,8 @@ describe("VaultItemCard", () => {
       };
 
       render(<VaultItemCard item={totpItem} viewMode="grid" onEdit={mockOnEdit} />);
-      expect(screen.getByTestId("totp-display")).toBeInTheDocument();
+      expect(screen.queryByTestId("totp-display")).not.toBeInTheDocument();
+      expect(screen.getByText(baseItem.title)).toBeInTheDocument();
     });
   });
 });

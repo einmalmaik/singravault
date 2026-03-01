@@ -16,6 +16,7 @@ import {
     Key,
     FileText,
     Shield,
+    Lock,
     Eye,
     EyeOff,
     Wand2,
@@ -71,6 +72,7 @@ import { QRScanner } from './QRScanner';
 import { cn } from '@/lib/utils';
 import { getExtension, getServiceHooks } from '@/extensions/registry';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
+import { useFeatureGate } from '@/hooks/useFeatureGate';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import {
     buildVaultItemRowFromInsert,
@@ -149,6 +151,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
 
     const vaultPasswordCheck = usePasswordCheck({ enforceStrong: false });
+    const { allowed: canUseTotp } = useFeatureGate('builtin_authenticator');
 
     const normalizedItemId = sanitizeOptionalUuid(itemId);
     const isEditing = !!normalizedItemId;
@@ -526,7 +529,22 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
                     {/* Item Type Tabs */}
                     {!isEditing && (
-                        <Tabs value={itemType} onValueChange={(v) => setItemType(v as typeof itemType)}>
+                        <Tabs
+                            value={itemType}
+                            onValueChange={(v) => {
+                                if (v === 'totp' && !canUseTotp) {
+                                    toast({
+                                        title: t('subscription.feature_locked_title'),
+                                        description: t('subscription.feature_locked_description', {
+                                            feature: t('subscription.features.builtin_authenticator'),
+                                            tier: 'Premium',
+                                        }),
+                                    });
+                                    return;
+                                }
+                                setItemType(v as typeof itemType);
+                            }}
+                        >
                             <TabsList className="w-full">
                                 <TabsTrigger value="password" className="flex-1">
                                     <Key className="w-4 h-4 mr-2" />
@@ -536,8 +554,11 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                     <FileText className="w-4 h-4 mr-2" />
                                     {t('vault.itemTypes.note')}
                                 </TabsTrigger>
-                                <TabsTrigger value="totp" className="flex-1">
-                                    <Shield className="w-4 h-4 mr-2" />
+                                <TabsTrigger value="totp" className="flex-1" disabled={!canUseTotp}>
+                                    {canUseTotp
+                                        ? <Shield className="w-4 h-4 mr-2" />
+                                        : <Lock className="w-4 h-4 mr-2" />
+                                    }
                                     {t('vault.itemTypes.totp')}
                                 </TabsTrigger>
                             </TabsList>

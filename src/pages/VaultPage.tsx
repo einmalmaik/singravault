@@ -42,7 +42,7 @@ import { isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
 
-export type ItemFilter = 'all' | 'passwords' | 'notes' | 'totp' | 'favorites';
+export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
 export type ViewMode = 'grid' | 'list';
 
 export default function VaultPage() {
@@ -301,10 +301,6 @@ export default function VaultPage() {
                                 <TabsTrigger value="notes" className="flex items-center gap-1.5 whitespace-nowrap">
                                     <FileText className="w-4 h-4" />
                                     <span className="hidden sm:inline">{t('vault.filters.notes')}</span>
-                                </TabsTrigger>
-                                <TabsTrigger value="totp" className="flex items-center gap-1.5 whitespace-nowrap">
-                                    <Shield className="w-4 h-4" />
-                                    <span className="hidden sm:inline">{t('vault.filters.totp')}</span>
                                 </TabsTrigger>
                                 <TabsTrigger value="favorites" className="flex items-center gap-1.5 whitespace-nowrap">
                                     <Star className="w-4 h-4" />
