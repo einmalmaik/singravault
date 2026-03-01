@@ -208,6 +208,9 @@ export function VaultItemList({
                 ? item.decryptedData.isFavorite
                 : !!item.is_favorite;
 
+            // TOTP items belong exclusively in the Authenticator section — never shown here
+            if (resolvedItemType === 'totp') return false;
+
             // Duress mode filter: only show decoy items in duress mode, real items otherwise
             // This is critical for plausible deniability — the filter happens AFTER decryption
             const hooks = getServiceHooks();
@@ -221,7 +224,6 @@ export function VaultItemList({
             // Type filter
             if (filter === 'passwords' && resolvedItemType !== 'password') return false;
             if (filter === 'notes' && resolvedItemType !== 'note') return false;
-            if (filter === 'totp' && resolvedItemType !== 'totp') return false;
             if (filter === 'favorites' && !resolvedIsFavorite) return false;
 
             // Search filter

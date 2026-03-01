@@ -131,19 +131,25 @@ describe("VaultItemCard", () => {
   });
 
   describe("TOTP item", () => {
-    it("should render TOTPDisplay for TOTP items", () => {
-      const totpItem = {
-        ...baseItem,
-        item_type: "totp" as const,
-        decryptedData: {
-          ...baseItem.decryptedData,
-          itemType: "totp" as const,
-          totpSecret: "JBSWY3DPEHPK3PXP",
-          password: undefined,
-        },
-      };
+    const totpItem = {
+      ...baseItem,
+      item_type: "totp" as const,
+      decryptedData: {
+        ...baseItem.decryptedData,
+        itemType: "totp" as const,
+        totpSecret: "JBSWY3DPEHPK3PXP",
+        password: undefined,
+      },
+    };
 
+    it("should NOT render inline TOTPDisplay by default (codes are exclusive to AuthenticatorPage)", () => {
       render(<VaultItemCard item={totpItem} viewMode="grid" onEdit={mockOnEdit} />);
+      expect(screen.queryByTestId("totp-display")).not.toBeInTheDocument();
+      expect(screen.getByText(baseItem.title)).toBeInTheDocument();
+    });
+
+    it("should render inline TOTPDisplay when showTotpCode=true (emergency access context)", () => {
+      render(<VaultItemCard item={totpItem} viewMode="grid" onEdit={mockOnEdit} showTotpCode={true} />);
       expect(screen.getByTestId("totp-display")).toBeInTheDocument();
     });
   });

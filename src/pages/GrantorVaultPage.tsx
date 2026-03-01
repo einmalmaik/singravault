@@ -152,7 +152,6 @@ export default function GrantorVaultPage() {
             // Filter by type
             if (activeFilter === 'passwords' && resolvedItemType !== 'password') return false;
             if (activeFilter === 'notes' && resolvedItemType !== 'note') return false;
-            if (activeFilter === 'totp' && resolvedItemType !== 'totp') return false;
             if (activeFilter === 'favorites' && !resolvedIsFavorite) return false;
 
             // Filter by search
@@ -296,6 +295,7 @@ export default function GrantorVaultPage() {
                                     decryptedData: item.decryptedData
                                 }}
                                 viewMode={viewMode}
+                                showTotpCode={true}
                                 onEdit={() => {
                                     toast({
                                         description: t('emergency.readOnlyToast', 'Read-only mode. Items cannot be edited.')
