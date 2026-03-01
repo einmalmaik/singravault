@@ -139,8 +139,11 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const { toast } = useToast();
     const { user } = useAuth();
     const { encryptItem, decryptItem, encryptData, decryptData, isDuressMode } = useVault();
+    const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
 
-    const [itemType, setItemType] = useState<'password' | 'note' | 'totp'>(initialType);
+    const [itemType, setItemType] = useState<'password' | 'note' | 'totp'>(
+        initialType === 'totp' && !canUseTotp ? 'password' : initialType
+    );
     const [showPassword, setShowPassword] = useState(false);
     const [showGenerator, setShowGenerator] = useState(false);
     const [showScanner, setShowScanner] = useState(false);
@@ -151,7 +154,6 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
 
     const vaultPasswordCheck = usePasswordCheck({ enforceStrong: false });
-    const { allowed: canUseTotp } = useFeatureGate('builtin_authenticator');
 
     const normalizedItemId = sanitizeOptionalUuid(itemId);
     const isEditing = !!normalizedItemId;
@@ -340,6 +342,16 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
     const onSubmit = async (data: ItemFormData) => {
         if (!user) return;
+        if (itemType === 'totp' && !canUseTotp) {
+            toast({
+                title: t('subscription.feature_locked_title'),
+                description: t('subscription.feature_locked_description', {
+                    feature: t('subscription.features.builtin_authenticator'),
+                    tier: requiredTier.charAt(0).toUpperCase() + requiredTier.slice(1),
+                }),
+            });
+            return;
+        }
 
         setLoading(true);
         try {
@@ -537,7 +549,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                         title: t('subscription.feature_locked_title'),
                                         description: t('subscription.feature_locked_description', {
                                             feature: t('subscription.features.builtin_authenticator'),
-                                            tier: 'Premium',
+                                            tier: requiredTier.charAt(0).toUpperCase() + requiredTier.slice(1),
                                         }),
                                     });
                                     return;
