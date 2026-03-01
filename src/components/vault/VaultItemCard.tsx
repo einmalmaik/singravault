@@ -37,6 +37,7 @@ import { cn } from '@/lib/utils';
 import { ViewMode } from '@/pages/VaultPage';
 import { VaultItemData } from '@/services/cryptoService';
 import { writeClipboard } from '@/services/clipboardService';
+import { TOTPDisplay } from './TOTPDisplay';
 
 interface VaultItemCardProps {
     item: {
@@ -49,9 +50,13 @@ interface VaultItemCardProps {
     };
     viewMode: ViewMode;
     onEdit: () => void;
+    /** Show the live TOTP code inline. False by default (codes live in AuthenticatorPage).
+     *  Set to true only in read-only contexts like GrantorVaultPage where the Authenticator
+     *  tab is not accessible but 2FA codes may be needed for account sign-in. */
+    showTotpCode?: boolean;
 }
 
-export function VaultItemCard({ item, viewMode, onEdit }: VaultItemCardProps) {
+export function VaultItemCard({ item, viewMode, onEdit, showTotpCode = false }: VaultItemCardProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const [showPassword, setShowPassword] = useState(false);
@@ -228,6 +233,13 @@ export function VaultItemCard({ item, viewMode, onEdit }: VaultItemCardProps) {
                         >
                             {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </Button>
+                    </div>
+                )}
+
+                {/* TOTP Display — only in contexts where the Authenticator tab is unavailable (e.g. emergency access) */}
+                {showTotpCode && resolvedItemType === 'totp' && item.decryptedData?.totpSecret && (
+                    <div className="mb-3" onClick={(e) => e.stopPropagation()}>
+                        <TOTPDisplay secret={item.decryptedData.totpSecret} />
                     </div>
                 )}
 
