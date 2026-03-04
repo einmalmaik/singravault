@@ -4,8 +4,8 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 
-// Premium extensions disabled for Core-only testing
-import { initPremium } from '@singra/premium';
+// Premium extensions — use local bridge file that shares the same registry instance
+import { initPremium } from '@/extensions/initPremium';
 initPremium();
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
