@@ -13,10 +13,14 @@ vi.mock("@/contexts/AuthContext", () => ({
   useAuth: useAuthMock,
 }));
 
-vi.mock("@/services/subscriptionService", () => ({
-  getSubscription: getSubscriptionMock,
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    auth: {
+      getUser: vi.fn(),
+      onAuthStateChange: vi.fn(),
+    },
+  },
 }));
-
 let SubscriptionProvider: ({ children }: { children: ReactNode }) => JSX.Element;
 let useSubscriptionHook: () => {
   tier: string;
@@ -59,7 +63,7 @@ function readState() {
 describe("SubscriptionContext", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    
+
     await loadContextModule();
   });
 

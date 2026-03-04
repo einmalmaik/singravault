@@ -64,9 +64,7 @@ vi.mock("@/services/totpService", () => ({
   parseTOTPUri: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock("@/services/duressService", () => ({
-  markAsDecoyItem: vi.fn((item: unknown) => item),
-}));
+// Removed duressService mock
 
 vi.mock("@/services/offlineVaultService", () => ({
   isAppOnline: vi.fn().mockReturnValue(true),

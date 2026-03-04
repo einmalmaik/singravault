@@ -80,13 +80,6 @@ vi.mock("@/services/passkeyService", () => ({
   isWebAuthnAvailable: vi.fn(() => false),
 }));
 
-// Mock duress service
-vi.mock("@/services/duressService", () => ({
-  getDuressConfig: vi.fn(() => Promise.resolve(null)),
-  attemptDualUnlock: vi.fn(),
-  isDecoyItem: vi.fn(() => false),
-}));
-
 // Mock rate limiter service
 const mockGetUnlockCooldown = vi.fn(() => null);
 const mockRecordFailedAttempt = vi.fn();
