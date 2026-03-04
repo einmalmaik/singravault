@@ -8,6 +8,7 @@
     "node": ">=20.19.0"
   },
   "scripts": {
+    "preinstall": "git config --global url.\"https://${GITHUB_PAT}@github.com/\".insteadOf \"https://github.com/\" && git config --global url.\"https://${GITHUB_PAT}@github.com/\".insteadOf \"ssh://git@github.com/\"",
     "dev": "vite",
     "build": "vite build",
     "build:dev": "vite build --mode development",
