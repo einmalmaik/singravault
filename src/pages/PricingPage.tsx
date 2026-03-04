@@ -41,7 +41,6 @@ const FREE_FEATURES = [
     'subscription.features.clipboard_auto_clear',
     'subscription.features.post_quantum',
     'subscription.features.passkey_unlock',
-    'subscription.features.vault_integrity',
     'subscription.features.core_features',
 ];
 
