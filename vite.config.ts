@@ -40,31 +40,34 @@ export default defineConfig(({ mode }) => {
   const securityHeaders = getSecurityHeaders(mode);
 
   return {
-  server: {
-    host: "::",
-    port: 8080,
-    headers: securityHeaders,
-    hmr: {
-      overlay: false,
+    server: {
+      host: "::",
+      port: 8080,
+      headers: securityHeaders,
+      hmr: {
+        overlay: false,
+      },
     },
-  },
-  preview: {
-    headers: securityHeaders,
-  },
-  plugins: [
-    wasm(),
-    topLevelAwait(),
-    react(),
-    mode === "development" && componentTagger()
-  ].filter(Boolean),
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+    preview: {
+      headers: securityHeaders,
     },
-  },
-  build: {
-    target: "esnext",
-  },
+    plugins: [
+      wasm(),
+      topLevelAwait(),
+      react(),
+      mode === "development" && componentTagger()
+    ].filter(Boolean),
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "./src"),
+        // Only point to local source in dev mode to bypass Vite optimizeDeps dual-instance bugs.
+        // In production build (Vercel), it will use the actual npm package from node_modules.
+        ...(mode === "development" ? { "@singra/premium": path.resolve(__dirname, "./src/extensions/initPremium.ts") } : {})
+      },
+    },
+    build: {
+      target: "esnext",
+    },
   };
 });
 
