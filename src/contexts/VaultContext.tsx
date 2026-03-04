@@ -45,7 +45,11 @@ import {
     isWebAuthnAvailable,
 } from '@/services/passkeyService';
 import { getServiceHooks } from '@/extensions/registry';
-import type { DuressConfigHook } from '@/extensions/types';
+import type {
+    DuressConfigHook,
+    VaultItemForIntegrity,
+    IntegrityVerificationResult,
+} from '@/extensions/types';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './AuthContext';
 import {
@@ -53,14 +57,6 @@ import {
     recordFailedAttempt,
     resetUnlockAttempts,
 } from '@/services/rateLimiterService';
-import {
-    deriveIntegrityKey,
-    verifyVaultIntegrity,
-    updateIntegrityRoot,
-    clearIntegrityRoot,
-    type VaultItemForIntegrity,
-    type IntegrityVerificationResult,
-} from '@/services/vaultIntegrityService';
 
 // Auto-lock timeout in milliseconds (default 15 minutes)
 const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
@@ -456,11 +452,16 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setLastActivity(Date.now());
 
             // Derive integrity key for tamper detection
-            try {
-                const iKey = await deriveIntegrityKey(masterPassword, newSalt);
-                setIntegrityKey(iKey);
-            } catch {
-                console.warn('Failed to derive integrity key during setup');
+            const hooks = getServiceHooks();
+            if (hooks.deriveIntegrityKey) {
+                try {
+                    const iKey = await hooks.deriveIntegrityKey(masterPassword, newSalt);
+                    setIntegrityKey(iKey);
+                } catch {
+                    console.warn('Failed to derive integrity key during setup');
+                }
+            } else {
+                setIntegrityKey(null);
             }
 
             // Store session indicator in sessionStorage
@@ -801,11 +802,16 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 setLastActivity(Date.now());
 
                 // Derive integrity key for tamper detection (real vault only)
-                try {
-                    const iKey = await deriveIntegrityKey(masterPassword, salt);
-                    setIntegrityKey(iKey);
-                } catch {
-                    console.warn('Failed to derive integrity key');
+                const hooks = getServiceHooks();
+                if (hooks.deriveIntegrityKey) {
+                    try {
+                        const iKey = await hooks.deriveIntegrityKey(masterPassword, salt);
+                        setIntegrityKey(iKey);
+                    } catch {
+                        console.warn('Failed to derive integrity key');
+                    }
+                } else {
+                    setIntegrityKey(null);
                 }
 
                 sessionStorage.setItem(SESSION_KEY, 'active');
@@ -1097,11 +1103,16 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setLastActivity(Date.now());
 
             // Derive integrity key for tamper detection
-            try {
-                const iKey = await deriveIntegrityKey(masterPassword, salt);
-                setIntegrityKey(iKey);
-            } catch {
-                console.warn('Failed to derive integrity key');
+            const hooks = getServiceHooks();
+            if (hooks.deriveIntegrityKey) {
+                try {
+                    const iKey = await hooks.deriveIntegrityKey(masterPassword, salt);
+                    setIntegrityKey(iKey);
+                } catch {
+                    console.warn('Failed to derive integrity key');
+                }
+            } else {
+                setIntegrityKey(null);
             }
 
             sessionStorage.setItem(SESSION_KEY, 'active');
@@ -1357,12 +1368,13 @@ export function VaultProvider({ children }: VaultProviderProps) {
     const verifyIntegrity = useCallback(async (
         items: VaultItemForIntegrity[]
     ): Promise<IntegrityVerificationResult | null> => {
-        if (!user || !integrityKey) {
+        const hooks = getServiceHooks();
+        if (!user || !integrityKey || !hooks.verifyVaultIntegrity || !hooks.updateIntegrityRoot) {
             return null;
         }
 
         try {
-            const result = await verifyVaultIntegrity(items, integrityKey, user.id);
+            const result = await hooks.verifyVaultIntegrity(items, integrityKey, user.id);
             setIntegrityVerified(true);
             setLastIntegrityResult(result);
 
@@ -1370,7 +1382,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 console.warn('Vault integrity check FAILED — possible tampering detected!');
             } else if (result.isFirstCheck) {
                 // First check: establish baseline
-                await updateIntegrityRoot(items, integrityKey, user.id);
+                await hooks.updateIntegrityRoot(items, integrityKey, user.id);
                 console.info('Vault integrity baseline established');
             }
 
@@ -1387,12 +1399,13 @@ export function VaultProvider({ children }: VaultProviderProps) {
     const updateIntegrity = useCallback(async (
         items: VaultItemForIntegrity[]
     ): Promise<void> => {
-        if (!user || !integrityKey) {
+        const hooks = getServiceHooks();
+        if (!user || !integrityKey || !hooks.updateIntegrityRoot) {
             return;
         }
 
         try {
-            await updateIntegrityRoot(items, integrityKey, user.id);
+            await hooks.updateIntegrityRoot(items, integrityKey, user.id);
         } catch (err) {
             console.error('Failed to update integrity root:', err);
         }

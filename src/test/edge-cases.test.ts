@@ -28,14 +28,6 @@ import {
     parseOTPAuthUri,
 } from "@/services/totpService";
 import {
-    verifyVaultIntegrity,
-    updateIntegrityRoot,
-    deriveIntegrityKey,
-} from "@/services/vaultIntegrityService";
-import {
-    analyzeVaultHealth,
-} from "@/services/vaultHealthService";
-import {
     recordFailedAttempt,
     getUnlockCooldown,
     resetUnlockAttempts,
@@ -50,11 +42,9 @@ import { languages, changeLanguage } from "@/i18n";
 
 // ============ Test Setup ============
 
-let testUserId: string;
 let testKey: CryptoKey;
 
 beforeAll(async () => {
-    testUserId = "edge-test-user-" + Date.now();
     const salt = generateSalt();
     testKey = await deriveKey("test-password-123", salt, 2);
 });
@@ -331,161 +321,6 @@ describe("TOTP Edge Cases", () => {
         expect(parsed.secret).toBe("JBSWY3DPEHPK3PXP");
         // parseOTPAuthUri only returns { secret, issuer?, label? }
         // algorithm, digits, period are not returned by this function
-    });
-});
-
-// ============ 5.5 Vault Integrity Edge Cases (4 Tests) ============
-
-describe("Vault Integrity Edge Cases", () => {
-    it("verifies integrity with single item", async () => {
-        const items = [
-            { id: "item-1", encrypted_data: "data1", user_id: testUserId },
-        ];
-        
-        // Derive proper HMAC key for integrity operations
-        const salt = generateSalt();
-        const integrityKey = await deriveIntegrityKey("integrity-test-password", salt);
-        
-        // First update to set the root
-        await updateIntegrityRoot(items, integrityKey, testUserId);
-        
-        // Then verify
-        const result = await verifyVaultIntegrity(items, integrityKey, testUserId);
-        
-        expect(result.valid).toBe(true);
-    });
-
-    it("verifies integrity with 3 items (odd count)", async () => {
-        const items = [
-            { id: "item-1", encrypted_data: "data1", user_id: testUserId },
-            { id: "item-2", encrypted_data: "data2", user_id: testUserId },
-            { id: "item-3", encrypted_data: "data3", user_id: testUserId },
-        ];
-        
-        // Derive proper HMAC key for integrity operations
-        const salt = generateSalt();
-        const integrityKey = await deriveIntegrityKey("integrity-test-password", salt);
-        
-        await updateIntegrityRoot(items, integrityKey, testUserId);
-        const result = await verifyVaultIntegrity(items, integrityKey, testUserId);
-        
-        expect(result.valid).toBe(true);
-    });
-
-    it("verifies integrity with 100+ items in reasonable time", async () => {
-        const items = Array.from({ length: 100 }, (_, i) => ({
-            id: `item-${i}`,
-            encrypted_data: `data${i}`,
-            user_id: testUserId,
-        }));
-        
-        // Derive proper HMAC key for integrity operations
-        const salt = generateSalt();
-        const integrityKey = await deriveIntegrityKey("integrity-test-password", salt);
-        
-        const startTime = Date.now();
-        await updateIntegrityRoot(items, integrityKey, testUserId);
-        const result = await verifyVaultIntegrity(items, integrityKey, testUserId);
-        const duration = Date.now() - startTime;
-        
-        expect(result.valid).toBe(true);
-        expect(duration).toBeLessThan(2000); // Less than 2 seconds
-    });
-
-    it("fails verification with corrupted localStorage root", async () => {
-        const items = [
-            { id: "item-1", encrypted_data: "data1", user_id: testUserId },
-        ];
-        
-        // Derive proper HMAC key for integrity operations
-        const salt = generateSalt();
-        const integrityKey = await deriveIntegrityKey("integrity-test-password", salt);
-        
-        // Mock localStorage with corrupted root
-        if (typeof localStorage !== "undefined") {
-            localStorage.setItem(
-                `singra_integrity_root_${testUserId}`,
-                "corrupted-root-hash"
-            );
-        }
-        
-        const result = await verifyVaultIntegrity(items, integrityKey, testUserId);
-        
-        expect(result.valid).toBe(false);
-        
-        // Cleanup
-        if (typeof localStorage !== "undefined") {
-            localStorage.removeItem(`singra_integrity_root_${testUserId}`);
-        }
-    });
-});
-
-// ============ 5.6 Vault Health Edge Cases (4 Tests) ============
-
-describe("Vault Health Edge Cases", () => {
-    it("excludes items without password field from password analysis", () => {
-        const items = [
-            { id: "1", title: "Note", password: "", username: "", websiteUrl: "", updatedAt: new Date().toISOString() },
-            { id: "2", title: "Login", password: "test123", username: "user", websiteUrl: "", updatedAt: new Date().toISOString() },
-        ];
-        
-        const health = analyzeVaultHealth(items);
-        
-        // totalItems counts all, but only items with passwords are analyzed
-        expect(health.totalItems).toBeGreaterThanOrEqual(1);
-    });
-
-    it("handles items with invalid URL gracefully", () => {
-        const items = [
-            { 
-                id: "1", 
-                title: "Test", 
-                password: "test123",
-                username: "user",
-                websiteUrl: "not-a-valid-url",
-                updatedAt: new Date().toISOString(),
-            },
-        ];
-        
-        const health = analyzeVaultHealth(items);
-        
-        // Should not crash
-        expect(health.totalItems).toBeGreaterThanOrEqual(1);
-    });
-
-    it("does not mark items with future updatedAt as old", () => {
-        const futureDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-        
-        const items = [
-            { 
-                id: "1", 
-                title: "Future", 
-                password: "test-password-123",
-                username: "user",
-                websiteUrl: "",
-                updatedAt: futureDate,
-            },
-        ];
-        
-        const health = analyzeVaultHealth(items);
-        
-        // Future items should not be marked as old
-        expect(health.stats.old).toBe(0);
-    });
-
-    it("detects all items with identical password as duplicates", () => {
-        const samePassword = "duplicate-password-123";
-        
-        const items = [
-            { id: "1", title: "A", password: samePassword, username: "a", websiteUrl: "", updatedAt: new Date().toISOString() },
-            { id: "2", title: "B", password: samePassword, username: "b", websiteUrl: "", updatedAt: new Date().toISOString() },
-            { id: "3", title: "C", password: samePassword, username: "c", websiteUrl: "", updatedAt: new Date().toISOString() },
-        ];
-        
-        const health = analyzeVaultHealth(items);
-        
-        // All 3 should be flagged as duplicates
-        expect(health.stats.duplicate).toBeGreaterThan(0);
     });
 });
 

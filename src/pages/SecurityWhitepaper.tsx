@@ -201,7 +201,7 @@ export default function SecurityWhitepaper() {
                 bullets: asStringArray(
                     t('securityWhitepaper.sections.integrity.bullets', { returnObjects: true }),
                 ),
-                evidence: ['src/services/vaultIntegrityService.ts', 'src/contexts/VaultContext.tsx'],
+                evidence: ['@singra/premium/src/services/vaultIntegrityService.ts', 'src/contexts/VaultContext.tsx'],
             },
             {
                 id: 'headers',
