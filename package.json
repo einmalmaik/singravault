@@ -8,7 +8,6 @@
     "node": ">=20.19.0"
   },
   "scripts": {
-    "preinstall": "git config --global url.\"https://${GITHUB_PAT}@github.com/\".insteadOf \"https://github.com/\" && git config --global url.\"https://${GITHUB_PAT}@github.com/\".insteadOf \"ssh://git@github.com/\"",
     "dev": "vite",
     "build": "vite build",
     "build:dev": "vite build --mode development",
@@ -58,7 +57,7 @@
     "@radix-ui/react-tooltip": "^1.2.7",
     "@serenity-kit/opaque": "^1.1.0",
     "@simplewebauthn/browser": "13.2.2",
-    "@singra/premium": "github:einmalmaik/singra-premium",
+    "@singra/premium": "git+https://${GITHUB_PAT}@github.com/einmalmaik/singra-premium.git",
     "@supabase/supabase-js": "2.95.3",
     "@tanstack/react-query": "^5.83.0",
     "@types/qrcode": "^1.5.6",
