@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
+import fs from "fs";
 import { componentTagger } from "lovable-tagger";
 import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
@@ -38,6 +39,94 @@ function getSecurityHeaders(mode: string) {
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const securityHeaders = getSecurityHeaders(mode);
+  const isDev = mode === "development";
+
+  const premiumSrc = path.resolve(__dirname, "../singra-premium/src");
+  const coreSrc = path.resolve(__dirname, "./src");
+
+  /**
+   * Dev-only Vite plugin: After Vite's alias resolution converts @/ to the core
+   * src/ path, this plugin checks if the resolved file actually exists in core.
+   * If not (because it was extracted to the premium repo), it redirects to the
+   * premium repo's src/ directory. Core files (like registry.ts) still resolve
+   * normally because they exist in core.
+   */
+  function premiumResolvePlugin() {
+    const coreSrcNormalized = coreSrc.replace(/\\/g, "/");
+    const premiumSrcNormalized = premiumSrc.replace(/\\/g, "/");
+
+    return {
+      name: "premium-resolve",
+      enforce: "pre" as const,
+      async resolveId(this: any, source: string, importer: string | undefined) {
+        if (!importer) return null;
+
+        // Normalize the source path
+        const normalizedSource = source.replace(/\\/g, "/");
+        const normalizedImporter = importer.replace(/\\/g, "/");
+
+        // Case 1: Source is already an absolute path pointing into core src/
+        // This happens when Vite's alias resolution has already converted @/ → core src path
+        if (normalizedSource.startsWith(coreSrcNormalized + "/")) {
+          // Check if the file exists in core
+          const exts = ["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx"];
+          const existsInCore = exts.some(ext => fs.existsSync(source + ext));
+
+          if (!existsInCore) {
+            // Try the premium repo instead
+            const relativePath = normalizedSource.slice(coreSrcNormalized.length);
+            for (const ext of exts) {
+              const premiumCandidate = path.join(premiumSrc, relativePath + ext);
+              if (fs.existsSync(premiumCandidate)) {
+                return premiumCandidate;
+              }
+            }
+          }
+        }
+
+        // Case 2: Relative import from a file inside the premium repo
+        // e.g. duressService.ts (in premium) does `import './cryptoService'`
+        // Vite resolves this relative to the premium file's directory, but
+        // cryptoService.ts lives in core. Redirect to core's equivalent path.
+        if (source.startsWith("./") || source.startsWith("../")) {
+          if (normalizedImporter.includes("singra-premium/src/")) {
+            const importerDir = path.dirname(importer);
+            const resolvedAbsolute = path.resolve(importerDir, source);
+            const exts = ["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx"];
+            const existsLocally = exts.some(ext => fs.existsSync(resolvedAbsolute + ext));
+
+            if (!existsLocally) {
+              // Map the premium path to the equivalent core path
+              const premiumSrcIndex = normalizedImporter.indexOf("singra-premium/src/");
+              if (premiumSrcIndex !== -1) {
+                const importerRelativeToSrc = normalizedImporter.slice(premiumSrcIndex + "singra-premium/src/".length);
+                const importerDirInSrc = path.dirname(importerRelativeToSrc);
+                const targetRelative = path.join(importerDirInSrc, source).replace(/\\/g, "/");
+                for (const ext of exts) {
+                  const coreCandidate = path.join(coreSrc, targetRelative + ext);
+                  if (fs.existsSync(coreCandidate)) {
+                    return coreCandidate;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Case 3: Bare module imports from premium repo files (e.g. 'react', 'lucide-react')
+        // These need to resolve from the core repo's node_modules
+        if (!source.startsWith(".") && !source.startsWith("/") && !source.startsWith("@/")) {
+          if (normalizedImporter.includes("singra-premium/")) {
+            // Re-resolve the same import as if it came from main.tsx (inside core)
+            const resolved = await this.resolve(source, path.resolve(__dirname, "src/main.tsx"), { skipSelf: true });
+            if (resolved) return resolved;
+          }
+        }
+
+        return null;
+      },
+    };
+  }
 
   return {
     server: {
@@ -47,6 +136,11 @@ export default defineConfig(({ mode }) => {
       hmr: {
         overlay: false,
       },
+      fs: {
+        // Allow serving files from the sibling premium repo
+        allow: [coreSrc, premiumSrc, path.resolve(__dirname, "node_modules")],
+        strict: false,
+      },
     },
     preview: {
       headers: securityHeaders,
@@ -55,14 +149,15 @@ export default defineConfig(({ mode }) => {
       wasm(),
       topLevelAwait(),
       react(),
-      mode === "development" && componentTagger()
+      isDev && componentTagger(),
+      isDev && premiumResolvePlugin(),
     ].filter(Boolean),
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
-        // Only point to local source in dev mode to bypass Vite optimizeDeps dual-instance bugs.
-        // In production build (Vercel), it will use the actual npm package from node_modules.
-        ...(mode === "development" ? { "@singra/premium": path.resolve(__dirname, "./src/extensions/initPremium.ts") } : {})
+        // In dev mode, resolve @singra/premium to the sibling repo so both can be developed side-by-side.
+        // In production (Vercel), the real npm package from node_modules is used instead.
+        ...(isDev ? { "@singra/premium": path.resolve(__dirname, "../singra-premium/src/extensions/initPremium.ts") } : {}),
       },
     },
     build: {
@@ -70,4 +165,3 @@ export default defineConfig(({ mode }) => {
     },
   };
 });
-
