@@ -72,9 +72,7 @@ const App = () => {
                         path="/vault"
                         element={
                           <ProtectedRoute>
-                            <VaultUnlockRequiredRoute>
-                              <VaultPage />
-                            </VaultUnlockRequiredRoute>
+                            <VaultPage />
                           </ProtectedRoute>
                         }
                       />
