@@ -10,6 +10,7 @@
 import { supabase } from '@/integrations/supabase/client';
 
 const DEFAULT_SENSITIVE_ACTION_MAX_AGE_SECONDS = 300;
+const PASSWORD_AUTH_PROVIDER = 'email';
 
 // ============ Public API ============
 
@@ -121,6 +122,64 @@ export async function reauthenticateWithAccountPassword(
     }
 }
 
+/**
+ * Resolves which reauthentication method should be shown to the current user.
+ * Password-based users get password confirmation, social-only users get the
+ * confirmation + session-refresh fallback.
+ *
+ * @returns Reauth method descriptor for the current account
+ */
+export async function getSensitiveActionReauthMethod(): Promise<SensitiveActionReauthMethod> {
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) {
+        return 'password';
+    }
+
+    const providers = getAuthProviders(user.app_metadata);
+    if (providers.includes(PASSWORD_AUTH_PROVIDER)) {
+        return 'password';
+    }
+
+    if (providers.length > 0) {
+        return 'confirmation';
+    }
+
+    return user.email ? 'password' : 'confirmation';
+}
+
+/**
+ * Reauthenticates by forcing a token refresh for providers without account
+ * password credentials (for example OAuth-only users).
+ *
+ * @returns Structured result with status and error code
+ */
+export async function reauthenticateWithSessionRefresh(): Promise<SensitiveActionReauthResult> {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session?.refresh_token) {
+        return { success: false, error: 'AUTH_REQUIRED' };
+    }
+
+    const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession({
+        refresh_token: session.refresh_token,
+    });
+
+    if (refreshError || !refreshedData.session?.access_token) {
+        return { success: false, error: 'REAUTH_FAILED' };
+    }
+
+    const issuedAt = parseJwtIssuedAt(refreshedData.session.access_token);
+    if (!issuedAt) {
+        return { success: false, error: 'REAUTH_FAILED' };
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (issuedAt > now + 30) {
+        return { success: false, error: 'REAUTH_FAILED' };
+    }
+
+    return { success: true };
+}
+
 // ============ Internal Helpers ============
 
 function isInIframe(): boolean {
@@ -157,7 +216,32 @@ function parseJwtIssuedAt(accessToken: string): number | null {
     }
 }
 
+function getAuthProviders(
+    appMetadata: Record<string, unknown> | null | undefined,
+): string[] {
+    if (!appMetadata || typeof appMetadata !== 'object') {
+        return [];
+    }
+
+    const providersField = appMetadata.providers;
+    if (Array.isArray(providersField)) {
+        return providersField
+            .filter((value): value is string => typeof value === 'string')
+            .map((value) => value.trim().toLowerCase())
+            .filter((value) => value.length > 0);
+    }
+
+    const providerField = appMetadata.provider;
+    if (typeof providerField === 'string' && providerField.trim()) {
+        return [providerField.trim().toLowerCase()];
+    }
+
+    return [];
+}
+
 // ============ Type Definitions ============
+
+export type SensitiveActionReauthMethod = 'password' | 'confirmation';
 
 export type SensitiveActionReauthErrorCode =
     | 'AUTH_REQUIRED'

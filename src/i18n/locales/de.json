@@ -1240,8 +1240,14 @@
     "authRequired": "Deine Sitzung ist nicht mehr gültig. Bitte melde dich erneut an.",
     "twoFactorRequired": "Eine Zwei-Faktor-Bestätigung ist erforderlich. Bitte melde dich erneut an.",
     "failed": "Re-Authentifizierung fehlgeschlagen. Bitte versuche es erneut.",
-    "accountDeleteContext": "Bitte bestätige dein Konto-Passwort, bevor du dein Konto löschst.",
-    "subscriptionCancelContext": "Bitte bestätige dein Konto-Passwort, bevor du dein Abonnement kündigst."
+    "accountDeleteContext": "Bitte bestätige deine Identität, bevor du dein Konto löschst.",
+    "subscriptionCancelContext": "Bitte bestätige deine Identität, bevor du dein Abonnement kündigst.",
+    "confirmationLabel": "Gib {{keyword}} ein",
+    "confirmationPlaceholder": "{{keyword}} eingeben",
+    "confirmationHint": "Bei Social-Login ohne Konto-Passwort bestätigst du diese Aktion mit einem Sicherheitswort.",
+    "confirmationMismatch": "Bitte gib exakt {{keyword}} ein.",
+    "confirmationKeywordDefault": "BESTÄTIGEN",
+    "cancelKeyword": "KÜNDIGEN"
   },
   "passkey": {
     "title": "Passkeys",

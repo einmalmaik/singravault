@@ -3,7 +3,7 @@
 ## Scope
 
 This update separates account-level access from vault-unlock state and adds
-step-up password reauthentication for destructive account actions.
+step-up reauthentication for destructive account actions.
 
 ## Unlock Policy
 
@@ -26,10 +26,15 @@ step-up password reauthentication for destructive account actions.
 - New client service: `src/services/sensitiveActionReauthService.ts`
   - `isSensitiveActionSessionFresh(maxAgeSeconds = 300)`
   - `reauthenticateWithAccountPassword(password)`
+  - `getSensitiveActionReauthMethod()`
+  - `reauthenticateWithSessionRefresh()`
 - New dialog: `src/components/security/SensitiveActionReauthDialog.tsx`
 - Sensitive actions requiring fresh session:
   - `delete_my_account` (core RPC)
   - `cancel-subscription` (premium edge function)
+- Reauth UX by account type:
+  - Password-capable accounts: confirm account password
+  - Social-only accounts: explicit keyword confirmation + token refresh fallback
 
 ## Server Enforcement
 

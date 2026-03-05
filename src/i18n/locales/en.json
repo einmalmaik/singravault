@@ -1219,8 +1219,14 @@
     "authRequired": "Your session is no longer valid. Please sign in again.",
     "twoFactorRequired": "Two-factor verification is required. Please sign in again.",
     "failed": "Re-authentication failed. Please try again.",
-    "accountDeleteContext": "Please confirm your account password before deleting your account.",
-    "subscriptionCancelContext": "Please confirm your account password before canceling your subscription."
+    "accountDeleteContext": "Please confirm your identity before deleting your account.",
+    "subscriptionCancelContext": "Please confirm your identity before canceling your subscription.",
+    "confirmationLabel": "Type {{keyword}}",
+    "confirmationPlaceholder": "Enter {{keyword}}",
+    "confirmationHint": "For social-login accounts without an account password, confirm this action with the safety keyword.",
+    "confirmationMismatch": "Please enter exactly {{keyword}}.",
+    "confirmationKeywordDefault": "CONFIRM",
+    "cancelKeyword": "CANCEL"
   },
   "passkey": {
     "title": "Passkeys",

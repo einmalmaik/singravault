@@ -6,21 +6,25 @@ const {
   mockGetSession,
   mockGetUser,
   mockSetSession,
+  mockRefreshSession,
   supabaseMock,
 } = vi.hoisted(() => {
   const mockGetSession = vi.fn();
   const mockGetUser = vi.fn();
   const mockSetSession = vi.fn();
+  const mockRefreshSession = vi.fn();
 
   return {
     mockGetSession,
     mockGetUser,
     mockSetSession,
+    mockRefreshSession,
     supabaseMock: {
       auth: {
         getSession: mockGetSession,
         getUser: mockGetUser,
         setSession: mockSetSession,
+        refreshSession: mockRefreshSession,
       },
     },
   };
@@ -31,8 +35,10 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 
 import {
+  getSensitiveActionReauthMethod,
   isSensitiveActionSessionFresh,
   reauthenticateWithAccountPassword,
+  reauthenticateWithSessionRefresh,
 } from '@/services/sensitiveActionReauthService';
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -55,6 +61,7 @@ describe('sensitiveActionReauthService', () => {
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     mockSetSession.mockResolvedValue({ error: null });
+    mockRefreshSession.mockResolvedValue({ data: { session: null }, error: null });
   });
 
   it('treats sessions with recent iat as fresh', async () => {
@@ -88,6 +95,91 @@ describe('sensitiveActionReauthService', () => {
     });
 
     const result = await reauthenticateWithAccountPassword('secret');
+
+    expect(result).toEqual({
+      success: false,
+      error: 'AUTH_REQUIRED',
+    });
+  });
+
+  it('uses password reauth for email provider accounts', async () => {
+    mockGetUser.mockResolvedValue({
+      data: {
+        user: {
+          email: 'user@example.com',
+          app_metadata: {
+            provider: 'email',
+            providers: ['email'],
+          },
+        },
+      },
+      error: null,
+    });
+
+    const method = await getSensitiveActionReauthMethod();
+
+    expect(method).toBe('password');
+  });
+
+  it('uses confirmation reauth for social-only accounts', async () => {
+    mockGetUser.mockResolvedValue({
+      data: {
+        user: {
+          email: 'user@example.com',
+          app_metadata: {
+            provider: 'google',
+            providers: ['google'],
+          },
+        },
+      },
+      error: null,
+    });
+
+    const method = await getSensitiveActionReauthMethod();
+
+    expect(method).toBe('confirmation');
+  });
+
+  it('refreshes session for non-password reauth fallback', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    mockGetSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: createJwtWithIssuedAt(now - 100),
+          refresh_token: 'refresh-token',
+        },
+      },
+      error: null,
+    });
+    mockRefreshSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: createJwtWithIssuedAt(now),
+          refresh_token: 'new-refresh-token',
+        },
+      },
+      error: null,
+    });
+
+    const result = await reauthenticateWithSessionRefresh();
+
+    expect(result).toEqual({ success: true });
+    expect(mockRefreshSession).toHaveBeenCalledWith({
+      refresh_token: 'refresh-token',
+    });
+  });
+
+  it('returns auth required when no refresh token is available', async () => {
+    mockGetSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: createJwtWithIssuedAt(Math.floor(Date.now() / 1000)),
+        },
+      },
+      error: null,
+    });
+
+    const result = await reauthenticateWithSessionRefresh();
 
     expect(result).toEqual({
       success: false,

@@ -202,6 +202,7 @@ export function AccountSettings() {
                 open={showReauthDialog}
                 onOpenChange={setShowReauthDialog}
                 description={t('reauth.accountDeleteContext')}
+                confirmationKeyword="DELETE"
                 onSuccess={executeDeleteAccount}
             />
         </>
