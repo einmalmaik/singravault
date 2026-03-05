@@ -123,6 +123,18 @@ export default function Auth() {
 
           if (!syncResponse.ok) {
             console.warn('[Auth] OAuth session cookie sync failed:', syncResponse.status);
+          } else {
+            const syncPayload = await syncResponse.json().catch(() => null) as {
+              session?: Session;
+            } | null;
+            const syncedSession = syncPayload?.session;
+
+            if (syncedSession?.access_token && syncedSession?.refresh_token) {
+              await supabase.auth.setSession({
+                access_token: syncedSession.access_token,
+                refresh_token: syncedSession.refresh_token,
+              });
+            }
           }
         }
       } catch (err) {
