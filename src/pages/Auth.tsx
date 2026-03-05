@@ -76,7 +76,8 @@ function normalizeRedirectPath(path: string | null | undefined): string | null {
     return null;
   }
 
-  if (path.startsWith('/auth')) {
+  const pathname = path.split(/[?#]/, 1)[0] || '';
+  if (pathname === '/auth' || pathname === '/auth/') {
     return null;
   }
 
