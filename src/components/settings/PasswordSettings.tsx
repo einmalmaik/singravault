@@ -1,5 +1,5 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 â€” see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Password Settings Component
  *
@@ -9,24 +9,41 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Loader2, WandSparkles } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import { useToast } from '@/hooks/use-toast';
+import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { supabase } from '@/integrations/supabase/client';
+import { DEFAULT_PASSWORD_OPTIONS, generatePassword } from '@/services/passwordGenerator';
 
 export function PasswordSettings() {
     const { t } = useTranslation();
     const { toast } = useToast();
+    const passwordCheck = usePasswordCheck({ enforceStrong: true });
 
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showNewPassword, setShowNewPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
+
+    const handleGeneratePassword = () => {
+        const generatedPassword = generatePassword(DEFAULT_PASSWORD_OPTIONS);
+        setNewPassword(generatedPassword);
+        setConfirmPassword(generatedPassword);
+        passwordCheck.onPasswordChange(generatedPassword);
+        passwordCheck.onPasswordBlur(generatedPassword);
+
+        toast({
+            title: t('common.success'),
+            description: t('settings.password.generateSuccess'),
+        });
+    };
 
     const handleUpdatePassword = async () => {
         if (newPassword.length < 12) {
@@ -47,6 +64,18 @@ export function PasswordSettings() {
             return;
         }
 
+        const checkResult = await passwordCheck.onPasswordSubmit(newPassword);
+        if (!checkResult.isAcceptable) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: checkResult.isPwned
+                    ? t('passwordStrength.pwned', { count: checkResult.pwnedCount })
+                    : t('settings.password.weakPassword'),
+            });
+            return;
+        }
+
         setIsUpdating(true);
         const { error } = await supabase.auth.updateUser({ password: newPassword });
         setIsUpdating(false);
@@ -62,6 +91,7 @@ export function PasswordSettings() {
 
         setNewPassword('');
         setConfirmPassword('');
+        passwordCheck.onPasswordChange('');
         toast({
             title: t('common.success'),
             description: t('settings.password.updateSuccess'),
@@ -80,6 +110,16 @@ export function PasswordSettings() {
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+                <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleGeneratePassword}
+                >
+                    <WandSparkles className="w-4 h-4 mr-2" />
+                    {t('settings.password.generateButton')}
+                </Button>
+
                 <div className="space-y-2">
                     <Label htmlFor="settings-new-password">{t('settings.password.newPassword')}</Label>
                     <div className="relative">
@@ -87,8 +127,13 @@ export function PasswordSettings() {
                             id="settings-new-password"
                             type={showNewPassword ? 'text' : 'password'}
                             value={newPassword}
-                            onChange={(e) => setNewPassword(e.target.value)}
-                            placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                            onFocus={passwordCheck.onFieldFocus}
+                            onChange={(e) => {
+                                setNewPassword(e.target.value);
+                                passwordCheck.onPasswordChange(e.target.value);
+                            }}
+                            onBlur={() => passwordCheck.onPasswordBlur(newPassword)}
+                            placeholder={t('settings.password.placeholder')}
                             className="pr-10"
                         />
                         <Button
@@ -111,7 +156,7 @@ export function PasswordSettings() {
                             type={showConfirmPassword ? 'text' : 'password'}
                             value={confirmPassword}
                             onChange={(e) => setConfirmPassword(e.target.value)}
-                            placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                            placeholder={t('settings.password.confirmPlaceholder')}
                             className="pr-10"
                         />
                         <Button
@@ -126,9 +171,20 @@ export function PasswordSettings() {
                     </div>
                 </div>
 
+                {passwordCheck.strengthResult && (
+                    <PasswordStrengthMeter
+                        score={passwordCheck.strengthResult.score}
+                        feedback={passwordCheck.strengthResult.feedback}
+                        crackTimeDisplay={passwordCheck.strengthResult.crackTimeDisplay}
+                        isPwned={passwordCheck.pwnedResult?.isPwned ?? false}
+                        pwnedCount={passwordCheck.pwnedResult?.pwnedCount ?? 0}
+                        isChecking={passwordCheck.isChecking}
+                    />
+                )}
+
                 <Button
                     onClick={handleUpdatePassword}
-                    disabled={isUpdating || !newPassword || !confirmPassword}
+                    disabled={isUpdating || passwordCheck.isChecking || !newPassword || !confirmPassword}
                 >
                     {isUpdating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     {t('settings.password.updateButton')}

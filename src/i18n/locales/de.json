@@ -656,10 +656,15 @@
       "description": "Aktualisiere dein Konto-Passwort.",
       "newPassword": "Neues Passwort",
       "confirmPassword": "Passwort bestÃ¤tigen",
+      "placeholder": "Starkes Passwort eingeben",
+      "confirmPlaceholder": "Passwort wiederholen",
+      "generateButton": "Sicheres Passwort generieren",
+      "generateSuccess": "Ein sicheres Passwort wurde generiert.",
       "updateButton": "Passwort aktualisieren",
       "updateSuccess": "Passwort erfolgreich aktualisiert.",
       "updateFailed": "Passwort konnte nicht aktualisiert werden.",
-      "minLength": "Passwort muss mindestens 12 Zeichen lang sein."
+      "minLength": "Passwort muss mindestens 12 Zeichen lang sein.",
+      "weakPassword": "Bitte waehle ein staerkeres Passwort."
     },
     "security": {
       "title": "Sicherheit",
