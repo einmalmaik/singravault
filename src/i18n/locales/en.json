@@ -643,6 +643,15 @@
       "minLength": "Password must be at least 12 characters long.",
       "weakPassword": "Please choose a stronger password."
     },
+    "accountDataExport": {
+      "title": "GDPR Data Export",
+      "description": "Export your account data as machine-readable JSON.",
+      "export": "Account Data Export",
+      "exportDesc": "Includes profile data, security metadata, passkey metadata, and subscription details.",
+      "exportButton": "Download GDPR export",
+      "exportSuccess": "Account data export created successfully.",
+      "exportFailed": "Failed to create account data export."
+    },
     "security": {
       "title": "Security",
       "description": "Control the security settings of your vault.",
@@ -720,6 +729,7 @@
     "data": {
       "title": "Data",
       "description": "Export or import your vault data.",
+      "exportOnlyDescription": "Export your vault data as a JSON file.",
       "export": "Export Data",
       "exportDesc": "Export all your passwords and entries as a JSON file.",
       "exportButton": "Export as JSON",

@@ -32,7 +32,11 @@ import { supabase } from '@/integrations/supabase/client';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
-export function DataSettings() {
+interface DataSettingsProps {
+    mode?: 'full' | 'export-only';
+}
+
+export function DataSettings({ mode = 'full' }: DataSettingsProps) {
     const { t } = useTranslation();
     const { user } = useAuth();
     const { decryptItem, encryptItem, isLocked } = useVault();
@@ -246,7 +250,9 @@ export function DataSettings() {
                         {t('settings.data.title')}
                     </CardTitle>
                     <CardDescription>
-                        {t('settings.data.description')}
+                        {mode === 'export-only'
+                            ? t('settings.data.exportOnlyDescription')
+                            : t('settings.data.description')}
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -274,49 +280,51 @@ export function DataSettings() {
                         </Button>
                     </div>
 
-                    {/* Import */}
-                    <div className="space-y-2">
-                        <Label className="flex items-center gap-2">
-                            <Upload className="w-4 h-4" />
-                            {t('settings.data.import')}
-                        </Label>
-                        <p className="text-sm text-muted-foreground mb-2">
-                            {t('settings.data.importDesc')}
-                        </p>
-                        <Input
-                            ref={fileInputRef}
-                            type="file"
-                            accept=".json"
-                            onChange={handleFileSelect}
-                            disabled={isLocked}
-                            className="max-w-xs"
-                        />
-                    </div>
+                    {mode === 'full' && (
+                        <div className="space-y-2">
+                            <Label className="flex items-center gap-2">
+                                <Upload className="w-4 h-4" />
+                                {t('settings.data.import')}
+                            </Label>
+                            <p className="text-sm text-muted-foreground mb-2">
+                                {t('settings.data.importDesc')}
+                            </p>
+                            <Input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".json"
+                                onChange={handleFileSelect}
+                                disabled={isLocked}
+                                className="max-w-xs"
+                            />
+                        </div>
+                    )}
                 </CardContent>
             </Card>
 
-            {/* Import Confirmation Dialog */}
-            <AlertDialog open={showImportDialog} onOpenChange={setShowImportDialog}>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>
-                            {t('settings.data.importConfirmTitle')}
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                            {t('settings.data.importConfirmDesc')}
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>
-                            {t('common.cancel')}
-                        </AlertDialogCancel>
-                        <AlertDialogAction onClick={handleImport} disabled={isImporting}>
-                            {isImporting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                            {t('settings.data.importButton')}
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+            {mode === 'full' && (
+                <AlertDialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>
+                                {t('settings.data.importConfirmTitle')}
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                                {t('settings.data.importConfirmDesc')}
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel>
+                                {t('common.cancel')}
+                            </AlertDialogCancel>
+                            <AlertDialogAction onClick={handleImport} disabled={isImporting}>
+                                {isImporting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                                {t('settings.data.importButton')}
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+            )}
         </>
     );
 }

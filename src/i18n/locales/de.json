@@ -666,6 +666,15 @@
       "minLength": "Passwort muss mindestens 12 Zeichen lang sein.",
       "weakPassword": "Bitte waehle ein staerkeres Passwort."
     },
+    "accountDataExport": {
+      "title": "DSGVO-Datenexport",
+      "description": "Exportiere deine Kontodaten in einem maschinenlesbaren JSON-Format.",
+      "export": "Konto-Datenexport",
+      "exportDesc": "Enthaelt Profildaten, Sicherheitsmetadaten, Passkey-Metadaten und Abo-Informationen.",
+      "exportButton": "DSGVO-Export herunterladen",
+      "exportSuccess": "Konto-Datenexport erfolgreich erstellt.",
+      "exportFailed": "Konto-Datenexport konnte nicht erstellt werden."
+    },
     "security": {
       "title": "Sicherheit",
       "description": "Kontrolliere die Sicherheitseinstellungen deines Tresors.",
@@ -743,6 +752,7 @@
     "data": {
       "title": "Daten",
       "description": "Exportiere oder importiere deine Tresor-Daten.",
+      "exportOnlyDescription": "Exportiere deine Tresor-Daten als JSON-Datei.",
       "export": "Daten exportieren",
       "exportDesc": "Exportiere alle deine PasswÃ¶rter und EintrÃ¤ge als JSON-Datei.",
       "exportButton": "Als JSON exportieren",
