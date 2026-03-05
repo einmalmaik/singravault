@@ -46,7 +46,14 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     // 2. Auth is resolved. If there's no user, redirect to login page
     if (!user) {
         // Save the attempted URL for redirecting after login, if needed
-        return <Navigate to="/auth" state={{ from: location }} replace />;
+        const redirectTarget = `${location.pathname}${location.search}${location.hash}`;
+        return (
+            <Navigate
+                to={`/auth?redirect=${encodeURIComponent(redirectTarget)}`}
+                state={{ from: location }}
+                replace
+            />
+        );
     }
 
     // 3. Auth is ready and user is defined: render protected content

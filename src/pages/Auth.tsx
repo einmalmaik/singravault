@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { z } from 'zod';
@@ -59,10 +59,54 @@ type LoginFormData = z.infer<typeof loginSchema>;
 type SignupFormData = z.infer<typeof signupSchema>;
 type RecoverFormData = z.infer<typeof recoverSchema>;
 type UpdatePasswordFormData = z.infer<typeof updatePasswordSchema>;
+type AuthRedirectState = {
+  from?: {
+    pathname?: string;
+    search?: string;
+    hash?: string;
+  };
+} | null;
+
+function normalizeRedirectPath(path: string | null | undefined): string | null {
+  if (!path || typeof path !== 'string') {
+    return null;
+  }
+
+  if (!path.startsWith('/') || path.startsWith('//')) {
+    return null;
+  }
+
+  const pathname = path.split(/[?#]/, 1)[0] || '';
+  if (pathname === '/auth' || pathname === '/auth/') {
+    return null;
+  }
+
+  return path;
+}
+
+function resolvePostAuthRedirectPath(
+  redirectParam: string | null,
+  locationState: unknown,
+): string {
+  const redirectFromQuery = normalizeRedirectPath(redirectParam);
+  if (redirectFromQuery) {
+    return redirectFromQuery;
+  }
+
+  const redirectState = locationState as AuthRedirectState;
+  const from = redirectState?.from;
+  const fromPath = from?.pathname
+    ? `${from.pathname}${from.search || ''}${from.hash || ''}`
+    : null;
+  const redirectFromState = normalizeRedirectPath(fromPath);
+
+  return redirectFromState || '/vault';
+}
 
 export default function Auth() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -75,12 +119,13 @@ export default function Auth() {
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
 
   useEffect(() => {
     if (user && mode !== 'update_password') {
-      navigate('/vault', { replace: true });
+      navigate(postAuthRedirectPath, { replace: true });
     }
-  }, [user, mode, navigate]);
+  }, [user, mode, navigate, postAuthRedirectPath]);
 
   // Note: 2FA Logik (TOTP) bleibt bestehen, wird hier vereinfacht
   const [show2FAModal, setShow2FAModal] = useState(false);
@@ -161,7 +206,7 @@ export default function Auth() {
         setShow2FAModal(false);
         setPendingLoginData(null);
         toast({ title: t('common.success'), description: t('auth.success') });
-        navigate('/vault');
+        navigate(postAuthRedirectPath, { replace: true });
         return true;
       }
       throw new Error('Login failed');
@@ -309,7 +354,7 @@ export default function Auth() {
     setShow2FAModal(false);
     setPendingLoginData(null);
     toast({ title: t('common.success'), description: t('auth.success') });
-    navigate('/vault');
+    navigate(postAuthRedirectPath, { replace: true });
     return true;
   };
 
@@ -582,7 +627,7 @@ export default function Auth() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: `${window.location.origin}/auth`,
+        redirectTo: `${window.location.origin}/auth?redirect=${encodeURIComponent(postAuthRedirectPath)}`,
       }
     });
 
