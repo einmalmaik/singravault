@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
+import { toExportSubscriptionSnapshot } from '@/services/subscriptionExportStatusService';
 
 export function AccountDataExportSettings() {
     const { t } = useTranslation();
@@ -57,6 +58,7 @@ export function AccountDataExportSettings() {
             ];
 
             const profile = profileResult.data ? sanitizeProfile(profileResult.data) : null;
+            const subscription = subscriptionResult.data ? toExportSubscriptionSnapshot(subscriptionResult.data) : null;
             const twoFactor = twoFactorResult.data ? sanitizeTwoFactor(twoFactorResult.data) : null;
             const passkeys = (passkeysResult.data || []).map((item) => ({
                 id: item.id,
@@ -84,7 +86,7 @@ export function AccountDataExportSettings() {
                 },
                 account: {
                     profile,
-                    subscription: subscriptionResult.data || null,
+                    subscription,
                 },
                 security: {
                     two_factor: twoFactor,
