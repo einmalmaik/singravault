@@ -21,7 +21,6 @@ import { AccountSettings } from '@/components/settings/AccountSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { PasswordSettings } from '@/components/settings/PasswordSettings';
-import { DataSettings } from '@/components/settings/DataSettings';
 import { AccountDataExportSettings } from '@/components/settings/AccountDataExportSettings';
 
 import { useAuth } from '@/contexts/AuthContext';
@@ -134,12 +133,6 @@ export default function SettingsPage() {
                 component: <AccountDataExportSettings />,
                 title: t('settings.accountDataExport.title'),
                 keywords: ['dsgvo', 'gdpr', 'export', 'privacy', 'datenexport', 'account export'],
-            },
-            {
-                id: 'vault-export',
-                component: <DataSettings mode="export-only" />,
-                title: t('settings.data.title'),
-                keywords: ['vault export', 'tresor export', 'json export', 'data export'],
             },
         ];
 

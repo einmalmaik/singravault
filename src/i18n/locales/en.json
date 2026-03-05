@@ -729,7 +729,6 @@
     "data": {
       "title": "Data",
       "description": "Export or import your vault data.",
-      "exportOnlyDescription": "Export your vault data as a JSON file.",
       "export": "Export Data",
       "exportDesc": "Export all your passwords and entries as a JSON file.",
       "exportButton": "Export as JSON",

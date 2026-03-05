@@ -752,7 +752,6 @@
     "data": {
       "title": "Daten",
       "description": "Exportiere oder importiere deine Tresor-Daten.",
-      "exportOnlyDescription": "Exportiere deine Tresor-Daten als JSON-Datei.",
       "export": "Daten exportieren",
       "exportDesc": "Exportiere alle deine PasswÃ¶rter und EintrÃ¤ge als JSON-Datei.",
       "exportButton": "Als JSON exportieren",
