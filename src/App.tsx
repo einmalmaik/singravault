@@ -31,6 +31,7 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import VaultPage from "./pages/VaultPage";
 import SettingsPage from "./pages/SettingsPage";
+import VaultSettingsPage from "./pages/VaultSettingsPage";
 import NotFound from "./pages/NotFound";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import Impressum from "./pages/Impressum";
@@ -77,6 +78,16 @@ const App = () => {
                         }
                       />
                       <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+                      <Route
+                        path="/vault/settings"
+                        element={
+                          <ProtectedRoute>
+                            <VaultUnlockRequiredRoute>
+                              <VaultSettingsPage />
+                            </VaultUnlockRequiredRoute>
+                          </ProtectedRoute>
+                        }
+                      />
                       {/* Admin route is now registered via initPremium as a premium route */}
                       <Route path="/security" element={<SecurityWhitepaper />} />
                       <Route path="/privacy" element={<PrivacyPolicy />} />

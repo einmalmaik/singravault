@@ -38,6 +38,7 @@
   "nav": {
     "home": "Startseite",
     "vault": "Tresor",
+    "account": "Konto",
     "settings": "Einstellungen",
     "logout": "Abmelden",
     "login": "Anmelden",
@@ -622,6 +623,12 @@
   },
   "settings": {
     "title": "Einstellungen",
+    "accountPage": {
+      "title": "Konto-Einstellungen"
+    },
+    "vaultPage": {
+      "title": "Tresor-Einstellungen"
+    },
     "footer": "Deine Daten werden lokal verschlÃ¼sselt und sicher gespeichert.",
     "searchPlaceholder": "Einstellungen durchsuchen...",
     "searchResults": "{{count}} Ergebnisse gefunden",
@@ -643,6 +650,16 @@
       "deleteSuccess": "Konto gelÃ¶scht",
       "deleteSuccessDesc": "Dein Konto und alle Daten wurden gelÃ¶scht.",
       "deleteFailed": "Konto konnte nicht gelÃ¶scht werden."
+    },
+    "password": {
+      "title": "Passwort Ã¤ndern",
+      "description": "Aktualisiere dein Konto-Passwort.",
+      "newPassword": "Neues Passwort",
+      "confirmPassword": "Passwort bestÃ¤tigen",
+      "updateButton": "Passwort aktualisieren",
+      "updateSuccess": "Passwort erfolgreich aktualisiert.",
+      "updateFailed": "Passwort konnte nicht aktualisiert werden.",
+      "minLength": "Passwort muss mindestens 12 Zeichen lang sein."
     },
     "security": {
       "title": "Sicherheit",

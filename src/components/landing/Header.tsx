@@ -8,9 +8,16 @@
 
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
-import { Menu, X, Download, CreditCard } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Menu, X, Download, CreditCard, ChevronDown, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 
 import { isPremiumActive } from '@/extensions/registry';
@@ -23,7 +30,8 @@ interface BeforeInstallPromptEvent extends Event {
 
 export function Header() {
   const { t } = useTranslation();
-  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { user, signOut } = useAuth();
   
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -64,6 +72,17 @@ export function Header() {
     if (outcome === 'accepted') {
       setDeferredPrompt(null);
       setIsInstallable(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('[Header] Failed to sign out:', error);
+    } finally {
+      setMobileMenuOpen(false);
+      navigate('/', { replace: true });
     }
   };
 
@@ -117,9 +136,29 @@ export function Header() {
             {/* Auth Buttons */}
             <div className="hidden sm:flex items-center gap-2">
               {user ? (
-                <Button asChild>
-                  <Link to="/vault">{t('nav.vault')}</Link>
-                </Button>
+                <>
+                  <Button asChild>
+                    <Link to="/vault">{t('nav.vault')}</Link>
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" className="gap-2">
+                        <UserRound className="w-4 h-4" />
+                        {t('nav.account')}
+                        <ChevronDown className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                      <DropdownMenuItem asChild>
+                        <Link to="/settings">{t('nav.settings')}</Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => void handleLogout()}>
+                        {t('nav.logout')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </>
               ) : (
                 <>
                   <Button asChild variant="ghost">
@@ -196,9 +235,21 @@ export function Header() {
                   </Button>
                 )}
                 {user ? (
-                  <Button asChild className="flex-1">
-                    <Link to="/vault">{t('nav.vault')}</Link>
-                  </Button>
+                  <>
+                    <Button asChild className="flex-1">
+                      <Link to="/vault">{t('nav.vault')}</Link>
+                    </Button>
+                    <Button asChild variant="outline" className="flex-1">
+                      <Link to="/settings">{t('nav.settings')}</Link>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="flex-1"
+                      onClick={() => void handleLogout()}
+                    >
+                      {t('nav.logout')}
+                    </Button>
+                  </>
                 ) : (
                   <>
                     <Button asChild variant="outline" className="flex-1">

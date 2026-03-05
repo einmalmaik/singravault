@@ -100,7 +100,7 @@ function resolvePostAuthRedirectPath(
     : null;
   const redirectFromState = normalizeRedirectPath(fromPath);
 
-  return redirectFromState || '/vault';
+  return redirectFromState || '/';
 }
 
 export default function Auth() {
