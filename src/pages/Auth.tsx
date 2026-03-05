@@ -9,6 +9,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import type { Session } from '@supabase/supabase-js';
 import { Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
@@ -26,6 +27,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { SEO } from '@/components/SEO';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
+import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService';
 import * as opaqueClient from '@/services/opaqueService';
 
 const loginSchema = z.object({
@@ -59,49 +61,6 @@ type LoginFormData = z.infer<typeof loginSchema>;
 type SignupFormData = z.infer<typeof signupSchema>;
 type RecoverFormData = z.infer<typeof recoverSchema>;
 type UpdatePasswordFormData = z.infer<typeof updatePasswordSchema>;
-type AuthRedirectState = {
-  from?: {
-    pathname?: string;
-    search?: string;
-    hash?: string;
-  };
-} | null;
-
-function normalizeRedirectPath(path: string | null | undefined): string | null {
-  if (!path || typeof path !== 'string') {
-    return null;
-  }
-
-  if (!path.startsWith('/') || path.startsWith('//')) {
-    return null;
-  }
-
-  const pathname = path.split(/[?#]/, 1)[0] || '';
-  if (pathname === '/auth' || pathname === '/auth/') {
-    return null;
-  }
-
-  return path;
-}
-
-function resolvePostAuthRedirectPath(
-  redirectParam: string | null,
-  locationState: unknown,
-): string {
-  const redirectFromQuery = normalizeRedirectPath(redirectParam);
-  if (redirectFromQuery) {
-    return redirectFromQuery;
-  }
-
-  const redirectState = locationState as AuthRedirectState;
-  const from = redirectState?.from;
-  const fromPath = from?.pathname
-    ? `${from.pathname}${from.search || ''}${from.hash || ''}`
-    : null;
-  const redirectFromState = normalizeRedirectPath(fromPath);
-
-  return redirectFromState || '/';
-}
 
 export default function Auth() {
   const { t } = useTranslation();
@@ -264,7 +223,7 @@ export default function Auth() {
     data: LoginFormData,
     totpCode?: string,
     isBackupCode?: boolean,
-  ): Promise<any | 'legacy' | '2fa' | null> => {
+  ): Promise<Session | 'legacy' | '2fa' | null> => {
     try {
       // Step 1: Client starts login (password is blinded, never sent)
       const { clientLoginState, startLoginRequest } = await opaqueClient.startLogin(data.password);
@@ -661,7 +620,7 @@ export default function Auth() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: `${window.location.origin}/auth?redirect=${encodeURIComponent(postAuthRedirectPath)}`,
+        redirectTo: `${window.location.origin}/auth`,
       }
     });
 
