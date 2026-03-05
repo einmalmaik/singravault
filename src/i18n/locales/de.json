@@ -626,6 +626,10 @@
     "searchPlaceholder": "Einstellungen durchsuchen...",
     "searchResults": "{{count}} Ergebnisse gefunden",
     "noResults": "Keine Einstellungen gefunden",
+    "vaultLockedNotice": {
+      "title": "Tresor ist aktuell gesperrt",
+      "description": "Konto- und Abo-Einstellungen bleiben verfuegbar. Tresorbezogene Einstellungen erfordern das Entsperren."
+    },
     "account": {
       "title": "Konto",
       "description": "Verwalte dein Konto und deine Anmeldedaten.",
@@ -1080,6 +1084,7 @@
   "emergency": {
     "title": "Notfallzugang",
     "description": "Verwalte, wer im Notfall auf deinen Tresor zugreifen darf.",
+    "unlockRequired": "Entsperre deinen Tresor, um Notfallzugang-Einstellungen zu verwalten.",
     "tabs": {
       "trustees": "Meine Vertrauenspersonen",
       "grantors": "Wer mir vertraut"
@@ -1207,6 +1212,7 @@
     "deviceNamePlaceholder": "z.B. MacBook Touch ID, YubiKey 5",
     "confirmPassword": "Master-Passwort bestätigen",
     "passwordRequired": "Das Master-Passwort wird benötigt, um einen Passkey zu registrieren.",
+    "unlockRequired": "Entsperre deinen Tresor, um neue Passkeys zu registrieren.",
     "passwordHint": "Erforderlich, um den Passkey sicher mit deinem Tresor-Verschlüsselungsschlüssel zu verknüpfen.",
     "registeredWithPrf": "Passkey registriert! Du kannst deinen Tresor jetzt mit diesem Passkey entsperren.",
     "registeredWithoutPrf": "Passkey für Authentifizierung registriert, aber dieses Gerät unterstützt kein Tresor-Entsperren (kein PRF). Du benötigst weiterhin dein Master-Passwort.",
