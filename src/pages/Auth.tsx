@@ -109,7 +109,7 @@ export default function Auth() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, authReady } = useAuth();
 
   const urlToken = searchParams.get('token') || (window.location.hash.includes('type=recovery') ? 'supabase-recovery' : null);
   const [mode, setMode] = useState<'login' | 'signup' | 'verify_signup' | 'recover' | 'verify_recover' | 'update_password'>(
@@ -122,10 +122,44 @@ export default function Auth() {
   const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
 
   useEffect(() => {
+    if (!window.location.hash.includes('access_token=')) {
+      return;
+    }
+
+    const applyCallbackSession = async () => {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+
+      if (!accessToken || !refreshToken) {
+        return;
+      }
+
+      try {
+        await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+      } catch (err) {
+        console.error('[Auth] Failed to apply callback session from URL hash:', err);
+      } finally {
+        const cleanUrl = `${window.location.pathname}${window.location.search}`;
+        window.history.replaceState({}, document.title, cleanUrl);
+      }
+    };
+
+    void applyCallbackSession();
+  }, []);
+
+  useEffect(() => {
+    if (!authReady) {
+      return;
+    }
+
     if (user && mode !== 'update_password') {
       navigate(postAuthRedirectPath, { replace: true });
     }
-  }, [user, mode, navigate, postAuthRedirectPath]);
+  }, [authReady, user, mode, navigate, postAuthRedirectPath]);
 
   // Note: 2FA Logik (TOTP) bleibt bestehen, wird hier vereinfacht
   const [show2FAModal, setShow2FAModal] = useState(false);
