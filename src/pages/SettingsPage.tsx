@@ -11,20 +11,18 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Settings, ArrowLeft, Shield, Search, Wrench, Lock } from 'lucide-react';
+import { Settings, ArrowLeft, Shield, Search, Wrench } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 import { AccountSettings } from '@/components/settings/AccountSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
-import { DataSettings } from '@/components/settings/DataSettings';
+import { PasswordSettings } from '@/components/settings/PasswordSettings';
 
 import { useAuth } from '@/contexts/AuthContext';
-import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { getExtension, isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import type { SettingsSlotProps } from '@/extensions/types';
@@ -34,8 +32,6 @@ type SettingsSection = {
     component: React.ReactNode;
     title: string;
     keywords: string[];
-    premium?: boolean;
-    families?: boolean;
 };
 
 export default function SettingsPage() {
@@ -43,8 +39,7 @@ export default function SettingsPage() {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const { toast } = useToast();
-    const { user, loading, authReady } = useAuth();
-    const { isLocked } = useVault();
+    const { user, authReady } = useAuth();
 
     const [searchQuery, setSearchQuery] = useState('');
     const [showAdminButton, setShowAdminButton] = useState(false);
@@ -122,15 +117,15 @@ export default function SettingsPage() {
             },
             {
                 id: 'security',
-                component: <SecuritySettings />,
+                component: <SecuritySettings mode="account" />,
                 title: t('settings.security.title'),
-                keywords: ['security', 'sicherheit', 'auto-lock', 'lock', 'passwort', 'password', '2fa', 'totp', 'passkey', 'duress'],
+                keywords: ['security', 'sicherheit', '2fa', 'totp', 'authenticator', 'konto-schutz', 'account security'],
             },
             {
-                id: 'data',
-                component: <DataSettings />,
-                title: t('settings.data.title'),
-                keywords: ['data', 'daten', 'export', 'import', 'backup', 'sicherung'],
+                id: 'password',
+                component: <PasswordSettings />,
+                title: t('settings.password.title'),
+                keywords: ['password', 'passwort', 'change password', 'reset password'],
             },
         ];
 
@@ -154,39 +149,6 @@ export default function SettingsPage() {
             keywords: ['account', 'konto', 'email', 'logout', 'delete', 'löschen'],
         });
 
-        const EmergencySection = getExtension<SettingsSlotProps>('settings.emergency');
-        if (EmergencySection) {
-            result.push({
-                id: 'emergency',
-                component: <EmergencySection bypassFeatureGate={isAdminUser} />,
-                title: t('emergency.title'),
-                keywords: ['emergency', 'notfall', 'trustee', 'recovery', 'wiederherstellung', 'zugriff'],
-                premium: true,
-            });
-        }
-
-        const FamilySection = getExtension<SettingsSlotProps>('settings.family');
-        if (FamilySection) {
-            result.push({
-                id: 'family',
-                component: <FamilySection bypassFeatureGate={isAdminUser} />,
-                title: t('settings.family.title'),
-                keywords: ['family', 'familie', 'organization', 'members', 'mitglieder', 'invite', 'einladen'],
-                families: true,
-            });
-        }
-
-        const SharedCollectionsSection = getExtension<SettingsSlotProps>('settings.shared-collections');
-        if (SharedCollectionsSection) {
-            result.push({
-                id: 'shared-collections',
-                component: <SharedCollectionsSection bypassFeatureGate={isAdminUser} />,
-                title: t('settings.sharedCollections.title'),
-                keywords: ['shared', 'collections', 'geteilt', 'sammlungen', 'share', 'teilen'],
-                families: true,
-            });
-        }
-
         const SupportSection = getExtension<SettingsSlotProps>('settings.support');
         if (SupportSection) {
             result.push({
@@ -198,7 +160,7 @@ export default function SettingsPage() {
         }
 
         return result;
-    }, [isAdminUser, t]);
+    }, [t]);
 
     const filteredSections = useMemo(() => {
         const query = searchQuery.toLowerCase().trim();
@@ -224,14 +186,14 @@ export default function SettingsPage() {
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => navigate('/vault')}
+                                onClick={() => navigate('/')}
                                 className="rounded-full"
                             >
                                 <ArrowLeft className="w-5 h-5" />
                             </Button>
                             <div className="flex items-center gap-2">
                                 <Settings className="w-6 h-6 text-primary" />
-                                <h1 className="text-xl font-bold">{t('settings.title')}</h1>
+                                <h1 className="text-xl font-bold">{t('settings.accountPage.title')}</h1>
                             </div>
                         </div>
                     </div>
@@ -260,14 +222,6 @@ export default function SettingsPage() {
 
             {/* Main Content */}
             <main className="container max-w-4xl mx-auto px-4 py-8">
-                {isLocked && (
-                    <Alert className="mb-6 border-amber-500/40 bg-amber-500/10">
-                        <Lock className="h-4 w-4 text-amber-600" />
-                        <AlertTitle>{t('settings.vaultLockedNotice.title')}</AlertTitle>
-                        <AlertDescription>{t('settings.vaultLockedNotice.description')}</AlertDescription>
-                    </Alert>
-                )}
-
                 {/* Search Bar */}
                 <div className="mb-8">
                     <div className="relative">

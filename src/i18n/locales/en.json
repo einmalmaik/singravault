@@ -38,6 +38,7 @@
   "nav": {
     "home": "Home",
     "vault": "Vault",
+    "account": "Account",
     "settings": "Settings",
     "logout": "Logout",
     "login": "Login",
@@ -599,6 +600,12 @@
   },
   "settings": {
     "title": "Settings",
+    "accountPage": {
+      "title": "Account Settings"
+    },
+    "vaultPage": {
+      "title": "Vault Settings"
+    },
     "footer": "Your data is encrypted locally and stored securely.",
     "searchPlaceholder": "Search settings...",
     "searchResults": "{{count}} results found",
@@ -620,6 +627,16 @@
       "deleteSuccess": "Account Deleted",
       "deleteSuccessDesc": "Your account and all data have been deleted.",
       "deleteFailed": "Failed to delete account."
+    },
+    "password": {
+      "title": "Change Password",
+      "description": "Update your account password.",
+      "newPassword": "New Password",
+      "confirmPassword": "Confirm Password",
+      "updateButton": "Update Password",
+      "updateSuccess": "Password updated successfully.",
+      "updateFailed": "Failed to update password.",
+      "minLength": "Password must be at least 12 characters long."
     },
     "security": {
       "title": "Security",

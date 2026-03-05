@@ -500,7 +500,7 @@ export function VaultSidebar({
                         collapsed={collapsed}
                         onClick={() => {
                             onActionComplete?.();
-                            navigate('/settings');
+                            navigate('/vault/settings');
                         }}
                     />
                     <SidebarItem

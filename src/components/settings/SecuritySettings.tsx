@@ -38,12 +38,21 @@ const AUTO_LOCK_OPTIONS = [
     { value: '0', label: 'settings.security.never' },
 ];
 
-export function SecuritySettings() {
+type SecuritySettingsMode = 'all' | 'account' | 'vault';
+
+interface SecuritySettingsProps {
+    mode?: SecuritySettingsMode;
+}
+
+export function SecuritySettings({ mode = 'all' }: SecuritySettingsProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const navigate = useNavigate();
     const { autoLockTimeout, setAutoLockTimeout, lock, isLocked } = useVault();
     const DuressSettings = getExtension('settings.duress');
+    const showVaultControls = mode !== 'account';
+    const showTwoFactor = mode !== 'vault';
+    const showVaultSecurityExtensions = mode !== 'account';
 
     const handleAutoLockChange = (value: string) => {
         const timeout = parseInt(value, 10);
@@ -70,83 +79,89 @@ export function SecuritySettings() {
 
     return (
         <>
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <Shield className="w-5 h-5" />
-                        {t('settings.security.title')}
-                    </CardTitle>
-                    <CardDescription>
-                        {t('settings.security.description')}
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                    {/* Auto-Lock Timer */}
-                    <div className="space-y-2">
-                        <Label className="flex items-center gap-2">
-                            <Timer className="w-4 h-4" />
-                            {t('settings.security.autoLock')}
-                        </Label>
-                        <Select
-                            value={autoLockTimeout.toString()}
-                            onValueChange={handleAutoLockChange}
-                        >
-                            <SelectTrigger className="w-full sm:w-[200px]">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {AUTO_LOCK_OPTIONS.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                        {option.label.startsWith('settings.')
-                                            ? t(option.label)
-                                            : option.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <p className="text-sm text-muted-foreground">
-                            {t('settings.security.autoLockDesc')}
-                        </p>
-                    </div>
+            {showVaultControls && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <Shield className="w-5 h-5" />
+                            {t('settings.security.title')}
+                        </CardTitle>
+                        <CardDescription>
+                            {t('settings.security.description')}
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                        {/* Auto-Lock Timer */}
+                        <div className="space-y-2">
+                            <Label className="flex items-center gap-2">
+                                <Timer className="w-4 h-4" />
+                                {t('settings.security.autoLock')}
+                            </Label>
+                            <Select
+                                value={autoLockTimeout.toString()}
+                                onValueChange={handleAutoLockChange}
+                            >
+                                <SelectTrigger className="w-full sm:w-[200px]">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {AUTO_LOCK_OPTIONS.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                            {option.label.startsWith('settings.')
+                                                ? t(option.label)
+                                                : option.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-sm text-muted-foreground">
+                                {t('settings.security.autoLockDesc')}
+                            </p>
+                        </div>
 
-                    {/* Lock Now Button */}
-                    <div className="space-y-2">
-                        <Label className="flex items-center gap-2">
-                            <Lock className="w-4 h-4" />
-                            {t('settings.security.manualLock')}
-                        </Label>
-                        <Button
-                            variant="outline"
-                            onClick={handleLockNow}
-                            disabled={isLocked}
-                            className="flex items-center gap-2"
-                        >
-                            <Lock className="w-4 h-4" />
-                            {t('settings.security.lockNow')}
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
+                        {/* Lock Now Button */}
+                        <div className="space-y-2">
+                            <Label className="flex items-center gap-2">
+                                <Lock className="w-4 h-4" />
+                                {t('settings.security.manualLock')}
+                            </Label>
+                            <Button
+                                variant="outline"
+                                onClick={handleLockNow}
+                                disabled={isLocked}
+                                className="flex items-center gap-2"
+                            >
+                                <Lock className="w-4 h-4" />
+                                {t('settings.security.lockNow')}
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
-            {/* Two-Factor Authentication */}
-            <Separator className="my-6" />
-            <TwoFactorSettings />
-
-            {/* Passkey Authentication */}
-            <Separator className="my-6" />
-            <PasskeySettings />
-
-            {/* Panic/Duress Password (Premium) */}
-            {DuressSettings && (
+            {showTwoFactor && (
                 <>
-                    <Separator className="my-6" />
-                    <DuressSettings />
+                    {showVaultControls && <Separator className="my-6" />}
+                    <TwoFactorSettings />
                 </>
             )}
 
-            {/* Device Key Protection */}
-            <Separator className="my-6" />
-            <DeviceKeySettings />
+            {showVaultSecurityExtensions && (
+                <>
+                    {(showVaultControls || showTwoFactor) && <Separator className="my-6" />}
+                    <PasskeySettings />
+
+                    {DuressSettings && (
+                        <>
+                            <Separator className="my-6" />
+                            <DuressSettings />
+                        </>
+                    )}
+
+                    <Separator className="my-6" />
+                    <DeviceKeySettings />
+                </>
+            )}
         </>
     );
 }
