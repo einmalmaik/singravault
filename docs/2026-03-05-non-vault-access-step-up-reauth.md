@@ -33,7 +33,7 @@ step-up password reauthentication for destructive account actions.
 
 ## Server Enforcement
 
-- Core migration: `supabase/migrations/20260305170000_require_fresh_session_for_delete_account.sql`
+- Core migration: `supabase/migrations/20260305163206_require_fresh_session_for_delete_account.sql`
   - `delete_my_account()` rejects stale JWTs (`iat` older than 300 seconds) with `REAUTH_REQUIRED`.
 - Premium edge function `cancel-subscription` enforces the same JWT `iat`
   freshness window and returns `403` + `REAUTH_REQUIRED`.
