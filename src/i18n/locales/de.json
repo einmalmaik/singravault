@@ -1187,7 +1187,7 @@
     "keep_plan": "Plan behalten",
     "confirm_cancel": "Kündigung bestätigen",
     "cancel_error": "Fehler beim Kündigen des Abonnements.",
-    "feature_locked_title": "Premium-Funktion",
+    "feature_locked_title": "Premium / Family Funktion",
     "feature_locked_description": "{{feature}} benötigt den {{tier}}-Plan."
   },
   "passkey": {

@@ -1166,7 +1166,7 @@
     "keep_plan": "Keep Plan",
     "confirm_cancel": "Confirm Cancellation",
     "cancel_error": "Error canceling subscription.",
-    "feature_locked_title": "Premium Feature",
+    "feature_locked_title": "Premium / Family Feature",
     "feature_locked_description": "{{feature}} requires the {{tier}} plan."
   },
   "passkey": {

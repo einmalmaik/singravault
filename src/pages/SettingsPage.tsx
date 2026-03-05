@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState, useMemo } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Settings, ArrowLeft, Shield, Search, Wrench } from 'lucide-react';
 
@@ -24,6 +24,7 @@ import { DataSettings } from '@/components/settings/DataSettings';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
+import { useToast } from '@/hooks/use-toast';
 import { getExtension, isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import type { SettingsSlotProps } from '@/extensions/types';
 
@@ -39,6 +40,8 @@ type SettingsSection = {
 export default function SettingsPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const { toast } = useToast();
     const { user, loading, authReady } = useAuth();
     const { isLocked } = useVault();
 
@@ -51,6 +54,25 @@ export default function SettingsPage() {
             navigate('/vault', { replace: true });
         }
     }, [isLocked, user, navigate]);
+
+    useEffect(() => {
+        if (searchParams.get('checkout') === 'success') {
+            toast({
+                title: t('subscription.paymentSuccessful', 'Zahlung erfolgreich!'),
+                description: t('subscription.paymentSuccessfulBody', 'Dein Abonnement wurde erfolgreich aktualisiert.'),
+            });
+            searchParams.delete('checkout');
+            setSearchParams(searchParams, { replace: true });
+        } else if (searchParams.get('checkout') === 'cancel') {
+            toast({
+                title: t('subscription.paymentCanceled', 'Zahlung abgebrochen'),
+                description: t('subscription.paymentCanceledBody', 'Der Checkout wurde abgebrochen.'),
+                variant: 'destructive',
+            });
+            searchParams.delete('checkout');
+            setSearchParams(searchParams, { replace: true });
+        }
+    }, [searchParams, setSearchParams, t, toast]);
 
     useEffect(() => {
         let isCancelled = false;
