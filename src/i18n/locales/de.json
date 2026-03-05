@@ -1199,6 +1199,19 @@
     "feature_locked_title": "Premium / Family Funktion",
     "feature_locked_description": "{{feature}} benötigt den {{tier}}-Plan."
   },
+  "reauth": {
+    "title": "Konto-Passwort bestätigen",
+    "description": "Für diese sensible Aktion bestätige bitte erneut dein Konto-Passwort.",
+    "passwordLabel": "Konto-Passwort",
+    "passwordPlaceholder": "Konto-Passwort eingeben",
+    "confirm": "Bestätigen und fortfahren",
+    "invalidCredentials": "Falsches Passwort. Bitte versuche es erneut.",
+    "authRequired": "Deine Sitzung ist nicht mehr gültig. Bitte melde dich erneut an.",
+    "twoFactorRequired": "Eine Zwei-Faktor-Bestätigung ist erforderlich. Bitte melde dich erneut an.",
+    "failed": "Re-Authentifizierung fehlgeschlagen. Bitte versuche es erneut.",
+    "accountDeleteContext": "Bitte bestätige dein Konto-Passwort, bevor du dein Konto löschst.",
+    "subscriptionCancelContext": "Bitte bestätige dein Konto-Passwort, bevor du dein Abonnement kündigst."
+  },
   "passkey": {
     "title": "Passkeys",
     "description": "Verwende Biometrie oder einen Sicherheitsschlüssel, um deinen Tresor ohne Eingabe des Master-Passworts zu entsperren.",

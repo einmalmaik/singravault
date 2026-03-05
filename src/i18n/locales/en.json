@@ -1178,6 +1178,19 @@
     "feature_locked_title": "Premium / Family Feature",
     "feature_locked_description": "{{feature}} requires the {{tier}} plan."
   },
+  "reauth": {
+    "title": "Confirm account password",
+    "description": "For this sensitive action, confirm your account password again.",
+    "passwordLabel": "Account password",
+    "passwordPlaceholder": "Enter your account password",
+    "confirm": "Confirm and continue",
+    "invalidCredentials": "Incorrect password. Please try again.",
+    "authRequired": "Your session is no longer valid. Please sign in again.",
+    "twoFactorRequired": "Two-factor verification is required. Please sign in again.",
+    "failed": "Re-authentication failed. Please try again.",
+    "accountDeleteContext": "Please confirm your account password before deleting your account.",
+    "subscriptionCancelContext": "Please confirm your account password before canceling your subscription."
+  },
   "passkey": {
     "title": "Passkeys",
     "description": "Use biometrics or a security key to unlock your vault without typing your master password.",
