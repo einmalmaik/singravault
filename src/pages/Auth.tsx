@@ -89,6 +89,13 @@ export default function Auth() {
       const hashParams = new URLSearchParams(window.location.hash.substring(1));
       const accessToken = hashParams.get('access_token');
       const refreshToken = hashParams.get('refresh_token');
+      const runningInIframe = (() => {
+        try {
+          return window.self !== window.top;
+        } catch {
+          return true;
+        }
+      })();
 
       if (!accessToken || !refreshToken) {
         return;
@@ -99,6 +106,25 @@ export default function Auth() {
           access_token: accessToken,
           refresh_token: refreshToken,
         });
+
+        if (!runningInIframe) {
+          const syncResponse = await fetch(`${API_URL}/auth-session`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${accessToken}`,
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+              action: 'oauth-sync',
+              refreshToken,
+            }),
+          });
+
+          if (!syncResponse.ok) {
+            console.warn('[Auth] OAuth session cookie sync failed:', syncResponse.status);
+          }
+        }
       } catch (err) {
         console.error('[Auth] Failed to apply callback session from URL hash:', err);
       } finally {
