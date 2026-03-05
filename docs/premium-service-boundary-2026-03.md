@@ -3,15 +3,19 @@
 ## Summary
 
 Core (`singravault`) now keeps only the extension contracts for premium features.
-The concrete implementations for family, emergency access, vault health, and vault integrity live in `singra-premium`.
+The concrete implementations for family, emergency access, shared collections,
+file attachments, support, vault health, and vault integrity live in `singra-premium`.
 
 ## Moved Out Of Core
 
 - `src/services/familyService.ts`
 - `src/services/emergencyAccessService.ts`
+- `src/services/collectionService.ts`
+- `src/services/fileAttachmentService.ts`
+- `src/services/supportService.ts`
 - `src/services/vaultHealthService.ts`
 - `src/services/vaultIntegrityService.ts`
-- Related core-only duplicate tests for these services
+- Related core-only duplicate tests/components for these services
 
 ## Core Integration Pattern
 
