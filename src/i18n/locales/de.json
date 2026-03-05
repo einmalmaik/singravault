@@ -1168,6 +1168,10 @@
     "cancel": "Abbrechen",
     "proceed_checkout": "Weiter zur Kasse",
     "checkout_error": "Fehler beim Erstellen der Checkout-Sitzung.",
+    "paymentSuccessful": "Zahlung erfolgreich!",
+    "paymentSuccessfulBody": "Dein Abonnement wurde erfolgreich aktualisiert.",
+    "paymentCanceled": "Zahlung abgebrochen",
+    "paymentCanceledBody": "Der Checkout wurde abgebrochen.",
     "settings_title": "Abonnement",
     "status_active": "Aktiv",
     "status_cancelling": "Wird gekündigt",
@@ -1187,7 +1191,7 @@
     "keep_plan": "Plan behalten",
     "confirm_cancel": "Kündigung bestätigen",
     "cancel_error": "Fehler beim Kündigen des Abonnements.",
-    "feature_locked_title": "Premium-Funktion",
+    "feature_locked_title": "Premium / Family Funktion",
     "feature_locked_description": "{{feature}} benötigt den {{tier}}-Plan."
   },
   "passkey": {

@@ -1147,6 +1147,10 @@
     "cancel": "Cancel",
     "proceed_checkout": "Proceed to Checkout",
     "checkout_error": "Error creating checkout session.",
+    "paymentSuccessful": "Payment successful!",
+    "paymentSuccessfulBody": "Your subscription has been updated successfully.",
+    "paymentCanceled": "Payment canceled",
+    "paymentCanceledBody": "The checkout was canceled.",
     "settings_title": "Subscription",
     "status_active": "Active",
     "status_cancelling": "Cancelling",
@@ -1166,7 +1170,7 @@
     "keep_plan": "Keep Plan",
     "confirm_cancel": "Confirm Cancellation",
     "cancel_error": "Error canceling subscription.",
-    "feature_locked_title": "Premium Feature",
+    "feature_locked_title": "Premium / Family Feature",
     "feature_locked_description": "{{feature}} requires the {{tier}} plan."
   },
   "passkey": {
