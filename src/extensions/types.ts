@@ -85,6 +85,25 @@ export interface DualUnlockResult {
 }
 
 /**
+ * Minimal vault item structure needed for integrity checks.
+ */
+export interface VaultItemForIntegrity {
+    id: string;
+    encrypted_data: string;
+}
+
+/**
+ * Result of an integrity verification run.
+ */
+export interface IntegrityVerificationResult {
+    valid: boolean;
+    isFirstCheck: boolean;
+    computedRoot: string;
+    storedRoot?: string;
+    itemCount: number;
+}
+
+/**
  * Service hooks that premium can register to inject business logic
  * into the core without direct imports.
  */
@@ -128,6 +147,34 @@ export interface ServiceHooks {
      * Returns null if the user has no team access or admin is not installed.
      */
     getTeamAccess?: () => Promise<{ access: TeamAccessHook | null; error: Error | null }>;
+
+    /**
+     * Derive an integrity key for tamper detection.
+     */
+    deriveIntegrityKey?: (masterPassword: string, saltBase64: string) => Promise<CryptoKey>;
+
+    /**
+     * Verify vault item integrity against the stored root.
+     */
+    verifyVaultIntegrity?: (
+        items: VaultItemForIntegrity[],
+        integrityKey: CryptoKey,
+        userId: string,
+    ) => Promise<IntegrityVerificationResult>;
+
+    /**
+     * Update the stored integrity root after vault mutations.
+     */
+    updateIntegrityRoot?: (
+        items: VaultItemForIntegrity[],
+        integrityKey: CryptoKey,
+        userId: string,
+    ) => Promise<string>;
+
+    /**
+     * Clear the local integrity baseline for a user.
+     */
+    clearIntegrityRoot?: (userId: string) => void;
 }
 
 /**

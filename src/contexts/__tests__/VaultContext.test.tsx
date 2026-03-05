@@ -90,14 +90,6 @@ vi.mock("@/services/rateLimiterService", () => ({
   resetUnlockAttempts: () => mockResetUnlockAttempts(),
 }));
 
-// Mock vault integrity service
-vi.mock("@/services/vaultIntegrityService", () => ({
-  deriveIntegrityKey: vi.fn(() => Promise.resolve({} as CryptoKey)),
-  verifyVaultIntegrity: vi.fn(),
-  updateIntegrityRoot: vi.fn(),
-  clearIntegrityRoot: vi.fn(),
-}));
-
 // ============ Test Helpers ============
 
 function createWrapper() {

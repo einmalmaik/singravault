@@ -5,7 +5,7 @@
  *
  * Testet alle reinen, zustandslosen Hilfsfunktionen ohne DB- oder
  * Netzwerk-Abhängigkeiten: cn(), sanitizeInlineSvg(), planConfig,
- * formatFileSize(), getFileIcon(), buildVaultItemRowFromInsert(),
+ * buildVaultItemRowFromInsert(),
  * buildCategoryRowFromInsert(), isLikelyOfflineError(), isAppOnline(),
  * i18n languages/changeLanguage, deriveRawKeySecure().
  */
@@ -267,75 +267,9 @@ describe("planConfig", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 3.4 formatFileSize() and getFileIcon()
-// ---------------------------------------------------------------------------
-import { formatFileSize, getFileIcon } from "@/services/fileAttachmentService";
-
-describe("formatFileSize()", () => {
-  it('formatFileSize(0) → "0 B"', () => {
-    expect(formatFileSize(0)).toBe("0 B");
-  });
-
-  it('formatFileSize(1023) → "1023 B"', () => {
-    expect(formatFileSize(1023)).toBe("1023 B");
-  });
-
-  it('formatFileSize(1024) → "1.0 KB"', () => {
-    expect(formatFileSize(1024)).toBe("1.0 KB");
-  });
-
-  it('formatFileSize(1048576) → "1.0 MB"', () => {
-    expect(formatFileSize(1048576)).toBe("1.0 MB");
-  });
-
-  it('formatFileSize(1073741824) → "1.00 GB"', () => {
-    expect(formatFileSize(1073741824)).toBe("1.00 GB");
-  });
-});
-
-describe("getFileIcon()", () => {
-  it('getFileIcon("application/pdf") returns icon string', () => {
-    const icon = getFileIcon("application/pdf");
-    expect(typeof icon).toBe("string");
-    expect(icon.length).toBeGreaterThan(0);
-    expect(icon).toBe("📄");
-  });
-
-  it('getFileIcon("image/png") returns image icon', () => {
-    const icon = getFileIcon("image/png");
-    expect(icon).toBe("🖼️");
-  });
-
-  it('getFileIcon("unknown/type") returns fallback icon', () => {
-    const icon = getFileIcon("unknown/type");
-    expect(icon).toBe("📎");
-  });
-
-  it("getFileIcon(null) returns fallback icon", () => {
-    const icon = getFileIcon(null);
-    expect(icon).toBe("📎");
-  });
-
-  it('getFileIcon("video/mp4") returns video icon', () => {
-    expect(getFileIcon("video/mp4")).toBe("🎬");
-  });
-
-  it('getFileIcon("audio/mpeg") returns audio icon', () => {
-    expect(getFileIcon("audio/mpeg")).toBe("🎵");
-  });
-
-  it('getFileIcon("application/zip") returns archive icon', () => {
-    expect(getFileIcon("application/zip")).toBe("📦");
-  });
-
-  it('getFileIcon("text/plain") returns text icon', () => {
-    expect(getFileIcon("text/plain")).toBe("📝");
-  });
-});
 
 // ---------------------------------------------------------------------------
-// 3.5 offlineVaultService — Pure helpers
+// 3.4 offlineVaultService — Pure helpers
 // ---------------------------------------------------------------------------
 import {
   isLikelyOfflineError,

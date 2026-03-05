@@ -166,7 +166,7 @@ export default function SecurityWhitepaper() {
                     t('securityWhitepaper.sections.attachments.bullets', { returnObjects: true }),
                 ),
                 evidence: [
-                    'src/services/fileAttachmentService.ts',
+                    '@singra/premium/src/services/fileAttachmentService.ts',
                     'supabase/migrations/20260213120000_secure_vault_attachments_bucket.sql',
                 ],
             },
@@ -201,7 +201,7 @@ export default function SecurityWhitepaper() {
                 bullets: asStringArray(
                     t('securityWhitepaper.sections.integrity.bullets', { returnObjects: true }),
                 ),
-                evidence: ['src/services/vaultIntegrityService.ts', 'src/contexts/VaultContext.tsx'],
+                evidence: ['@singra/premium/src/services/vaultIntegrityService.ts', 'src/contexts/VaultContext.tsx'],
             },
             {
                 id: 'headers',
