@@ -19,6 +19,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { VaultProvider } from "@/contexts/VaultContext";
 import { SubscriptionProvider } from "@/contexts/SubscriptionContext";
 import { ProtectedRoute } from "./components/layout/ProtectedRoute";
+import { VaultUnlockRequiredRoute } from "./components/layout/VaultUnlockRequiredRoute";
 import { CookieConsent } from "./components/CookieConsent";
 import { getExtensionRoutes, getExtension } from "@/extensions/registry";
 
@@ -36,6 +37,14 @@ import Impressum from "./pages/Impressum";
 import SecurityWhitepaper from "./pages/SecurityWhitepaper";
 
 const queryClient = new QueryClient();
+
+function isLegacyVaultUnlockRoute(path: string): boolean {
+  return (
+    path === "/vault-health" ||
+    path === "/authenticator" ||
+    path === "/vault/emergency/:id"
+  );
+}
 
 const App = () => {
   const premiumRoutes = getExtensionRoutes();
@@ -59,7 +68,16 @@ const App = () => {
                       {/* Core Routes */}
                       <Route path="/" element={<Index />} />
                       <Route path="/auth" element={<Auth />} />
-                      <Route path="/vault" element={<ProtectedRoute><VaultPage /></ProtectedRoute>} />
+                      <Route
+                        path="/vault"
+                        element={
+                          <ProtectedRoute>
+                            <VaultUnlockRequiredRoute>
+                              <VaultPage />
+                            </VaultUnlockRequiredRoute>
+                          </ProtectedRoute>
+                        }
+                      />
                       <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
                       {/* Admin route is now registered via initPremium as a premium route */}
                       <Route path="/security" element={<SecurityWhitepaper />} />
@@ -67,17 +85,26 @@ const App = () => {
                       <Route path="/impressum" element={<Impressum />} />
 
                       {/* Premium Routes (dynamically registered) */}
-                      {premiumRoutes.map((route) => (
-                        <Route
-                          key={route.path}
-                          path={route.path}
-                          element={
-                            route.protected
-                              ? <ProtectedRoute><route.component /></ProtectedRoute>
-                              : <route.component />
-                          }
-                        />
-                      ))}
+                      {premiumRoutes.map((route) => {
+                        const requiresVaultUnlock =
+                          route.requiresVaultUnlock ?? isLegacyVaultUnlockRoute(route.path);
+
+                        const routeElement = requiresVaultUnlock
+                          ? (
+                            <VaultUnlockRequiredRoute>
+                              <route.component />
+                            </VaultUnlockRequiredRoute>
+                          )
+                          : <route.component />;
+
+                        return (
+                          <Route
+                            key={route.path}
+                            path={route.path}
+                            element={route.protected ? <ProtectedRoute>{routeElement}</ProtectedRoute> : routeElement}
+                          />
+                        );
+                      })}
 
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />

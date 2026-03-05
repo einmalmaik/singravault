@@ -62,6 +62,8 @@ export interface ExtensionRoute {
     component: ComponentType<any>;
     /** Whether the route requires authentication */
     protected?: boolean;
+    /** Whether the route requires an unlocked vault key in memory */
+    requiresVaultUnlock?: boolean;
 }
 
 // ============ Service Hook Types ============
