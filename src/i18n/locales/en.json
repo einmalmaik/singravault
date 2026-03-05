@@ -633,10 +633,24 @@
       "description": "Update your account password.",
       "newPassword": "New Password",
       "confirmPassword": "Confirm Password",
+      "placeholder": "Enter a strong password",
+      "confirmPlaceholder": "Repeat your password",
+      "generateButton": "Generate secure password",
+      "generateSuccess": "A secure password was generated.",
       "updateButton": "Update Password",
       "updateSuccess": "Password updated successfully.",
       "updateFailed": "Failed to update password.",
-      "minLength": "Password must be at least 12 characters long."
+      "minLength": "Password must be at least 12 characters long.",
+      "weakPassword": "Please choose a stronger password."
+    },
+    "accountDataExport": {
+      "title": "GDPR Data Export",
+      "description": "Export your account data as machine-readable JSON.",
+      "export": "Account Data Export",
+      "exportDesc": "Includes profile data, security metadata, passkey metadata, and subscription details.",
+      "exportButton": "Download GDPR export",
+      "exportSuccess": "Account data export created successfully.",
+      "exportFailed": "Failed to create account data export."
     },
     "security": {
       "title": "Security",

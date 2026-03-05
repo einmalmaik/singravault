@@ -11,6 +11,7 @@ The authenticated UX was adjusted to separate account-level and vault-level acti
   - `Vault` button
   - `Account` dropdown (`Settings`, `Logout`)
 - `/settings` now focuses on account settings (appearance, subscription, password change, 2FA, account actions).
+- `/settings` now also includes GDPR/DSGVO account-data export (machine-readable JSON).
 - New route `/vault/settings` contains vault-specific settings and remains vault-unlock protected.
 
 ## Routing

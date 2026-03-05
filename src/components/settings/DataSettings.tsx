@@ -274,7 +274,6 @@ export function DataSettings() {
                         </Button>
                     </div>
 
-                    {/* Import */}
                     <div className="space-y-2">
                         <Label className="flex items-center gap-2">
                             <Upload className="w-4 h-4" />
@@ -295,7 +294,6 @@ export function DataSettings() {
                 </CardContent>
             </Card>
 
-            {/* Import Confirmation Dialog */}
             <AlertDialog open={showImportDialog} onOpenChange={setShowImportDialog}>
                 <AlertDialogContent>
                     <AlertDialogHeader>

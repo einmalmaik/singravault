@@ -656,10 +656,24 @@
       "description": "Aktualisiere dein Konto-Passwort.",
       "newPassword": "Neues Passwort",
       "confirmPassword": "Passwort bestÃ¤tigen",
+      "placeholder": "Starkes Passwort eingeben",
+      "confirmPlaceholder": "Passwort wiederholen",
+      "generateButton": "Sicheres Passwort generieren",
+      "generateSuccess": "Ein sicheres Passwort wurde generiert.",
       "updateButton": "Passwort aktualisieren",
       "updateSuccess": "Passwort erfolgreich aktualisiert.",
       "updateFailed": "Passwort konnte nicht aktualisiert werden.",
-      "minLength": "Passwort muss mindestens 12 Zeichen lang sein."
+      "minLength": "Passwort muss mindestens 12 Zeichen lang sein.",
+      "weakPassword": "Bitte waehle ein staerkeres Passwort."
+    },
+    "accountDataExport": {
+      "title": "DSGVO-Datenexport",
+      "description": "Exportiere deine Kontodaten in einem maschinenlesbaren JSON-Format.",
+      "export": "Konto-Datenexport",
+      "exportDesc": "Enthaelt Profildaten, Sicherheitsmetadaten, Passkey-Metadaten und Abo-Informationen.",
+      "exportButton": "DSGVO-Export herunterladen",
+      "exportSuccess": "Konto-Datenexport erfolgreich erstellt.",
+      "exportFailed": "Konto-Datenexport konnte nicht erstellt werden."
     },
     "security": {
       "title": "Sicherheit",
