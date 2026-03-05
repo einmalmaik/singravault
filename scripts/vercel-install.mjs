@@ -30,17 +30,24 @@ if (!pat) {
         console.log('package.json has ssh:// URL:', hasSshUrl);
 
         // 2. Replace ALL possible URL formats with authenticated HTTPS
-        const httpsUrl = `"git+https://x-oauth-basic:${pat}@github.com/einmalmaik/singra-premium.git"`;
+        const httpsBaseUrl = `git+https://x-oauth-basic:${pat}@github.com/einmalmaik/singra-premium.git`;
 
-        // Replace github: shorthand
+        // Replace github shorthand and preserve pinned refs (#commit, #tag)
         pkgContent = pkgContent.replace(
-            /"github:einmalmaik\/singra-premium"/g,
-            httpsUrl
+            /"github:einmalmaik\/singra-premium(?:#([^"]+))?"/g,
+            (_match, ref) => `"${httpsBaseUrl}${ref ? `#${ref}` : ''}"`
         );
-        // Replace SSH URLs
+
+        // Replace SSH URLs and preserve pinned refs (#commit, #tag)
         pkgContent = pkgContent.replace(
-            /"(git\+)?ssh:\/\/git@github\.com\/einmalmaik\/singra-premium\.git[^"]*"/g,
-            httpsUrl
+            /"(?:git\+)?ssh:\/\/git@github\.com\/einmalmaik\/singra-premium\.git(?:#([^"]+))?"/g,
+            (_match, ref) => `"${httpsBaseUrl}${ref ? `#${ref}` : ''}"`
+        );
+
+        // Replace SCP-like git URLs just in case (git@github.com:owner/repo.git#ref)
+        pkgContent = pkgContent.replace(
+            /"git@github\.com:einmalmaik\/singra-premium\.git(?:#([^"]+))?"/g,
+            (_match, ref) => `"${httpsBaseUrl}${ref ? `#${ref}` : ''}"`
         );
 
         writeFileSync(packageJsonPath, pkgContent);
