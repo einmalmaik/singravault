@@ -35,6 +35,8 @@ import {
   reauthenticateWithAccountPassword,
 } from '@/services/sensitiveActionReauthService';
 
+let fetchMock: ReturnType<typeof vi.fn>;
+
 function createJwtWithIssuedAt(iat: number): string {
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
     .replace(/\+/g, '-')
@@ -50,7 +52,8 @@ function createJwtWithIssuedAt(iat: number): string {
 describe('sensitiveActionReauthService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubGlobal('fetch', vi.fn());
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
     mockSetSession.mockResolvedValue({ error: null });
   });
 
@@ -97,7 +100,7 @@ describe('sensitiveActionReauthService', () => {
       data: { user: { email: 'user@example.com' } },
       error: null,
     });
-    (globalThis.fetch as any).mockResolvedValue(
+    fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ error: 'Invalid credentials' }), { status: 401 }),
     );
 
@@ -115,7 +118,7 @@ describe('sensitiveActionReauthService', () => {
       data: { user: { email: 'user@example.com' } },
       error: null,
     });
-    (globalThis.fetch as any).mockResolvedValue(
+    fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ requires2FA: true }), { status: 200 }),
     );
 
@@ -133,7 +136,7 @@ describe('sensitiveActionReauthService', () => {
       data: { user: { email: 'user@example.com' } },
       error: null,
     });
-    (globalThis.fetch as any).mockResolvedValue(
+    fetchMock.mockResolvedValue(
       new Response(JSON.stringify({
         session: {
           access_token: 'new-access-token',
