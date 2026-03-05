@@ -17,6 +17,11 @@ Deno.serve(async (req) => {
         ...corsHeaders,
         "Access-Control-Allow-Credentials": "true",
     });
+    const jsonHeaders = (): Headers => {
+        const responseHeaders = new Headers(headers);
+        responseHeaders.set("Content-Type", "application/json");
+        return responseHeaders;
+    };
 
     if (req.method === "OPTIONS") {
         return new Response("ok", { headers });
@@ -36,7 +41,7 @@ Deno.serve(async (req) => {
             });
             return new Response(JSON.stringify({ success: true }), {
                 status: 200,
-                headers: { ...headers, "Content-Type": "application/json" }
+                headers: jsonHeaders()
             });
         }
 
@@ -48,7 +53,7 @@ Deno.serve(async (req) => {
             if (!refreshToken) {
                 return new Response(JSON.stringify({ error: "No session cookie" }), {
                     status: 401,
-                    headers: { ...headers, "Content-Type": "application/json" }
+                    headers: jsonHeaders()
                 });
             }
 
@@ -58,7 +63,7 @@ Deno.serve(async (req) => {
             if (error || !data.session) {
                 return new Response(JSON.stringify({ error: "Session expired" }), {
                     status: 401,
-                    headers: { ...headers, "Content-Type": "application/json" }
+                    headers: jsonHeaders()
                 });
             }
 
@@ -75,7 +80,7 @@ Deno.serve(async (req) => {
 
             return new Response(JSON.stringify({ session: data.session }), {
                 status: 200,
-                headers: { ...headers, "Content-Type": "application/json" }
+                headers: jsonHeaders()
             });
         }
 
@@ -88,7 +93,7 @@ Deno.serve(async (req) => {
         if (!email || !password) {
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                 status: 400,
-                headers: { ...headers, "Content-Type": "application/json" }
+                headers: jsonHeaders()
             });
         }
 
@@ -103,7 +108,7 @@ Deno.serve(async (req) => {
             await new Promise(r => setTimeout(r, 500 - (Date.now() - startTime)));
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                 status: 401,
-                headers: { ...headers, "Content-Type": "application/json" }
+                headers: jsonHeaders()
             });
         }
 
@@ -129,7 +134,7 @@ Deno.serve(async (req) => {
                 await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - startTime))));
                 return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                     status: 401,
-                    headers: { ...headers, "Content-Type": "application/json" }
+                    headers: jsonHeaders()
                 });
             }
             credentialsValid = true;
@@ -142,7 +147,7 @@ Deno.serve(async (req) => {
             await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - startTime))));
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
                 status: 401,
-                headers: { ...headers, "Content-Type": "application/json" }
+                headers: jsonHeaders()
             });
         }
 
@@ -151,7 +156,7 @@ Deno.serve(async (req) => {
         if (adminUserError || !adminUser.user.email_confirmed_at) {
             return new Response(JSON.stringify({ error: "Email verification required" }), {
                 status: 403,
-                headers: { ...headers, "Content-Type": "application/json" }
+                headers: jsonHeaders()
             });
         }
 
@@ -170,7 +175,7 @@ Deno.serve(async (req) => {
                     userId: user.id
                 }), {
                     status: 200,
-                    headers: { ...headers, "Content-Type": "application/json" }
+                    headers: jsonHeaders()
                 });
             }
 
@@ -184,7 +189,7 @@ Deno.serve(async (req) => {
                 if (totpSecretError || !totpSecret) {
                     return new Response(JSON.stringify({ error: "2FA configuration error" }), {
                         status: 500,
-                        headers: { ...headers, "Content-Type": "application/json" }
+                        headers: jsonHeaders()
                     });
                 }
 
@@ -202,7 +207,7 @@ Deno.serve(async (req) => {
                     await new Promise(r => setTimeout(r, 500));
                     return new Response(JSON.stringify({ error: "Invalid 2FA code" }), {
                         status: 401,
-                        headers: { ...headers, "Content-Type": "application/json" }
+                        headers: jsonHeaders()
                     });
                 }
 
@@ -231,7 +236,7 @@ Deno.serve(async (req) => {
                     await new Promise(r => setTimeout(r, 500));
                     return new Response(JSON.stringify({ error: "Invalid backup code" }), {
                         status: 401,
-                        headers: { ...headers, "Content-Type": "application/json" }
+                        headers: jsonHeaders()
                     });
                 }
 
@@ -248,7 +253,7 @@ Deno.serve(async (req) => {
             } else {
                 return new Response(JSON.stringify({ error: "Invalid request payload" }), {
                     status: 400,
-                    headers: { ...headers, "Content-Type": "application/json" }
+                    headers: jsonHeaders()
                 });
             }
         }
@@ -295,14 +300,15 @@ Deno.serve(async (req) => {
 
         return new Response(JSON.stringify({ success: true, session: sessionData.session }), {
             status: 200,
-            headers: { ...headers, "Content-Type": "application/json" }
+            headers: jsonHeaders()
         });
 
     } catch (err: any) {
         console.error("Auth Session Error:", err);
         return new Response(JSON.stringify({ error: "Internal Server Error" }), {
             status: 500,
-            headers: { ...headers, "Content-Type": "application/json" }
+            headers: jsonHeaders()
         });
     }
 });
+
