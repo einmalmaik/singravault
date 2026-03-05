@@ -11,11 +11,12 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Settings, ArrowLeft, Shield, Search, Wrench } from 'lucide-react';
+import { Settings, ArrowLeft, Shield, Search, Wrench, Lock } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 import { AccountSettings } from '@/components/settings/AccountSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
@@ -48,12 +49,6 @@ export default function SettingsPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [showAdminButton, setShowAdminButton] = useState(false);
     const [isAdminUser, setIsAdminUser] = useState(false);
-
-    useEffect(() => {
-        if (user && isLocked) {
-            navigate('/vault', { replace: true });
-        }
-    }, [isLocked, user, navigate]);
 
     useEffect(() => {
         if (searchParams.get('checkout') === 'success') {
@@ -265,6 +260,14 @@ export default function SettingsPage() {
 
             {/* Main Content */}
             <main className="container max-w-4xl mx-auto px-4 py-8">
+                {isLocked && (
+                    <Alert className="mb-6 border-amber-500/40 bg-amber-500/10">
+                        <Lock className="h-4 w-4 text-amber-600" />
+                        <AlertTitle>{t('settings.vaultLockedNotice.title')}</AlertTitle>
+                        <AlertDescription>{t('settings.vaultLockedNotice.description')}</AlertDescription>
+                    </Alert>
+                )}
+
                 {/* Search Bar */}
                 <div className="mb-8">
                     <div className="relative">

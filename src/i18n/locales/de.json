@@ -626,6 +626,10 @@
     "searchPlaceholder": "Einstellungen durchsuchen...",
     "searchResults": "{{count}} Ergebnisse gefunden",
     "noResults": "Keine Einstellungen gefunden",
+    "vaultLockedNotice": {
+      "title": "Tresor ist aktuell gesperrt",
+      "description": "Konto- und Abo-Einstellungen bleiben verfuegbar. Tresorbezogene Einstellungen erfordern das Entsperren."
+    },
     "account": {
       "title": "Konto",
       "description": "Verwalte dein Konto und deine Anmeldedaten.",
@@ -1080,6 +1084,7 @@
   "emergency": {
     "title": "Notfallzugang",
     "description": "Verwalte, wer im Notfall auf deinen Tresor zugreifen darf.",
+    "unlockRequired": "Entsperre deinen Tresor, um Notfallzugang-Einstellungen zu verwalten.",
     "tabs": {
       "trustees": "Meine Vertrauenspersonen",
       "grantors": "Wer mir vertraut"
@@ -1194,6 +1199,19 @@
     "feature_locked_title": "Premium / Family Funktion",
     "feature_locked_description": "{{feature}} benötigt den {{tier}}-Plan."
   },
+  "reauth": {
+    "title": "Konto-Passwort bestätigen",
+    "description": "Für diese sensible Aktion bestätige bitte erneut dein Konto-Passwort.",
+    "passwordLabel": "Konto-Passwort",
+    "passwordPlaceholder": "Konto-Passwort eingeben",
+    "confirm": "Bestätigen und fortfahren",
+    "invalidCredentials": "Falsches Passwort. Bitte versuche es erneut.",
+    "authRequired": "Deine Sitzung ist nicht mehr gültig. Bitte melde dich erneut an.",
+    "twoFactorRequired": "Eine Zwei-Faktor-Bestätigung ist erforderlich. Bitte melde dich erneut an.",
+    "failed": "Re-Authentifizierung fehlgeschlagen. Bitte versuche es erneut.",
+    "accountDeleteContext": "Bitte bestätige dein Konto-Passwort, bevor du dein Konto löschst.",
+    "subscriptionCancelContext": "Bitte bestätige dein Konto-Passwort, bevor du dein Abonnement kündigst."
+  },
   "passkey": {
     "title": "Passkeys",
     "description": "Verwende Biometrie oder einen Sicherheitsschlüssel, um deinen Tresor ohne Eingabe des Master-Passworts zu entsperren.",
@@ -1207,6 +1225,7 @@
     "deviceNamePlaceholder": "z.B. MacBook Touch ID, YubiKey 5",
     "confirmPassword": "Master-Passwort bestätigen",
     "passwordRequired": "Das Master-Passwort wird benötigt, um einen Passkey zu registrieren.",
+    "unlockRequired": "Entsperre deinen Tresor, um neue Passkeys zu registrieren.",
     "passwordHint": "Erforderlich, um den Passkey sicher mit deinem Tresor-Verschlüsselungsschlüssel zu verknüpfen.",
     "registeredWithPrf": "Passkey registriert! Du kannst deinen Tresor jetzt mit diesem Passkey entsperren.",
     "registeredWithoutPrf": "Passkey für Authentifizierung registriert, aber dieses Gerät unterstützt kein Tresor-Entsperren (kein PRF). Du benötigst weiterhin dein Master-Passwort.",

@@ -25,10 +25,12 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { SensitiveActionReauthDialog } from '@/components/security/SensitiveActionReauthDialog';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthService';
 
 export function AccountSettings() {
     const { t } = useTranslation();
@@ -37,6 +39,7 @@ export function AccountSettings() {
     const navigate = useNavigate();
 
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+    const [showReauthDialog, setShowReauthDialog] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
 
@@ -45,9 +48,7 @@ export function AccountSettings() {
         navigate('/');
     };
 
-    const handleDeleteAccount = async () => {
-        if (deleteConfirmation.trim().toUpperCase() !== 'DELETE') return;
-
+    const executeDeleteAccount = async (): Promise<boolean> => {
         setIsDeleting(true);
         try {
             if (!user) {
@@ -56,7 +57,17 @@ export function AccountSettings() {
 
             // Delete auth user server-side. Related app data is removed via ON DELETE CASCADE.
             const { data, error: deleteError } = await supabase.rpc('delete_my_account');
-            if (deleteError) throw deleteError;
+            if (deleteError) {
+                if (typeof deleteError.message === 'string' && deleteError.message.includes('REAUTH_REQUIRED')) {
+                    toast({
+                        title: t('common.error'),
+                        description: t('reauth.accountDeleteContext'),
+                    });
+                    setShowReauthDialog(true);
+                    return false;
+                }
+                throw deleteError;
+            }
             if (!data || typeof data !== 'object' || !('deleted' in data) || data.deleted !== true) {
                 throw new Error('Account deletion verification failed');
             }
@@ -73,16 +84,32 @@ export function AccountSettings() {
             });
 
             navigate('/');
-        } catch (error) {
+            return true;
+        } catch {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
                 description: t('settings.account.deleteFailed'),
             });
+            return true;
         } finally {
             setIsDeleting(false);
             setShowDeleteDialog(false);
+            setDeleteConfirmation('');
         }
+    };
+
+    const handleDeleteAccount = async () => {
+        if (deleteConfirmation.trim().toUpperCase() !== 'DELETE' || isDeleting) return;
+
+        const hasFreshSession = await isSensitiveActionSessionFresh(300);
+        if (!hasFreshSession) {
+            setShowDeleteDialog(false);
+            setShowReauthDialog(true);
+            return;
+        }
+
+        await executeDeleteAccount();
     };
 
     return (
@@ -170,6 +197,13 @@ export function AccountSettings() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            <SensitiveActionReauthDialog
+                open={showReauthDialog}
+                onOpenChange={setShowReauthDialog}
+                description={t('reauth.accountDeleteContext')}
+                onSuccess={executeDeleteAccount}
+            />
         </>
     );
 }

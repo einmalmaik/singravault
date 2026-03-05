@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Fingerprint, Plus, Trash2, Loader2, ShieldCheck, ShieldAlert, Info } from 'lucide-react';
+import { Fingerprint, Plus, Trash2, Loader2, ShieldCheck, ShieldAlert, Info, Lock } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +25,7 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -42,7 +43,7 @@ export function PasskeySettings() {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user, authReady } = useAuth();
-    const { webAuthnAvailable, getRawKeyForPasskey, refreshPasskeyUnlockStatus } = useVault();
+    const { webAuthnAvailable, getRawKeyForPasskey, refreshPasskeyUnlockStatus, isLocked } = useVault();
 
     const [passkeys, setPasskeys] = useState<PasskeyCredential[]>([]);
     const [loading, setLoading] = useState(false);
@@ -109,6 +110,15 @@ export function PasskeySettings() {
 
     const handleRegister = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        if (isLocked) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('passkey.unlockRequired'),
+            });
+            return;
+        }
 
         if (!masterPassword) {
             toast({
@@ -250,6 +260,13 @@ export function PasskeySettings() {
             </CardHeader>
 
             <CardContent className="space-y-4">
+                {isLocked && (
+                    <Alert className="border-amber-500/40 bg-amber-500/10">
+                        <Lock className="h-4 w-4 text-amber-600" />
+                        <AlertDescription>{t('passkey.unlockRequired')}</AlertDescription>
+                    </Alert>
+                )}
+
                 {/* Info banner */}
                 <div className="flex gap-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm">
                     <Info className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500" />
@@ -338,6 +355,7 @@ export function PasskeySettings() {
                                 value={deviceName}
                                 onChange={(e) => setDeviceName(e.target.value)}
                                 placeholder={t('passkey.deviceNamePlaceholder', 'e.g. MacBook Touch ID, YubiKey 5')}
+                                disabled={registering || isLocked}
                             />
                         </div>
 
@@ -352,6 +370,7 @@ export function PasskeySettings() {
                                 onChange={(e) => setMasterPassword(e.target.value)}
                                 placeholder="••••••••••••"
                                 required
+                                disabled={registering || isLocked}
                             />
                             <p className="text-xs text-muted-foreground">
                                 {t('passkey.passwordHint', 'Required to securely link the passkey to your vault encryption key.')}
@@ -361,7 +380,7 @@ export function PasskeySettings() {
                         <div className="flex gap-2">
                             <Button
                                 type="submit"
-                                disabled={registering || !masterPassword}
+                                disabled={registering || !masterPassword || isLocked}
                                 className="flex-1"
                             >
                                 {registering && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
@@ -385,6 +404,7 @@ export function PasskeySettings() {
                         variant="outline"
                         className="w-full"
                         onClick={() => setShowRegisterForm(true)}
+                        disabled={isLocked}
                     >
                         <Plus className="w-4 h-4 mr-2" />
                         {t('passkey.addPasskey', 'Add Passkey')}

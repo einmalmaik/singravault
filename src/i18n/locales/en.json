@@ -603,6 +603,10 @@
     "searchPlaceholder": "Search settings...",
     "searchResults": "{{count}} results found",
     "noResults": "No settings found",
+    "vaultLockedNotice": {
+      "title": "Vault is currently locked",
+      "description": "Account and billing settings remain available. Vault-related settings require unlocking your vault."
+    },
     "account": {
       "title": "Account",
       "description": "Manage your account and login credentials.",
@@ -1059,6 +1063,7 @@
   "emergency": {
     "title": "Emergency Access",
     "description": "Manage who can access your vault in emergencies.",
+    "unlockRequired": "Unlock your vault to manage emergency access settings.",
     "tabs": {
       "trustees": "My trusted contacts",
       "grantors": "Who trusts me"
@@ -1173,6 +1178,19 @@
     "feature_locked_title": "Premium / Family Feature",
     "feature_locked_description": "{{feature}} requires the {{tier}} plan."
   },
+  "reauth": {
+    "title": "Confirm account password",
+    "description": "For this sensitive action, confirm your account password again.",
+    "passwordLabel": "Account password",
+    "passwordPlaceholder": "Enter your account password",
+    "confirm": "Confirm and continue",
+    "invalidCredentials": "Incorrect password. Please try again.",
+    "authRequired": "Your session is no longer valid. Please sign in again.",
+    "twoFactorRequired": "Two-factor verification is required. Please sign in again.",
+    "failed": "Re-authentication failed. Please try again.",
+    "accountDeleteContext": "Please confirm your account password before deleting your account.",
+    "subscriptionCancelContext": "Please confirm your account password before canceling your subscription."
+  },
   "passkey": {
     "title": "Passkeys",
     "description": "Use biometrics or a security key to unlock your vault without typing your master password.",
@@ -1186,6 +1204,7 @@
     "deviceNamePlaceholder": "e.g. MacBook Touch ID, YubiKey 5",
     "confirmPassword": "Confirm master password",
     "passwordRequired": "Master password is required to register a passkey.",
+    "unlockRequired": "Unlock your vault to register new passkeys.",
     "passwordHint": "Required to securely link the passkey to your vault encryption key.",
     "registeredWithPrf": "Passkey registered! You can now unlock your vault with this passkey.",
     "registeredWithoutPrf": "Passkey registered for authentication, but this device does not support vault unlock (no PRF). You will still need your master password.",
