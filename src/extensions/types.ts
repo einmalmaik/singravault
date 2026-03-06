@@ -187,6 +187,8 @@ export interface TeamAccessHook {
     permissions: string[];
     is_admin: boolean;
     can_access_admin: boolean;
+    has_internal_role?: boolean;
+    missing_admin_permissions?: string[];
 }
 
 /** Named service hook keys */

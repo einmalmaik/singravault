@@ -63,6 +63,10 @@ Service layer:
 - `src/services/adminService.ts`
 
 The admin page is guarded by effective permissions returned from `admin-team:get_access`.
+The payload now also includes diagnostics:
+
+- `has_internal_role`: whether the user has `admin` or `moderator`
+- `missing_admin_permissions`: permission keys not currently assigned from the admin access set
 
 ## Default Permission Seeds
 
@@ -91,5 +95,8 @@ Default role mappings:
 - End-user support flow (widget/settings ticket creation) remains unchanged.
 - Internal team membership views include only users with internal roles (`admin` or `moderator`).
 - The end-user baseline role (`user`) is explicitly blocked from receiving internal support/team permissions.
-- The `/admin` surface is now hard-gated to users with the `admin` role.
+- The `/admin` surface is hard-gated to internal team users (`admin`/`moderator`) with matching permissions.
 - Frontend admin calls always send an explicit user session JWT to prevent anon-token fallback and 401 races.
+- If `/admin` is denied after a refactor/migration, first check:
+  - user has internal role (`admin` or `moderator`) in `user_roles`
+  - at least one required admin-access permission is mapped via `role_permissions`
