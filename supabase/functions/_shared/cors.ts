@@ -2,7 +2,7 @@
  * @fileoverview Shared CORS configuration for Supabase Edge Functions.
  *
  * Reads `ALLOWED_ORIGIN` from environment (comma-separated list) to restrict
- * cross-origin requests. Falls back to wildcard ("*") when the env var is unset.
+ * cross-origin requests. Falls back to the production domain when the env var is unset.
  * Automatically allows localhost origins for development.
  *
  * Usage in an Edge Function (preferred — dynamic):
@@ -18,7 +18,15 @@ const configuredOrigin = (globalThis as any).Deno?.env?.get("ALLOWED_ORIGIN")?.t
 const productionOrigins = configuredOrigin
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
-    .filter((o) => o.length > 0);
+    .filter(isConfiguredOriginSafe);
+
+const allowPreviewOrigins = ((globalThis as any).Deno?.env?.get("ALLOW_PREVIEW_ORIGINS") || "")
+    .trim()
+    .toLowerCase() === "true";
+const configuredPreviewOrigins = ((globalThis as any).Deno?.env?.get("ALLOWED_PREVIEW_ORIGINS") || "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(isConfiguredOriginSafe);
 
 function isAllowedOrigin(origin: string): boolean {
     if (productionOrigins.includes(origin)) return true;
@@ -28,8 +36,8 @@ function isAllowedOrigin(origin: string): boolean {
         return true;
     }
 
-    // Lovable Preview-Umgebung erlauben
-    if (origin.endsWith(".lovable.app") || origin.endsWith(".lovableproject.com")) {
+    // Preview-Umgebungen nur mit explizitem Opt-in erlauben.
+    if (allowPreviewOrigins && configuredPreviewOrigins.includes(origin)) {
         return true;
     }
 
@@ -96,3 +104,16 @@ export const corsHeaders: Record<string, string> = {
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
     "Access-Control-Allow-Credentials": "true",
 };
+
+function isConfiguredOriginSafe(origin: string): boolean {
+    if (!origin || origin.includes("*")) {
+        return false;
+    }
+
+    try {
+        const parsed = new URL(origin);
+        return parsed.protocol === "https:" || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    } catch {
+        return false;
+    }
+}
