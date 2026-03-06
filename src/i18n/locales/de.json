@@ -792,6 +792,8 @@
       "submitting": "Wird erstellt...",
       "submitSuccess": "Support-Ticket wurde erfolgreich erstellt.",
       "submitError": "Support-Ticket konnte nicht erstellt werden.",
+      "loadError": "Support-Daten konnten nicht geladen werden.",
+      "rateLimited": "Zu viele Anfragen. Bitte warte kurz und versuche es erneut.",
       "recentTickets": "Letzte Tickets",
       "noTickets": "Noch keine Support-Tickets vorhanden.",
       "firstResponseTime": "Erste Antwort: {{minutes}} Min",
@@ -809,6 +811,10 @@
       "sla": {
         "priority24h": "Prioritaets-Support - in der Regel 24h",
         "standard72h": "Standard-Support - in der Regel 72h"
+      },
+      "realtime": {
+        "connected": "Live-Updates aktiv",
+        "fallback": "Live-Updates getrennt, Fallback-Aktualisierung aktiv"
       },
       "chat": {
         "title": "Chat",
@@ -905,6 +911,8 @@
     "loadError": "Admin-Zugriff konnte nicht geladen werden.",
     "accessDeniedTitle": "Kein Zugriff",
     "accessDeniedDescription": "Du hast keine Berechtigung fuer den internen Admin-Bereich.",
+    "accessDeniedMissingRole": "Dein Account ist kein internes Teammitglied (admin/moderator).",
+    "accessDeniedMissingPermissions": "Deinem internen Teamkonto fehlen Admin-Berechtigungen (z.B. {{permissions}}).",
     "backToSettings": "Zurueck zu Einstellungen",
     "tabs": {
       "support": "Support",
@@ -925,6 +933,10 @@
       "noMetrics": "Keine Metrikdaten verfuegbar.",
       "inboxTitle": "Tickets",
       "refresh": "Aktualisieren",
+      "realtime": {
+        "connected": "Live",
+        "fallback": "Fallback"
+      },
       "filters": {
         "status": "Status",
         "allStatuses": "Alle Status",

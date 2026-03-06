@@ -769,6 +769,8 @@
       "submitting": "Creating...",
       "submitSuccess": "Support ticket created successfully.",
       "submitError": "Failed to create support ticket.",
+      "loadError": "Failed to load support data.",
+      "rateLimited": "Too many requests. Please wait a moment and try again.",
       "recentTickets": "Recent tickets",
       "noTickets": "No support tickets yet.",
       "firstResponseTime": "First response: {{minutes}} min",
@@ -786,6 +788,10 @@
       "sla": {
         "priority24h": "Priority support - usually within 24h",
         "standard72h": "Standard support - usually within 72h"
+      },
+      "realtime": {
+        "connected": "Live updates enabled",
+        "fallback": "Live updates disconnected, fallback refresh active"
       },
       "chat": {
         "title": "Chat",
@@ -882,6 +888,8 @@
     "loadError": "Failed to load admin access.",
     "accessDeniedTitle": "Access denied",
     "accessDeniedDescription": "You don't have permission to access the internal admin area.",
+    "accessDeniedMissingRole": "Your account is not part of the internal team (admin/moderator).",
+    "accessDeniedMissingPermissions": "Your internal team account is missing admin permissions (e.g. {{permissions}}).",
     "backToSettings": "Back to settings",
     "tabs": {
       "support": "Support",
@@ -902,6 +910,10 @@
       "noMetrics": "No metric data available.",
       "inboxTitle": "Tickets",
       "refresh": "Refresh",
+      "realtime": {
+        "connected": "Live",
+        "fallback": "Fallback"
+      },
       "filters": {
         "status": "Status",
         "allStatuses": "All statuses",

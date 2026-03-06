@@ -77,6 +77,11 @@ Support UI is available in Settings:
 - recent ticket overview
 - optional average-response metric card for support team users
 
+Global support access is also available via the floating `layout.support-widget` extension.
+Both the widget and admin inbox now use Supabase Realtime for live updates on
+`support_tickets` and `support_messages`, with automatic polling fallback when
+realtime connectivity is unavailable.
+
 Pricing page explicitly lists support response targets for all plans.
 
 ## Operational Notes
@@ -84,6 +89,7 @@ Pricing page explicitly lists support response targets for all plans.
 - Do not include secrets in tickets (master password, recovery codes, private keys, vault contents)
 - Email send failures do not block ticket creation
 - Track SLA performance with 7d and 30d windows for internal operations
+- Keep `support_tickets` and `support_messages` in `supabase_realtime` publication for live UI updates
 
 ## Internal Team Access (No-Code)
 
