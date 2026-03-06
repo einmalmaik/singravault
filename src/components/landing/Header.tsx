@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
-import { Menu, X, Download, CreditCard, ChevronDown, UserRound } from 'lucide-react';
+import { Menu, X, Download, CreditCard, ChevronDown, UserRound, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 
-import { isPremiumActive } from '@/extensions/registry';
+import { getServiceHooks, isPremiumActive } from '@/extensions/registry';
 
 // Type for the BeforeInstallPromptEvent
 interface BeforeInstallPromptEvent extends Event {
@@ -31,11 +31,12 @@ interface BeforeInstallPromptEvent extends Event {
 export function Header() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, signOut, authReady } = useAuth();
   
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstallable, setIsInstallable] = useState(false);
+  const [showAdminButton, setShowAdminButton] = useState(false);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
@@ -59,6 +60,45 @@ export function Header() {
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadAdminAccess = async () => {
+      if (!authReady || !user || !isPremiumActive()) {
+        if (!isCancelled) {
+          setShowAdminButton(false);
+        }
+        return;
+      }
+
+      const hooks = getServiceHooks();
+      if (!hooks.getTeamAccess) {
+        if (!isCancelled) {
+          setShowAdminButton(false);
+        }
+        return;
+      }
+
+      const { access, error } = await hooks.getTeamAccess();
+      if (isCancelled) {
+        return;
+      }
+
+      if (error || !access) {
+        setShowAdminButton(false);
+        return;
+      }
+
+      setShowAdminButton(access.can_access_admin);
+    };
+
+    void loadAdminAccess();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [authReady, user]);
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
@@ -140,6 +180,14 @@ export function Header() {
                   <Button asChild>
                     <Link to="/vault">{t('nav.vault')}</Link>
                   </Button>
+                  {showAdminButton && (
+                    <Button asChild variant="outline" className="gap-2">
+                      <Link to="/admin">
+                        <Wrench className="w-4 h-4" />
+                        {t('admin.title')}
+                      </Link>
+                    </Button>
+                  )}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" className="gap-2">
@@ -239,6 +287,11 @@ export function Header() {
                     <Button asChild className="flex-1">
                       <Link to="/vault">{t('nav.vault')}</Link>
                     </Button>
+                    {showAdminButton && (
+                      <Button asChild variant="outline" className="flex-1">
+                        <Link to="/admin">{t('admin.title')}</Link>
+                      </Button>
+                    )}
                     <Button asChild variant="outline" className="flex-1">
                       <Link to="/settings">{t('nav.settings')}</Link>
                     </Button>
