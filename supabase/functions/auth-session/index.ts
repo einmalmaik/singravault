@@ -88,7 +88,72 @@ Deno.serve(async (req) => {
         if (req.method !== "POST") {
             return new Response("Method not allowed", { status: 405, headers });
         }
-        const { email, password, totpCode, isBackupCode, skipCookie } = await req.json();
+        const payload = await req.json();
+        const { action } = payload;
+
+        if (action === "oauth-sync") {
+            const authHeader = req.headers.get("Authorization");
+            const accessToken = parseBearerToken(authHeader);
+            const refreshToken = typeof payload.refreshToken === "string" ? payload.refreshToken : null;
+            const skipCookie = Boolean(payload.skipCookie);
+
+            if (!accessToken || !refreshToken) {
+                return new Response(JSON.stringify({ error: "Invalid oauth sync payload" }), {
+                    status: 400,
+                    headers: jsonHeaders(),
+                });
+            }
+
+            const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+            const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+                global: { headers: { Authorization: `Bearer ${accessToken}` } },
+            });
+
+            const { data: authedUserData, error: authedUserError } = await authClient.auth.getUser();
+            if (authedUserError || !authedUserData.user) {
+                return new Response(JSON.stringify({ error: "Unauthorized" }), {
+                    status: 401,
+                    headers: jsonHeaders(),
+                });
+            }
+
+            const { data: refreshedData, error: refreshError } = await supabaseAdmin.auth.refreshSession({
+                refresh_token: refreshToken,
+            });
+
+            if (refreshError || !refreshedData.session) {
+                return new Response(JSON.stringify({ error: "Session expired" }), {
+                    status: 401,
+                    headers: jsonHeaders(),
+                });
+            }
+
+            if (refreshedData.session.user.id !== authedUserData.user.id) {
+                return new Response(JSON.stringify({ error: "Session mismatch" }), {
+                    status: 403,
+                    headers: jsonHeaders(),
+                });
+            }
+
+            if (!skipCookie) {
+                setCookie(headers, {
+                    name: "sb-bff-session",
+                    value: refreshedData.session.refresh_token,
+                    path: "/",
+                    httpOnly: true,
+                    secure: true,
+                    sameSite: "None",
+                    maxAge: 60 * 60 * 24 * 7, // 7 days
+                });
+            }
+
+            return new Response(JSON.stringify({ success: true, session: refreshedData.session }), {
+                status: 200,
+                headers: jsonHeaders(),
+            });
+        }
+
+        const { email, password, totpCode, isBackupCode, skipCookie } = payload;
 
         if (!email || !password) {
             return new Response(JSON.stringify({ error: "Invalid credentials" }), {
@@ -311,4 +376,18 @@ Deno.serve(async (req) => {
         });
     }
 });
+
+function parseBearerToken(authHeader: string | null): string | null {
+    if (!authHeader) {
+        return null;
+    }
+
+    if (authHeader.startsWith("Bearer ")) {
+        const token = authHeader.slice("Bearer ".length).trim();
+        return token || null;
+    }
+
+    const token = authHeader.trim();
+    return token || null;
+}
 
