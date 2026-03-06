@@ -58,6 +58,7 @@ let authCallback: (event: string, session: unknown) => void;
 
 beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
 
     // Default: auth state listener returns unsubscribe fn and captures callback
     mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
@@ -87,6 +88,7 @@ beforeEach(() => {
 
 afterEach(() => {
     vi.restoreAllMocks();
+    sessionStorage.clear();
 });
 
 // ============ Helper: Wrapper Component ============
@@ -362,6 +364,70 @@ describe("AuthContext", () => {
             expect(result.current.session).toEqual(mockSession);
 
             consoleWarn.mockRestore();
+        });
+
+        it("restores the tab fallback session when BFF cookie hydration returns 401", async () => {
+            sessionStorage.setItem("singra-auth-session-fallback", JSON.stringify({
+                access_token: "fallback-token",
+                refresh_token: "fallback-refresh",
+            }));
+
+            mockFetch.mockResolvedValue({
+                ok: false,
+                status: 401,
+            });
+
+            mockSupabase.auth.setSession.mockResolvedValue({
+                data: { session: mockSession },
+                error: null,
+            });
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.authReady).toBe(true);
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(mockSupabase.auth.setSession).toHaveBeenCalledWith({
+                access_token: "fallback-token",
+                refresh_token: "fallback-refresh",
+            });
+        });
+    });
+
+    describe("Session fallback persistence", () => {
+        it("stores session tokens in sessionStorage on SIGNED_IN", async () => {
+            renderHook(() => useAuth(), { wrapper });
+
+            act(() => {
+                authCallback("SIGNED_IN", mockSession);
+            });
+
+            await waitFor(() => {
+                const stored = JSON.parse(sessionStorage.getItem("singra-auth-session-fallback")!);
+                expect(stored.access_token).toBe("test-token");
+                expect(stored.refresh_token).toBe("test-refresh");
+            });
+        });
+
+        it("clears the tab fallback session on signOut", async () => {
+            sessionStorage.setItem("singra-auth-session-fallback", JSON.stringify({
+                access_token: "test-token",
+                refresh_token: "test-refresh",
+            }));
+
+            mockSupabase.auth.signOut.mockResolvedValue({ error: null });
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            await act(async () => {
+                await result.current.signOut();
+            });
+
+            expect(sessionStorage.getItem("singra-auth-session-fallback")).toBeNull();
         });
     });
 });
