@@ -305,14 +305,26 @@ Deno.serve(async (req) => {
                     });
                 }
 
-                // Mark the specific Backup Code as used
-                await supabaseAdmin
+                // Mark the specific backup code as used (atomic one-time consume).
+                const { data: consumedBackupCode, error: consumeError } = await supabaseAdmin
                     .from('backup_codes')
                     .update({
-                        used: true,
+                        is_used: true,
                         used_at: new Date().toISOString()
                     })
-                    .eq('id', validCodeId);
+                    .eq('id', validCodeId)
+                    .eq('user_id', user.id)
+                    .eq('is_used', false)
+                    .select('id')
+                    .maybeSingle();
+
+                if (consumeError || !consumedBackupCode) {
+                    await new Promise(r => setTimeout(r, 500));
+                    return new Response(JSON.stringify({ error: "Invalid backup code" }), {
+                        status: 401,
+                        headers: jsonHeaders()
+                    });
+                }
 
                 await supabaseAdmin.from('user_2fa').update({ last_verified_at: new Date().toISOString() }).eq('user_id', user.id);
             } else {
