@@ -11,6 +11,8 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
+const SESSION_FALLBACK_STORAGE_KEY = 'singra-auth-session-fallback';
+
 // ============ Iframe Detection ============
 
 /**
@@ -23,6 +25,62 @@ function isInIframe(): boolean {
         return window.self !== window.top;
     } catch {
         return true; // Cross-origin iframe → blocked access = iframe
+    }
+}
+
+function persistSessionFallback(session: Session | null): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    if (!session?.access_token || !session?.refresh_token) {
+        window.sessionStorage.removeItem(SESSION_FALLBACK_STORAGE_KEY);
+        return;
+    }
+
+    window.sessionStorage.setItem(SESSION_FALLBACK_STORAGE_KEY, JSON.stringify({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+    }));
+}
+
+function clearSessionFallback(): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    window.sessionStorage.removeItem(SESSION_FALLBACK_STORAGE_KEY);
+}
+
+function readSessionFallback(): { access_token: string; refresh_token: string } | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    const raw = window.sessionStorage.getItem(SESSION_FALLBACK_STORAGE_KEY);
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(raw) as Partial<Session>;
+        if (
+            typeof parsed.access_token !== 'string'
+            || typeof parsed.refresh_token !== 'string'
+            || !parsed.access_token
+            || !parsed.refresh_token
+        ) {
+            clearSessionFallback();
+            return null;
+        }
+
+        return {
+            access_token: parsed.access_token,
+            refresh_token: parsed.refresh_token,
+        };
+    } catch {
+        clearSessionFallback();
+        return null;
     }
 }
 
@@ -43,12 +101,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
+    const restoreSessionFromFallback = async (): Promise<boolean> => {
+      const storedSession = readSessionFallback();
+      if (!storedSession) {
+        return false;
+      }
+
+      const { data, error } = await supabase.auth.setSession(storedSession);
+      if (error || !data.session) {
+        clearSessionFallback();
+        return false;
+      }
+
+      return true;
+    };
+
     // 1. Initialer Auth-Status aus Memory
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, currentSession) => {
         console.debug(`[AuthContext] Memory auth state changed: ${event}`);
         setSession(currentSession);
         setUser(currentSession?.user ?? null);
+
+        if (currentSession?.access_token && currentSession?.refresh_token) {
+          persistSessionFallback(currentSession);
+        } else if (event === 'SIGNED_OUT') {
+          clearSessionFallback();
+        }
 
         if (event !== 'INITIAL_SESSION') {
           setLoading(false);
@@ -62,6 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Im Iframe können Third-Party Cookies nicht gesetzt/gelesen werden.
       // Daher überspringen wir den Cookie-basierten Session-Fetch komplett.
       if (isInIframe()) {
+        await restoreSessionFromFallback();
         console.debug('[AuthContext] Running in iframe – skipping BFF cookie hydration.');
         setLoading(false);
         setAuthReady(true);
@@ -85,10 +165,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               access_token: bffSession.access_token,
               refresh_token: bffSession.refresh_token || '',
             });
+          } else {
+            await restoreSessionFromFallback();
           }
+        } else {
+          await restoreSessionFromFallback();
         }
       } catch (err) {
         console.warn('[AuthContext] No active session found from BFF.');
+        await restoreSessionFromFallback();
       } finally {
         setLoading(false);
         setAuthReady(true);
@@ -101,6 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = async () => {
+    clearSessionFallback();
     // 1. Supabase Memory-Session löschen
     const { error: signOutError } = await supabase.auth.signOut();
     if (signOutError) {

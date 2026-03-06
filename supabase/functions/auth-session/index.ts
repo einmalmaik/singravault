@@ -7,6 +7,8 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+const SESSION_COOKIE_NAME = "sb-bff-session";
+const SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 
 Deno.serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
@@ -30,15 +32,7 @@ Deno.serve(async (req) => {
     try {
         // --- DELETE: Session Invalidation ---
         if (req.method === "DELETE") {
-            setCookie(headers, {
-                name: "sb-bff-session",
-                value: "",
-                path: "/",
-                httpOnly: true,
-                secure: true,
-                sameSite: "None",
-                maxAge: 0, // expire immediately
-            });
+            clearSessionCookie(headers);
             return new Response(JSON.stringify({ success: true }), {
                 status: 200,
                 headers: jsonHeaders()
@@ -48,7 +42,7 @@ Deno.serve(async (req) => {
         // --- GET: Session Hydration & Refresh ---
         if (req.method === "GET") {
             const cookies = getCookies(req.headers);
-            const refreshToken = cookies["sb-bff-session"];
+            const refreshToken = cookies[SESSION_COOKIE_NAME];
 
             if (!refreshToken) {
                 return new Response(JSON.stringify({ error: "No session cookie" }), {
@@ -68,15 +62,7 @@ Deno.serve(async (req) => {
             }
 
             // Neues Cookie setzen
-            setCookie(headers, {
-                name: "sb-bff-session",
-                value: data.session.refresh_token,
-                path: "/",
-                httpOnly: true,
-                secure: true,
-                sameSite: "None",
-                maxAge: 60 * 60 * 24 * 7, // 7 days
-            });
+            setSessionCookie(headers, data.session.refresh_token);
 
             return new Response(JSON.stringify({ session: data.session }), {
                 status: 200,
@@ -136,15 +122,7 @@ Deno.serve(async (req) => {
             }
 
             if (!skipCookie) {
-                setCookie(headers, {
-                    name: "sb-bff-session",
-                    value: refreshedData.session.refresh_token,
-                    path: "/",
-                    httpOnly: true,
-                    secure: true,
-                    sameSite: "None",
-                    maxAge: 60 * 60 * 24 * 7, // 7 days
-                });
+                setSessionCookie(headers, refreshedData.session.refresh_token);
             }
 
             return new Response(JSON.stringify({ success: true, session: refreshedData.session }), {
@@ -364,15 +342,7 @@ Deno.serve(async (req) => {
 
         // Secure, HttpOnly Cookie nur setzen wenn nicht im Iframe-Modus
         if (!skipCookie) {
-            setCookie(headers, {
-                name: "sb-bff-session",
-                value: sessionData.session.refresh_token,
-                path: "/",
-                httpOnly: true,
-                secure: true,
-                sameSite: "None",
-                maxAge: 60 * 60 * 24 * 7, // 7 Days
-            });
+            setSessionCookie(headers, sessionData.session.refresh_token);
         }
 
         return new Response(JSON.stringify({ success: true, session: sessionData.session }), {
@@ -380,7 +350,7 @@ Deno.serve(async (req) => {
             headers: jsonHeaders()
         });
 
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("Auth Session Error:", err);
         return new Response(JSON.stringify({ error: "Internal Server Error" }), {
             status: 500,
@@ -388,6 +358,42 @@ Deno.serve(async (req) => {
         });
     }
 });
+
+function setSessionCookie(headers: Headers, refreshToken: string): void {
+    setCookie(headers, {
+        name: SESSION_COOKIE_NAME,
+        value: refreshToken,
+        path: "/",
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        maxAge: SESSION_COOKIE_MAX_AGE,
+    });
+    appendPartitionedCookieAttribute(headers);
+}
+
+function clearSessionCookie(headers: Headers): void {
+    setCookie(headers, {
+        name: SESSION_COOKIE_NAME,
+        value: "",
+        path: "/",
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        maxAge: 0,
+    });
+    appendPartitionedCookieAttribute(headers);
+}
+
+function appendPartitionedCookieAttribute(headers: Headers): void {
+    const currentCookie = headers.get("set-cookie");
+    if (!currentCookie || /;\s*Partitioned/i.test(currentCookie)) {
+        return;
+    }
+
+    // Partitioned cookies survive third-party cookie restrictions in modern Chromium.
+    headers.set("set-cookie", `${currentCookie}; Partitioned`);
+}
 
 function parseBearerToken(authHeader: string | null): string | null {
     if (!authHeader) {
