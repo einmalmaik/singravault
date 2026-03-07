@@ -93,6 +93,11 @@ describe("CookieConsent", () => {
   });
 
   it("should save essential-only consent when Essential only is clicked", () => {
+    localStorage.setItem("Singra-language", "en");
+    localStorage.setItem("i18nextLng", "en");
+    localStorage.setItem("singra_autolock", "1800000");
+    document.cookie = "sidebar:state=true; path=/";
+
     renderCookieConsent();
 
     act(() => {
@@ -108,6 +113,10 @@ describe("CookieConsent", () => {
     const consent = JSON.parse(localStorage.getItem("singra-cookie-consent")!);
     expect(consent.optional).toBe(false);
     expect(consent.necessary).toBe(true);
+    expect(localStorage.getItem("Singra-language")).toBeNull();
+    expect(localStorage.getItem("i18nextLng")).toBeNull();
+    expect(localStorage.getItem("singra_autolock")).toBeNull();
+    expect(document.cookie).not.toContain("sidebar:state");
   });
 
   it("should open settings dialog when Customize is clicked", () => {
@@ -154,6 +163,33 @@ describe("CookieConsent", () => {
     const consent = JSON.parse(localStorage.getItem("singra-cookie-consent")!);
     expect(consent.optional).toBe(true);
     expect(consent.necessary).toBe(true);
+  });
+
+  it("should clear optional storage when settings are saved with functional cookies disabled", () => {
+    localStorage.setItem(
+      "singra-cookie-consent",
+      JSON.stringify({ necessary: true, optional: true })
+    );
+    localStorage.setItem("Singra-language", "en");
+    localStorage.setItem("i18nextLng", "en");
+    localStorage.setItem("singra_autolock", "1800000");
+    document.cookie = "sidebar:state=false; path=/";
+
+    renderCookieConsent();
+
+    act(() => {
+      window.dispatchEvent(new Event("singra:open-cookie-settings"));
+    });
+
+    fireEvent.click(screen.getByRole("switch", { name: /functional cookies/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Preferences" }));
+
+    const consent = JSON.parse(localStorage.getItem("singra-cookie-consent")!);
+    expect(consent.optional).toBe(false);
+    expect(localStorage.getItem("Singra-language")).toBeNull();
+    expect(localStorage.getItem("i18nextLng")).toBeNull();
+    expect(localStorage.getItem("singra_autolock")).toBeNull();
+    expect(document.cookie).not.toContain("sidebar:state");
   });
 
   it("should open dialog via custom event singra:open-cookie-settings", () => {

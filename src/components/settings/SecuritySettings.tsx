@@ -58,9 +58,6 @@ export function SecuritySettings({ mode = 'all' }: SecuritySettingsProps) {
         const timeout = parseInt(value, 10);
         setAutoLockTimeout(timeout);
 
-        // Persist to localStorage
-        localStorage.setItem('singra_autolock', value);
-
         toast({
             title: t('common.success'),
             description: t('settings.security.autoLockUpdated'),

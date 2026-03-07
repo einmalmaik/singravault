@@ -10,6 +10,7 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
+import { hasOptionalCookieConsent } from '@/lib/cookieConsent';
 import de from './locales/de.json';
 import en from './locales/en.json';
 
@@ -63,9 +64,11 @@ export const languages = {
 export type LanguageCode = keyof typeof languages;
 
 const getInitialLanguage = (): LanguageCode => {
-  const stored = localStorage.getItem('Singra-language');
-  if (stored && stored in languages) {
-    return stored as LanguageCode;
+  if (hasOptionalCookieConsent()) {
+    const stored = localStorage.getItem('Singra-language');
+    if (stored && stored in languages) {
+      return stored as LanguageCode;
+    }
   }
 
   const browserLang = navigator.language.split('-')[0];

@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/select';
 
 import { useToast } from '@/hooks/use-toast';
+import { changeLanguage, type LanguageCode } from '@/i18n';
 
 const LANGUAGE_OPTIONS = [
     { value: 'de', label: 'Deutsch', flag: '🇩🇪' },
@@ -31,8 +32,7 @@ export function AppearanceSettings() {
     const { toast } = useToast();
 
     const handleLanguageChange = (value: string) => {
-        i18n.changeLanguage(value);
-        localStorage.setItem('i18nextLng', value);
+        changeLanguage(value as LanguageCode);
 
         toast({
             title: t('common.success'),

@@ -9,8 +9,11 @@ import { useEffect, useState } from 'react';
 
 import { CookieBanner } from '@/components/CookieBanner';
 import { CookieSettingsDialog } from '@/components/CookieSettingsDialog';
-
-const CONSENT_STORAGE_KEY = 'singra-cookie-consent';
+import {
+    clearOptionalCookieData,
+    readCookieConsent,
+    saveCookieConsent,
+} from '@/lib/cookieConsent';
 const BANNER_ENTER_DELAY_MS = 80;
 const BANNER_EXIT_DELAY_MS = 250;
 
@@ -25,19 +28,23 @@ export function CookieConsent({ variant: _variant = 'default' }: CookieConsentPr
     const [optional, setOptional] = useState(false);
 
     useEffect(() => {
-        const consent = readConsent();
+        const consent = readCookieConsent();
         if (!consent) {
+            clearOptionalCookieData();
             setIsBannerMounted(true);
             const timer = window.setTimeout(() => setIsBannerVisible(true), BANNER_ENTER_DELAY_MS);
             return () => window.clearTimeout(timer);
         }
 
         setOptional(consent.optional === true);
+        if (!consent.optional) {
+            clearOptionalCookieData();
+        }
     }, []);
 
     useEffect(() => {
         const handleOpenSettings = () => {
-            const consent = readConsent();
+            const consent = readCookieConsent();
             if (consent) {
                 setOptional(consent.optional === true);
             }
@@ -54,13 +61,14 @@ export function CookieConsent({ variant: _variant = 'default' }: CookieConsentPr
     };
 
     const handleAcceptAll = () => {
-        saveConsent({ optional: true });
+        saveCookieConsent({ optional: true });
         setOptional(true);
         dismissBanner();
     };
 
     const handleEssentialOnly = () => {
-        saveConsent({ optional: false });
+        saveCookieConsent({ optional: false });
+        clearOptionalCookieData();
         setOptional(false);
         dismissBanner();
     };
@@ -71,7 +79,7 @@ export function CookieConsent({ variant: _variant = 'default' }: CookieConsentPr
 
     const handleSettingsOpenChange = (open: boolean) => {
         if (open) {
-            const consent = readConsent();
+            const consent = readCookieConsent();
             if (consent) {
                 setOptional(consent.optional === true);
             }
@@ -81,7 +89,10 @@ export function CookieConsent({ variant: _variant = 'default' }: CookieConsentPr
     };
 
     const handleSaveSettings = () => {
-        saveConsent({ optional });
+        saveCookieConsent({ optional });
+        if (!optional) {
+            clearOptionalCookieData();
+        }
         setIsSettingsOpen(false);
 
         if (isBannerMounted) {
@@ -111,51 +122,4 @@ export function CookieConsent({ variant: _variant = 'default' }: CookieConsentPr
             />
         </>
     );
-}
-
-function readConsent(): StoredConsent | null {
-    try {
-        const stored = localStorage.getItem(CONSENT_STORAGE_KEY);
-        if (!stored) {
-            return null;
-        }
-
-        const parsed = JSON.parse(stored) as StoredConsent;
-        if (typeof parsed !== 'object' || parsed === null) {
-            return null;
-        }
-
-        if (parsed.necessary !== true || typeof parsed.optional !== 'boolean') {
-            return null;
-        }
-
-        return parsed;
-    } catch {
-        return null;
-    }
-}
-
-function saveConsent({ optional }: SaveConsentInput): void {
-    localStorage.setItem(
-        CONSENT_STORAGE_KEY,
-        JSON.stringify({
-            necessary: true,
-            optional,
-            analytics: false,
-            timestamp: new Date().toISOString(),
-        } satisfies StoredConsent),
-    );
-}
-
-// ============ Type Definitions ============
-
-interface StoredConsent {
-    necessary: true;
-    optional: boolean;
-    analytics?: boolean;
-    timestamp?: string;
-}
-
-interface SaveConsentInput {
-    optional: boolean;
 }
