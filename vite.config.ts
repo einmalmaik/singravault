@@ -10,7 +10,7 @@ function getSecurityHeaders(mode: string) {
   const dev = mode === "development";
   const scriptSrc = dev
     ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-    : "script-src 'self'";
+    : "script-src 'self' 'wasm-unsafe-eval'";
   const connectSrc = dev
     ? "connect-src 'self' ws: wss: http: https:"
     : "connect-src 'self' https://*.supabase.co wss://*.supabase.co";
