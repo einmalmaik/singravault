@@ -62,9 +62,14 @@ const App = () => {
                 <TooltipProvider>
                   <Toaster />
                   <Sonner />
-                  <CookieConsent />
-                  {SupportWidget && <SupportWidget />}
-                  <BrowserRouter>
+                  <BrowserRouter
+                    future={{
+                      v7_startTransition: true,
+                      v7_relativeSplatPath: true,
+                    }}
+                  >
+                    <CookieConsent />
+                    {SupportWidget && <SupportWidget />}
                     <Routes>
                       {/* Core Routes */}
                       <Route path="/" element={<Index />} />

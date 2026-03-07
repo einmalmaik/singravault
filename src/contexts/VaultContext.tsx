@@ -51,6 +51,7 @@ import type {
     IntegrityVerificationResult,
 } from '@/extensions/types';
 import { supabase } from '@/integrations/supabase/client';
+import { hasOptionalCookieConsent } from '@/lib/cookieConsent';
 import { useAuth } from './AuthContext';
 import {
     getUnlockCooldown,
@@ -141,6 +142,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
     // Get initial auto-lock timeout from localStorage
     const getInitialAutoLockTimeout = () => {
+        if (!hasOptionalCookieConsent()) {
+            return DEFAULT_AUTO_LOCK_TIMEOUT;
+        }
+
         const saved = localStorage.getItem('singra_autolock');
         return saved ? parseInt(saved, 10) : DEFAULT_AUTO_LOCK_TIMEOUT;
     };
