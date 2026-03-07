@@ -37,3 +37,5 @@ GEMINI.md
 .output.txt
 notizen.md
 .env.production
+*.json
+/supabase/.temp
