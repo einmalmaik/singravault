@@ -6,9 +6,19 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 const SESSION_COOKIE_NAME = "sb-bff-session";
 const SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
+
+function createSupabaseAuthClient() {
+    return createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+        },
+    });
+}
 
 Deno.serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
@@ -52,7 +62,8 @@ Deno.serve(async (req) => {
             }
 
             // Refresh via Admin oder Anon Client
-            const { data, error } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken });
+            const authClient = createSupabaseAuthClient();
+            const { data, error } = await authClient.auth.refreshSession({ refresh_token: refreshToken });
 
             if (error || !data.session) {
                 return new Response(JSON.stringify({ error: "Session expired" }), {
@@ -90,8 +101,11 @@ Deno.serve(async (req) => {
                 });
             }
 
-            const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
             const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+                auth: {
+                    persistSession: false,
+                    autoRefreshToken: false,
+                },
                 global: { headers: { Authorization: `Bearer ${accessToken}` } },
             });
 
@@ -103,7 +117,8 @@ Deno.serve(async (req) => {
                 });
             }
 
-            const { data: refreshedData, error: refreshError } = await supabaseAdmin.auth.refreshSession({
+            const refreshClient = createSupabaseAuthClient();
+            const { data: refreshedData, error: refreshError } = await refreshClient.auth.refreshSession({
                 refresh_token: refreshToken,
             });
 
@@ -168,7 +183,8 @@ Deno.serve(async (req) => {
 
         if (secError || !secData) {
             // Legacy GoTrue Fallback (Bug 15)
-            const { data: fallbackAuth, error: fallbackError } = await supabaseAdmin.auth.signInWithPassword({
+            const authClient = createSupabaseAuthClient();
+            const { data: fallbackAuth, error: fallbackError } = await authClient.auth.signInWithPassword({
                 email,
                 password
             });
@@ -331,7 +347,8 @@ Deno.serve(async (req) => {
         if (!tokenHash) throw new Error("No hashed_token in generateLink response");
 
         // Verifiziere den Token über token_hash (korrekte API seit Supabase PKCE)
-        const { data: sessionData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({
+        const authClient = createSupabaseAuthClient();
+        const { data: sessionData, error: verifyError } = await authClient.auth.verifyOtp({
             token_hash: tokenHash,
             type: 'magiclink'
         });
