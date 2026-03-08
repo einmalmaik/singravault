@@ -7,11 +7,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 
-const { mockInvoke, mockGetSession, supabaseMock } = vi.hoisted(() => {
+const { mockInvoke, mockGetSession, mockRefreshSession, mockSetSession, supabaseMock, validTestToken } = vi.hoisted(() => {
+  const validTestToken = [
+    "header",
+    btoa(JSON.stringify({
+      sub: "user-1",
+      aud: "authenticated",
+      role: "authenticated",
+      exp: 4102444800,
+      iss: "https://example.supabase.co/auth/v1",
+    })),
+    "signature",
+  ].join(".");
+
   const mockInvoke = vi.fn();
   const mockGetSession = vi.fn().mockResolvedValue({
-    data: { session: { access_token: 'mock-token' } },
+    data: { session: { access_token: validTestToken, refresh_token: 'mock-refresh-token' } },
     error: null
+  });
+  const mockRefreshSession = vi.fn().mockResolvedValue({
+    data: { session: null },
+    error: null,
+  });
+  const mockSetSession = vi.fn().mockResolvedValue({
+    data: { session: { access_token: 'rehydrated-token', refresh_token: 'rehydrated-refresh-token' } },
+    error: null,
   });
 
   const supabaseMock = {
@@ -20,13 +40,18 @@ const { mockInvoke, mockGetSession, supabaseMock } = vi.hoisted(() => {
     },
     auth: {
       getSession: mockGetSession,
+      refreshSession: mockRefreshSession,
+      setSession: mockSetSession,
     }
   };
 
   return {
     mockInvoke,
     mockGetSession,
+    mockRefreshSession,
+    mockSetSession,
     supabaseMock,
+    validTestToken,
   };
 });
 
@@ -42,6 +67,7 @@ import {
 describe("edgeFunctionService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fetch not mocked")));
   });
 
   it("invokes function securely using supabase.functions.invoke", async () => {
@@ -56,7 +82,7 @@ describe("edgeFunctionService", () => {
 
     expect(mockInvoke).toHaveBeenCalledWith("invite-family-member", {
       body: { email: "a@example.com" },
-      headers: { Authorization: "Bearer mock-token" }
+      headers: { Authorization: `Bearer ${validTestToken}` }
     });
     expect(result.success).toBe(true);
   });
@@ -139,5 +165,54 @@ describe("edgeFunctionService", () => {
       status: 500,
       message: "Internal server error",
     });
+  });
+
+  it("rehydrates the session from auth-session and retries once after a 401", async () => {
+    const error = new FunctionsHttpError("Edge Function returned a non-2xx status code");
+    (error as any).context = {
+      status: 401,
+      json: vi.fn().mockResolvedValue({ error: "Unauthorized" }),
+    };
+
+    mockInvoke
+      .mockResolvedValueOnce({
+        data: null,
+        error,
+      })
+      .mockResolvedValueOnce({
+        data: { success: true },
+        error: null,
+      });
+
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        session: {
+          access_token: "rehydrated-token",
+          refresh_token: "rehydrated-refresh-token",
+        },
+      }),
+    } as unknown as Response);
+
+    const result = await invokeAuthedFunction<{ success: boolean }>("admin-team", {
+      action: "get_access",
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/functions/v1/auth-session"),
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+      }),
+    );
+    expect(mockSetSession).toHaveBeenCalledWith({
+      access_token: "rehydrated-token",
+      refresh_token: "rehydrated-refresh-token",
+    });
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, "admin-team", {
+      body: { action: "get_access" },
+      headers: { Authorization: "Bearer rehydrated-token" },
+    });
+    expect(result.success).toBe(true);
   });
 });

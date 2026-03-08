@@ -34,6 +34,15 @@ import type {
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
+function createSupabaseAuthClient(supabaseUrl: string, supabaseAnonKey: string) {
+    return createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+        },
+    });
+}
+
 // ============ Configuration ============
 
 /**
@@ -76,6 +85,7 @@ Deno.serve(async (req: Request) => {
         console.log("WebAuthn function called. Method:", req.method);
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -522,7 +532,8 @@ async function handleVerifyAuthentication(
 
             if (!token) throw new Error("No token in magic link");
 
-            const { data: sessionData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({
+            const authClient = createSupabaseAuthClient(supabaseUrl, supabaseAnonKey);
+            const { data: sessionData, error: verifyError } = await authClient.auth.verifyOtp({
                 email: user.email!,
                 token,
                 type: 'magiclink'

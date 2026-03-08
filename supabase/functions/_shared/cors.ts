@@ -5,6 +5,10 @@
  * cross-origin requests. Falls back to the production domain when the env var is unset.
  * Automatically allows localhost origins for development.
  *
+ * Preview environments support two allow-list modes:
+ * - `ALLOWED_PREVIEW_ORIGINS`: exact origin matches
+ * - `ALLOWED_PREVIEW_ORIGIN_SUFFIXES`: hostname suffix matches for owned preview domains
+ *
  * Usage in an Edge Function (preferred — dynamic):
  *   import { getCorsHeaders } from "../_shared/cors.ts";
  *   const cors = getCorsHeaders(req);
@@ -27,6 +31,10 @@ const configuredPreviewOrigins = ((globalThis as any).Deno?.env?.get("ALLOWED_PR
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(isConfiguredOriginSafe);
+const configuredPreviewOriginSuffixes = ((globalThis as any).Deno?.env?.get("ALLOWED_PREVIEW_ORIGIN_SUFFIXES") || "")
+    .split(",")
+    .map((suffix) => normalizeHostnameSuffix(suffix))
+    .filter((suffix): suffix is string => Boolean(suffix));
 
 function isAllowedOrigin(origin: string): boolean {
     if (productionOrigins.includes(origin)) return true;
@@ -37,7 +45,10 @@ function isAllowedOrigin(origin: string): boolean {
     }
 
     // Preview-Umgebungen nur mit explizitem Opt-in erlauben.
-    if (allowPreviewOrigins && configuredPreviewOrigins.includes(origin)) {
+    if (allowPreviewOrigins && (
+        configuredPreviewOrigins.includes(origin)
+        || matchesAllowedPreviewOriginSuffix(origin)
+    )) {
         return true;
     }
 
@@ -116,4 +127,39 @@ function isConfiguredOriginSafe(origin: string): boolean {
     } catch {
         return false;
     }
+}
+
+function matchesAllowedPreviewOriginSuffix(origin: string): boolean {
+    if (configuredPreviewOriginSuffixes.length === 0) {
+        return false;
+    }
+
+    try {
+        const parsed = new URL(origin);
+        if (parsed.protocol !== "https:") {
+            return false;
+        }
+
+        return configuredPreviewOriginSuffixes.some((suffix) =>
+            parsed.hostname === suffix
+            || parsed.hostname.endsWith(`.${suffix}`)
+            || parsed.hostname.endsWith(`-${suffix}`)
+        );
+    } catch {
+        return false;
+    }
+}
+
+function normalizeHostnameSuffix(value: string): string | null {
+    const trimmed = value.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "").replace(/^\.+/, "");
+    if (!trimmed || trimmed.includes("*")) {
+        return null;
+    }
+
+    const looksLikeHost = /^[a-z0-9.-]+$/i.test(trimmed);
+    if (!looksLikeHost) {
+        return null;
+    }
+
+    return trimmed.toLowerCase();
 }

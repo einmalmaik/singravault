@@ -4,8 +4,18 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 const resendApiKey = Deno.env.get("RESEND_API_KEY")!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+function createSupabaseAuthClient() {
+    return createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+        },
+    });
+}
 
 /**
  * Generates a cryptographically secure 8-digit numeric code.
@@ -159,7 +169,8 @@ serve(async (req) => {
                 });
             }
 
-            const { data: sessionData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({
+            const authClient = createSupabaseAuthClient();
+            const { data: sessionData, error: verifyError } = await authClient.auth.verifyOtp({
                 token_hash: tokenHash,
                 type: "magiclink",
             });
