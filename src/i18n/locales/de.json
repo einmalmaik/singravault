@@ -907,13 +907,13 @@
   "admin": {
     "title": "Admin-Bereich",
     "brand": "Singra Vault",
-    "description": "Interne Verwaltung fuer Support, Rollen und Rechte.",
+    "description": "Interne Verwaltung für Support, Rollen und Rechte.",
     "loadError": "Admin-Zugriff konnte nicht geladen werden.",
     "accessDeniedTitle": "Kein Zugriff",
-    "accessDeniedDescription": "Du hast keine Berechtigung fuer den internen Admin-Bereich.",
+    "accessDeniedDescription": "Du hast keine Berechtigung für den internen Admin-Bereich.",
     "accessDeniedMissingRole": "Dein Account ist kein internes Teammitglied (admin/moderator).",
-    "accessDeniedMissingPermissions": "Deinem internen Teamkonto fehlen Admin-Berechtigungen (z.B. {{permissions}}).",
-    "backToSettings": "Zurueck zu Einstellungen",
+    "accessDeniedMissingPermissions": "Deinem internen Teamkonto fehlen Admin-Berechtigungen (z. B. {{permissions}}).",
+    "backToSettings": "Zurück zu Einstellungen",
     "tabs": {
       "support": "Support",
       "team": "Team & Rechte"
@@ -930,7 +930,7 @@
       "metricsTitle": "Support-Metriken (30 Tage)",
       "metricResponse": "Durchschnittliche erste Antwortzeit: {{hours}} h",
       "metricHitRate": "SLA-Trefferquote: {{rate}}%",
-      "noMetrics": "Keine Metrikdaten verfuegbar.",
+      "noMetrics": "Keine Metrikdaten verfügbar.",
       "inboxTitle": "Tickets",
       "refresh": "Aktualisieren",
       "realtime": {
@@ -944,9 +944,9 @@
         "applySearch": "Suchen"
       },
       "noTickets": "Keine Tickets gefunden.",
-      "priority": "Prioritaet",
+      "priority": "Priorität",
       "ticketDetails": "Ticket-Details",
-      "selectTicket": "Waehle links ein Ticket aus.",
+      "selectTicket": "Wähle links ein Ticket aus.",
       "unknownRequester": "Unbekannte Anfrage-E-Mail",
       "messages": "Nachrichten",
       "noMessages": "Keine Nachrichten vorhanden.",
@@ -956,10 +956,10 @@
         "system": "System"
       },
       "internalBadge": "Intern",
-      "statusUpdateLabel": "Status aendern",
+      "statusUpdateLabel": "Status ändern",
       "statusUpdateAction": "Status speichern",
       "replyLabel": "Antwort verfassen",
-      "replyPlaceholder": "Antwort fuer den Nutzer oder interne Notiz eingeben...",
+      "replyPlaceholder": "Antwort für den Nutzer oder interne Notiz eingeben...",
       "internalNoteToggle": "Als interne Notiz speichern",
       "replySending": "Wird gesendet...",
       "replyAction": "Antwort senden",
@@ -968,9 +968,9 @@
         "description": "Weise dem aktuellen Nutzer manuell ein Abo-Tier zu.",
         "lookupLabel": "Ziel-Nutzer-ID",
         "lookupPlaceholder": "Nutzer-ID eingeben",
-        "resolveAction": "ID uebernehmen",
+        "resolveAction": "ID übernehmen",
         "ticketUserHint": "Ticket-Nutzer: {{userId}}",
-        "noTicketUserHint": "Kein Ticket-Nutzer vorausgewaehlt.",
+        "noTicketUserHint": "Kein Ticket-Nutzer vorausgewählt.",
         "targetUser": "Ziel-Nutzer: {{userId}}",
         "tierLabel": "Tier",
         "tier": {
@@ -979,27 +979,27 @@
           "families": "Families",
           "self_hosted": "Self-hosted"
         },
-        "reasonLabel": "Begruendung",
-        "reasonPlaceholder": "Begründe kurz, warum die manuelle Zuweisung noetig ist.",
+        "reasonLabel": "Begründung",
+        "reasonPlaceholder": "Begründe kurz, warum die manuelle Zuweisung nötig ist.",
         "assignAction": "Zuweisen",
         "assigning": "Wird zugewiesen...",
         "success": "Abo erfolgreich zugewiesen.",
         "errorMissingUser": "Bitte gib eine Ziel-Nutzer-ID an.",
-        "errorReasonTooShort": "Die Begruendung muss mindestens 3 Zeichen haben.",
+        "errorReasonTooShort": "Die Begründung muss mindestens 3 Zeichen haben.",
         "errorAssignFailed": "Abo konnte nicht zugewiesen werden."
       }
     },
     "team": {
       "title": "Team & Rechte",
       "subscriptionTitle": "Abonnement zuweisen",
-      "subscriptionDescription": "Waehle zuerst einen registrierten Nutzer aus oder trage unten direkt eine Nutzer-ID ein.",
-      "noAccess": "Du hast keine Berechtigung fuer Rollen- oder Rechteverwaltung.",
+      "subscriptionDescription": "Wähle zuerst einen registrierten Nutzer aus oder trage unten direkt eine Nutzer-ID ein.",
+      "noAccess": "Du hast keine Berechtigung für Rollen- oder Rechteverwaltung.",
       "membersTitle": "Team-Mitglieder",
-      "membersDescription": "Rollen fuer interne Team-Mitglieder verwalten.",
+      "membersDescription": "Rollen für interne Team-Mitglieder verwalten.",
       "membersLoadError": "Team-Mitglieder konnten nicht geladen werden.",
       "noMembers": "Keine Team-Mitglieder gefunden.",
       "userDirectoryTitle": "Registrierte Benutzer",
-      "userDirectoryDescription": "Durchsuche alle registrierten Konten, kopiere Nutzer-IDs und uebernimm Nutzer direkt fuer Team- oder Abo-Aktionen.",
+      "userDirectoryDescription": "Durchsuche alle registrierten Konten, kopiere Nutzer-IDs und übernimm Nutzer direkt für Team- oder Abo-Aktionen.",
       "userDirectoryLoadError": "Benutzerliste konnte nicht geladen werden.",
       "userDirectorySearchPlaceholder": "Nach E-Mail, Name, Nutzer-ID oder Tier suchen",
       "userDirectoryCount": "{{count}} Benutzer",
@@ -1042,8 +1042,8 @@
       "copyUserId": "Nutzer-ID kopieren",
       "userIdCopied": "Nutzer-ID kopiert.",
       "userIdCopyError": "Nutzer-ID konnte nicht kopiert werden.",
-      "useForSubscription": "Fuer Abo verwenden",
-      "prefillSubscriptionSuccess": "Nutzer in Abo-Zuweisung uebernommen."
+      "useForSubscription": "Für Abo verwenden",
+      "prefillSubscriptionSuccess": "Nutzer in Abo-Zuweisung übernommen."
     }
   },
   "fileAttachments": {
