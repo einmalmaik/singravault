@@ -10,6 +10,8 @@
 import { supabase } from '@/integrations/supabase/client';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
+const loggedRetryWarnings = new Set<string>();
+
 // ============ Public API ============
 
 /**
@@ -76,7 +78,7 @@ export async function invokeAuthedFunction<
             throw error;
         }
 
-        console.warn(`[EdgeFunctionService] '${functionName}' returned 401. Rehydrating from BFF and retrying once...`);
+        logRetryWarningOnce(functionName);
         const rehydratedSession = await rehydrateSessionFromBff(functionName);
         if (!rehydratedSession?.access_token) {
             throw error;
@@ -210,6 +212,15 @@ function logSessionDiagnostics(functionName: string, stage: string, session: Aut
         expiresInSec: typeof payload.exp === 'number' ? payload.exp - nowSec : null,
         iss: payload.iss ?? null,
     });
+}
+
+function logRetryWarningOnce(functionName: string): void {
+    if (loggedRetryWarnings.has(functionName)) {
+        return;
+    }
+
+    loggedRetryWarnings.add(functionName);
+    console.warn(`[EdgeFunctionService] '${functionName}' returned 401. Rehydrating from BFF and retrying once...`);
 }
 
 function isRetryableAuthError(error: unknown): boolean {
