@@ -19,3 +19,16 @@ The core repository must remain installable and buildable without the private `@
   - install `@singra/premium` into the root project
   - `npm run build`
   - premium features register automatically via `initPremium()`
+
+## Vercel
+
+The Vercel install step uses `node scripts/vercel-install.mjs`.
+
+- Core-only deployment:
+  - do not set `INSTALL_SINGRA_PREMIUM`
+- Premium-enabled deployment:
+  - set `INSTALL_SINGRA_PREMIUM=true`
+  - set `GITHUB_PAT` to a token with access to `einmalmaik/singra-premium`
+  - optionally set `SINGRA_PREMIUM_REF=master` or a pinned commit/tag
+
+When `INSTALL_SINGRA_PREMIUM=true`, the install script injects `@singra/premium` into the temporary Vercel build workspace before running `npm install`.
