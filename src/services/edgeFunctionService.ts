@@ -33,19 +33,27 @@ export async function invokeAuthedFunction<
     console.debug(`[EdgeFunctionService] invokeAuthedFunction('${functionName}') started. Awaiting getSession()...`);
     let { data: { session }, error: sessionError } = await supabase.auth.getSession();
     console.debug(`[EdgeFunctionService] getSession() returned for '${functionName}'. Has session:`, !!session);
+    logSessionDiagnostics(functionName, 'initial', session);
+
+    if ((sessionError || !session?.access_token) && typeof window !== 'undefined') {
+        console.warn(`[EdgeFunctionService] No usable in-memory session for '${functionName}'. Attempting BFF rehydration...`);
+        session = await rehydrateSessionFromBff(functionName);
+        sessionError = session ? null : sessionError;
+    }
 
     // autoRefreshToken is disabled (BFF pattern). Detect expired access_token and
     // attempt a silent refresh via the BFF cookie before failing with 401.
     if (!sessionError && session?.access_token) {
         try {
-            const payload = JSON.parse(atob(session.access_token.split('.')[1]));
-            const expiresAt: number = payload.exp ?? 0;
+            const payload = decodeJwtPayload(session.access_token);
+            const expiresAt: number = payload?.exp ?? 0;
             const nowSec = Math.floor(Date.now() / 1000);
             if (expiresAt - nowSec < 30) {
                 console.debug(`[EdgeFunctionService] Access token expiring/expired for '${functionName}', attempting BFF refresh…`);
                 const refreshed = await supabase.auth.refreshSession({ refresh_token: session.refresh_token });
                 if (!refreshed.error && refreshed.data.session) {
                     session = refreshed.data.session;
+                    logSessionDiagnostics(functionName, 'refresh-session', session);
                 }
             }
         } catch {
@@ -61,21 +69,22 @@ export async function invokeAuthedFunction<
         throw authError;
     }
 
-    console.debug(`[EdgeFunctionService] Invoking '${functionName}' now...`);
-    const startTime = Date.now();
-    const { data, error } = await supabase.functions.invoke(functionName, {
-        body,
-        headers: {
-            Authorization: `Bearer ${session.access_token}`
+    try {
+        return await invokeWithSession<TResponse, TBody>(functionName, session.access_token, body);
+    } catch (error) {
+        if (!isRetryableAuthError(error) || typeof window === 'undefined') {
+            throw error;
         }
-    });
-    console.debug(`[EdgeFunctionService] Invoked '${functionName}' in ${Date.now() - startTime}ms. Error:`, error);
 
-    if (error) {
-        throw await normalizeSupabaseFunctionError(error);
+        console.warn(`[EdgeFunctionService] '${functionName}' returned 401. Rehydrating from BFF and retrying once...`);
+        const rehydratedSession = await rehydrateSessionFromBff(functionName);
+        if (!rehydratedSession?.access_token) {
+            throw error;
+        }
+
+        logSessionDiagnostics(functionName, 'retry-after-bff', rehydratedSession);
+        return await invokeWithSession<TResponse, TBody>(functionName, rehydratedSession.access_token, body);
     }
-
-    return (data || null) as TResponse;
 }
 
 /**
@@ -93,6 +102,119 @@ export function isEdgeFunctionServiceError(error: unknown): error is EdgeFunctio
 }
 
 // ============ Internal Helpers ============
+
+async function invokeWithSession<
+    TResponse,
+    TBody extends Record<string, unknown> = Record<string, unknown>,
+>(
+    functionName: string,
+    accessToken: string,
+    body?: TBody,
+): Promise<TResponse> {
+    console.debug(`[EdgeFunctionService] Invoking '${functionName}' now...`);
+    const startTime = Date.now();
+    const { data, error } = await supabase.functions.invoke(functionName, {
+        body,
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+        },
+    });
+    console.debug(`[EdgeFunctionService] Invoked '${functionName}' in ${Date.now() - startTime}ms. Error:`, error);
+
+    if (error) {
+        throw await normalizeSupabaseFunctionError(error);
+    }
+
+    return (data || null) as TResponse;
+}
+
+async function rehydrateSessionFromBff(functionName: string) {
+    const apiUrl = import.meta.env.VITE_SUPABASE_URL;
+    const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+    if (!apiUrl || !publishableKey) {
+        console.warn(`[EdgeFunctionService] Cannot rehydrate session for '${functionName}' because Supabase env vars are missing.`);
+        return null;
+    }
+
+    try {
+        const response = await fetch(`${apiUrl}/functions/v1/auth-session`, {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${publishableKey}`,
+            },
+            credentials: 'include',
+        });
+
+        if (!response.ok) {
+            console.warn(`[EdgeFunctionService] BFF rehydration for '${functionName}' failed with status ${response.status}.`);
+            return null;
+        }
+
+        const payload = await response.json().catch(() => null) as { session?: AuthSessionLike } | null;
+        const rehydratedSession = payload?.session;
+
+        if (!rehydratedSession?.access_token || !rehydratedSession?.refresh_token) {
+            console.warn(`[EdgeFunctionService] BFF rehydration for '${functionName}' returned no usable session.`);
+            return null;
+        }
+
+        const { data, error } = await supabase.auth.setSession({
+            access_token: rehydratedSession.access_token,
+            refresh_token: rehydratedSession.refresh_token,
+        });
+
+        if (error || !data.session) {
+            console.warn(`[EdgeFunctionService] Failed to apply rehydrated session for '${functionName}'.`, error);
+            return null;
+        }
+
+        return data.session;
+    } catch (error) {
+        console.warn(`[EdgeFunctionService] Session rehydration threw for '${functionName}'.`, error);
+        return null;
+    }
+}
+
+function decodeJwtPayload(token: string): JwtPayload | null {
+    try {
+        const base64 = token.split('.')[1];
+        if (!base64) {
+            return null;
+        }
+
+        return JSON.parse(atob(base64)) as JwtPayload;
+    } catch {
+        return null;
+    }
+}
+
+function logSessionDiagnostics(functionName: string, stage: string, session: AuthSessionLike | null | undefined): void {
+    if (!session?.access_token) {
+        console.debug(`[EdgeFunctionService] Session diagnostics for '${functionName}' at '${stage}': no access token.`);
+        return;
+    }
+
+    const payload = decodeJwtPayload(session.access_token);
+    if (!payload) {
+        console.debug(`[EdgeFunctionService] Session diagnostics for '${functionName}' at '${stage}': token could not be decoded.`);
+        return;
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    console.debug(`[EdgeFunctionService] Session diagnostics for '${functionName}' at '${stage}':`, {
+        sub: payload.sub ?? null,
+        aud: payload.aud ?? null,
+        role: payload.role ?? null,
+        exp: payload.exp ?? null,
+        expiresInSec: typeof payload.exp === 'number' ? payload.exp - nowSec : null,
+        iss: payload.iss ?? null,
+    });
+}
+
+function isRetryableAuthError(error: unknown): boolean {
+    return isEdgeFunctionServiceError(error) && error.code === 'AUTH_REQUIRED' && error.status === 401;
+}
 
 async function normalizeSupabaseFunctionError(error: any): Promise<EdgeFunctionServiceError> {
     let status: number | undefined;
@@ -178,4 +300,17 @@ export interface EdgeFunctionServiceError extends Error {
     code: EdgeFunctionErrorCode;
     details?: Record<string, unknown>;
     status?: number;
+}
+
+interface JwtPayload {
+    sub?: string;
+    aud?: string | string[];
+    role?: string;
+    exp?: number;
+    iss?: string;
+}
+
+interface AuthSessionLike {
+    access_token: string;
+    refresh_token?: string;
 }
