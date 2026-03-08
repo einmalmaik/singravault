@@ -1004,6 +1004,22 @@
       "userDirectorySearchPlaceholder": "Nach E-Mail, Name, Nutzer-ID oder Tier suchen",
       "userDirectoryCount": "{{count}} Benutzer",
       "userDirectoryEmpty": "Keine passenden Benutzer gefunden.",
+      "userIdLabel": "Nutzer-ID",
+      "subscriptionStatusLabel": "Abo-Status",
+      "roleEditorLabel": "Interne Rolle",
+      "noSubscriptionStatus": "Kein aktiver Abo-Status",
+      "selectedUserTitle": "Ausgewählter Nutzer",
+      "selectedUserDescription": "Das Abo-Formular ist für {{userId}} vorausgefüllt.",
+      "clearSelection": "Auswahl zurücksetzen",
+      "jumpToSubscription": "Zur Abo-Zuweisung",
+      "summary": {
+        "registeredUsers": "Registrierte Benutzer",
+        "registeredUsersDescription": "Alle Konten, die aktuell für interne Aktionen verfügbar sind.",
+        "internalMembers": "Interne Teammitglieder",
+        "internalMembersDescription": "Konten, die aktuell dem internen Team zugeordnet sind.",
+        "paidUsers": "Paid-Nutzer",
+        "paidUsersDescription": "Konten mit aktivem Premium- oder Families-Tier."
+      },
       "userDirectoryColumns": {
         "user": "Benutzer",
         "userId": "Nutzer-ID",

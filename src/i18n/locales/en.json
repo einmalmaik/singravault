@@ -981,6 +981,22 @@
       "userDirectorySearchPlaceholder": "Search by email, name, user ID, or tier",
       "userDirectoryCount": "{{count}} users",
       "userDirectoryEmpty": "No matching users found.",
+      "userIdLabel": "User ID",
+      "subscriptionStatusLabel": "Subscription status",
+      "roleEditorLabel": "Internal role",
+      "noSubscriptionStatus": "No active subscription status",
+      "selectedUserTitle": "Selected user",
+      "selectedUserDescription": "Subscription form is prefilled for {{userId}}.",
+      "clearSelection": "Clear selection",
+      "jumpToSubscription": "Jump to subscription",
+      "summary": {
+        "registeredUsers": "Registered users",
+        "registeredUsersDescription": "All accounts currently available for internal actions.",
+        "internalMembers": "Internal members",
+        "internalMembersDescription": "Accounts currently assigned to the internal team.",
+        "paidUsers": "Paid users",
+        "paidUsersDescription": "Accounts currently on Premium or Families."
+      },
       "userDirectoryColumns": {
         "user": "User",
         "userId": "User ID",
