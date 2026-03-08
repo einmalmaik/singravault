@@ -74,6 +74,8 @@ export async function invokeAuthedFunction<
     try {
         return await invokeWithSession<TResponse, TBody>(functionName, session.access_token, body);
     } catch (error) {
+        logAuthErrorDetails(functionName, error);
+
         if (!isRetryableAuthError(error) || typeof window === 'undefined') {
             throw error;
         }
@@ -221,6 +223,14 @@ function logRetryWarningOnce(functionName: string): void {
 
     loggedRetryWarnings.add(functionName);
     console.warn(`[EdgeFunctionService] '${functionName}' returned 401. Rehydrating from BFF and retrying once...`);
+}
+
+function logAuthErrorDetails(functionName: string, error: unknown): void {
+    if (!isEdgeFunctionServiceError(error) || error.status !== 401 || !error.details) {
+        return;
+    }
+
+    console.warn(`[EdgeFunctionService] '${functionName}' 401 details:`, error.details);
 }
 
 function isRetryableAuthError(error: unknown): boolean {
