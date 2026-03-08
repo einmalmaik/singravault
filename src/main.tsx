@@ -6,7 +6,13 @@ import "./index.css";
 
 // Premium extensions disabled for Core-only testing
 import { initPremium } from '@singra/premium';
+import { registerRoute, registerServiceHooks } from '@/extensions/registry';
+import AdminPage from '@/pages/AdminPage';
+import { getTeamAccess } from '@/services/adminService';
+
 initPremium();
+registerServiceHooks({ getTeamAccess });
+registerRoute({ path: '/admin', component: AdminPage, protected: true, requiresVaultUnlock: false });
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {

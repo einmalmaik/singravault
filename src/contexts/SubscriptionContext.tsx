@@ -1,5 +1,5 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Subscription Context for Singra Vault
  *
@@ -12,6 +12,7 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { useAuth } from './AuthContext';
 import { FEATURE_MATRIX, type FeatureName, type SubscriptionTier } from '@/config/planConfig';
 import { getServiceHooks } from '@/extensions/registry';
+import { getTeamAccess } from '@/services/adminService';
 
 /** Subscription data shape (matches subscriptionService.SubscriptionData) */
 export interface SubscriptionData {
@@ -59,37 +60,45 @@ interface SubscriptionProviderProps {
 }
 
 export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
-    const { user } = useAuth();
+    const { user, authReady } = useAuth();
     const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
+    const [hasAdminFeatureOverride, setHasAdminFeatureOverride] = useState(false);
     const [loading, setLoading] = useState(true);
 
     const loadSubscription = useCallback(async () => {
+        if (!authReady) {
+            setLoading(true);
+            return;
+        }
+
         if (!user) {
             setSubscription(null);
+            setHasAdminFeatureOverride(false);
             setLoading(false);
             return;
         }
 
         const hooks = getServiceHooks();
-        if (!hooks.getSubscription) {
-            // Premium not installed — stay on free tier
-            setSubscription(null);
-            setLoading(false);
-            return;
-        }
 
         try {
-            const data = await hooks.getSubscription();
-            setSubscription(data);
+            const [subscriptionData, accessResult] = await Promise.all([
+                hooks.getSubscription ? hooks.getSubscription() : Promise.resolve(null),
+                getTeamAccess(),
+            ]);
+
+            setSubscription(subscriptionData);
+            setHasAdminFeatureOverride(accessResult.access?.is_admin === true);
         } catch (err) {
             console.error('Error loading subscription:', err);
+            setSubscription(null);
+            setHasAdminFeatureOverride(false);
         } finally {
             setLoading(false);
         }
-    }, [user]);
+    }, [authReady, user]);
 
     useEffect(() => {
-        loadSubscription();
+        void loadSubscription();
     }, [loadSubscription]);
 
     const tier: SubscriptionTier = (subscription?.tier as SubscriptionTier) || 'free';
@@ -103,9 +112,10 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     const hasUsedIntroDiscount = subscription?.has_used_intro_discount ?? false;
 
     const hasFeature = useCallback((feature: FeatureName): boolean => {
+        if (hasAdminFeatureOverride) return true;
         if (!isActive && (tier as string) !== 'free') return false; // Expired paid plan
         return FEATURE_MATRIX[feature]?.[tier] ?? false;
-    }, [tier, isActive]);
+    }, [hasAdminFeatureOverride, tier, isActive]);
 
     const refresh = useCallback(async () => {
         setLoading(true);
