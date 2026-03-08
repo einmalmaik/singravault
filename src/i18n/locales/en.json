@@ -969,11 +969,25 @@
     "team": {
       "title": "Team & Permissions",
       "subscriptionTitle": "Assign Subscription",
+      "subscriptionDescription": "Select a registered user first or enter a user ID manually below.",
       "noAccess": "You don't have permission to manage roles or permissions.",
       "membersTitle": "Team members",
       "membersDescription": "Manage internal roles for team members.",
       "membersLoadError": "Failed to load team members.",
       "noMembers": "No team members found.",
+      "userDirectoryTitle": "Registered users",
+      "userDirectoryDescription": "Browse all registered accounts, copy user IDs, and prefill users directly for team or subscription actions.",
+      "userDirectoryLoadError": "Failed to load user directory.",
+      "userDirectorySearchPlaceholder": "Search by email, name, user ID, or tier",
+      "userDirectoryCount": "{{count}} users",
+      "userDirectoryEmpty": "No matching users found.",
+      "userDirectoryColumns": {
+        "user": "User",
+        "userId": "User ID",
+        "role": "Internal role",
+        "subscription": "Subscription",
+        "actions": "Actions"
+      },
       "columns": {
         "member": "Member",
         "roles": "Active roles",
@@ -1001,7 +1015,12 @@
         "team": "Team"
       },
       "permissionsUpdateError": "Failed to update permission.",
-      "permissionsUpdated": "Permission updated successfully."
+      "permissionsUpdated": "Permission updated successfully.",
+      "copyUserId": "Copy user ID",
+      "userIdCopied": "User ID copied.",
+      "userIdCopyError": "Failed to copy user ID.",
+      "useForSubscription": "Use for subscription",
+      "prefillSubscriptionSuccess": "User copied into subscription assignment."
     }
   },
   "fileAttachments": {

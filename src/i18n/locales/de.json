@@ -992,11 +992,25 @@
     "team": {
       "title": "Team & Rechte",
       "subscriptionTitle": "Abonnement zuweisen",
+      "subscriptionDescription": "Waehle zuerst einen registrierten Nutzer aus oder trage unten direkt eine Nutzer-ID ein.",
       "noAccess": "Du hast keine Berechtigung fuer Rollen- oder Rechteverwaltung.",
       "membersTitle": "Team-Mitglieder",
       "membersDescription": "Rollen fuer interne Team-Mitglieder verwalten.",
       "membersLoadError": "Team-Mitglieder konnten nicht geladen werden.",
       "noMembers": "Keine Team-Mitglieder gefunden.",
+      "userDirectoryTitle": "Registrierte Benutzer",
+      "userDirectoryDescription": "Durchsuche alle registrierten Konten, kopiere Nutzer-IDs und uebernimm Nutzer direkt fuer Team- oder Abo-Aktionen.",
+      "userDirectoryLoadError": "Benutzerliste konnte nicht geladen werden.",
+      "userDirectorySearchPlaceholder": "Nach E-Mail, Name, Nutzer-ID oder Tier suchen",
+      "userDirectoryCount": "{{count}} Benutzer",
+      "userDirectoryEmpty": "Keine passenden Benutzer gefunden.",
+      "userDirectoryColumns": {
+        "user": "Benutzer",
+        "userId": "Nutzer-ID",
+        "role": "Interne Rolle",
+        "subscription": "Abo",
+        "actions": "Aktionen"
+      },
       "columns": {
         "member": "Mitglied",
         "roles": "Aktive Rollen",
@@ -1024,7 +1038,12 @@
         "team": "Team"
       },
       "permissionsUpdateError": "Berechtigung konnte nicht aktualisiert werden.",
-      "permissionsUpdated": "Berechtigung erfolgreich aktualisiert."
+      "permissionsUpdated": "Berechtigung erfolgreich aktualisiert.",
+      "copyUserId": "Nutzer-ID kopieren",
+      "userIdCopied": "Nutzer-ID kopiert.",
+      "userIdCopyError": "Nutzer-ID konnte nicht kopiert werden.",
+      "useForSubscription": "Fuer Abo verwenden",
+      "prefillSubscriptionSuccess": "Nutzer in Abo-Zuweisung uebernommen."
     }
   },
   "fileAttachments": {
