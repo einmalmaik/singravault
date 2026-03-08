@@ -43,6 +43,16 @@ export default defineConfig(({ mode }) => {
 
   const premiumSrc = path.resolve(__dirname, "../singra-premium/src");
   const coreSrc = path.resolve(__dirname, "./src");
+  const premiumDevEntry = path.resolve(__dirname, "../singra-premium/src/extensions/initPremium.ts");
+  const premiumInstalledEntry = path.resolve(__dirname, "./node_modules/@singra/premium/dist/initPremium.mjs");
+  const premiumStubEntry = path.resolve(__dirname, "./src/extensions/premiumStub.ts");
+  const hasPremiumDevRepo = fs.existsSync(premiumDevEntry);
+  const hasInstalledPremiumPackage = fs.existsSync(premiumInstalledEntry);
+  const premiumEntry = isDev && hasPremiumDevRepo
+    ? premiumDevEntry
+    : hasInstalledPremiumPackage
+      ? premiumInstalledEntry
+      : premiumStubEntry;
 
   /**
    * Dev-only Vite plugin: After Vite's alias resolution converts @/ to the core
@@ -150,14 +160,12 @@ export default defineConfig(({ mode }) => {
       topLevelAwait(),
       react(),
       isDev && componentTagger(),
-      isDev && premiumResolvePlugin(),
+      isDev && hasPremiumDevRepo && premiumResolvePlugin(),
     ].filter(Boolean),
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
-        // In dev mode, resolve @singra/premium to the sibling repo so both can be developed side-by-side.
-        // In production (Vercel), the real npm package from node_modules is used instead.
-        ...(isDev ? { "@singra/premium": path.resolve(__dirname, "../singra-premium/src/extensions/initPremium.ts") } : {}),
+        "@singra/premium": premiumEntry,
       },
     },
     build: {

@@ -11,6 +11,20 @@ Du bist ein autonomer Coding-Agent, der im SINGRA-Repository arbeitet (React 18 
 - Bevorzuge Korrektheit und Sicherheit vor Geschwindigkeit. Mache niemals „Quick-Fixes“, indem du Guardrails, Validierungen, RLS, Permission-Checks oder Sicherheitssysteme abschwächst.
 - Wenn Anforderungen unklar oder riskant sind, stelle VOR der Implementierung Rückfragen. Wenn es zeitkritisch ist und die Unklarheit gering: wähle die sicherste Minimaländerung und dokumentiere Annahmen.
 
+## Multi-Repo Boundary (Verpflichtend)
+- In diesem Projekt existieren zwei getrennte Repositories:
+  - `F:\Projekte Main\singravault` = **Core** (Open-Source-Basis)
+  - `F:\Projekte Main\singra-premium` = **Premium** (nicht Open Source, privat)
+- Arbeite bei Anfragen immer repo-bewusst. Prüfe zuerst, ob die Änderung in den Core oder in Premium gehört.
+- **Core enthält nur Kernfunktionen und Extension-Verträge.** Premium-/Bezahl-/Internal-Team-Funktionen dürfen nicht als dauerhafte Business-Logik in den Core verschoben werden.
+- Alles rund um `admin`, `support`, `subscription`, `billing`, `family`, `shared collections`, `emergency access`, Premium-Seiten, Premium-Services und interne Teamrechte gehört grundsätzlich ins **Premium-Repo**, außer der Nutzer verlangt ausdrücklich eine Änderung an der Core-Schnittstelle.
+- Änderungen im Core für Premium-Themen dürfen nur die öffentliche Boundary betreffen:
+  - Extension-Slots/Types
+  - Registry-Verträge
+  - stabile Interfaces, die Premium konsumiert
+- Greife **nicht** aus dem Core auf interne Premium-Dateien oder `node_modules/@singra/premium/src/*` zu, außer der Nutzer verlangt explizit einen temporären Hotfix und die Abweichung wird klar dokumentiert.
+- Wenn ein Fix beide Repos betrifft, arbeite in beiden Repos getrennt und halte die Verantwortlichkeiten sauber auseinander.
+
 ## Tooling & Verifikation (Anti-Halluzination)
 - Wenn du es nicht weißt: VERIFIZIERE (Repo-Suche, Supabase MCP, Websuche), bevor du handelst.
 - Erfinde niemals Tabellennamen, Spalten, Endpoints, Settings-Keys oder bestehende Funktionen. Finde sie zuerst (oder lege sie via Migration/Settings inkl. Dokumentation korrekt an).

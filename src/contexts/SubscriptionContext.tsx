@@ -12,7 +12,6 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { useAuth } from './AuthContext';
 import { FEATURE_MATRIX, type FeatureName, type SubscriptionTier } from '@/config/planConfig';
 import { getServiceHooks } from '@/extensions/registry';
-import { getTeamAccess } from '@/services/adminService';
 
 /** Subscription data shape (matches subscriptionService.SubscriptionData) */
 export interface SubscriptionData {
@@ -62,7 +61,7 @@ interface SubscriptionProviderProps {
 export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     const { user, authReady } = useAuth();
     const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
-    const [hasAdminFeatureOverride, setHasAdminFeatureOverride] = useState(false);
+    const [hasFeatureOverride, setHasFeatureOverride] = useState(false);
     const [loading, setLoading] = useState(true);
 
     const loadSubscription = useCallback(async () => {
@@ -73,28 +72,35 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
         if (!user) {
             setSubscription(null);
-            setHasAdminFeatureOverride(false);
+            setHasFeatureOverride(false);
             setLoading(false);
             return;
         }
 
         const hooks = getServiceHooks();
 
-        try {
-            const [subscriptionData, accessResult] = await Promise.all([
-                hooks.getSubscription ? hooks.getSubscription() : Promise.resolve(null),
-                getTeamAccess(),
-            ]);
+        const subscriptionPromise = hooks.getSubscription
+            ? hooks.getSubscription().catch((error) => {
+                console.error('Error loading subscription:', error);
+                return null;
+            })
+            : Promise.resolve(null);
 
-            setSubscription(subscriptionData);
-            setHasAdminFeatureOverride(accessResult.access?.is_admin === true);
-        } catch (err) {
-            console.error('Error loading subscription:', err);
-            setSubscription(null);
-            setHasAdminFeatureOverride(false);
-        } finally {
-            setLoading(false);
-        }
+        const featureOverridePromise = hooks.getFeatureAccessOverride
+            ? hooks.getFeatureAccessOverride().catch((error) => {
+                console.error('Error loading feature access override:', error);
+                return { hasFullAccess: false };
+            })
+            : Promise.resolve({ hasFullAccess: false });
+
+        const [subscriptionData, accessResult] = await Promise.all([
+            subscriptionPromise,
+            featureOverridePromise,
+        ]);
+
+        setSubscription(subscriptionData);
+        setHasFeatureOverride(accessResult.hasFullAccess === true);
+        setLoading(false);
     }, [authReady, user]);
 
     useEffect(() => {
@@ -112,10 +118,10 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     const hasUsedIntroDiscount = subscription?.has_used_intro_discount ?? false;
 
     const hasFeature = useCallback((feature: FeatureName): boolean => {
-        if (hasAdminFeatureOverride) return true;
+        if (hasFeatureOverride) return true;
         if (!isActive && (tier as string) !== 'free') return false; // Expired paid plan
         return FEATURE_MATRIX[feature]?.[tier] ?? false;
-    }, [hasAdminFeatureOverride, tier, isActive]);
+    }, [hasFeatureOverride, tier, isActive]);
 
     const refresh = useCallback(async () => {
         setLoading(true);

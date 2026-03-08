@@ -151,6 +151,12 @@ export interface ServiceHooks {
     getTeamAccess?: () => Promise<{ access: TeamAccessHook | null; error: Error | null }>;
 
     /**
+     * Resolve whether the current user receives non-billing feature overrides.
+     * This keeps the core feature gate generic and independent from admin logic.
+     */
+    getFeatureAccessOverride?: () => Promise<{ hasFullAccess: boolean }>;
+
+    /**
      * Derive an integrity key for tamper detection.
      */
     deriveIntegrityKey?: (masterPassword: string, saltBase64: string) => Promise<CryptoKey>;
