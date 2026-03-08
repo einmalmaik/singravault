@@ -4,10 +4,10 @@ import { ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { useAuthMock, getSubscriptionMock, getTeamAccessMock } = vi.hoisted(() => ({
+const { useAuthMock, getSubscriptionMock, getFeatureAccessOverrideMock } = vi.hoisted(() => ({
   useAuthMock: vi.fn(),
   getSubscriptionMock: vi.fn(),
-  getTeamAccessMock: vi.fn(),
+  getFeatureAccessOverrideMock: vi.fn(),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -17,11 +17,8 @@ vi.mock("@/contexts/AuthContext", () => ({
 vi.mock("@/extensions/registry", () => ({
   getServiceHooks: () => ({
     getSubscription: getSubscriptionMock,
+    getFeatureAccessOverride: getFeatureAccessOverrideMock,
   }),
-}));
-
-vi.mock("@/services/adminService", () => ({
-  getTeamAccess: getTeamAccessMock,
 }));
 
 let SubscriptionProvider: ({ children }: { children: ReactNode }) => JSX.Element;
@@ -66,7 +63,7 @@ function readState() {
 describe("SubscriptionContext", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    getTeamAccessMock.mockResolvedValue({ access: null, error: null });
+    getFeatureAccessOverrideMock.mockResolvedValue({ hasFullAccess: false });
 
     await loadContextModule();
   });
@@ -168,6 +165,62 @@ describe("SubscriptionContext", () => {
       isActive: true,
       hasAttachments: false,
       hasSubObject: false,
+    });
+  });
+
+  it("unlocks family-only features when premium provides a feature override", async () => {
+    useAuthMock.mockReturnValue({ user: { id: "staff-1" }, loading: false, authReady: true });
+    getSubscriptionMock.mockResolvedValue({
+      id: "sub-4",
+      user_id: "staff-1",
+      tier: "premium",
+      status: "active",
+      current_period_end: null,
+      cancel_at_period_end: false,
+      has_used_intro_discount: false,
+    });
+    getFeatureAccessOverrideMock.mockResolvedValue({ hasFullAccess: true });
+
+    render(
+      <SubscriptionProvider>
+        <Probe />
+      </SubscriptionProvider>
+    );
+
+    await waitFor(() => expect(readState().loading).toBe(false));
+    expect(readState()).toMatchObject({
+      tier: "premium",
+      hasAttachments: true,
+      hasFamily: true,
+      hasSubObject: true,
+    });
+  });
+
+  it("preserves paid access when feature override resolution fails", async () => {
+    useAuthMock.mockReturnValue({ user: { id: "paid-user" }, loading: false, authReady: true });
+    getSubscriptionMock.mockResolvedValue({
+      id: "sub-5",
+      user_id: "paid-user",
+      tier: "premium",
+      status: "active",
+      current_period_end: null,
+      cancel_at_period_end: false,
+      has_used_intro_discount: false,
+    });
+    getFeatureAccessOverrideMock.mockRejectedValue(new Error("entitlement lookup failed"));
+
+    render(
+      <SubscriptionProvider>
+        <Probe />
+      </SubscriptionProvider>
+    );
+
+    await waitFor(() => expect(readState().loading).toBe(false));
+    expect(readState()).toMatchObject({
+      tier: "premium",
+      hasAttachments: true,
+      hasFamily: false,
+      hasSubObject: true,
     });
   });
 });

@@ -12,7 +12,6 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { useAuth } from './AuthContext';
 import { FEATURE_MATRIX, type FeatureName, type SubscriptionTier } from '@/config/planConfig';
 import { getServiceHooks } from '@/extensions/registry';
-import { getTeamAccess, type TeamAccess } from '@/services/adminService';
 
 /** Subscription data shape (matches subscriptionService.SubscriptionData) */
 export interface SubscriptionData {
@@ -59,22 +58,10 @@ interface SubscriptionProviderProps {
     children: ReactNode;
 }
 
-function hasInternalPlanOverride(access: TeamAccess | null): boolean {
-    if (!access) {
-        return false;
-    }
-
-    if (access.has_internal_role === true || access.can_access_admin) {
-        return true;
-    }
-
-    return access.roles.some((role) => role === 'admin' || role === 'moderator');
-}
-
 export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     const { user, authReady } = useAuth();
     const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
-    const [hasAdminFeatureOverride, setHasAdminFeatureOverride] = useState(false);
+    const [hasFeatureOverride, setHasFeatureOverride] = useState(false);
     const [loading, setLoading] = useState(true);
 
     const loadSubscription = useCallback(async () => {
@@ -85,7 +72,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
         if (!user) {
             setSubscription(null);
-            setHasAdminFeatureOverride(false);
+            setHasFeatureOverride(false);
             setLoading(false);
             return;
         }
@@ -99,18 +86,20 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
             })
             : Promise.resolve(null);
 
-        const teamAccessPromise = getTeamAccess().catch((error) => {
-            console.error('Error loading team access:', error);
-            return { access: null, error };
-        });
+        const featureOverridePromise = hooks.getFeatureAccessOverride
+            ? hooks.getFeatureAccessOverride().catch((error) => {
+                console.error('Error loading feature access override:', error);
+                return { hasFullAccess: false };
+            })
+            : Promise.resolve({ hasFullAccess: false });
 
         const [subscriptionData, accessResult] = await Promise.all([
             subscriptionPromise,
-            teamAccessPromise,
+            featureOverridePromise,
         ]);
 
         setSubscription(subscriptionData);
-        setHasAdminFeatureOverride(hasInternalPlanOverride(accessResult.access));
+        setHasFeatureOverride(accessResult.hasFullAccess === true);
         setLoading(false);
     }, [authReady, user]);
 
@@ -129,10 +118,10 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     const hasUsedIntroDiscount = subscription?.has_used_intro_discount ?? false;
 
     const hasFeature = useCallback((feature: FeatureName): boolean => {
-        if (hasAdminFeatureOverride) return true;
+        if (hasFeatureOverride) return true;
         if (!isActive && (tier as string) !== 'free') return false; // Expired paid plan
         return FEATURE_MATRIX[feature]?.[tier] ?? false;
-    }, [hasAdminFeatureOverride, tier, isActive]);
+    }, [hasFeatureOverride, tier, isActive]);
 
     const refresh = useCallback(async () => {
         setLoading(true);
