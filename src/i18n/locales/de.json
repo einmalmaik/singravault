@@ -1080,7 +1080,47 @@
       "userIdCopied": "Nutzer-ID kopiert.",
       "userIdCopyError": "Nutzer-ID konnte nicht kopiert werden.",
       "useForSubscription": "Für Abo verwenden",
-      "prefillSubscriptionSuccess": "Nutzer in Abo-Zuweisung übernommen."
+      "prefillSubscriptionSuccess": "Nutzer in Abo-Zuweisung übernommen.",
+      "deleteUser": {
+        "action": "Benutzer endgültig löschen",
+        "loadError": "Löschvorschau konnte nicht geladen werden.",
+        "executeError": "Benutzer konnte nicht vollständig gelöscht werden.",
+        "success": "Benutzer und zugehörige Daten wurden endgültig gelöscht.",
+        "successWithWarnings": "Benutzer wurde gelöscht, aber {{count}} Bereinigungshinweise sind im Audit vermerkt.",
+        "stepOneTitle": "Benutzerlöschung prüfen",
+        "stepOneDescription": "Prüfe zuerst genau, welche Daten entfernt oder anonymisiert werden.",
+        "stepTwoTitle": "Löschung final bestätigen",
+        "stepTwoDescription": "Diese Aktion ist endgültig und kann nicht rückgängig gemacht werden.",
+        "blockedTitle": "Diese Löschung ist derzeit blockiert.",
+        "summary": {
+          "directDelete": "Direkt gelöscht",
+          "storageObjects": "Storage-Objekte",
+          "anonymizedRefs": "Anonymisierte Referenzen"
+        },
+        "directDeleteTitle": "Direkt entfernte Daten",
+        "manualDeleteTitle": "Zusätzliche Bereinigung",
+        "authManagedTitle": "Von Supabase Auth entfernte Datensätze",
+        "authManagedDescription": "Diese Auth-Tabellen werden durch die serverseitige Benutzerlöschung mitbereinigt.",
+        "storageTitle": "Storage-Objekte",
+        "storageDescription": "Alle zugeordneten Storage-Objekte werden vor der Auth-Löschung entfernt, weil Supabase sonst die Benutzerlöschung blockiert.",
+        "noStorageObjects": "Keine zugeordneten Storage-Objekte gefunden.",
+        "bucketObjectCount": "{{count}} Objekte",
+        "preservedTitle": "Erhaltene Fremdreferenzen",
+        "preservedDescription": "Diese Verweise werden nicht gelöscht, sondern anonymisiert, damit keine Daten anderer Konten beschädigt werden.",
+        "inventoryEmpty": "Keine Einträge in diesem Bereich gefunden.",
+        "doubleConfirmNote": "Zum Schutz vor Fehlbedienung sind zwei manuelle Bestätigungen erforderlich.",
+        "confirmPhraseLabel": "Tippe DELETE zur Bestätigung",
+        "confirmPhrasePlaceholder": "{{phrase}}",
+        "confirmUserIdLabel": "Tippe die exakte Nutzer-ID",
+        "continueAction": "Weiter zur finalen Bestätigung",
+        "finalAction": "Benutzer endgültig löschen",
+        "deleting": "Benutzer wird gelöscht...",
+        "blockingReasons": {
+          "self_delete_blocked": "Der aktuell angemeldete Admin kann sich nicht selbst löschen.",
+          "last_admin": "Der letzte verbleibende Admin kann nicht gelöscht werden.",
+          "user_not_found": "Der Zielbenutzer wurde nicht gefunden."
+        }
+      }
     }
   },
   "fileAttachments": {

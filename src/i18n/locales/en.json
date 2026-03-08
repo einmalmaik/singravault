@@ -1057,7 +1057,47 @@
       "userIdCopied": "User ID copied.",
       "userIdCopyError": "Failed to copy user ID.",
       "useForSubscription": "Use for subscription",
-      "prefillSubscriptionSuccess": "User copied into subscription assignment."
+      "prefillSubscriptionSuccess": "User copied into subscription assignment.",
+      "deleteUser": {
+        "action": "Delete user permanently",
+        "loadError": "Failed to load the deletion preview.",
+        "executeError": "Failed to delete the user completely.",
+        "success": "User and owned data were deleted permanently.",
+        "successWithWarnings": "User was deleted, but {{count}} cleanup warnings were recorded in the audit log.",
+        "stepOneTitle": "Review user deletion",
+        "stepOneDescription": "Review exactly which data will be removed or anonymized before continuing.",
+        "stepTwoTitle": "Confirm final deletion",
+        "stepTwoDescription": "This action is permanent and cannot be undone.",
+        "blockedTitle": "This deletion is currently blocked.",
+        "summary": {
+          "directDelete": "Directly deleted",
+          "storageObjects": "Storage objects",
+          "anonymizedRefs": "Anonymized references"
+        },
+        "directDeleteTitle": "Directly removed data",
+        "manualDeleteTitle": "Additional cleanup",
+        "authManagedTitle": "Records removed by Supabase Auth",
+        "authManagedDescription": "These Auth tables are cleaned up by the server-side user deletion itself.",
+        "storageTitle": "Storage objects",
+        "storageDescription": "All linked Storage objects are removed before deleting the Auth user because Supabase blocks user deletion while owned objects still exist.",
+        "noStorageObjects": "No linked storage objects found.",
+        "bucketObjectCount": "{{count}} objects",
+        "preservedTitle": "Preserved external references",
+        "preservedDescription": "These references are anonymized instead of deleted so data owned by other accounts is not damaged.",
+        "inventoryEmpty": "No entries found in this section.",
+        "doubleConfirmNote": "Two manual confirmations are required to reduce operator mistakes.",
+        "confirmPhraseLabel": "Type DELETE to confirm",
+        "confirmPhrasePlaceholder": "{{phrase}}",
+        "confirmUserIdLabel": "Type the exact user ID",
+        "continueAction": "Continue to final confirmation",
+        "finalAction": "Delete user permanently",
+        "deleting": "Deleting user...",
+        "blockingReasons": {
+          "self_delete_blocked": "The currently signed-in admin cannot delete their own account.",
+          "last_admin": "The last remaining admin cannot be deleted.",
+          "user_not_found": "The target user could not be found."
+        }
+      }
     }
   },
   "fileAttachments": {
