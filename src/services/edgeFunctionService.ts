@@ -28,11 +28,30 @@ export async function invokeAuthedFunction<
     functionName: string,
     body?: TBody,
 ): Promise<TResponse> {
-    // Gatekeeper: await getSession() to guarantee storage hydration completes 
+    // Gatekeeper: await getSession() to guarantee storage hydration completes
     // before we invoke the function, preventing race condition 401s.
     console.debug(`[EdgeFunctionService] invokeAuthedFunction('${functionName}') started. Awaiting getSession()...`);
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    let { data: { session }, error: sessionError } = await supabase.auth.getSession();
     console.debug(`[EdgeFunctionService] getSession() returned for '${functionName}'. Has session:`, !!session);
+
+    // autoRefreshToken is disabled (BFF pattern). Detect expired access_token and
+    // attempt a silent refresh via the BFF cookie before failing with 401.
+    if (!sessionError && session?.access_token) {
+        try {
+            const payload = JSON.parse(atob(session.access_token.split('.')[1]));
+            const expiresAt: number = payload.exp ?? 0;
+            const nowSec = Math.floor(Date.now() / 1000);
+            if (expiresAt - nowSec < 30) {
+                console.debug(`[EdgeFunctionService] Access token expiring/expired for '${functionName}', attempting BFF refresh…`);
+                const refreshed = await supabase.auth.refreshSession({ refresh_token: session.refresh_token });
+                if (!refreshed.error && refreshed.data.session) {
+                    session = refreshed.data.session;
+                }
+            }
+        } catch {
+            // ignore decode errors — let the call proceed and fail naturally
+        }
+    }
 
     if (sessionError || !session?.access_token) {
         const authError = new Error('Authentication required') as EdgeFunctionServiceError;
