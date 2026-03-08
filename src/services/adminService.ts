@@ -1,12 +1,10 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 - see LICENSE
+// Licensed under the Business Source License 1.1 — see LICENSE
 /**
  * @fileoverview Admin Service
  *
- * Local admin service override for the premium admin UI.
- * Routes all privileged edge-function calls through the shared
- * authenticated invocation helper so admin access uses the same
- * session refresh path as the rest of the application.
+ * Client abstraction for internal admin/team operations.
+ * All privileged reads/writes go through Supabase Edge Functions.
  */
 
 import { invokeAuthedFunction } from '@/services/edgeFunctionService';
@@ -17,7 +15,9 @@ const ADMIN_TEAM_FUNCTION = 'admin-team';
 // ============ Internal Helpers ============
 
 /**
- * Invokes an admin edge function with the current user's refreshed session.
+ * Invokes an admin edge function through the shared authenticated helper.
+ * This keeps admin access aligned with the BFF refresh flow used by other
+ * edge-function calls and prevents stale-session 401s.
  *
  * @param functionName - Supabase edge function slug
  * @param body - Request payload
@@ -29,10 +29,7 @@ async function invokeAdminFunction(
 ): Promise<{ data: Record<string, unknown> | null; error: Error | null }> {
     try {
         const data = await invokeAuthedFunction<Record<string, unknown>>(functionName, body);
-        return {
-            data: (data || null) as Record<string, unknown> | null,
-            error: null,
-        };
+        return { data, error: null };
     } catch (error) {
         return {
             data: null,
@@ -363,6 +360,8 @@ export interface TeamAccess {
     permissions: string[];
     is_admin: boolean;
     can_access_admin: boolean;
+    has_internal_role?: boolean;
+    missing_admin_permissions?: string[];
 }
 
 export interface TeamMember {

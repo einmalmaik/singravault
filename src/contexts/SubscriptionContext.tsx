@@ -12,7 +12,7 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { useAuth } from './AuthContext';
 import { FEATURE_MATRIX, type FeatureName, type SubscriptionTier } from '@/config/planConfig';
 import { getServiceHooks } from '@/extensions/registry';
-import { getTeamAccess } from '@/services/adminService';
+import { getTeamAccess, type TeamAccess } from '@/services/adminService';
 
 /** Subscription data shape (matches subscriptionService.SubscriptionData) */
 export interface SubscriptionData {
@@ -59,6 +59,18 @@ interface SubscriptionProviderProps {
     children: ReactNode;
 }
 
+function hasInternalPlanOverride(access: TeamAccess | null): boolean {
+    if (!access) {
+        return false;
+    }
+
+    if (access.has_internal_role === true || access.can_access_admin) {
+        return true;
+    }
+
+    return access.roles.some((role) => role === 'admin' || role === 'moderator');
+}
+
 export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     const { user, authReady } = useAuth();
     const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
@@ -80,21 +92,26 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
         const hooks = getServiceHooks();
 
-        try {
-            const [subscriptionData, accessResult] = await Promise.all([
-                hooks.getSubscription ? hooks.getSubscription() : Promise.resolve(null),
-                getTeamAccess(),
-            ]);
+        const subscriptionPromise = hooks.getSubscription
+            ? hooks.getSubscription().catch((error) => {
+                console.error('Error loading subscription:', error);
+                return null;
+            })
+            : Promise.resolve(null);
 
-            setSubscription(subscriptionData);
-            setHasAdminFeatureOverride(accessResult.access?.is_admin === true);
-        } catch (err) {
-            console.error('Error loading subscription:', err);
-            setSubscription(null);
-            setHasAdminFeatureOverride(false);
-        } finally {
-            setLoading(false);
-        }
+        const teamAccessPromise = getTeamAccess().catch((error) => {
+            console.error('Error loading team access:', error);
+            return { access: null, error };
+        });
+
+        const [subscriptionData, accessResult] = await Promise.all([
+            subscriptionPromise,
+            teamAccessPromise,
+        ]);
+
+        setSubscription(subscriptionData);
+        setHasAdminFeatureOverride(hasInternalPlanOverride(accessResult.access));
+        setLoading(false);
     }, [authReady, user]);
 
     useEffect(() => {

@@ -4,23 +4,26 @@ import { ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { useAuthMock, getSubscriptionMock } = vi.hoisted(() => ({
+const { useAuthMock, getSubscriptionMock, getTeamAccessMock } = vi.hoisted(() => ({
   useAuthMock: vi.fn(),
   getSubscriptionMock: vi.fn(),
+  getTeamAccessMock: vi.fn(),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
   useAuth: useAuthMock,
 }));
 
-vi.mock("@/integrations/supabase/client", () => ({
-  supabase: {
-    auth: {
-      getUser: vi.fn(),
-      onAuthStateChange: vi.fn(),
-    },
-  },
+vi.mock("@/extensions/registry", () => ({
+  getServiceHooks: () => ({
+    getSubscription: getSubscriptionMock,
+  }),
 }));
+
+vi.mock("@/services/adminService", () => ({
+  getTeamAccess: getTeamAccessMock,
+}));
+
 let SubscriptionProvider: ({ children }: { children: ReactNode }) => JSX.Element;
 let useSubscriptionHook: () => {
   tier: string;
@@ -63,12 +66,13 @@ function readState() {
 describe("SubscriptionContext", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    getTeamAccessMock.mockResolvedValue({ access: null, error: null });
 
     await loadContextModule();
   });
 
   it("loads and exposes active premium subscription feature access", async () => {
-    useAuthMock.mockReturnValue({ user: { id: "user-1" }, loading: false });
+    useAuthMock.mockReturnValue({ user: { id: "user-1" }, loading: false, authReady: true });
     getSubscriptionMock.mockResolvedValue({
       id: "sub-1",
       user_id: "user-1",
@@ -97,7 +101,7 @@ describe("SubscriptionContext", () => {
   });
 
   it("denies paid features for inactive paid subscriptions", async () => {
-    useAuthMock.mockReturnValue({ user: { id: "user-2" }, loading: false });
+    useAuthMock.mockReturnValue({ user: { id: "user-2" }, loading: false, authReady: true });
     getSubscriptionMock.mockResolvedValue({
       id: "sub-2",
       user_id: "user-2",
@@ -125,9 +129,10 @@ describe("SubscriptionContext", () => {
   });
 
   it("resets subscription state after logout to avoid stale paid access", async () => {
-    const authState: { user: { id: string } | null; loading: boolean } = {
+    const authState: { user: { id: string } | null; loading: boolean; authReady: boolean } = {
       user: { id: "user-3" },
       loading: false,
+      authReady: true,
     };
 
     useAuthMock.mockImplementation(() => authState);

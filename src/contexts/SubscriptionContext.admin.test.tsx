@@ -63,7 +63,7 @@ describe("SubscriptionContext admin override", () => {
     await loadContextModule();
   });
 
-  it("unlocks families-only features for admin users without changing their stored tier", async () => {
+  it("unlocks families-only features for internal team users without changing their stored tier", async () => {
     useAuthMock.mockReturnValue({
       user: { id: "admin-user" },
       authReady: true,
@@ -79,9 +79,9 @@ describe("SubscriptionContext admin override", () => {
     });
     getTeamAccessMock.mockResolvedValue({
       access: {
-        roles: ["admin"],
+        roles: ["moderator"],
         permissions: ["support.admin.access"],
-        is_admin: true,
+        is_admin: false,
         can_access_admin: true,
       },
       error: null,
@@ -98,6 +98,36 @@ describe("SubscriptionContext admin override", () => {
       tier: "premium",
       hasAttachments: true,
       hasFamily: true,
+    });
+  });
+
+  it("preserves paid subscription access when team access lookup fails", async () => {
+    useAuthMock.mockReturnValue({
+      user: { id: "paid-user" },
+      authReady: true,
+    });
+    getSubscriptionMock.mockResolvedValue({
+      id: "sub-2",
+      user_id: "paid-user",
+      tier: "premium",
+      status: "active",
+      current_period_end: null,
+      cancel_at_period_end: false,
+      has_used_intro_discount: false,
+    });
+    getTeamAccessMock.mockRejectedValue(new Error("admin-team unavailable"));
+
+    render(
+      <SubscriptionProvider>
+        <Probe />
+      </SubscriptionProvider>
+    );
+
+    await waitFor(() => expect(readState().loading).toBe(false));
+    expect(readState()).toMatchObject({
+      tier: "premium",
+      hasAttachments: true,
+      hasFamily: false,
     });
   });
 });
