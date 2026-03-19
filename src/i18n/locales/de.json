@@ -53,7 +53,8 @@
       "titleHighlight": "Deine Kontrolle.",
       "subtitle": "Der sichere Open-Source Passwortmanager mit Ende-zu-Ende-VerschlÃ¼sselung. Deine Daten gehÃ¶ren nur dir.",
       "cta": "Jetzt kostenlos starten",
-      "ctaSecondary": "Mehr erfahren"
+      "ctaSecondary": "Mehr erfahren",
+      "description": "AES-256-GCM Verschlüsselung. Argon2id Schlüsselableitung. Zero-Knowledge Architektur. Deine Passwörter verlassen dein Gerät niemals unverschlüsselt."
     },
     "security": {
       "title": "Höchste Sicherheitsstandards",

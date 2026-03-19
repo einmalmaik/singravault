@@ -15,6 +15,7 @@ import { OpenSource } from '@/components/landing/OpenSource';
 import { Comparison } from '@/components/landing/Comparison';
 import { Footer } from '@/components/landing/Footer';
 import { SEO, createWebsiteStructuredData, createSoftwareAppStructuredData } from '@/components/SEO';
+import { FadeInSection } from '@/components/FadeInSection';
 
 export default function Landing() {
   const structuredData = {
@@ -43,11 +44,11 @@ export default function Landing() {
       <Header />
       <main className="flex-1">
         <Hero />
-        <SecurityFeatures />
-        <Features />
-        <PWASection />
-        <OpenSource />
-        <Comparison />
+        <FadeInSection><SecurityFeatures /></FadeInSection>
+        <FadeInSection delay={100}><Features /></FadeInSection>
+        <FadeInSection delay={200}><PWASection /></FadeInSection>
+        <FadeInSection delay={300}><OpenSource /></FadeInSection>
+        <FadeInSection delay={400}><Comparison /></FadeInSection>
       </main>
       <Footer />
     </div>
