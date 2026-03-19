@@ -29,6 +29,7 @@ loadtest/tokens.txt
 
 AGENTS.md
 GEMINI.md
+CLAUDE.md
 
 # GPG keys (never commit private key material)
 *.gpg
