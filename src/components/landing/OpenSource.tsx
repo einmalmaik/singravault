@@ -9,17 +9,18 @@
 import { useTranslation } from 'react-i18next';
 import { Github, Users, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ScrollReveal } from '@/components/ScrollReveal';
 
 export function OpenSource() {
   const { t } = useTranslation();
 
   return (
-    <section className="py-20 bg-primary/5">
+    <section className="section-dark py-24">
       <div className="container px-4">
         <div className="max-w-4xl mx-auto">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             {/* Content */}
-            <div>
+            <ScrollReveal>
               <div className="inline-flex items-center gap-2 px-3 py-1 mb-4 text-sm font-medium rounded-full bg-primary/10 text-primary">
                 <Github className="w-4 h-4" />
                 <span>BSL 1.1 · Source Available</span>
@@ -52,14 +53,14 @@ export function OpenSource() {
                   </a>
                 </Button>
               </div>
-            </div>
+            </ScrollReveal>
 
             {/* Visual */}
-            <div className="relative">
-              <div className="aspect-square rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border flex items-center justify-center">
+            <ScrollReveal delay={150} variant="scale">
+              <div className="aspect-square rounded-2xl bg-gradient-to-br from-primary/12 to-primary/4 border border-border/35 flex items-center justify-center">
                 <div className="text-center p-8">
                   {/* Code preview mockup */}
-                  <div className="bg-card rounded-lg p-4 shadow-lg text-left font-mono text-sm">
+                  <div className="bg-card/80 rounded-lg p-4 shadow-[0_8px_32px_hsl(0_0%_0%/0.4)] text-left font-mono text-sm border border-border/40">
                     <div className="flex gap-2 mb-3">
                       <div className="w-3 h-3 rounded-full bg-destructive" />
                       <div className="w-3 h-3 rounded-full bg-warning" />
@@ -81,7 +82,7 @@ export function OpenSource() {
                   </div>
                 </div>
               </div>
-            </div>
+            </ScrollReveal>
           </div>
         </div>
       </div>

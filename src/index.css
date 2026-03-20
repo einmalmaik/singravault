@@ -1414,3 +1414,84 @@
   opacity: 0;
   transition: opacity 150ms ease-in;
 }
+
+
+/* ================================================================
+   SCROLL REVEAL ANIMATIONS
+   Used by ScrollReveal / ScrollRevealGrid components.
+================================================================ */
+
+/* Missing animate-fade-in for Cards */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ── Base hidden state ─────────────────────────────────────── */
+.scroll-reveal {
+  transition:
+    opacity 0.75s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.75s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Variants */
+.scroll-reveal.sr-up    { opacity: 0; transform: translateY(40px); }
+.scroll-reveal.sr-fade  { opacity: 0; transform: none; }
+.scroll-reveal.sr-scale { opacity: 0; transform: scale(0.96) translateY(24px); }
+
+/* Revealed state */
+.scroll-reveal.sr-visible {
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+/* ── Staggered grid ─────────────────────────────────────────── */
+.stagger-grid > * {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 0.65s cubic-bezier(0.16, 1, 0.3, 1) var(--sg-delay, 0ms),
+    transform 0.65s cubic-bezier(0.16, 1, 0.3, 1) var(--sg-delay, 0ms);
+}
+
+.stagger-grid.sg-visible > * {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── Section color continuity helpers ──────────────────────── */
+
+/* All landing sections share the same deep-space dark palette.
+   Section separators use very subtle ambient glow variations. */
+.section-dark {
+  background: transparent;
+  position: relative;
+}
+
+.section-dark-alt {
+  background: hsl(204 25% 6% / 0.55);
+  position: relative;
+}
+
+/* Ambient radial glow behind sections for visual depth */
+.section-dark-alt::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, hsl(var(--primary) / 0.04) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 40% at 50% 100%, hsl(var(--primary) / 0.025) 0%, transparent 70%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-reveal,
+  .stagger-grid > * {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}

@@ -501,6 +501,29 @@ export function NebulaHeroBackground({
             ctx.stroke();
         };
 
+        const drawPanelGlow = (elapsed: number) => {
+            // Subtle ambient glow for auth panel — replaces the black hole
+            ctx.globalCompositeOperation = "screen";
+            const pulse = 0.9 + Math.sin(elapsed * 0.38) * 0.1;
+
+            const ambientHalo = ctx.createRadialGradient(focusX, focusY, 0, focusX, focusY, holeRadius * 6.0);
+            ambientHalo.addColorStop(0, `hsla(210, 22%, 98%, ${0.16 * pulse})`);
+            ambientHalo.addColorStop(0.18, `hsla(210, 18%, 95%, ${0.07 * pulse})`);
+            ambientHalo.addColorStop(0.45, `hsla(206, 20%, 72%, ${0.032 * pulse})`);
+            ambientHalo.addColorStop(1, "transparent");
+            ctx.fillStyle = ambientHalo;
+            ctx.fillRect(focusX - holeRadius * 6, focusY - holeRadius * 6, holeRadius * 12, holeRadius * 12);
+
+            const innerGlow = ctx.createRadialGradient(focusX, focusY, 0, focusX, focusY, holeRadius * 2.2);
+            innerGlow.addColorStop(0, `hsla(210, 24%, 100%, ${0.22 * pulse})`);
+            innerGlow.addColorStop(0.35, `hsla(210, 20%, 94%, ${0.09 * pulse})`);
+            innerGlow.addColorStop(1, "transparent");
+            ctx.fillStyle = innerGlow;
+            ctx.fillRect(focusX - holeRadius * 2.2, focusY - holeRadius * 2.2, holeRadius * 4.4, holeRadius * 4.4);
+
+            ctx.globalCompositeOperation = "source-over";
+        };
+
         const drawAccretionParticles = () => {
             if (!showParticles) return;
 
@@ -562,7 +585,7 @@ export function NebulaHeroBackground({
                 drawLandingGlow(elapsed, width, height);
             } else {
                 drawAccretionParticles();
-                drawBlackhole(elapsed);
+                drawPanelGlow(elapsed);
             }
             drawVignette(width, height);
 
