@@ -26,7 +26,7 @@ export function Features() {
     <section id="features" className="py-20">
       <div className="container px-4">
         <div className="text-center mb-16">
-          <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+          <h2 className="singra-headline-serif text-3xl sm:text-4xl font-bold mb-4">
             {t('landing.features.title')}
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">

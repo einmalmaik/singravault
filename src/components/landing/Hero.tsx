@@ -11,16 +11,17 @@ import { Link } from 'react-router-dom';
 import { Shield, Lock, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SingraVaultLogo } from '@/components/SingraVaultLogo';
+import { NebulaHeroBackground } from '@/components/NebulaHeroBackground';
 
 export function Hero() {
   const { t } = useTranslation();
 
   return (
     <section className="relative overflow-hidden">
-      {/* Nebula Background Effect */}
-      <div className="absolute inset-0 bg-[linear-gradient(228_26%_3%_/_0.96),linear-gradient(228_26%_3%_/_0.84)]" />
-      
-      {/* Animated atmosphere background */}
+      {/* Canvas nebula background */}
+      <NebulaHeroBackground variant="landing" showText={false} showParticles={false} />
+
+      {/* Animated atmosphere overlay */}
       <div aria-hidden="true" className="singra-hero-atmosphere">
         <div className="singra-hero-light-beam" />
         <div className="singra-hero-vapor-sheet singra-hero-vapor-sheet-one" />
@@ -33,12 +34,39 @@ export function Hero() {
         <div className="singra-hero-fog singra-hero-fog-five" />
         <div className="singra-hero-fog singra-hero-fog-six" />
 
-        {/* Wordmark Stage */}
-        <div className="singra-hero-wordmark-stage">
-          <div className="singra-hero-wordmark-stack">
-            <span className="singra-hero-wordmark singra-hero-wordmark-glow">SINGRAVAULT</span>
-            <span className="singra-hero-wordmark singra-hero-wordmark-core">SINGRAVAULT</span>
-            <span className="singra-hero-wordmark singra-hero-wordmark-veil">SINGRAVAULT</span>
+        {/* Vault emblem — abstract geometric shield/key, replaces text wordmark */}
+        <div className="singra-hero-wordmark-stage" aria-hidden="true">
+          <div className="singra-vault-emblem-stack">
+            <svg
+              className="singra-vault-emblem singra-vault-emblem-glow"
+              viewBox="0 0 200 240"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path d="M100 8 L188 44 L188 120 C188 168 148 204 100 224 C52 204 12 168 12 120 L12 44 Z" stroke="currentColor" strokeWidth="2" fill="none" />
+              <circle cx="100" cy="110" r="32" stroke="currentColor" strokeWidth="2" fill="none" />
+              <circle cx="100" cy="110" r="18" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <line x1="100" y1="92" x2="100" y2="72" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <line x1="100" y1="128" x2="100" y2="148" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <line x1="68" y1="110" x2="48" y2="110" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <line x1="132" y1="110" x2="152" y2="110" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <circle cx="100" cy="110" r="5" fill="currentColor" />
+            </svg>
+            <svg
+              className="singra-vault-emblem singra-vault-emblem-core"
+              viewBox="0 0 200 240"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path d="M100 8 L188 44 L188 120 C188 168 148 204 100 224 C52 204 12 168 12 120 L12 44 Z" stroke="currentColor" strokeWidth="2" fill="none" />
+              <circle cx="100" cy="110" r="32" stroke="currentColor" strokeWidth="2" fill="none" />
+              <circle cx="100" cy="110" r="18" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <line x1="100" y1="92" x2="100" y2="72" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <line x1="100" y1="128" x2="100" y2="148" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <line x1="68" y1="110" x2="48" y2="110" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <line x1="132" y1="110" x2="152" y2="110" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <circle cx="100" cy="110" r="5" fill="currentColor" />
+            </svg>
           </div>
         </div>
       </div>
@@ -58,7 +86,7 @@ export function Hero() {
 
             {/* Main heading with singra-core-ai style */}
             <div className="space-y-5">
-              <h1 className="singra-hero-title text-balance text-5xl font-semibold tracking-[-0.055em] text-foreground [text-shadow:0_0_42px_hsl(228_26%_3%_/_0.96),0_0_110px_hsl(228_26%_3%_/_0.82)] md:text-7xl lg:text-[5.75rem] lg:leading-[0.92]">
+              <h1 className="singra-hero-title singra-headline-serif text-balance text-5xl font-bold tracking-[-0.055em] text-foreground [text-shadow:0_0_42px_hsl(228_26%_3%_/_0.96),0_0_110px_hsl(228_26%_3%_/_0.82)] md:text-7xl lg:text-[5.75rem] lg:leading-[0.92]">
                 {t('landing.hero.title')}
                 <br />
                 <span className="text-gradient">Secure</span>

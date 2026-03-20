@@ -1326,6 +1326,71 @@
 }
 
 /* ================================================================
+   VAULT EMBLEM (Hero background element)
+================================================================ */
+
+.singra-vault-emblem-stack {
+  position: relative;
+  width: clamp(14rem, 30vw, 36rem);
+  height: clamp(17rem, 36vw, 43rem);
+  transform: translateX(16%) translateY(12%);
+}
+
+.singra-vault-emblem {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.singra-vault-emblem-glow {
+  color: hsl(var(--foreground) / 0.22);
+  filter: blur(14px);
+  opacity: 0.6;
+  mix-blend-mode: screen;
+}
+
+.singra-vault-emblem-core {
+  color: hsl(var(--foreground) / 0.72);
+  filter: blur(0.5px) drop-shadow(0 0 22px hsl(var(--foreground) / 0.1));
+  animation: singra-wordmark-breathe 18s ease-in-out infinite;
+}
+
+/* ── Typography: serif headline utility ─────────────────────── */
+.singra-headline-serif {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+/* ── Auth split-layout animations ──────────────────────────── */
+@keyframes auth-brand-reveal {
+  0% { opacity: 0; transform: translateX(-32px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes auth-form-reveal {
+  0% { opacity: 0; transform: translateX(20px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes auth-float {
+  0%, 100% { transform: translateY(0) translateX(0); }
+  25% { transform: translateY(-18px) translateX(9px); }
+  50% { transform: translateY(-9px) translateX(-5px); }
+  75% { transform: translateY(-22px) translateX(7px); }
+}
+
+.auth-brand-reveal {
+  animation: auth-brand-reveal 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.auth-form-reveal {
+  opacity: 0;
+  animation: auth-form-reveal 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards;
+}
+
+/* ================================================================
    PAGE TRANSITIONS
 ================================================================ */
 

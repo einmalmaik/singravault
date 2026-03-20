@@ -25,7 +25,7 @@ export function OpenSource() {
                 <span>BSL 1.1 · Source Available</span>
               </div>
 
-              <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+              <h2 className="singra-headline-serif text-3xl sm:text-4xl font-bold mb-4">
                 {t('landing.openSource.title')}
               </h2>
 

@@ -176,7 +176,7 @@ export function Comparison() {
                         <Shield className="w-4 h-4" />
                         {t('landing.comparison.badge')}
                     </div>
-                    <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+                    <h2 className="singra-headline-serif text-3xl sm:text-4xl font-bold mb-4">
                         {t('landing.comparison.title')}
                     </h2>
                     <p className="text-lg text-muted-foreground max-w-2xl mx-auto">

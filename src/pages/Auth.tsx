@@ -17,8 +17,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { NebulaHeroBackground } from '@/components/NebulaHeroBackground';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -673,25 +673,82 @@ export default function Auth() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">
+    <div className="min-h-screen flex overflow-hidden">
       <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
-      <div className="w-full max-w-md">
-        <Link to="/" className="flex items-center justify-center gap-3 mb-8">
+
+      {/* ── Brand Panel (desktop only, left 45%) ────────────────── */}
+      <div className="hidden lg:flex relative w-[45%] flex-shrink-0 overflow-hidden auth-brand-gradient auth-brand-reveal">
+        <NebulaHeroBackground variant="panel" showText showParticles />
+
+        {/* Floating accent particles */}
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+          {([
+            { w: 6, h: 6, top: '18%', left: '22%', delay: '0s', dur: '7s' },
+            { w: 4, h: 4, top: '64%', left: '14%', delay: '1.4s', dur: '6s' },
+            { w: 8, h: 8, top: '38%', left: '72%', delay: '0.7s', dur: '8s' },
+            { w: 3, h: 3, top: '78%', left: '55%', delay: '2.1s', dur: '6.5s' },
+            { w: 5, h: 5, top: '12%', left: '68%', delay: '0.3s', dur: '7.5s' },
+          ] as const).map((p, i) => (
+            <div
+              key={i}
+              className="auth-particle"
+              style={{
+                width: p.w, height: p.h,
+                top: p.top, left: p.left,
+                animation: `auth-float ${p.dur} ease-in-out ${p.delay} infinite`,
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Brand info at bottom */}
+        <div className="relative z-10 mt-auto p-12 space-y-5">
+          <div className="flex items-center gap-3">
+            <img src="/singra-icon.png" alt="Singra Vault" className="w-9 h-9 rounded-full shadow-lg shadow-primary/20 ring-1 ring-border/70" />
+            <span className="text-lg font-semibold tracking-tight text-foreground/90">Singra Vault</span>
+          </div>
+          <ul className="space-y-2.5">
+            {[
+              'AES-256-GCM · Argon2id Key Derivation',
+              'Zero-Knowledge — kein Klartext auf dem Server',
+              'Post-Quantum ready mit @noble/post-quantum',
+              'Schlüssel verlassen niemals dein Gerät',
+            ].map((item) => (
+              <li key={item} className="flex items-center gap-2.5 text-sm text-muted-foreground">
+                <span className="h-1 w-1 rounded-full bg-primary/60 flex-shrink-0" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      {/* ── Form Panel (100% mobile / 55% desktop) ──────────────── */}
+      <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-12 auth-form-reveal relative">
+        {/* Mobile logo */}
+        <Link to="/" className="lg:hidden flex items-center gap-3 mb-10">
           <img src="/singra-icon.png" alt="Singra Vault" className="w-8 h-8 rounded-full shadow-lg shadow-primary/20 ring-1 ring-border/70" />
-          <span className="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/80">Singra Vault</span>
+          <span className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/80">Singra Vault</span>
         </Link>
-        <Card className="shadow-xl">
-          <CardHeader className="text-center">
-            <CardTitle className="text-2xl">
+
+        <div className="w-full max-w-sm">
+          {/* Form header */}
+          <div className="mb-8 text-center lg:text-left">
+            <h1 className="text-2xl font-semibold text-foreground mb-1">
               {mode === 'login' ? t('auth.login.title')
                 : mode === 'signup' ? t('auth.signup.title')
                   : mode === 'verify_signup' || mode === 'verify_recover' ? 'Code bestätigen'
                     : mode === 'update_password' ? 'Neues Passwort'
                       : 'Passwort vergessen'}
-            </CardTitle>
-          </CardHeader>
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {mode === 'login' ? 'Willkommen zurück.'
+                : mode === 'signup' ? 'Konto erstellen — kostenlos & sicher.'
+                  : ''}
+            </p>
+          </div>
 
-          <CardContent>
+          <div className="auth-view-enter space-y-4">
             {/* OAuth Buttons */}
             {(mode === 'login' || mode === 'signup') && (
               <>
@@ -1009,9 +1066,9 @@ export default function Auth() {
                 </>
               )}
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>{/* end auth-view-enter */}
+        </div>{/* end max-w-sm */}
+      </div>{/* end form panel */}
 
       <TwoFactorVerificationModal
         open={show2FAModal}
