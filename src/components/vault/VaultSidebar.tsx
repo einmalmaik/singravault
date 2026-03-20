@@ -338,14 +338,15 @@ export function VaultSidebar({
         <>
             <aside
                 className={cn(
-                    'bg-card border-r flex flex-col',
+                    'flex flex-col border-r',
+                    'bg-[hsl(var(--sidebar-background))] border-[hsl(var(--sidebar-border)/0.55)]',
                     compactMode
                         ? 'h-full w-full'
                         : cn('h-screen transition-all duration-300', collapsed ? 'w-16' : 'w-64')
                 )}
             >
                 {/* Header */}
-                <div className="p-4 flex items-center justify-between border-b">
+                <div className="p-4 flex items-center justify-between border-b border-[hsl(var(--sidebar-border)/0.45)]">
                     {!collapsed && (
                         <h2 className="font-semibold text-lg">
                             {t('vault.sidebar.title')}
@@ -553,10 +554,11 @@ function SidebarItem({
         <button
             onClick={onClick}
             className={cn(
-                'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors',
-                'hover:bg-accent/50',
-                active && 'bg-accent text-accent-foreground',
-                variant === 'destructive' && 'text-destructive hover:bg-destructive/10',
+                'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-150',
+                'text-[hsl(var(--sidebar-foreground)/0.72)] hover:text-[hsl(var(--sidebar-foreground))]',
+                'hover:bg-[hsl(var(--el-2))]',
+                active && 'bg-[hsl(var(--el-3))] text-[hsl(var(--sidebar-primary))]',
+                variant === 'destructive' && 'text-destructive hover:bg-destructive/10 hover:text-destructive',
                 collapsed && 'justify-center px-0'
             )}
         >

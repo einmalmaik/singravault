@@ -115,10 +115,10 @@ export function VaultItemCard({ item, viewMode, onEdit, showTotpCode = false }: 
 
     if (viewMode === 'list') {
         return (
-            <Card className="hover:bg-accent/50 transition-colors">
+            <Card className="border-[hsl(var(--border)/0.4)] bg-[hsl(var(--card)/0.55)] hover:bg-[hsl(var(--el-2)/0.8)] hover:border-[hsl(var(--border)/0.65)] transition-all duration-200">
                 <CardContent className="flex items-center gap-4 p-3">
                     {/* Icon */}
-                    <div className="flex-shrink-0 p-2 rounded-lg bg-primary/10 text-primary">
+                    <div className="flex-shrink-0 p-2 rounded-lg bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.12)] text-primary">
                         {getIcon()}
                     </div>
 
@@ -185,14 +185,14 @@ export function VaultItemCard({ item, viewMode, onEdit, showTotpCode = false }: 
 
     return (
         <Card
-            className="group hover:shadow-lg transition-all duration-300 cursor-pointer"
+            className="group border-[hsl(var(--border)/0.38)] bg-[hsl(var(--card)/0.5)] hover:border-[hsl(var(--primary)/0.22)] hover:bg-[hsl(var(--el-2)/0.7)] hover:shadow-[0_8px_32px_hsl(0_0%_0%/0.3)] transition-all duration-250 cursor-pointer"
             onClick={onEdit}
         >
             <CardContent className="p-4">
                 {/* Header */}
                 <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                        <div className="p-2 rounded-lg bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.12)] text-primary group-hover:bg-[hsl(var(--primary)/0.16)] group-hover:border-[hsl(var(--primary)/0.2)] transition-all duration-200">
                             {getIcon()}
                         </div>
                         <div>
@@ -219,7 +219,7 @@ export function VaultItemCard({ item, viewMode, onEdit, showTotpCode = false }: 
                 {/* Password (if password type) */}
                 {resolvedItemType === 'password' && item.decryptedData?.password && (
                     <div className="flex items-center gap-2 mb-3">
-                        <code className="flex-1 text-sm bg-muted px-2 py-1 rounded font-mono truncate">
+                        <code className="flex-1 text-sm bg-[hsl(var(--el-3))] border border-[hsl(var(--border)/0.4)] px-2 py-1 rounded font-mono truncate text-[hsl(var(--accent))]">
                             {showPassword ? item.decryptedData.password : '••••••••••'}
                         </code>
                         <Button

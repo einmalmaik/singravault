@@ -584,7 +584,7 @@ export function NebulaHeroBackground({
             if (variant === "landing") {
                 drawLandingGlow(elapsed, width, height);
             } else {
-                drawAccretionParticles();
+                // Panel variant: ambient glow only — no orbiting particles
                 drawPanelGlow(elapsed);
             }
             drawVignette(width, height);
