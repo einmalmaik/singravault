@@ -253,8 +253,8 @@ export function VaultItemList({
     if (items.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-64 text-center">
-                <div className="p-4 rounded-full bg-muted mb-4">
-                    <Shield className="w-8 h-8 text-muted-foreground" />
+                <div className="p-4 rounded-full bg-[hsl(var(--el-2))] border border-[hsl(var(--border)/0.35)] mb-4">
+                    <Shield className="w-8 h-8 text-primary/60" />
                 </div>
                 <h3 className="text-lg font-medium mb-2">{t('vault.empty.title')}</h3>
                 <p className="text-muted-foreground mb-4 max-w-sm">
@@ -271,8 +271,8 @@ export function VaultItemList({
     if (filteredItems.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-64 text-center">
-                <div className="p-4 rounded-full bg-muted mb-4">
-                    <KeyRound className="w-8 h-8 text-muted-foreground" />
+                <div className="p-4 rounded-full bg-[hsl(var(--el-2))] border border-[hsl(var(--border)/0.35)] mb-4">
+                    <KeyRound className="w-8 h-8 text-primary/60" />
                 </div>
                 <h3 className="text-lg font-medium mb-2">{t('vault.search.noResults')}</h3>
                 <p className="text-muted-foreground max-w-sm">

@@ -127,7 +127,7 @@ export function Header() {
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/80 backdrop-blur-lg">
+    <header className="ms-glass-header sticky top-0 z-50 w-full">
       <div className="container px-4">
         <div className="flex h-16 items-center justify-between">
           {/* Logo */}
@@ -167,7 +167,7 @@ export function Header() {
                 onClick={handleInstallClick}
                 aria-label={t('pwa.install', 'App installieren')}
                 title={t('pwa.install', 'App installieren')}
-                className="text-primary"
+                className="ms-header-utility-button min-h-[44px] rounded-full px-3"
               >
                 <Download className="w-5 h-5" />
               </Button>
@@ -177,11 +177,11 @@ export function Header() {
             <div className="hidden sm:flex items-center gap-2">
               {user ? (
                 <>
-                  <Button asChild>
+                  <Button asChild className="ms-header-primary-button min-h-[44px] rounded-full px-4 text-sm font-medium">
                     <Link to="/vault">{t('nav.vault')}</Link>
                   </Button>
                   {showAdminButton && (
-                    <Button asChild variant="outline" className="gap-2">
+                    <Button asChild className="ms-header-secondary-button min-h-[44px] rounded-full px-3 text-sm font-medium gap-2">
                       <Link to="/admin">
                         <Wrench className="w-4 h-4" />
                         {t('admin.title')}
@@ -190,13 +190,13 @@ export function Header() {
                   )}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" className="gap-2">
+                      <Button className="ms-header-utility-button min-h-[44px] rounded-full px-3 text-sm font-medium gap-2">
                         <UserRound className="w-4 h-4" />
                         {t('nav.account')}
                         <ChevronDown className="w-4 h-4" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuContent align="end" className="ms-header-dropdown w-48">
                       <DropdownMenuItem asChild>
                         <Link to="/settings">{t('nav.settings')}</Link>
                       </DropdownMenuItem>
@@ -209,10 +209,10 @@ export function Header() {
                 </>
               ) : (
                 <>
-                  <Button asChild variant="ghost">
+                  <Button asChild className="ms-header-utility-button min-h-[44px] rounded-full px-4 text-sm font-medium">
                     <Link to="/auth">{t('nav.login')}</Link>
                   </Button>
-                  <Button asChild>
+                  <Button asChild className="ms-header-primary-button min-h-[44px] rounded-full px-4 text-sm font-medium">
                     <Link to="/auth?mode=signup">{t('nav.signup')}</Link>
                   </Button>
                 </>

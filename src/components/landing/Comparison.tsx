@@ -23,6 +23,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { ScrollReveal } from '@/components/ScrollReveal';
 
 type FeatureStatus = 'yes' | 'no' | 'partial';
 
@@ -169,31 +170,31 @@ export function Comparison() {
     const { t } = useTranslation();
 
     return (
-        <section id="comparison" className="py-20">
+        <section id="comparison" className="section-dark-alt py-24 overflow-hidden">
             <div className="container px-4">
-                <div className="text-center mb-16">
-                    <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary mb-4">
+                <ScrollReveal className="text-center mb-16">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/8 px-4 py-1.5 text-sm font-medium text-primary mb-4">
                         <Shield className="w-4 h-4" />
                         {t('landing.comparison.badge')}
                     </div>
-                    <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+                    <h2 className="singra-headline-serif text-3xl sm:text-4xl font-bold mb-4">
                         {t('landing.comparison.title')}
                     </h2>
                     <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
                         {t('landing.comparison.subtitle')}
                     </p>
-                </div>
+                </ScrollReveal>
 
-                <div className="max-w-5xl mx-auto overflow-x-auto">
+                <ScrollReveal delay={100} className="max-w-5xl mx-auto overflow-x-auto rounded-2xl border border-border/35 bg-card/30 backdrop-blur-sm p-1">
                     <Table>
                         <TableHeader>
-                            <TableRow>
-                                <TableHead className="w-[220px]">
+                            <TableRow className="border-border/40 hover:bg-transparent">
+                                <TableHead className="w-[220px] text-muted-foreground/80">
                                     {t('landing.comparison.featureLabel')}
                                 </TableHead>
                                 {competitors.map((c) => (
-                                    <TableHead key={c.name} className="text-center min-w-[120px]">
-                                        <span className={c.name === 'Singra Vault' ? 'text-primary font-bold' : ''}>
+                                    <TableHead key={c.name} className={`text-center min-w-[120px] ${c.name === 'Singra Vault' ? 'bg-primary/6 rounded-t-lg' : ''}`}>
+                                        <span className={c.name === 'Singra Vault' ? 'text-primary font-bold' : 'text-muted-foreground'}>
                                             {c.name}
                                         </span>
                                     </TableHead>
@@ -202,12 +203,12 @@ export function Comparison() {
                         </TableHeader>
                         <TableBody>
                             {featureKeys.map((featureKey) => (
-                                <TableRow key={featureKey}>
-                                    <TableCell className="font-medium">
+                                <TableRow key={featureKey} className="border-border/25 hover:bg-card/40 transition-colors">
+                                    <TableCell className="font-medium text-foreground/80">
                                         {t(`landing.comparison.features.${featureKey}`)}
                                     </TableCell>
                                     {competitors.map((c) => (
-                                        <TableCell key={`${c.name}-${featureKey}`} className="text-center">
+                                        <TableCell key={`${c.name}-${featureKey}`} className={`text-center ${c.name === 'Singra Vault' ? 'bg-primary/4' : ''}`}>
                                             {c.details[featureKey] ? (
                                                 <div className="flex flex-col items-center gap-0.5">
                                                     <StatusIcon status={c.features[featureKey]} />
@@ -224,10 +225,10 @@ export function Comparison() {
                             ))}
                         </TableBody>
                     </Table>
-                </div>
+                </ScrollReveal>
 
                 {/* Legend */}
-                <div className="flex justify-center gap-6 mt-6 text-sm text-muted-foreground">
+                <ScrollReveal delay={200} className="flex justify-center gap-6 mt-6 text-sm text-muted-foreground">
                     <div className="flex items-center gap-2">
                         <Check className="w-4 h-4 text-success" />
                         <span>{t('landing.comparison.legend.full')}</span>
@@ -240,7 +241,7 @@ export function Comparison() {
                         <X className="w-4 h-4 text-destructive" />
                         <span>{t('landing.comparison.legend.unavailable')}</span>
                     </div>
-                </div>
+                </ScrollReveal>
 
                 <p className="text-center text-xs text-muted-foreground mt-4 max-w-2xl mx-auto">
                     {t('landing.comparison.disclaimer')}

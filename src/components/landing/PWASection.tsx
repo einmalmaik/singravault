@@ -24,6 +24,7 @@ import {
     AccordionItem,
     AccordionTrigger,
 } from '@/components/ui/accordion';
+import { ScrollReveal, ScrollRevealGrid } from '@/components/ScrollReveal';
 
 const features = [
     { key: 'whatIsPwa', icon: Smartphone },
@@ -41,40 +42,42 @@ export function PWASection() {
     const { t } = useTranslation();
 
     return (
-        <section id="pwa" className="py-20 bg-gradient-to-br from-primary/5 via-background to-primary/10">
+        <section id="pwa" className="section-dark-alt py-24 overflow-hidden">
             <div className="container px-4">
                 {/* Header */}
-                <div className="text-center mb-16">
-                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-4">
+                <ScrollReveal className="text-center mb-16">
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-primary/20 bg-primary/8 text-primary text-sm font-medium mb-4">
                         <Smartphone className="w-4 h-4" />
                         {t('landing.pwa.badge')}
                     </div>
-                    <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+                    <h2 className="singra-headline-serif text-3xl sm:text-4xl font-bold mb-4">
                         {t('landing.pwa.title')}
                     </h2>
                     <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
                         {t('landing.pwa.subtitle')}
                     </p>
-                </div>
+                </ScrollReveal>
 
                 {/* How PWA Works - Feature Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto mb-12">
-                    {features.map((feature, index) => (
+                <ScrollRevealGrid
+                    className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl mx-auto mb-12"
+                    staggerMs={80}
+                >
+                    {features.map((feature) => (
                         <Card
                             key={feature.key}
-                            className="group hover:shadow-lg hover:border-primary/20 transition-all duration-300 animate-fade-in"
-                            style={{ animationDelay: `${index * 0.1}s` }}
+                            className="group border-border/35 bg-card/40 backdrop-blur-sm hover:border-primary/22 hover:bg-card/60 transition-all duration-300"
                         >
                             <CardContent className="p-6">
                                 <div className="flex gap-4">
-                                    <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                    <div className="w-12 h-12 rounded-xl bg-primary/8 border border-primary/12 flex items-center justify-center shrink-0 group-hover:bg-primary group-hover:text-primary-foreground group-hover:border-primary transition-all duration-300">
                                         <feature.icon className="w-6 h-6" />
                                     </div>
                                     <div>
-                                        <h3 className="font-semibold mb-2">
+                                        <h3 className="font-semibold mb-2 text-foreground/90">
                                             {t(`landing.pwa.features.${feature.key}.title`)}
                                         </h3>
-                                        <p className="text-sm text-muted-foreground">
+                                        <p className="text-sm text-muted-foreground leading-relaxed">
                                             {t(`landing.pwa.features.${feature.key}.description`)}
                                         </p>
                                     </div>
@@ -82,30 +85,29 @@ export function PWASection() {
                             </CardContent>
                         </Card>
                     ))}
-                </div>
+                </ScrollRevealGrid>
 
                 {/* Security Section */}
-                <div className="max-w-4xl mx-auto mb-12">
+                <ScrollReveal delay={100} className="max-w-4xl mx-auto mb-12">
                     <h3 className="text-2xl font-bold text-center mb-8">
                         {t('landing.pwa.security.title')}
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {securityPoints.map((point, index) => (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        {securityPoints.map((point) => (
                             <Card
                                 key={point.key}
-                                className="border-green-500/20 bg-green-500/5 hover:border-green-500/40 transition-colors animate-fade-in"
-                                style={{ animationDelay: `${(features.length + index) * 0.1}s` }}
+                                className="border-[hsl(158_64%_52%/0.18)] bg-[hsl(158_64%_52%/0.04)] hover:border-[hsl(158_64%_52%/0.3)] transition-colors"
                             >
                                 <CardContent className="p-6">
                                     <div className="flex gap-4">
-                                        <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center shrink-0">
-                                            <point.icon className="w-5 h-5 text-green-600 dark:text-green-400" />
+                                        <div className="w-10 h-10 rounded-lg bg-[hsl(158_64%_52%/0.12)] flex items-center justify-center shrink-0">
+                                            <point.icon className="w-5 h-5 text-[hsl(var(--success))]" />
                                         </div>
                                         <div>
-                                            <h4 className="font-semibold mb-1">
+                                            <h4 className="font-semibold mb-1 text-foreground/90">
                                                 {t(`landing.pwa.security.${point.key}.title`)}
                                             </h4>
-                                            <p className="text-sm text-muted-foreground">
+                                            <p className="text-sm text-muted-foreground leading-relaxed">
                                                 {t(`landing.pwa.security.${point.key}.description`)}
                                             </p>
                                         </div>
@@ -114,15 +116,15 @@ export function PWASection() {
                             </Card>
                         ))}
                     </div>
-                </div>
+                </ScrollReveal>
 
                 {/* Important Notes - Accordion */}
-                <div className="max-w-3xl mx-auto">
-                    <Card className="border-amber-500/20 bg-amber-500/5">
+                <ScrollReveal delay={150} className="max-w-3xl mx-auto">
+                    <Card className="border-[hsl(38_92%_50%/0.18)] bg-[hsl(38_92%_50%/0.04)]">
                         <CardContent className="p-6">
                             <div className="flex items-start gap-3 mb-4">
-                                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                                <h3 className="font-semibold text-amber-800 dark:text-amber-200">
+                                <AlertTriangle className="w-5 h-5 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
+                                <h3 className="font-semibold text-foreground/90">
                                     {t('landing.pwa.notes.title')}
                                 </h3>
                             </div>
@@ -162,7 +164,7 @@ export function PWASection() {
                             </Accordion>
                         </CardContent>
                     </Card>
-                </div>
+                </ScrollReveal>
             </div>
         </section>
     );

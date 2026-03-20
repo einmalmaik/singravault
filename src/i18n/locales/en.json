@@ -53,7 +53,8 @@
       "titleHighlight": "Your Control.",
       "subtitle": "The secure open-source password manager with end-to-end encryption. Your data belongs only to you.",
       "cta": "Get started for free",
-      "ctaSecondary": "Learn more"
+      "ctaSecondary": "Learn more",
+      "description": "AES-256-GCM encryption. Argon2id key derivation. Zero-knowledge architecture. Your passwords never leave your device unencrypted."
     },
     "security": {
       "title": "Highest Security Standards",

@@ -192,7 +192,7 @@ export default function VaultPage() {
     };
 
     return (
-        <div className="min-h-screen bg-background flex overflow-hidden">
+        <div className="min-h-screen flex overflow-hidden" style={{ background: 'hsl(206 31% 4%)' }}>
             {/* Sidebar */}
             {!isMobile && (
                 <VaultSidebar
@@ -217,7 +217,7 @@ export default function VaultPage() {
             {/* Main Content */}
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Header */}
-                <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b px-4 lg:px-6 py-4">
+                <header className="sticky top-0 z-10 border-b border-[hsl(198_22%_26%/0.55)] bg-[hsl(206_31%_4%/0.92)] backdrop-blur-xl px-4 lg:px-6 py-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:gap-4 items-start sm:items-center justify-between">
                         {/* Search */}
                         <div className="relative w-full sm:max-w-md min-w-0">
@@ -342,7 +342,7 @@ export default function VaultPage() {
                     />
                 </main>
 
-                <footer className="border-t px-4 lg:px-6 py-3 text-xs text-muted-foreground">
+                <footer className="border-t border-[hsl(198_22%_26%/0.4)] px-4 lg:px-6 py-3 text-xs text-muted-foreground">
                     <nav className="flex flex-wrap items-center gap-3">
                         <Link to="/privacy" className="hover:text-foreground transition-colors">
                             {t('landing.footer.privacy')}
