@@ -32,6 +32,8 @@ export interface OfflineVaultSnapshot {
   encryptionSalt?: string | null;
   masterPasswordVerifier?: string | null;
   kdfVersion?: number | null;
+  /** Encrypted UserKey (profiles.encrypted_user_key) for USK-based offline unlock */
+  encryptedUserKey?: string | null;
 }
 
 type OfflineMutation =
@@ -207,12 +209,16 @@ export async function saveOfflineCredentials(
   encryptionSalt: string,
   masterPasswordVerifier: string | null,
   kdfVersion?: number,
+  encryptedUserKey?: string | null,
 ): Promise<void> {
   const snapshot = await ensureSnapshot(userId);
   snapshot.encryptionSalt = encryptionSalt;
   snapshot.masterPasswordVerifier = masterPasswordVerifier;
   if (kdfVersion !== undefined) {
     snapshot.kdfVersion = kdfVersion;
+  }
+  if (encryptedUserKey !== undefined) {
+    snapshot.encryptedUserKey = encryptedUserKey;
   }
   snapshot.updatedAt = nowIso();
   await saveOfflineSnapshot(snapshot);
@@ -223,7 +229,7 @@ export async function saveOfflineCredentials(
  */
 export async function getOfflineCredentials(
   userId: string,
-): Promise<{ salt: string; verifier: string | null; kdfVersion: number | null } | null> {
+): Promise<{ salt: string; verifier: string | null; kdfVersion: number | null; encryptedUserKey: string | null } | null> {
   const snapshot = await getOfflineSnapshot(userId);
   if (!snapshot?.encryptionSalt) {
     return null;
@@ -232,6 +238,7 @@ export async function getOfflineCredentials(
     salt: snapshot.encryptionSalt,
     verifier: snapshot.masterPasswordVerifier ?? null,
     kdfVersion: snapshot.kdfVersion ?? null,
+    encryptedUserKey: snapshot.encryptedUserKey ?? null,
   };
 }
 

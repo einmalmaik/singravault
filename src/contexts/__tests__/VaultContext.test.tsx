@@ -62,6 +62,21 @@ vi.mock("@/services/cryptoService", () => ({
   clearReferences: vi.fn(),
   secureClear: vi.fn(),
   attemptKdfUpgrade: (...args: unknown[]) => mockAttemptKdfUpgrade(...args),
+  reEncryptVault: vi.fn(() => Promise.resolve({ itemUpdates: [], categoryUpdates: [], itemsReEncrypted: 0 })),
+  // USK Layer mocks
+  createEncryptedUserKey: vi.fn(() => Promise.resolve({
+    encryptedUserKey: 'mock-encrypted-user-key',
+    userKey: { type: 'secret', extractable: false, usages: ['encrypt', 'decrypt'] },
+  })),
+  migrateToUserKey: vi.fn(() => Promise.resolve({
+    encryptedUserKey: 'mock-migrated-user-key',
+    userKey: { type: 'secret', extractable: false, usages: ['encrypt', 'decrypt'] },
+  })),
+  unwrapUserKey: vi.fn(() => Promise.resolve(
+    { type: 'secret', extractable: false, usages: ['encrypt', 'decrypt'] }
+  )),
+  decryptPrivateKeyLegacy: vi.fn(() => Promise.resolve('mock-plain-private-key')),
+  wrapPrivateKeyWithUserKey: vi.fn(() => Promise.resolve('mock-wrapped-private-key')),
   CURRENT_KDF_VERSION: 2,
 }));
 
@@ -279,7 +294,7 @@ describe("VaultContext", () => {
   describe("setupMasterPassword", () => {
     it("should set up master password for first-time users", async () => {
       mockGenerateSalt.mockReturnValue("new-salt-789");
-      mockDeriveKey.mockResolvedValue({} as CryptoKey);
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockCreateVerificationHash.mockResolvedValue("new-verifier-abc");
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
@@ -295,7 +310,7 @@ describe("VaultContext", () => {
 
       expect(setupResult?.error).toBeNull();
       expect(mockGenerateSalt).toHaveBeenCalled();
-      expect(mockDeriveKey).toHaveBeenCalledWith("SecurePassword123!", "new-salt-789", 2);
+      expect(mockDeriveRawKey).toHaveBeenCalledWith("SecurePassword123!", "new-salt-789", 2);
       expect(mockCreateVerificationHash).toHaveBeenCalled();
 
       // Vault should be unlocked after setup
@@ -349,7 +364,9 @@ describe("VaultContext", () => {
     });
 
     it("should unlock vault with correct password", async () => {
-      mockDeriveKey.mockResolvedValue({} as CryptoKey);
+      // Profile mock without encrypted_user_key → takes PRE-USK migration path
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
 
@@ -367,7 +384,7 @@ describe("VaultContext", () => {
       });
 
       expect(unlockResult?.error).toBeNull();
-      expect(mockDeriveKey).toHaveBeenCalledWith("CorrectPassword!", "existing-salt", 2, undefined);
+      expect(mockDeriveRawKey).toHaveBeenCalledWith("CorrectPassword!", "existing-salt", 2, undefined);
       expect(mockVerifyKey).toHaveBeenCalled();
       expect(result.current.isLocked).toBe(false);
     });

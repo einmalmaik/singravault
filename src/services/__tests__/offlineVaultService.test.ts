@@ -367,14 +367,14 @@ describe("Offline credentials", () => {
     await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz", 2);
 
     const creds = await svc.getOfflineCredentials(USER_ID);
-    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: 2 });
+    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: 2, encryptedUserKey: null });
   });
 
   it("saveOfflineCredentials without kdfVersion returns null kdfVersion", async () => {
     await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz");
 
     const creds = await svc.getOfflineCredentials(USER_ID);
-    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: null });
+    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: null, encryptedUserKey: null });
   });
 
   it("getOfflineCredentials returns null when not saved", async () => {
