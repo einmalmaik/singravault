@@ -168,9 +168,11 @@ export default defineConfig(({ mode }) => {
         "@singra/premium": premiumEntry,
       },
     },
-    // Don't pre-bundle @singra/premium since it's resolved via alias
     optimizeDeps: {
-      exclude: ["@singra/premium"],
+      // Force Vite to pre-bundle the resolved premium entry (stub or real package).
+      // Without this, esbuild's dep-scan resolves the alias too late and the
+      // browser gets a bare "@singra/premium" import that results in a 404.
+      include: [premiumEntry],
     },
     build: {
       target: "esnext",

@@ -445,15 +445,17 @@ export async function authenticatePasskey(): Promise<PasskeyAuthenticationResult
             prfOutput,
         );
 
-        // 7. Import the raw key bytes as a non-extractable CryptoKey
+        // 7. Import the raw key bytes as a non-extractable CryptoKey.
+        // SECURITY: rawKeyBytes are also returned to the caller so that
+        // post-USK code can call unwrapUserKey(encryptedUserKey, rawKeyBytes).
+        // The caller is responsible for wiping rawKeyBytes with .fill(0) after use.
+        // We do NOT wipe here to preserve the bytes for the caller.
         const encryptionKey = await importMasterKey(rawKeyBytes);
-
-        // SECURITY: Wipe raw key bytes immediately
-        rawKeyBytes.fill(0);
 
         return {
             success: true,
             encryptionKey,
+            rawKeyBytes,
             prfEnabled: true,
             credentialId: verifyData.credentialId,
         };
@@ -684,6 +686,17 @@ export interface PasskeyAuthenticationResult {
     error?: string;
     /** The unwrapped vault encryption key (only if PRF succeeded) */
     encryptionKey?: CryptoKey;
+    /**
+     * The raw 32-byte KDF-equivalent key bytes, available only immediately
+     * after authentication before they are wiped.
+     *
+     * SECURITY: The caller MUST wipe these bytes with .fill(0) after use.
+     * These bytes are provided so that post-USK callers can call unwrapUserKey()
+     * to obtain the actual vault UserKey from profiles.encrypted_user_key.
+     *
+     * Only set when PRF succeeded (success === true && prfEnabled === true).
+     */
+    rawKeyBytes?: Uint8Array;
     /** Whether PRF was used for key derivation */
     prfEnabled?: boolean;
     /** The credential that was used */

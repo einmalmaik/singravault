@@ -764,6 +764,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                         if (probeItems) {
                             for (const item of probeItems) {
                                 try {
+                                    // Pass item.id as AAD — decryptVaultItem falls back to no-AAD if needed.
                                     await decryptVaultItem(item.encrypted_data, activeKey, item.id);
                                 } catch {
                                     needsFullRepair = true;
@@ -811,6 +812,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 if (allItems) {
                                     for (const item of allItems) {
                                         try {
+                                            // Pass item.id as AAD — decryptVaultItem falls back to no-AAD if needed.
                                             await decryptVaultItem(item.encrypted_data, activeKey, item.id);
                                         } catch {
                                             brokenItems.push(item);
@@ -1065,7 +1067,9 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     if (probeItems) {
                         for (const item of probeItems) {
                             try {
-                                await decryptVaultItem(item.encrypted_data, activeKey);
+                                // Pass item.id as AAD — decryptVaultItem falls back to
+                                // no-AAD automatically if the item was encrypted without AAD.
+                                await decryptVaultItem(item.encrypted_data, activeKey, item.id);
                             } catch {
                                 needsFullRepair = true;
                                 break;
@@ -1112,7 +1116,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                             if (allItems) {
                                 for (const item of allItems) {
                                     try {
-                                        await decryptVaultItem(item.encrypted_data, activeKey);
+                                        await decryptVaultItem(item.encrypted_data, activeKey, item.id);
                                     } catch {
                                         brokenItems.push(item);
                                     }
@@ -1279,24 +1283,26 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }
 
             // ── USK-aware passkey unlock ──
-            // result.encryptionKey is the PRF-derived key (equivalent to kdfOutputBytes
-            // imported as a CryptoKey). For post-USK users, we must use it to unwrap
-            // the UserKey; the UserKey is the actual vault encryption key.
+            // For pre-USK users: result.encryptionKey IS the vault key (use directly).
+            // For post-USK users: result.rawKeyBytes are the kdfOutputBytes equivalent;
+            // use them to unwrap the UserKey from profiles.encrypted_user_key.
             let activeKey: CryptoKey;
-            if (encryptedUserKey) {
-                // Post-USK: PRF output is used as kdfOutputBytes to unwrap UserKey
-                // We need the raw bytes — re-export them via a workaround:
-                // authenticatePasskey must return rawPrfBytes for this path.
-                // Until passkeyService exposes rawPrfBytes, fall back to the
-                // PRF-derived key directly (pre-USK compat — logs a warning).
-                // TODO(usk-passkey): update passkeyService to return rawPrfBytes
-                console.warn('Passkey unlock: encryptedUserKey present but rawPrfBytes not available — using PRF key directly. Vault items may fail to decrypt for post-USK accounts.');
-                activeKey = result.encryptionKey;
+            if (encryptedUserKey && result.rawKeyBytes) {
+                // Post-USK path: unwrap the UserKey with the raw PRF bytes.
+                try {
+                    activeKey = await unwrapUserKey(encryptedUserKey, result.rawKeyBytes);
+                } finally {
+                    // SECURITY: wipe raw bytes immediately after unwrap attempt.
+                    result.rawKeyBytes.fill(0);
+                }
             } else {
+                // Pre-USK path: PRF key is the vault key directly.
+                // Also wipe rawKeyBytes if present (shouldn't happen but be safe).
+                if (result.rawKeyBytes) result.rawKeyBytes.fill(0);
                 activeKey = result.encryptionKey;
             }
 
-            // Verify the key works by checking the verification hash
+            // Verify the active key works against the stored verifier
             if (verifier) {
                 const isValid = await verifyKey(verifier, activeKey);
                 if (!isValid) {
@@ -1354,8 +1360,13 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return rawKeyBytes;
             }
 
-            const derivedKey = await importMasterKey(rawKeyBytes);
-            const isValid = await verifyKey(verifier, derivedKey);
+            // Post-USK: verifier is stored against the UserKey, not the raw KDF bytes.
+            // Use the already-unlocked encryptionKey (which IS the UserKey) to verify.
+            // Pre-USK: verifier is against importMasterKey(rawKeyBytes) directly.
+            const keyToVerify = encryptedUserKey && encryptionKey
+                ? encryptionKey
+                : await importMasterKey(rawKeyBytes);
+            const isValid = await verifyKey(verifier, keyToVerify);
             if (!isValid) {
                 rawKeyBytes.fill(0);
                 return null;
@@ -1369,7 +1380,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             console.error('Failed to derive raw key for passkey:', err);
             return null;
         }
-    }, [user, salt, kdfVersion, isLocked, verificationHash]);
+    }, [user, salt, kdfVersion, isLocked, verificationHash, encryptedUserKey, encryptionKey]);
 
     /**
      * Locks the vault and clears encryption key from memory
