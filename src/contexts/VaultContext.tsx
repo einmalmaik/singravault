@@ -93,11 +93,15 @@ async function migrateLegacyPrivateKeysToUserKey(
             const plainPrivateKey = await decryptPrivateKeyLegacy(encRsa, masterPassword, false);
             // wrapPrivateKeyWithUserKey includes the usk-v1: sentinel prefix.
             const newEncRsa = await wrapPrivateKeyWithUserKey(plainPrivateKey, userKey);
-            await supabase
+            const { error: rsaUpdateErr } = await supabase
                 .from('user_keys')
                 .update({ encrypted_private_key: newEncRsa, updated_at: new Date().toISOString() })
                 .eq('user_id', userId);
-            console.info('USK private key migration: RSA key re-wrapped to usk-v1 format.');
+            if (rsaUpdateErr) {
+                console.warn('USK private key migration: RSA key update failed:', rsaUpdateErr);
+            } else {
+                console.info('USK private key migration: RSA key re-wrapped to usk-v1 format.');
+            }
         }
     } catch (err) {
         console.warn('USK migration: RSA private key migration failed (non-fatal):', err);
