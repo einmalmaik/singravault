@@ -1236,36 +1236,21 @@ async function deriveWrapKey(kdfOutputBytes: Uint8Array): Promise<Uint8Array> {
 }
 
 /**
- * Derives a 32-byte UserKey from the raw Argon2id output via HKDF.
- * Used ONLY during first-time migration of existing accounts.
+ * Returns the raw Argon2id KDF output bytes to serve as the initial UserKey
+ * for existing accounts migrating to the USK architecture.
  *
- * This produces the same bytes as the old direct KDF key would have produced
- * (via a deterministic HKDF expansion), so existing vault items remain
- * readable without re-encryption.
+ * MUST return the raw kdfOutputBytes unchanged — pre-USK vault items were
+ * encrypted directly with importMasterKey(kdfOutputBytes), so the UserKey
+ * must be identical to avoid vault re-encryption on migration.
  *
- * Uses a DIFFERENT info string than deriveWrapKey to ensure independence.
+ * The wrapKey (HKDF-derived, different info string) is still domain-separated
+ * from this value: wrapKey = HKDF(kdfOutputBytes, "singra-vault-wrap-v1").
  *
  * INTERNAL — do not export. Use migrateToUserKey instead.
  */
 async function deriveInitialUserKeyBytes(kdfOutputBytes: Uint8Array): Promise<Uint8Array> {
-    const baseKey = await crypto.subtle.importKey(
-        'raw',
-        kdfOutputBytes as BufferSource,
-        'HKDF',
-        false,
-        ['deriveBits'],
-    );
-    const bits = await crypto.subtle.deriveBits(
-        {
-            name: 'HKDF',
-            hash: 'SHA-256',
-            salt: new Uint8Array(32) as BufferSource,
-            info: new TextEncoder().encode('singra-vault-userkey-v1-init') as BufferSource,
-        },
-        baseKey,
-        256,
-    );
-    return new Uint8Array(bits);
+    // Return a copy to allow the caller to fill(0) safely without aliasing issues.
+    return new Uint8Array(kdfOutputBytes);
 }
 
 /**
@@ -1372,10 +1357,10 @@ export async function rewrapUserKey(
 ): Promise<string> {
     let oldWrapKeyBytes: Uint8Array | null = null;
     let newWrapKeyBytes: Uint8Array | null = null;
-    let userKeyBytes: Uint8Array | null = null;
     try {
         oldWrapKeyBytes = await deriveWrapKey(oldKdfOutputBytes);
         const oldWrapKey = await importMasterKey(oldWrapKeyBytes);
+        // Note: userKeyBase64 is a JS string — cannot be securely wiped.
         const userKeyBase64 = await decrypt(encryptedUserKey, oldWrapKey);
 
         newWrapKeyBytes = await deriveWrapKey(newKdfOutputBytes);
@@ -1384,7 +1369,6 @@ export async function rewrapUserKey(
     } finally {
         oldWrapKeyBytes?.fill(0);
         newWrapKeyBytes?.fill(0);
-        userKeyBytes?.fill(0);
     }
 }
 
@@ -1512,7 +1496,8 @@ export async function getDecryptedRsaPrivateKey(
         if (!userKey) {
             throw new Error('getDecryptedRsaPrivateKey: UserKey required for usk-v1 format');
         }
-        return unwrapPrivateKeyWithUserKey(encryptedPrivateKey.slice('usk-v1:'.length), userKey);
+        // Pass the full string — unwrapPrivateKeyWithUserKey handles the prefix internally.
+        return unwrapPrivateKeyWithUserKey(encryptedPrivateKey, userKey);
     }
     return decryptPrivateKeyLegacy(encryptedPrivateKey, masterPassword, false);
 }
@@ -1521,11 +1506,11 @@ export async function getDecryptedRsaPrivateKey(
  * Decrypts a stored PQ (ML-KEM-768) private key, dispatching on format sentinel.
  *
  * Supports:
- *   - `pq-v2-usk:<base64>` — wrapped with UserKey (post-USK migration)
- *   - legacy formats        — delegated to `decryptPrivateKeyLegacy`
+ *   - `usk-v1:<base64>` — wrapped with UserKey (post-USK migration; same sentinel as RSA)
+ *   - legacy formats     — delegated to `decryptPrivateKeyLegacy`
  *
  * @param encryptedPqPrivateKey - Stored encrypted key from `profiles.pq_encrypted_private_key`
- * @param userKey               - UserKey CryptoKey (used when sentinel is `pq-v2-usk:`)
+ * @param userKey               - UserKey CryptoKey (used when sentinel is `usk-v1:`)
  * @param masterPassword        - Master password (used for legacy formats)
  */
 export async function getDecryptedPqPrivateKey(
@@ -1533,11 +1518,12 @@ export async function getDecryptedPqPrivateKey(
     userKey: CryptoKey | null,
     masterPassword: string,
 ): Promise<string> {
-    if (encryptedPqPrivateKey.startsWith('pq-v2-usk:')) {
+    if (encryptedPqPrivateKey.startsWith('usk-v1:')) {
         if (!userKey) {
-            throw new Error('getDecryptedPqPrivateKey: UserKey required for pq-v2-usk format');
+            throw new Error('getDecryptedPqPrivateKey: UserKey required for usk-v1 format');
         }
-        return unwrapPrivateKeyWithUserKey(encryptedPqPrivateKey.slice('pq-v2-usk:'.length), userKey);
+        // Pass the full string — unwrapPrivateKeyWithUserKey handles the prefix internally.
+        return unwrapPrivateKeyWithUserKey(encryptedPqPrivateKey, userKey);
     }
     // Legacy pq-v2: format stores RSA+PQ combined; extract only the PQ part
     if (encryptedPqPrivateKey.startsWith('pq-v2:')) {

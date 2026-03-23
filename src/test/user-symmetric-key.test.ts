@@ -165,11 +165,19 @@ describe('USK Layer — wrapPrivateKeyWithUserKey / unwrapPrivateKeyWithUserKey'
     expect(unwrapped).toBe(plainPrivateKey);
   });
 
-  it('wrapped ciphertext is base64 (not plaintext)', () => {
-    // Already verified via roundtrip; also check it doesn't contain plaintext chars
-    // The wrapPrivateKeyWithUserKey output is base64(IV||CT||tag) — not the input string
-    const wrapped = 'c29tZUJhc2U2NA=='; // fake, but the real test is roundtrip above
-    expect(wrapped).not.toBe('{"kty":"RSA"}');
+  it('wrapped ciphertext is base64 and does not contain plaintext', async () => {
+    const kdf = generateTestKdfOutput();
+    const bundle = await createEncryptedUserKey(kdf);
+    const plainPrivateKey = '{"kty":"RSA","n":"test-modulus","e":"AQAB"}';
+
+    const wrapped = await wrapPrivateKeyWithUserKey(plainPrivateKey, bundle.userKey);
+    // Output must be the sentinel prefix + a valid base64 string
+    expect(wrapped.startsWith('usk-v1:')).toBe(true);
+    const cipherBase64 = wrapped.slice('usk-v1:'.length);
+    expect(() => atob(cipherBase64)).not.toThrow();
+    // Plaintext must not appear in the ciphertext
+    expect(wrapped).not.toContain('RSA');
+    expect(wrapped).not.toContain('test-modulus');
   });
 });
 
@@ -179,8 +187,8 @@ describe('USK Layer — getDecryptedRsaPrivateKey dispatcher', () => {
     const bundle = await createEncryptedUserKey(kdf);
     const plainKey = '{"kty":"RSA","n":"modulus","e":"AQAB","d":"private"}';
 
-    const wrapped = await wrapPrivateKeyWithUserKey(plainKey, bundle.userKey);
-    const stored = 'usk-v1:' + wrapped;
+    // wrapPrivateKeyWithUserKey already includes the usk-v1: prefix
+    const stored = await wrapPrivateKeyWithUserKey(plainKey, bundle.userKey);
 
     const result = await getDecryptedRsaPrivateKey(stored, bundle.userKey, 'any-password');
     expect(result).toBe(plainKey);
@@ -193,20 +201,20 @@ describe('USK Layer — getDecryptedRsaPrivateKey dispatcher', () => {
 });
 
 describe('USK Layer — getDecryptedPqPrivateKey dispatcher', () => {
-  it('dispatches pq-v2-usk: format via UserKey', async () => {
+  it('dispatches usk-v1: format via UserKey (ignores masterPassword)', async () => {
     const kdf = generateTestKdfOutput();
     const bundle = await createEncryptedUserKey(kdf);
     const plainPqKey = 'base64-encoded-mlkem-secret-key-material';
 
-    const wrapped = await wrapPrivateKeyWithUserKey(plainPqKey, bundle.userKey);
-    const stored = 'pq-v2-usk:' + wrapped;
+    // wrapPrivateKeyWithUserKey already includes the usk-v1: prefix
+    const stored = await wrapPrivateKeyWithUserKey(plainPqKey, bundle.userKey);
 
     const result = await getDecryptedPqPrivateKey(stored, bundle.userKey, 'any-password');
     expect(result).toBe(plainPqKey);
   });
 
-  it('throws for pq-v2-usk: format when userKey is null', async () => {
-    const stored = 'pq-v2-usk:someBase64Ciphertext';
+  it('throws for usk-v1: format when userKey is null', async () => {
+    const stored = 'usk-v1:someBase64Ciphertext';
     await expect(getDecryptedPqPrivateKey(stored, null, 'password')).rejects.toThrow('UserKey required');
   });
 });
@@ -225,11 +233,11 @@ describe('decryptPrivateKeyLegacy — format detection', () => {
   // Integration tests cover the full KDF+decrypt roundtrip.
 });
 
-describe('USK Layer — HKDF domain separation', () => {
-  it('wrapKey and initial migration key are different (different HKDF info strings)', async () => {
-    // createEncryptedUserKey uses a random USK (not HKDF-derived from kdfOutput)
-    // migrateToUserKey uses HKDF info="singra-vault-userkey-v1-init"
-    // They should produce keys that cannot decrypt each other's ciphertexts
+describe('USK Layer — key isolation between createEncryptedUserKey and migrateToUserKey', () => {
+  it('new random USK and migration USK are different keys from the same kdfOutput', async () => {
+    // createEncryptedUserKey uses a random USK (not derived from kdfOutput)
+    // migrateToUserKey derives USK directly from raw kdfOutputBytes (pre-USK compat)
+    // They must produce keys that cannot decrypt each other's ciphertexts
     const kdf = generateTestKdfOutput();
     const newBundle = await createEncryptedUserKey(kdf);
     const migBundle = await migrateToUserKey(kdf);

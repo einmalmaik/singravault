@@ -91,7 +91,8 @@ async function migrateLegacyPrivateKeysToUserKey(
         const encRsa = keyRow?.encrypted_private_key as string | null | undefined;
         if (encRsa && !encRsa.startsWith('usk-v1:')) {
             const plainPrivateKey = await decryptPrivateKeyLegacy(encRsa, masterPassword, false);
-            const newEncRsa = 'usk-v1:' + await wrapPrivateKeyWithUserKey(plainPrivateKey, userKey);
+            // wrapPrivateKeyWithUserKey includes the usk-v1: sentinel prefix.
+            const newEncRsa = await wrapPrivateKeyWithUserKey(plainPrivateKey, userKey);
             await supabase
                 .from('user_keys')
                 .update({ encrypted_private_key: newEncRsa, updated_at: new Date().toISOString() })
@@ -111,12 +112,13 @@ async function migrateLegacyPrivateKeysToUserKey(
             .maybeSingle();
 
         const encPq = profileRow?.pq_encrypted_private_key as string | null | undefined;
-        if (encPq && !encPq.startsWith('pq-v2-usk:')) {
+        if (encPq && !encPq.startsWith('usk-v1:')) {
             // For pq-v2: format, extract the PQ part only
             const plainPqKey = encPq.startsWith('pq-v2:')
                 ? await decryptPrivateKeyLegacy(encPq, masterPassword, true)
                 : await decryptPrivateKeyLegacy(encPq, masterPassword, false);
-            const newEncPq = 'pq-v2-usk:' + await wrapPrivateKeyWithUserKey(plainPqKey, userKey);
+            // wrapPrivateKeyWithUserKey includes the usk-v1: sentinel prefix.
+            const newEncPq = await wrapPrivateKeyWithUserKey(plainPqKey, userKey);
             await supabase
                 .from('profiles')
                 .update({ pq_encrypted_private_key: newEncPq, updated_at: new Date().toISOString() } as Record<string, unknown>)
@@ -998,60 +1000,18 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
                     activeKey = uskBundle.userKey;
 
-                    // Also run legacy KDF upgrade if needed (still required for pre-USK users)
-                    try {
-                        const upgrade = await attemptKdfUpgrade(masterPassword, salt, kdfVersion);
-                        if (upgrade.upgraded && upgrade.newKey && upgrade.newVerifier) {
-                            try {
-                                const { data: vaultItems } = await supabase
-                                    .from('vault_items')
-                                    .select('id, encrypted_data')
-                                    .eq('user_id', user.id);
-                                const { data: categories } = await supabase
-                                    .from('categories')
-                                    .select('id, name, icon, color')
-                                    .eq('user_id', user.id);
-                                const reEncResult = await reEncryptVault(
-                                    vaultItems || [], categories || [],
-                                    legacyKey, upgrade.newKey,
-                                );
-                                for (const itemUpdate of reEncResult.itemUpdates) {
-                                    const { error: itemError } = await supabase
-                                        .from('vault_items')
-                                        .update({ encrypted_data: itemUpdate.encrypted_data })
-                                        .eq('id', itemUpdate.id)
-                                        .eq('user_id', user.id);
-                                    if (itemError) throw new Error(`Failed to update item ${itemUpdate.id}: ${itemError.message}`);
-                                }
-                                for (const catUpdate of reEncResult.categoryUpdates) {
-                                    const { error: catError } = await supabase
-                                        .from('categories')
-                                        .update({ name: catUpdate.name, icon: catUpdate.icon, color: catUpdate.color })
-                                        .eq('id', catUpdate.id)
-                                        .eq('user_id', user.id);
-                                    if (catError) throw new Error(`Failed to update category ${catUpdate.id}: ${catError.message}`);
-                                }
-                                const { error: upgradeError } = await supabase
-                                    .from('profiles')
-                                    .update({
-                                        master_password_verifier: upgrade.newVerifier,
-                                        kdf_version: upgrade.activeVersion,
-                                    } as Record<string, unknown>)
-                                    .eq('user_id', user.id);
-                                if (!upgradeError) {
-                                    activeKey = upgrade.newKey;
-                                    setVerificationHash(upgrade.newVerifier);
-                                    setKdfVersion(upgrade.activeVersion);
-                                    await saveOfflineCredentials(user.id, salt, upgrade.newVerifier);
-                                    console.info(`KDF upgraded (pre-USK) from v${kdfVersion} to v${upgrade.activeVersion}. Re-encrypted ${reEncResult.itemsReEncrypted} items.`);
-                                }
-                            } catch (reEncErr) {
-                                console.warn('KDF upgrade: re-encryption failed, staying on old version', reEncErr);
-                            }
-                        }
-                    } catch {
-                        console.warn('KDF upgrade failed, continuing with current version');
-                    }
+                    // KDF upgrade is intentionally NOT run here.
+                    //
+                    // The USK migration sets encrypted_user_key wrapped with the current
+                    // (v1) KDF output. Running a KDF upgrade in the same session would
+                    // update kdf_version to v2 in the DB but leave the USK blob still
+                    // wrapped with v1 bytes → permanent lockout on next unlock.
+                    //
+                    // Instead, the KDF upgrade is handled on the NEXT unlock via the
+                    // POST-USK path (encryptedUserKey is now non-null), which uses
+                    // rewrapUserKey (rewrap-only, no vault re-encryption needed).
+                    // Vault items do NOT need re-encryption: the UserKey bytes are
+                    // identical to the old kdfOutputBytes, so data remains readable.
                 }
             } finally {
                 kdfOutputBytes.fill(0);

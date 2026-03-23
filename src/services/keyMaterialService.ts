@@ -71,9 +71,10 @@ export async function ensureUserRsaKeyMaterial(
     const userKeyPair = await generateUserKeyPair(masterPassword);
     let encryptedPrivateKey = userKeyPair.encryptedPrivateKey;
     if (userKey) {
-        // Decrypt the legacy-format key, then re-wrap under the UserKey
+        // Decrypt the legacy-format key, then re-wrap under the UserKey.
+        // wrapPrivateKeyWithUserKey already includes the usk-v1: sentinel prefix.
         const plainPrivateKey = await decryptPrivateKeyLegacy(userKeyPair.encryptedPrivateKey, masterPassword);
-        encryptedPrivateKey = 'usk-v1:' + await wrapPrivateKeyWithUserKey(plainPrivateKey, userKey);
+        encryptedPrivateKey = await wrapPrivateKeyWithUserKey(plainPrivateKey, userKey);
     }
     const { error: insertError } = await supabase
         .from('user_keys')
@@ -191,8 +192,9 @@ export async function ensureUserPqKeyMaterial(
     const pqKeys = generatePQKeyPair();
     let pqEncryptedPrivateKeyField: string;
     if (userKey) {
-        // Wrap PQ secret key with UserKey (USK format)
-        pqEncryptedPrivateKeyField = 'pq-v2-usk:' + await wrapPrivateKeyWithUserKey(pqKeys.secretKey, userKey);
+        // Wrap PQ secret key with UserKey (USK format).
+        // wrapPrivateKeyWithUserKey already includes the usk-v1: sentinel prefix.
+        pqEncryptedPrivateKeyField = await wrapPrivateKeyWithUserKey(pqKeys.secretKey, userKey);
     } else {
         const salt = generateSalt();
         const kdfVersion = CURRENT_KDF_VERSION;
