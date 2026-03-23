@@ -168,13 +168,9 @@ export default defineConfig(({ mode }) => {
         "@singra/premium": premiumEntry,
       },
     },
-    // Ensure esbuild dep-scan also respects the @singra/premium alias
+    // Don't pre-bundle @singra/premium since it's resolved via alias
     optimizeDeps: {
-      esbuildOptions: {
-        alias: {
-          "@singra/premium": premiumEntry,
-        },
-      },
+      exclude: ["@singra/premium"],
     },
     build: {
       target: "esnext",
