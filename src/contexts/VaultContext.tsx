@@ -123,7 +123,7 @@ async function migrateLegacyPrivateKeysToUserKey(
                 .from('profiles')
                 .update({ pq_encrypted_private_key: newEncPq, updated_at: new Date().toISOString() } as Record<string, unknown>)
                 .eq('user_id', userId);
-            console.info('USK private key migration: PQ key re-wrapped to pq-v2-usk format.');
+            console.info('USK private key migration: PQ key re-wrapped to usk-v1 format.');
         }
     } catch (err) {
         console.warn('USK migration: PQ private key migration failed (non-fatal):', err);
