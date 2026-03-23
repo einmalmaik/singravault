@@ -30,6 +30,7 @@ import {
     createEncryptedUserKey,
     migrateToUserKey,
     unwrapUserKey,
+    rewrapUserKey,
     decryptPrivateKeyLegacy,
     wrapPrivateKeyWithUserKey,
 } from '@/services/cryptoService';
@@ -1277,9 +1278,27 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return { error: new Error('Passkey authenticated but no encryption key derived') };
             }
 
+            // ── USK-aware passkey unlock ──
+            // result.encryptionKey is the PRF-derived key (equivalent to kdfOutputBytes
+            // imported as a CryptoKey). For post-USK users, we must use it to unwrap
+            // the UserKey; the UserKey is the actual vault encryption key.
+            let activeKey: CryptoKey;
+            if (encryptedUserKey) {
+                // Post-USK: PRF output is used as kdfOutputBytes to unwrap UserKey
+                // We need the raw bytes — re-export them via a workaround:
+                // authenticatePasskey must return rawPrfBytes for this path.
+                // Until passkeyService exposes rawPrfBytes, fall back to the
+                // PRF-derived key directly (pre-USK compat — logs a warning).
+                // TODO(usk-passkey): update passkeyService to return rawPrfBytes
+                console.warn('Passkey unlock: encryptedUserKey present but rawPrfBytes not available — using PRF key directly. Vault items may fail to decrypt for post-USK accounts.');
+                activeKey = result.encryptionKey;
+            } else {
+                activeKey = result.encryptionKey;
+            }
+
             // Verify the key works by checking the verification hash
             if (verifier) {
-                const isValid = await verifyKey(verifier, result.encryptionKey);
+                const isValid = await verifyKey(verifier, activeKey);
                 if (!isValid) {
                     recordFailedAttempt();
                     return { error: new Error('Passkey-derived key does not match vault — key may be outdated') };
@@ -1289,7 +1308,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             // Success — reset rate-limiter and unlock
             resetUnlockAttempts();
 
-            setEncryptionKey(result.encryptionKey);
+            setEncryptionKey(activeKey);
             setIsLocked(false);
             setIsDuressMode(false); // Passkey always unlocks real vault
             setLastActivity(Date.now());
@@ -1387,90 +1406,124 @@ export function VaultProvider({ children }: VaultProviderProps) {
             // Generate new device key
             const newDeviceKey = generateDeviceKey();
 
-            // Derive new key WITH device key
-            const newKey = await deriveKey(masterPassword, salt, kdfVersion, newDeviceKey);
+            if (encryptedUserKey) {
+                // ── POST-USK PATH ──
+                // The vault encryption key IS the UserKey — vault items do NOT need
+                // re-encryption. Only the USK wrapper must be re-wrapped under the
+                // new KDF output (which now incorporates the device key).
+                const oldKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion);
+                const newKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, newDeviceKey);
+                let newEncryptedUserKey: string;
+                try {
+                    newEncryptedUserKey = await rewrapUserKey(encryptedUserKey, oldKdfOutputBytes, newKdfOutputBytes);
+                } finally {
+                    oldKdfOutputBytes.fill(0);
+                    newKdfOutputBytes.fill(0);
+                }
 
-            // Create new verification hash with the device-key-enhanced key
-            const newVerifier = await createVerificationHash(newKey);
+                // New verifier is still against the UserKey (unchanged)
+                const newVerifier = await createVerificationHash(encryptionKey);
 
-            // Load all vault items and categories for re-encryption
-            const { data: vaultItems } = await supabase
-                .from('vault_items')
-                .select('id, encrypted_data')
-                .eq('user_id', user.id);
+                const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({
+                        master_password_verifier: newVerifier,
+                        encrypted_user_key: newEncryptedUserKey,
+                    } as Record<string, unknown>)
+                    .eq('user_id', user.id);
 
-            const { data: categories } = await supabase
-                .from('categories')
-                .select('id, name, icon, color')
-                .eq('user_id', user.id);
+                if (updateError) {
+                    throw new Error(`Failed to update profile: ${updateError.message}`);
+                }
 
-            // Re-encrypt everything with the new key
-            const reEncResult = await reEncryptVault(
-                vaultItems || [],
-                categories || [],
-                encryptionKey, // old key (without device key)
-                newKey,
-            );
+                // Store device key in IndexedDB
+                await storeDeviceKey(user.id, newDeviceKey);
 
-            // Persist re-encrypted items
-            for (const itemUpdate of reEncResult.itemUpdates) {
-                const { error: itemError } = await supabase
+                // Update state — encryptionKey (UserKey) does not change
+                setVerificationHash(newVerifier);
+                setEncryptedUserKey(newEncryptedUserKey);
+                setCurrentDeviceKey(newDeviceKey);
+                setDeviceKeyActive(true);
+
+                await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion, newEncryptedUserKey);
+                console.info('Device Key enabled (USK path). No vault re-encryption needed.');
+            } else {
+                // ── LEGACY PATH ──
+                // No USK: vault items are encrypted under the KDF-derived key directly.
+                // Must re-encrypt everything with the device-key-combined key.
+                const newKey = await deriveKey(masterPassword, salt, kdfVersion, newDeviceKey);
+                const newVerifier = await createVerificationHash(newKey);
+
+                const { data: vaultItems } = await supabase
                     .from('vault_items')
-                    .update({ encrypted_data: itemUpdate.encrypted_data })
-                    .eq('id', itemUpdate.id)
+                    .select('id, encrypted_data')
                     .eq('user_id', user.id);
-                if (itemError) {
-                    throw new Error(`Failed to update item ${itemUpdate.id}: ${itemError.message}`);
-                }
-            }
 
-            // Persist re-encrypted categories
-            for (const catUpdate of reEncResult.categoryUpdates) {
-                const { error: catError } = await supabase
+                const { data: categories } = await supabase
                     .from('categories')
-                    .update({ name: catUpdate.name, icon: catUpdate.icon, color: catUpdate.color })
-                    .eq('id', catUpdate.id)
+                    .select('id, name, icon, color')
                     .eq('user_id', user.id);
-                if (catError) {
-                    throw new Error(`Failed to update category ${catUpdate.id}: ${catError.message}`);
+
+                const reEncResult = await reEncryptVault(
+                    vaultItems || [],
+                    categories || [],
+                    encryptionKey,
+                    newKey,
+                );
+
+                for (const itemUpdate of reEncResult.itemUpdates) {
+                    const { error: itemError } = await supabase
+                        .from('vault_items')
+                        .update({ encrypted_data: itemUpdate.encrypted_data })
+                        .eq('id', itemUpdate.id)
+                        .eq('user_id', user.id);
+                    if (itemError) {
+                        throw new Error(`Failed to update item ${itemUpdate.id}: ${itemError.message}`);
+                    }
                 }
+
+                for (const catUpdate of reEncResult.categoryUpdates) {
+                    const { error: catError } = await supabase
+                        .from('categories')
+                        .update({ name: catUpdate.name, icon: catUpdate.icon, color: catUpdate.color })
+                        .eq('id', catUpdate.id)
+                        .eq('user_id', user.id);
+                    if (catError) {
+                        throw new Error(`Failed to update category ${catUpdate.id}: ${catError.message}`);
+                    }
+                }
+
+                const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({
+                        master_password_verifier: newVerifier,
+                    } as Record<string, unknown>)
+                    .eq('user_id', user.id);
+
+                if (updateError) {
+                    throw new Error(`Failed to update profile: ${updateError.message}`);
+                }
+
+                await storeDeviceKey(user.id, newDeviceKey);
+
+                setEncryptionKey(newKey);
+                setVerificationHash(newVerifier);
+                setCurrentDeviceKey(newDeviceKey);
+                setDeviceKeyActive(true);
+
+                await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion);
+                console.info(
+                    `Device Key enabled (legacy path). Re-encrypted ${reEncResult.itemsReEncrypted} items, ` +
+                    `${reEncResult.categoriesReEncrypted} categories.`
+                );
             }
-
-            // Update the verifier in profile
-            const { error: updateError } = await supabase
-                .from('profiles')
-                .update({
-                    master_password_verifier: newVerifier,
-                } as Record<string, unknown>)
-                .eq('user_id', user.id);
-
-            if (updateError) {
-                throw new Error(`Failed to update profile: ${updateError.message}`);
-            }
-
-            // Store device key in IndexedDB
-            await storeDeviceKey(user.id, newDeviceKey);
-
-            // Update state
-            setEncryptionKey(newKey);
-            setVerificationHash(newVerifier);
-            setCurrentDeviceKey(newDeviceKey);
-            setDeviceKeyActive(true);
-
-            // Update offline credentials
-            await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion);
-
-            console.info(
-                `Device Key enabled. Re-encrypted ${reEncResult.itemsReEncrypted} items, ` +
-                `${reEncResult.categoriesReEncrypted} categories.`
-            );
 
             return { error: null };
         } catch (err) {
             console.error('Failed to enable Device Key:', err);
             return { error: err as Error };
         }
-    }, [user, salt, kdfVersion, encryptionKey]);
+    }, [user, salt, kdfVersion, encryptionKey, encryptedUserKey]);
 
     /**
      * Verifies vault items against stored integrity root.

@@ -484,12 +484,13 @@ export async function attemptKdfUpgrade(
                 newKdfOutputBytes.fill(0);
             }
             // Derive new userKey to create a fresh verifier
-            const newKdfOutputBytes2 = await deriveRawKey(masterPassword, saltBase64, CURRENT_KDF_VERSION, deviceKey);
             let newVerifier: string;
+            const newKdfOutputBytes2 = await deriveRawKey(masterPassword, saltBase64, CURRENT_KDF_VERSION, deviceKey);
             try {
                 const newUserKey = await unwrapUserKey(newEncryptedUserKey, newKdfOutputBytes2);
                 newVerifier = await createVerificationHash(newUserKey);
             } finally {
+                // Always wipe — even if unwrapUserKey or createVerificationHash throws
                 newKdfOutputBytes2.fill(0);
             }
             return {
@@ -669,7 +670,9 @@ export async function reEncryptVault(
         }
     }
 
-    // Capture legacy count before reset
+    // Capture and reset the module-level legacy counter.
+    // This is a best-effort metric — not guaranteed to be accurate under
+    // concurrent reEncryptVault calls (though none are expected in practice).
     const legacyFound = _legacyDecryptCount;
     _legacyDecryptCount = 0;
 
