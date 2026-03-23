@@ -72,7 +72,7 @@ const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
  *
  * Runs once per unlock after the UserKey is established. Re-wraps keys that
  * are still in the old KDF-derived format (e.g. `kdfVersion:salt:enc`) to the
- * new `usk-v1:…` / `pq-v2-usk:…` sentinel format. This is a non-destructive,
+ * new unified `usk-v1:…` sentinel format. This is a non-destructive,
  * idempotent operation — it checks the sentinel before doing any work.
  */
 async function migrateLegacyPrivateKeysToUserKey(
@@ -123,11 +123,15 @@ async function migrateLegacyPrivateKeysToUserKey(
                 : await decryptPrivateKeyLegacy(encPq, masterPassword, false);
             // wrapPrivateKeyWithUserKey includes the usk-v1: sentinel prefix.
             const newEncPq = await wrapPrivateKeyWithUserKey(plainPqKey, userKey);
-            await supabase
+            const { error: pqUpdateErr } = await supabase
                 .from('profiles')
                 .update({ pq_encrypted_private_key: newEncPq, updated_at: new Date().toISOString() } as Record<string, unknown>)
                 .eq('user_id', userId);
-            console.info('USK private key migration: PQ key re-wrapped to usk-v1 format.');
+            if (pqUpdateErr) {
+                console.warn('USK private key migration: PQ key update failed:', pqUpdateErr);
+            } else {
+                console.info('USK private key migration: PQ key re-wrapped to usk-v1 format.');
+            }
         }
     } catch (err) {
         console.warn('USK migration: PQ private key migration failed (non-fatal):', err);
