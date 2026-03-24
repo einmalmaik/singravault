@@ -1248,7 +1248,7 @@ async function deriveWrapKey(kdfOutputBytes: Uint8Array): Promise<Uint8Array> {
  *
  * INTERNAL — do not export. Use migrateToUserKey instead.
  */
-async function deriveInitialUserKeyBytes(kdfOutputBytes: Uint8Array): Promise<Uint8Array> {
+function deriveInitialUserKeyBytes(kdfOutputBytes: Uint8Array): Uint8Array {
     // Return a copy to allow the caller to fill(0) safely without aliasing issues.
     return new Uint8Array(kdfOutputBytes);
 }

@@ -30,6 +30,7 @@ import {
     createEncryptedUserKey,
     migrateToUserKey,
     unwrapUserKey,
+    rewrapUserKey,
     decryptPrivateKeyLegacy,
     wrapPrivateKeyWithUserKey,
 } from '@/services/cryptoService';
@@ -117,10 +118,9 @@ async function migrateLegacyPrivateKeysToUserKey(
 
         const encPq = profileRow?.pq_encrypted_private_key as string | null | undefined;
         if (encPq && !encPq.startsWith('usk-v1:')) {
-            // For pq-v2: format, extract the PQ part only
-            const plainPqKey = encPq.startsWith('pq-v2:')
-                ? await decryptPrivateKeyLegacy(encPq, masterPassword, true)
-                : await decryptPrivateKeyLegacy(encPq, masterPassword, false);
+            // profiles.pq_encrypted_private_key is always kdfVersion:salt:encData format.
+            // (pq-v2: combined format only appears in user_keys.encrypted_private_key)
+            const plainPqKey = await decryptPrivateKeyLegacy(encPq, masterPassword, false);
             // wrapPrivateKeyWithUserKey includes the usk-v1: sentinel prefix.
             const newEncPq = await wrapPrivateKeyWithUserKey(plainPqKey, userKey);
             const { error: pqUpdateErr } = await supabase
@@ -1343,11 +1343,22 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return rawKeyBytes;
             }
 
-            const derivedKey = await importMasterKey(rawKeyBytes);
-            const isValid = await verifyKey(verifier, derivedKey);
-            if (!isValid) {
-                rawKeyBytes.fill(0);
-                return null;
+            // Post-USK: verify with UserKey (not raw KDF bytes) — verifier was created with UserKey.
+            // Pre-USK / migrated accounts (UserKey = kdfOutputBytes): both paths are equivalent.
+            if (encryptedUserKey) {
+                const userKey = await unwrapUserKey(encryptedUserKey, rawKeyBytes);
+                const isValid = await verifyKey(verifier, userKey);
+                if (!isValid) {
+                    rawKeyBytes.fill(0);
+                    return null;
+                }
+            } else {
+                const derivedKey = await importMasterKey(rawKeyBytes);
+                const isValid = await verifyKey(verifier, derivedKey);
+                if (!isValid) {
+                    rawKeyBytes.fill(0);
+                    return null;
+                }
             }
 
             return rawKeyBytes;
@@ -1358,7 +1369,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             console.error('Failed to derive raw key for passkey:', err);
             return null;
         }
-    }, [user, salt, kdfVersion, isLocked, verificationHash]);
+    }, [user, salt, kdfVersion, isLocked, verificationHash, encryptedUserKey]);
 
     /**
      * Locks the vault and clears encryption key from memory
@@ -1395,7 +1406,52 @@ export function VaultProvider({ children }: VaultProviderProps) {
             // Generate new device key
             const newDeviceKey = generateDeviceKey();
 
-            // Derive new key WITH device key
+            if (encryptedUserKey) {
+                // ── USK path: rewrap UserKey under device-key-enhanced KDF ──
+                // Vault items stay encrypted under UserKey — no vault re-encryption needed.
+                // Only the 32-byte UserKey wrapper changes.
+                const oldKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion);
+                const newKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, newDeviceKey);
+                let newEncryptedUserKey: string;
+                try {
+                    newEncryptedUserKey = await rewrapUserKey(
+                        encryptedUserKey, oldKdfOutputBytes, newKdfOutputBytes,
+                    );
+                } finally {
+                    oldKdfOutputBytes.fill(0);
+                    newKdfOutputBytes.fill(0);
+                }
+                // Unwrap to create fresh verifier (kdfOutputBytes2 is the new device-enhanced bytes)
+                const kdfOutputBytes2 = await deriveRawKey(masterPassword, salt, kdfVersion, newDeviceKey);
+                let newVerifier: string;
+                try {
+                    const newUserKey = await unwrapUserKey(newEncryptedUserKey, kdfOutputBytes2);
+                    newVerifier = await createVerificationHash(newUserKey);
+                } finally {
+                    kdfOutputBytes2.fill(0);
+                }
+                const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({
+                        master_password_verifier: newVerifier,
+                        encrypted_user_key: newEncryptedUserKey,
+                    } as Record<string, unknown>)
+                    .eq('user_id', user.id);
+                if (updateError) {
+                    throw new Error(`Failed to update profile: ${updateError.message}`);
+                }
+                await storeDeviceKey(user.id, newDeviceKey);
+                setEncryptedUserKey(newEncryptedUserKey);
+                setVerificationHash(newVerifier);
+                setCurrentDeviceKey(newDeviceKey);
+                setDeviceKeyActive(true);
+                await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion, newEncryptedUserKey);
+                console.info('Device Key enabled (USK path). No vault re-encryption needed.');
+                return { error: null };
+            }
+
+            // ── Legacy path (pre-USK, encryptedUserKey = null) ──
+            // Vault items are encrypted directly with KDF-derived key — full re-encryption required.
             const newKey = await deriveKey(masterPassword, salt, kdfVersion, newDeviceKey);
 
             // Create new verification hash with the device-key-enhanced key
@@ -1478,7 +1534,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             console.error('Failed to enable Device Key:', err);
             return { error: err as Error };
         }
-    }, [user, salt, kdfVersion, encryptionKey]);
+    }, [user, salt, kdfVersion, encryptionKey, encryptedUserKey]);
 
     /**
      * Verifies vault items against stored integrity root.
