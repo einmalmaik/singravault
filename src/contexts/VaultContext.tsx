@@ -123,11 +123,15 @@ async function migrateLegacyPrivateKeysToUserKey(
                 : await decryptPrivateKeyLegacy(encPq, masterPassword, false);
             // wrapPrivateKeyWithUserKey includes the usk-v1: sentinel prefix.
             const newEncPq = await wrapPrivateKeyWithUserKey(plainPqKey, userKey);
-            await supabase
+            const { error: pqUpdateErr } = await supabase
                 .from('profiles')
                 .update({ pq_encrypted_private_key: newEncPq, updated_at: new Date().toISOString() } as Record<string, unknown>)
                 .eq('user_id', userId);
-            console.info('USK private key migration: PQ key re-wrapped to usk-v1 format.');
+            if (pqUpdateErr) {
+                console.warn('USK migration: PQ key update failed:', pqUpdateErr);
+            } else {
+                console.info('USK private key migration: PQ key re-wrapped to usk-v1 format.');
+            }
         }
     } catch (err) {
         console.warn('USK migration: PQ private key migration failed (non-fatal):', err);
