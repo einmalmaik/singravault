@@ -18,6 +18,8 @@ import {
     encrypt,
     generateSalt,
     generateUserKeyPair,
+    decryptPrivateKeyLegacy,
+    wrapPrivateKeyWithUserKey,
 } from '@/services/cryptoService';
 import { generatePQKeyPair } from '@/services/pqCryptoService';
 import { SECURITY_STANDARD_VERSION } from '@/services/securityStandard';
@@ -40,7 +42,7 @@ export const KEY_MATERIAL_ERROR_MASTER_PASSWORD_REQUIRED = 'MASTER_PASSWORD_REQU
 export async function ensureUserRsaKeyMaterial(
     params: EnsureRsaKeyMaterialParams,
 ): Promise<EnsureRsaKeyMaterialResult> {
-    const { userId, masterPassword } = params;
+    const { userId, masterPassword, userKey } = params;
 
     const { data: keyRow, error: fetchError } = await supabase
         .from('user_keys')
@@ -67,12 +69,19 @@ export async function ensureUserRsaKeyMaterial(
     }
 
     const userKeyPair = await generateUserKeyPair(masterPassword);
+    let encryptedPrivateKey = userKeyPair.encryptedPrivateKey;
+    if (userKey) {
+        // Decrypt the legacy-format key, then re-wrap under the UserKey.
+        // wrapPrivateKeyWithUserKey already includes the usk-v1: sentinel prefix.
+        const plainPrivateKey = await decryptPrivateKeyLegacy(userKeyPair.encryptedPrivateKey, masterPassword);
+        encryptedPrivateKey = await wrapPrivateKeyWithUserKey(plainPrivateKey, userKey);
+    }
     const { error: insertError } = await supabase
         .from('user_keys')
         .insert({
             user_id: userId,
             public_key: userKeyPair.publicKey,
-            encrypted_private_key: userKeyPair.encryptedPrivateKey,
+            encrypted_private_key: encryptedPrivateKey,
             updated_at: new Date().toISOString(),
         });
 
@@ -117,7 +126,7 @@ export async function ensureUserRsaKeyMaterial(
 export async function ensureUserPqKeyMaterial(
     params: EnsurePqKeyMaterialParams,
 ): Promise<EnsurePqKeyMaterialResult> {
-    const { userId, masterPassword } = params;
+    const { userId, masterPassword, userKey } = params;
 
     const { data: profileRow, error: fetchError } = await supabase
         .from('profiles')
@@ -181,16 +190,24 @@ export async function ensureUserPqKeyMaterial(
     }
 
     const pqKeys = generatePQKeyPair();
-    const salt = generateSalt();
-    const kdfVersion = CURRENT_KDF_VERSION;
-    const key = await deriveKey(masterPassword, salt, kdfVersion);
-    const encryptedPrivateKey = await encrypt(pqKeys.secretKey, key);
+    let pqEncryptedPrivateKeyField: string;
+    if (userKey) {
+        // Wrap PQ secret key with UserKey (USK format).
+        // wrapPrivateKeyWithUserKey already includes the usk-v1: sentinel prefix.
+        pqEncryptedPrivateKeyField = await wrapPrivateKeyWithUserKey(pqKeys.secretKey, userKey);
+    } else {
+        const salt = generateSalt();
+        const kdfVersion = CURRENT_KDF_VERSION;
+        const key = await deriveKey(masterPassword, salt, kdfVersion);
+        const encryptedPrivateKey = await encrypt(pqKeys.secretKey, key);
+        pqEncryptedPrivateKeyField = `${kdfVersion}:${salt}:${encryptedPrivateKey}`;
+    }
     const needsEnforcedAt = !profileRow?.pq_enforced_at;
 
     const profilePayload = {
         user_id: userId,
         pq_public_key: pqKeys.publicKey,
-        pq_encrypted_private_key: `${kdfVersion}:${salt}:${encryptedPrivateKey}`,
+        pq_encrypted_private_key: pqEncryptedPrivateKeyField,
         pq_key_version: 1,
         security_standard_version: SECURITY_STANDARD_VERSION,
         pq_enforced_at: profileRow?.pq_enforced_at ?? nowIso,
@@ -404,6 +421,8 @@ interface KeyMaterialError extends Error {
 export interface EnsureRsaKeyMaterialParams {
     userId: string;
     masterPassword?: string;
+    /** When provided, new private keys are wrapped with the UserKey (USK format). */
+    userKey?: CryptoKey;
 }
 
 export interface EnsureRsaKeyMaterialResult {
@@ -414,6 +433,8 @@ export interface EnsureRsaKeyMaterialResult {
 export interface EnsurePqKeyMaterialParams {
     userId: string;
     masterPassword?: string;
+    /** When provided, new private keys are wrapped with the UserKey (USK format). */
+    userKey?: CryptoKey;
 }
 
 export interface EnsurePqKeyMaterialResult {
@@ -426,6 +447,8 @@ export interface EnsurePqKeyMaterialResult {
 export interface EnsureHybridKeyMaterialParams {
     userId: string;
     masterPassword?: string;
+    /** When provided, new private keys are wrapped with the UserKey (USK format). */
+    userKey?: CryptoKey;
 }
 
 export interface EnsureHybridKeyMaterialResult {

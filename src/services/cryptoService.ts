@@ -413,14 +413,20 @@ export async function verifyKey(
 export interface KdfUpgradeResult {
     /** Whether the upgrade succeeded */
     upgraded: boolean;
-    /** New CryptoKey derived with upgraded parameters (only if upgraded) */
+    /** New CryptoKey derived with upgraded parameters (only if upgraded, legacy path only) */
     newKey?: CryptoKey;
-    /** Old CryptoKey (returned so caller can re-encrypt existing data) */
+    /** Old CryptoKey (returned so caller can re-encrypt existing data, legacy path only) */
     oldKey?: CryptoKey;
     /** New verification hash (only if upgraded) */
     newVerifier?: string;
     /** The KDF version that is now active */
     activeVersion: number;
+    /**
+     * New encrypted user key, re-wrapped under upgraded KDF parameters.
+     * Only set when encryptedUserKey was passed in (USK path).
+     * When set, the caller does NOT need to re-encrypt vault items.
+     */
+    newEncryptedUserKey?: string;
 }
 
 /**
@@ -458,12 +464,43 @@ export async function attemptKdfUpgrade(
     saltBase64: string,
     currentVersion: number,
     deviceKey?: Uint8Array,
+    encryptedUserKey?: string,
+    existingKdfOutputBytes?: Uint8Array,
 ): Promise<KdfUpgradeResult> {
     if (currentVersion >= CURRENT_KDF_VERSION) {
         return { upgraded: false, activeVersion: currentVersion };
     }
 
     try {
+        if (encryptedUserKey) {
+            // ── USK path: only re-wrap the UserKey under the stronger KDF params ──
+            // Vault items are NOT re-encrypted. Only the tiny 32-byte UserKey wrapper changes.
+            //
+            // Use the caller's already-derived bytes when available to avoid a redundant
+            // Argon2id call (Argon2id is intentionally expensive — re-deriving wastes seconds).
+            const ownedOldBytes = existingKdfOutputBytes
+                ? null
+                : await deriveRawKey(masterPassword, saltBase64, currentVersion, deviceKey);
+            const oldKdfOutputBytes = existingKdfOutputBytes ?? ownedOldBytes!;
+            const newKdfOutputBytes = await deriveRawKey(masterPassword, saltBase64, CURRENT_KDF_VERSION, deviceKey);
+            try {
+                // Keep newKdfOutputBytes alive until after unwrapUserKey — no second derivation needed.
+                const newEncryptedUserKey = await rewrapUserKey(encryptedUserKey, oldKdfOutputBytes, newKdfOutputBytes);
+                const newUserKey = await unwrapUserKey(newEncryptedUserKey, newKdfOutputBytes);
+                const newVerifier = await createVerificationHash(newUserKey);
+                return {
+                    upgraded: true,
+                    newVerifier,
+                    newEncryptedUserKey,
+                    activeVersion: CURRENT_KDF_VERSION,
+                };
+            } finally {
+                ownedOldBytes?.fill(0);
+                newKdfOutputBytes.fill(0);
+            }
+        }
+
+        // ── Legacy path: full vault re-encryption required ──
         // Derive key with the new, stronger parameters
         const newKey = await deriveKey(masterPassword, saltBase64, CURRENT_KDF_VERSION, deviceKey);
 
@@ -1118,7 +1155,7 @@ async function encryptWithPassword(plaintext: string, password: string): Promise
 
 /**
  * Decrypts data with a password
- * 
+ *
  * @param encryptedData - Encrypted data (format: salt:encryptedData)
  * @param password - Password to derive key from
  * @returns Decrypted plaintext
@@ -1144,4 +1181,353 @@ async function decryptWithPassword(encryptedData: string, password: string): Pro
 
     const key = await deriveKey(password, salt, kdfVersion);
     return decrypt(encrypted, key);
+}
+
+// ============ User Symmetric Key (USK) Layer ============
+//
+// Inspired by Bitwarden's layered key architecture.
+//
+// Instead of using the Argon2id KDF output directly as the vault encryption key,
+// we introduce a random User Symmetric Key (USK):
+//
+//   Argon2id(password, salt) → kdfOutputBytes (32 B)
+//       HKDF-Expand(kdfOutputBytes, info="singra-vault-wrap-v1") → wrapKey (32 B)
+//       AES-256-GCM(randomUSK, wrapKey) → profiles.encrypted_user_key
+//       randomUSK → encrypts all vault items, RSA private key, PQ private key
+//
+// Benefits over the direct-KDF-output approach:
+//   1. Password change: only re-wraps the 32-byte USK — vault items untouched
+//   2. HKDF domain separation: raw KDF output is never directly an encryption key
+//   3. Unified hierarchy: RSA and PQ private keys share the same wrap key (USK)
+//
+// Migration: existing users have profiles.encrypted_user_key = NULL.
+// On their first unlock, migrateToUserKey() is called. It derives the USK
+// deterministically from the KDF output so existing vault items (encrypted
+// under the old KDF-derived key) remain readable without re-encryption.
+
+/**
+ * Derives a 32-byte "wrap key" from the raw Argon2id output via HKDF.
+ * The wrap key is used exclusively to encrypt/decrypt the UserKey.
+ * It is cryptographically independent of the UserKey (different HKDF info string).
+ *
+ * INTERNAL — do not export. Use createEncryptedUserKey / unwrapUserKey instead.
+ */
+async function deriveWrapKey(kdfOutputBytes: Uint8Array): Promise<Uint8Array> {
+    const baseKey = await crypto.subtle.importKey(
+        'raw',
+        kdfOutputBytes as BufferSource,
+        'HKDF',
+        false,
+        ['deriveBits'],
+    );
+    const bits = await crypto.subtle.deriveBits(
+        {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            // Zero salt is correct here: IKM is already high-entropy Argon2id output.
+            // RFC 5869 §2.2 permits zero-byte salt when IKM is pseudorandom.
+            salt: new Uint8Array(32) as BufferSource,
+            info: new TextEncoder().encode('singra-vault-wrap-v1') as BufferSource,
+        },
+        baseKey,
+        256,
+    );
+    return new Uint8Array(bits);
+}
+
+/**
+ * Returns the raw Argon2id KDF output bytes to serve as the initial UserKey
+ * for existing accounts migrating to the USK architecture.
+ *
+ * MUST return the raw kdfOutputBytes unchanged — pre-USK vault items were
+ * encrypted directly with importMasterKey(kdfOutputBytes), so the UserKey
+ * must be identical to avoid vault re-encryption on migration.
+ *
+ * The wrapKey (HKDF-derived, different info string) is still domain-separated
+ * from this value: wrapKey = HKDF(kdfOutputBytes, "singra-vault-wrap-v1").
+ *
+ * INTERNAL — do not export. Use migrateToUserKey instead.
+ */
+function deriveInitialUserKeyBytes(kdfOutputBytes: Uint8Array): Uint8Array {
+    // Return a copy to allow the caller to fill(0) safely without aliasing issues.
+    return new Uint8Array(kdfOutputBytes);
+}
+
+/**
+ * Bundle returned by createEncryptedUserKey / migrateToUserKey.
+ */
+export interface UserKeyBundle {
+    /** AES-256-GCM encrypted UserKey (base64(IV||CT||tag)), wrapped under wrapKey */
+    encryptedUserKey: string;
+    /** Non-extractable AES-256-GCM CryptoKey, ready for vault operations */
+    userKey: CryptoKey;
+}
+
+/**
+ * Generates a new random UserKey and encrypts it under a wrapKey derived from
+ * the KDF output. Used for NEW accounts (setupMasterPassword).
+ *
+ * The UserKey is cryptographically random and completely independent of the
+ * master password. The master password can therefore be changed without
+ * re-encrypting any vault data — only the encryptedUserKey wrapper changes.
+ *
+ * @param kdfOutputBytes - Raw 32 bytes from Argon2id (caller must wipe after use)
+ */
+export async function createEncryptedUserKey(kdfOutputBytes: Uint8Array): Promise<UserKeyBundle> {
+    const userKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+    let wrapKeyBytes: Uint8Array | null = null;
+    try {
+        wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
+        const wrapKey = await importMasterKey(wrapKeyBytes);
+        const encryptedUserKey = await encrypt(uint8ArrayToBase64(userKeyBytes), wrapKey);
+        const userKey = await importMasterKey(userKeyBytes);
+        return { encryptedUserKey, userKey };
+    } finally {
+        userKeyBytes.fill(0);
+        wrapKeyBytes?.fill(0);
+    }
+}
+
+/**
+ * Derives a deterministic UserKey from the KDF output and wraps it.
+ * Used for EXISTING accounts migrating to the USK architecture on first unlock.
+ *
+ * Because the UserKey is derived from the same KDF output that previously
+ * encrypted vault items directly, existing data is immediately readable
+ * under the new UserKey — no vault re-encryption required.
+ *
+ * @param kdfOutputBytes - Raw 32 bytes from Argon2id (caller must wipe after use)
+ */
+export async function migrateToUserKey(kdfOutputBytes: Uint8Array): Promise<UserKeyBundle> {
+    let userKeyBytes: Uint8Array | null = null;
+    let wrapKeyBytes: Uint8Array | null = null;
+    try {
+        userKeyBytes = await deriveInitialUserKeyBytes(kdfOutputBytes);
+        wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
+        const wrapKey = await importMasterKey(wrapKeyBytes);
+        const encryptedUserKey = await encrypt(uint8ArrayToBase64(userKeyBytes), wrapKey);
+        const userKey = await importMasterKey(userKeyBytes);
+        return { encryptedUserKey, userKey };
+    } finally {
+        userKeyBytes?.fill(0);
+        wrapKeyBytes?.fill(0);
+    }
+}
+
+/**
+ * Decrypts the stored encryptedUserKey to obtain the UserKey for vault operations.
+ * Called on every unlock after the initial migration.
+ *
+ * @param encryptedUserKey - Value from profiles.encrypted_user_key
+ * @param kdfOutputBytes   - Raw 32 bytes from Argon2id (caller must wipe after use)
+ * @throws If the KDF output is wrong or the data is tampered
+ */
+export async function unwrapUserKey(
+    encryptedUserKey: string,
+    kdfOutputBytes: Uint8Array,
+): Promise<CryptoKey> {
+    let wrapKeyBytes: Uint8Array | null = null;
+    let userKeyBytes: Uint8Array | null = null;
+    try {
+        wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
+        const wrapKey = await importMasterKey(wrapKeyBytes);
+        const userKeyBase64 = await decrypt(encryptedUserKey, wrapKey);
+        userKeyBytes = base64ToUint8Array(userKeyBase64);
+        return await importMasterKey(userKeyBytes);
+    } finally {
+        wrapKeyBytes?.fill(0);
+        userKeyBytes?.fill(0);
+    }
+}
+
+/**
+ * Re-wraps an existing UserKey under a new KDF output (new master password / new salt).
+ * The UserKey itself does NOT change — only its encrypted wrapper is updated.
+ * Vault items, RSA keys, and PQ keys are NOT re-encrypted.
+ *
+ * @param encryptedUserKey  - Current profiles.encrypted_user_key value
+ * @param oldKdfOutputBytes - KDF output from the old master password (caller must wipe)
+ * @param newKdfOutputBytes - KDF output from the new master password (caller must wipe)
+ * @returns New encryptedUserKey value to write to profiles
+ */
+export async function rewrapUserKey(
+    encryptedUserKey: string,
+    oldKdfOutputBytes: Uint8Array,
+    newKdfOutputBytes: Uint8Array,
+): Promise<string> {
+    let oldWrapKeyBytes: Uint8Array | null = null;
+    let newWrapKeyBytes: Uint8Array | null = null;
+    try {
+        oldWrapKeyBytes = await deriveWrapKey(oldKdfOutputBytes);
+        const oldWrapKey = await importMasterKey(oldWrapKeyBytes);
+        // Note: userKeyBase64 is a JS string — cannot be securely wiped.
+        const userKeyBase64 = await decrypt(encryptedUserKey, oldWrapKey);
+
+        newWrapKeyBytes = await deriveWrapKey(newKdfOutputBytes);
+        const newWrapKey = await importMasterKey(newWrapKeyBytes);
+        return await encrypt(userKeyBase64, newWrapKey);
+    } finally {
+        oldWrapKeyBytes?.fill(0);
+        newWrapKeyBytes?.fill(0);
+    }
+}
+
+/**
+ * Encrypts a private key (RSA JWK string or PQ base64 secret) with the UserKey.
+ * Replaces the old pattern of deriving a separate KDF key per private key.
+ *
+ * Stored format: `usk-v1:<base64(IV||CT||tag)>`
+ * The sentinel prefix is checked by read paths to dispatch to this function.
+ *
+ * @param privateKeyMaterial - Serialized private key string
+ * @param userKey            - The UserKey CryptoKey
+ * @returns Sentinel-prefixed ciphertext string
+ */
+export async function wrapPrivateKeyWithUserKey(
+    privateKeyMaterial: string,
+    userKey: CryptoKey,
+): Promise<string> {
+    const enc = await encrypt(privateKeyMaterial, userKey);
+    return `usk-v1:${enc}`;
+}
+
+/**
+ * Decrypts a private key wrapped with wrapPrivateKeyWithUserKey.
+ *
+ * @param wrappedKey - Sentinel-prefixed ciphertext (`usk-v1:<base64>`)
+ * @param userKey    - The UserKey CryptoKey
+ * @returns Decrypted private key material string
+ * @throws If the sentinel prefix is missing or decryption fails
+ */
+export async function unwrapPrivateKeyWithUserKey(
+    wrappedKey: string,
+    userKey: CryptoKey,
+): Promise<string> {
+    const USK_V1_PREFIX = 'usk-v1:';
+    if (!wrappedKey.startsWith(USK_V1_PREFIX)) {
+        throw new Error('unwrapPrivateKeyWithUserKey: unexpected format (missing usk-v1: prefix)');
+    }
+    return decrypt(wrappedKey.slice(USK_V1_PREFIX.length), userKey);
+}
+
+/**
+ * Decrypts a legacy private key that was encrypted with its own KDF derivation.
+ *
+ * Handles these formats:
+ *   - `kdfVersion:salt:encBase64`      (RSA v1, PQ keys)
+ *   - `salt:encBase64`                 (very old RSA, no version prefix)
+ *   - `pq-v2:kdfVersion:salt:encRsa:encPq`  (RSA+PQ combined v2)
+ *     → when detectPqPart=false (default): returns the RSA private key
+ *     → when detectPqPart=true:            returns the PQ secret key
+ *
+ * @param encryptedPrivateKey - Stored encrypted key string
+ * @param masterPassword      - Master password to derive the decryption key
+ * @param extractPqPart       - For pq-v2 format: extract PQ key instead of RSA key
+ * @returns Decrypted private key material string
+ */
+export async function decryptPrivateKeyLegacy(
+    encryptedPrivateKey: string,
+    masterPassword: string,
+    extractPqPart = false,
+): Promise<string> {
+    // pq-v2:kdfVersion:salt:encRsaKey:encPqKey
+    if (encryptedPrivateKey.startsWith('pq-v2:')) {
+        const rest = encryptedPrivateKey.slice('pq-v2:'.length);
+        // rest = "kdfVersion:salt:encRsa:encPq"
+        // encRsa and encPq are themselves base64 strings that may contain '+'/'/' but
+        // the split(':') approach is safe only if we split into exactly 4 parts max.
+        const colonIdx1 = rest.indexOf(':');
+        const colonIdx2 = rest.indexOf(':', colonIdx1 + 1);
+        const colonIdx3 = rest.indexOf(':', colonIdx2 + 1);
+        if (colonIdx1 < 0 || colonIdx2 < 0 || colonIdx3 < 0) {
+            throw new Error('decryptPrivateKeyLegacy: invalid pq-v2 format');
+        }
+        const kdfVersion = parseInt(rest.slice(0, colonIdx1), 10);
+        const salt = rest.slice(colonIdx1 + 1, colonIdx2);
+        const encRsaKey = rest.slice(colonIdx2 + 1, colonIdx3);
+        const encPqKey = rest.slice(colonIdx3 + 1);
+        const key = await deriveKey(masterPassword, salt, kdfVersion);
+        return extractPqPart
+            ? decrypt(encPqKey, key)
+            : decrypt(encRsaKey, key);
+    }
+
+    // kdfVersion:salt:encData  or  salt:encData (legacy without version)
+    const parts = encryptedPrivateKey.split(':');
+    let kdfVersion = 1;
+    let salt: string;
+    let encData: string;
+
+    if (parts.length === 2) {
+        // Very old format: salt:encData
+        salt = parts[0];
+        encData = parts[1];
+    } else if (parts.length === 3) {
+        kdfVersion = parseInt(parts[0], 10);
+        salt = parts[1];
+        encData = parts[2];
+    } else {
+        throw new Error(`decryptPrivateKeyLegacy: unrecognised format (${parts.length} colon-separated parts)`);
+    }
+
+    const key = await deriveKey(masterPassword, salt, kdfVersion);
+    return decrypt(encData, key);
+}
+
+// ============ Private-Key Dispatcher ============
+
+/**
+ * Decrypts a stored RSA private key, dispatching on format sentinel.
+ *
+ * Supports:
+ *   - `usk-v1:<base64>`  — wrapped with UserKey (post-USK migration)
+ *   - legacy formats     — delegated to `decryptPrivateKeyLegacy`
+ *
+ * @param encryptedPrivateKey - Stored encrypted key from `user_keys.encrypted_private_key`
+ * @param userKey             - UserKey CryptoKey (used when sentinel is `usk-v1:`)
+ * @param masterPassword      - Master password (used for legacy formats)
+ */
+export async function getDecryptedRsaPrivateKey(
+    encryptedPrivateKey: string,
+    userKey: CryptoKey | null,
+    masterPassword: string,
+): Promise<string> {
+    if (encryptedPrivateKey.startsWith('usk-v1:')) {
+        if (!userKey) {
+            throw new Error('getDecryptedRsaPrivateKey: UserKey required for usk-v1 format');
+        }
+        // Pass the full string — unwrapPrivateKeyWithUserKey handles the prefix internally.
+        return unwrapPrivateKeyWithUserKey(encryptedPrivateKey, userKey);
+    }
+    return decryptPrivateKeyLegacy(encryptedPrivateKey, masterPassword, false);
+}
+
+/**
+ * Decrypts a stored PQ (ML-KEM-768) private key, dispatching on format sentinel.
+ *
+ * Supports:
+ *   - `usk-v1:<base64>` — wrapped with UserKey (post-USK migration; same sentinel as RSA)
+ *   - legacy formats     — delegated to `decryptPrivateKeyLegacy`
+ *
+ * @param encryptedPqPrivateKey - Stored encrypted key from `profiles.pq_encrypted_private_key`
+ * @param userKey               - UserKey CryptoKey (used when sentinel is `usk-v1:`)
+ * @param masterPassword        - Master password (used for legacy formats)
+ */
+export async function getDecryptedPqPrivateKey(
+    encryptedPqPrivateKey: string,
+    userKey: CryptoKey | null,
+    masterPassword: string,
+): Promise<string> {
+    if (encryptedPqPrivateKey.startsWith('usk-v1:')) {
+        if (!userKey) {
+            throw new Error('getDecryptedPqPrivateKey: UserKey required for usk-v1 format');
+        }
+        // Pass the full string — unwrapPrivateKeyWithUserKey handles the prefix internally.
+        return unwrapPrivateKeyWithUserKey(encryptedPqPrivateKey, userKey);
+    }
+    // Legacy pq-v2: format stores RSA+PQ combined; extract only the PQ part
+    if (encryptedPqPrivateKey.startsWith('pq-v2:')) {
+        return decryptPrivateKeyLegacy(encryptedPqPrivateKey, masterPassword, true);
+    }
+    return decryptPrivateKeyLegacy(encryptedPqPrivateKey, masterPassword, false);
 }
