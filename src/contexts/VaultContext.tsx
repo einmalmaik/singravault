@@ -1410,7 +1410,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 // ── USK path: rewrap UserKey under device-key-enhanced KDF ──
                 // Vault items stay encrypted under UserKey — no vault re-encryption needed.
                 // Only the 32-byte UserKey wrapper changes.
-                const oldKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion);
+                // Use currentDeviceKey so old bytes match what was used to wrap encryptedUserKey last time.
+                const oldKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
                 const newKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, newDeviceKey);
                 let newEncryptedUserKey: string;
                 try {
@@ -1534,7 +1535,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             console.error('Failed to enable Device Key:', err);
             return { error: err as Error };
         }
-    }, [user, salt, kdfVersion, encryptionKey, encryptedUserKey]);
+    }, [user, salt, kdfVersion, encryptionKey, encryptedUserKey, currentDeviceKey]);
 
     /**
      * Verifies vault items against stored integrity root.

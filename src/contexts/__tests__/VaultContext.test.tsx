@@ -75,6 +75,7 @@ vi.mock("@/services/cryptoService", () => ({
   unwrapUserKey: vi.fn(() => Promise.resolve(
     { type: 'secret', extractable: false, usages: ['encrypt', 'decrypt'] }
   )),
+  rewrapUserKey: vi.fn(() => Promise.resolve('mock-rewrapped-user-key')),
   decryptPrivateKeyLegacy: vi.fn(() => Promise.resolve('mock-plain-private-key')),
   wrapPrivateKeyWithUserKey: vi.fn(() => Promise.resolve('mock-wrapped-private-key')),
   CURRENT_KDF_VERSION: 2,
