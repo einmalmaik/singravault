@@ -72,7 +72,7 @@ const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
  *
  * Runs once per unlock after the UserKey is established. Re-wraps keys that
  * are still in the old KDF-derived format (e.g. `kdfVersion:salt:enc`) to the
- * new `usk-v1:…` / `pq-v2-usk:…` sentinel format. This is a non-destructive,
+ * new `usk-v1:` sentinel format. This is a non-destructive,
  * idempotent operation — it checks the sentinel before doing any work.
  */
 async function migrateLegacyPrivateKeysToUserKey(
@@ -925,6 +925,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
             const kdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
 
             let activeKey: CryptoKey;
+            // Tracks whether the PRE-USK migration wrote a new verifier this unlock.
+            // Prevents the legacy localStorage verifier migration from overwriting it
+            // (React setState is async — the state variable hasn't updated yet).
+            let uskMigrationWroteNewVerifier = false;
 
             try {
                 if (encryptedUserKey) {
@@ -944,6 +948,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                             masterPassword, salt, kdfVersion,
                             currentDeviceKey || undefined,
                             encryptedUserKey,
+                            kdfOutputBytes, // avoid re-deriving already-computed bytes
                         );
                         if (upgrade.upgraded && upgrade.newEncryptedUserKey && upgrade.newVerifier) {
                             const { error: upgradeError } = await supabase
@@ -993,6 +998,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                             } as Record<string, unknown>)
                             .eq('user_id', user.id);
                         if (!uskError) {
+                            uskMigrationWroteNewVerifier = true;
                             setEncryptedUserKey(uskBundle.encryptedUserKey);
                             setVerificationHash(newVerifier);
                             await saveOfflineCredentials(
@@ -1026,7 +1032,9 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }
 
             // One-time migration: persist legacy verifier to profile.
-            if (!verificationHash && legacyHash) {
+            // Guard: skip if USK migration already wrote a fresh verifier this unlock
+            // (React setState is async — verificationHash hasn't updated in this execution context).
+            if (!verificationHash && legacyHash && !uskMigrationWroteNewVerifier) {
                 const { error: migrateError } = await supabase
                     .from('profiles')
                     .update({ master_password_verifier: legacyHash })

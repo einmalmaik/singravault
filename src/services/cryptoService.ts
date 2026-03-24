@@ -465,6 +465,7 @@ export async function attemptKdfUpgrade(
     currentVersion: number,
     deviceKey?: Uint8Array,
     encryptedUserKey?: string,
+    existingKdfOutputBytes?: Uint8Array,
 ): Promise<KdfUpgradeResult> {
     if (currentVersion >= CURRENT_KDF_VERSION) {
         return { upgraded: false, activeVersion: currentVersion };
@@ -474,30 +475,29 @@ export async function attemptKdfUpgrade(
         if (encryptedUserKey) {
             // ── USK path: only re-wrap the UserKey under the stronger KDF params ──
             // Vault items are NOT re-encrypted. Only the tiny 32-byte UserKey wrapper changes.
-            const oldKdfOutputBytes = await deriveRawKey(masterPassword, saltBase64, currentVersion, deviceKey);
+            //
+            // Use the caller's already-derived bytes when available to avoid a redundant
+            // Argon2id call (Argon2id is intentionally expensive — re-deriving wastes seconds).
+            const ownedOldBytes = existingKdfOutputBytes
+                ? null
+                : await deriveRawKey(masterPassword, saltBase64, currentVersion, deviceKey);
+            const oldKdfOutputBytes = existingKdfOutputBytes ?? ownedOldBytes!;
             const newKdfOutputBytes = await deriveRawKey(masterPassword, saltBase64, CURRENT_KDF_VERSION, deviceKey);
-            let newEncryptedUserKey: string;
             try {
-                newEncryptedUserKey = await rewrapUserKey(encryptedUserKey, oldKdfOutputBytes, newKdfOutputBytes);
+                // Keep newKdfOutputBytes alive until after unwrapUserKey — no second derivation needed.
+                const newEncryptedUserKey = await rewrapUserKey(encryptedUserKey, oldKdfOutputBytes, newKdfOutputBytes);
+                const newUserKey = await unwrapUserKey(newEncryptedUserKey, newKdfOutputBytes);
+                const newVerifier = await createVerificationHash(newUserKey);
+                return {
+                    upgraded: true,
+                    newVerifier,
+                    newEncryptedUserKey,
+                    activeVersion: CURRENT_KDF_VERSION,
+                };
             } finally {
-                oldKdfOutputBytes.fill(0);
+                ownedOldBytes?.fill(0);
                 newKdfOutputBytes.fill(0);
             }
-            // Derive new userKey to create a fresh verifier
-            const newKdfOutputBytes2 = await deriveRawKey(masterPassword, saltBase64, CURRENT_KDF_VERSION, deviceKey);
-            let newVerifier: string;
-            try {
-                const newUserKey = await unwrapUserKey(newEncryptedUserKey, newKdfOutputBytes2);
-                newVerifier = await createVerificationHash(newUserKey);
-            } finally {
-                newKdfOutputBytes2.fill(0);
-            }
-            return {
-                upgraded: true,
-                newVerifier,
-                newEncryptedUserKey,
-                activeVersion: CURRENT_KDF_VERSION,
-            };
         }
 
         // ── Legacy path: full vault re-encryption required ──
