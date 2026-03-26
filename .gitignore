@@ -28,7 +28,25 @@ loadtest/users.txt
 loadtest/tokens.txt
 
 AGENTS.md
+CLAUDE.md
+claude.md
 GEMINI.md
+gemini.md
+.claude/
+.minimax/
+.codex/
+.cursor/
+.roo/
+.windsurf/
+.aider/
+.cody/
+.kiro/
+.mcp.json
+loadtest/tokens.txt.failed.txt
+local_migrations*.txt
+test_results.txt
+vitest.out
+*.tsbuildinfo
 
 # GPG keys (never commit private key material)
 *.gpg
