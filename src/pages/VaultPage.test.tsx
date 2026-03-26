@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import VaultPage from "./VaultPage";
 
 const mockSyncOfflineMutations = vi.fn();
+const VALID_ITEM_ID = "123e4567-e89b-12d3-a456-426614174000";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -106,6 +107,34 @@ describe("VaultPage", () => {
 
   it("opens the editor from the edit query param and removes the deep-link params", async () => {
     render(
+      <MemoryRouter initialEntries={[`/vault?edit=${VALID_ITEM_ID}&source=vault-health`]}>
+        <Routes>
+          <Route
+            path="/vault"
+            element={
+              <>
+                <LocationProbe />
+                <VaultPage />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("vault-item-dialog")).toHaveTextContent(`open:true;item:${VALID_ITEM_ID}`);
+    });
+
+    expect(screen.getByTestId("vault-item-dialog")).toHaveTextContent("types:password|note");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("location-search")).toBeEmptyDOMElement();
+    });
+  });
+
+  it("ignores invalid edit query params instead of opening the create dialog", async () => {
+    render(
       <MemoryRouter initialEntries={["/vault?edit=item-123&source=vault-health"]}>
         <Routes>
           <Route
@@ -122,10 +151,8 @@ describe("VaultPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("vault-item-dialog")).toHaveTextContent("open:true;item:item-123");
+      expect(screen.getByTestId("vault-item-dialog")).toHaveTextContent("open:false;item:null");
     });
-
-    expect(screen.getByTestId("vault-item-dialog")).toHaveTextContent("types:password|note");
 
     await waitFor(() => {
       expect(screen.getByTestId("location-search")).toBeEmptyDOMElement();

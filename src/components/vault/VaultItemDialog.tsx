@@ -85,6 +85,11 @@ import {
     upsertOfflineCategoryRow,
     upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
+import {
+    getAllowedCreateTypes,
+    resolveInitialCreateType,
+    type VaultItemType,
+} from './vaultItemDialogConfig';
 
 interface Category {
     id: string;
@@ -115,7 +120,6 @@ const normalizeUrl = (url: string | undefined): string | null => {
 
 type ItemFormData = z.infer<typeof itemSchema>;
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
-type VaultItemType = 'password' | 'note' | 'totp';
 
 interface VaultItemDialogProps {
     open: boolean;
@@ -127,7 +131,6 @@ interface VaultItemDialogProps {
 }
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
-const ALL_ITEM_TYPES: VaultItemType[] = ['password', 'note', 'totp'];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function sanitizeOptionalUuid(value: string | null | undefined): string | null {
@@ -135,37 +138,6 @@ function sanitizeOptionalUuid(value: string | null | undefined): string | null {
     const trimmed = value.trim();
     if (trimmed === '') return null;
     return UUID_PATTERN.test(trimmed) ? trimmed : null;
-}
-
-function getAllowedCreateTypes(allowedTypes?: VaultItemType[]): VaultItemType[] {
-    if (!allowedTypes || allowedTypes.length === 0) {
-        return ALL_ITEM_TYPES;
-    }
-
-    return ALL_ITEM_TYPES.filter((type) => allowedTypes.includes(type));
-}
-
-function resolveInitialCreateType(
-    initialType: VaultItemType,
-    configuredTypes: VaultItemType[],
-    canUseTotp: boolean,
-): VaultItemType {
-    const accessibleTypes = configuredTypes.filter((type) => type !== 'totp' || canUseTotp);
-    const preferredType = initialType === 'totp' && !canUseTotp ? 'password' : initialType;
-
-    if (accessibleTypes.includes(preferredType)) {
-        return preferredType;
-    }
-
-    if (accessibleTypes.length > 0) {
-        return accessibleTypes[0];
-    }
-
-    if (configuredTypes.includes(preferredType)) {
-        return preferredType;
-    }
-
-    return configuredTypes[0] || 'password';
 }
 
 export function VaultItemDialog({

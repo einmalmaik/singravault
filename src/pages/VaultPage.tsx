@@ -45,6 +45,20 @@ import { useToast } from '@/hooks/use-toast';
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
 export type ViewMode = 'grid' | 'list';
 const VAULT_CREATE_ITEM_TYPES = ['password', 'note'] as const;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function sanitizeEditItemId(value: string | null): string | null {
+    if (!value) {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed === '' || !UUID_PATTERN.test(trimmed)) {
+        return null;
+    }
+
+    return trimmed;
+}
 
 export default function VaultPage() {
     const { t } = useTranslation();
@@ -80,17 +94,23 @@ export default function VaultPage() {
     }, []);
 
     useEffect(() => {
-        const editItemId = searchParams.get('edit');
+        const rawEditItemId = searchParams.get('edit');
+        if (!rawEditItemId) {
+            return;
+        }
+
+        const editItemId = sanitizeEditItemId(rawEditItemId);
+        const nextSearchParams = new URLSearchParams(searchParams);
+        nextSearchParams.delete('edit');
+        nextSearchParams.delete('source');
+
         if (!editItemId) {
+            setSearchParams(nextSearchParams, { replace: true });
             return;
         }
 
         setEditingItemId(editItemId);
         setDialogOpen(true);
-
-        const nextSearchParams = new URLSearchParams(searchParams);
-        nextSearchParams.delete('edit');
-        nextSearchParams.delete('source');
         setSearchParams(nextSearchParams, { replace: true });
     }, [searchParams, setSearchParams]);
 
