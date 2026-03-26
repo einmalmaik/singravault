@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
     Plus,
     Search,
@@ -44,10 +44,12 @@ import { useToast } from '@/hooks/use-toast';
 
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
 export type ViewMode = 'grid' | 'list';
+const VAULT_CREATE_ITEM_TYPES = ['password', 'note'] as const;
 
 export default function VaultPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { toast } = useToast();
     const isMobile = useIsMobile();
     const { user, loading: authLoading, authReady } = useAuth();
@@ -76,6 +78,21 @@ export default function VaultPage() {
             window.removeEventListener('offline', goOffline);
         };
     }, []);
+
+    useEffect(() => {
+        const editItemId = searchParams.get('edit');
+        if (!editItemId) {
+            return;
+        }
+
+        setEditingItemId(editItemId);
+        setDialogOpen(true);
+
+        const nextSearchParams = new URLSearchParams(searchParams);
+        nextSearchParams.delete('edit');
+        nextSearchParams.delete('source');
+        setSearchParams(nextSearchParams, { replace: true });
+    }, [searchParams, setSearchParams]);
 
     useEffect(() => {
         if (!user || isLocked || isSetupRequired || !isOnline) return;
@@ -189,6 +206,21 @@ export default function VaultPage() {
     const handleItemSaved = () => {
         // Trigger refresh of item list without full page reload
         setRefreshKey(prev => prev + 1);
+    };
+
+    const handleDialogOpenChange = (open: boolean) => {
+        setDialogOpen(open);
+
+        if (!open) {
+            setEditingItemId(null);
+
+            if (searchParams.get('edit') || searchParams.get('source')) {
+                const nextSearchParams = new URLSearchParams(searchParams);
+                nextSearchParams.delete('edit');
+                nextSearchParams.delete('source');
+                setSearchParams(nextSearchParams, { replace: true });
+            }
+        }
     };
 
     return (
@@ -364,9 +396,10 @@ export default function VaultPage() {
             {/* Create/Edit Dialog */}
             <VaultItemDialog
                 open={dialogOpen}
-                onOpenChange={setDialogOpen}
+                onOpenChange={handleDialogOpenChange}
                 itemId={editingItemId}
                 onSave={handleItemSaved}
+                allowedTypes={[...VAULT_CREATE_ITEM_TYPES]}
             />
         </div>
     );

@@ -115,16 +115,19 @@ const normalizeUrl = (url: string | undefined): string | null => {
 
 type ItemFormData = z.infer<typeof itemSchema>;
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
+type VaultItemType = 'password' | 'note' | 'totp';
 
 interface VaultItemDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     itemId: string | null;
     onSave?: () => void;
-    initialType?: 'password' | 'note' | 'totp';
+    initialType?: VaultItemType;
+    allowedTypes?: VaultItemType[];
 }
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
+const ALL_ITEM_TYPES: VaultItemType[] = ['password', 'note', 'totp'];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function sanitizeOptionalUuid(value: string | null | undefined): string | null {
@@ -134,16 +137,54 @@ function sanitizeOptionalUuid(value: string | null | undefined): string | null {
     return UUID_PATTERN.test(trimmed) ? trimmed : null;
 }
 
-export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialType = 'password' }: VaultItemDialogProps) {
+function getAllowedCreateTypes(allowedTypes?: VaultItemType[]): VaultItemType[] {
+    if (!allowedTypes || allowedTypes.length === 0) {
+        return ALL_ITEM_TYPES;
+    }
+
+    return ALL_ITEM_TYPES.filter((type) => allowedTypes.includes(type));
+}
+
+function resolveInitialCreateType(
+    initialType: VaultItemType,
+    configuredTypes: VaultItemType[],
+    canUseTotp: boolean,
+): VaultItemType {
+    const accessibleTypes = configuredTypes.filter((type) => type !== 'totp' || canUseTotp);
+    const preferredType = initialType === 'totp' && !canUseTotp ? 'password' : initialType;
+
+    if (accessibleTypes.includes(preferredType)) {
+        return preferredType;
+    }
+
+    if (accessibleTypes.length > 0) {
+        return accessibleTypes[0];
+    }
+
+    if (configuredTypes.includes(preferredType)) {
+        return preferredType;
+    }
+
+    return configuredTypes[0] || 'password';
+}
+
+export function VaultItemDialog({
+    open,
+    onOpenChange,
+    itemId,
+    onSave,
+    initialType = 'password',
+    allowedTypes,
+}: VaultItemDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
     const { encryptItem, decryptItem, encryptData, decryptData, isDuressMode } = useVault();
     const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
+    const createTypeOptions = getAllowedCreateTypes(allowedTypes);
+    const resolvedInitialItemType = resolveInitialCreateType(initialType, createTypeOptions, canUseTotp);
 
-    const [itemType, setItemType] = useState<'password' | 'note' | 'totp'>(
-        initialType === 'totp' && !canUseTotp ? 'password' : initialType
-    );
+    const [itemType, setItemType] = useState<VaultItemType>(() => resolvedInitialItemType);
     const [showPassword, setShowPassword] = useState(false);
     const [showGenerator, setShowGenerator] = useState(false);
     const [showScanner, setShowScanner] = useState(false);
@@ -297,7 +338,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     ? decrypted.isFavorite
                     : !!item.is_favorite;
                 const candidateType = decrypted.itemType || item.item_type || 'password';
-                const resolvedType: 'password' | 'note' | 'totp' =
+                const resolvedType: VaultItemType =
                     candidateType === 'note' || candidateType === 'totp' ? candidateType : 'password';
                 const resolvedCategoryId = decrypted.categoryId ?? item.category_id ?? null;
 
@@ -332,13 +373,21 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     useEffect(() => {
         if (!open) {
             form.reset();
-            setItemType('password');
             setShowPassword(false);
             setShowGenerator(false);
+            setShowScanner(false);
             setSelectedCategoryId(null);
             setCategoryDialogOpen(false);
         }
     }, [open, form]);
+
+    useEffect(() => {
+        if (!open || isEditing) {
+            return;
+        }
+
+        setItemType(resolvedInitialItemType);
+    }, [open, isEditing, resolvedInitialItemType]);
 
     const onSubmit = async (data: ItemFormData) => {
         if (!user) return;
@@ -540,11 +589,16 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     </DialogHeader>
 
                     {/* Item Type Tabs */}
-                    {!isEditing && (
+                    {!isEditing && createTypeOptions.length > 1 && (
                         <Tabs
                             value={itemType}
                             onValueChange={(v) => {
-                                if (v === 'totp' && !canUseTotp) {
+                                const nextType = v as VaultItemType;
+                                if (!createTypeOptions.includes(nextType)) {
+                                    return;
+                                }
+
+                                if (nextType === 'totp' && !canUseTotp) {
                                     toast({
                                         title: t('subscription.feature_locked_title'),
                                         description: t('subscription.feature_locked_description', {
@@ -554,25 +608,31 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                     });
                                     return;
                                 }
-                                setItemType(v as typeof itemType);
+                                setItemType(nextType);
                             }}
                         >
                             <TabsList className="w-full">
-                                <TabsTrigger value="password" className="flex-1">
-                                    <Key className="w-4 h-4 mr-2" />
-                                    {t('vault.itemTypes.password')}
-                                </TabsTrigger>
-                                <TabsTrigger value="note" className="flex-1">
-                                    <FileText className="w-4 h-4 mr-2" />
-                                    {t('vault.itemTypes.note')}
-                                </TabsTrigger>
-                                <TabsTrigger value="totp" className="flex-1" disabled={!canUseTotp}>
-                                    {canUseTotp
-                                        ? <Shield className="w-4 h-4 mr-2" />
-                                        : <Lock className="w-4 h-4 mr-2" />
-                                    }
-                                    {t('vault.itemTypes.totp')}
-                                </TabsTrigger>
+                                {createTypeOptions.includes('password') && (
+                                    <TabsTrigger value="password" className="flex-1">
+                                        <Key className="w-4 h-4 mr-2" />
+                                        {t('vault.itemTypes.password')}
+                                    </TabsTrigger>
+                                )}
+                                {createTypeOptions.includes('note') && (
+                                    <TabsTrigger value="note" className="flex-1">
+                                        <FileText className="w-4 h-4 mr-2" />
+                                        {t('vault.itemTypes.note')}
+                                    </TabsTrigger>
+                                )}
+                                {createTypeOptions.includes('totp') && (
+                                    <TabsTrigger value="totp" className="flex-1" disabled={!canUseTotp}>
+                                        {canUseTotp
+                                            ? <Shield className="w-4 h-4 mr-2" />
+                                            : <Lock className="w-4 h-4 mr-2" />
+                                        }
+                                        {t('vault.itemTypes.totp')}
+                                    </TabsTrigger>
+                                )}
                             </TabsList>
                         </Tabs>
                     )}
