@@ -30,6 +30,8 @@ loadtest/tokens.txt
 AGENTS.md
 GEMINI.md
 CLAUDE.md
+.mcp.json
+.minimax/
 
 # GPG keys (never commit private key material)
 *.gpg
@@ -40,3 +42,12 @@ notizen.md
 .env.production
 *.json
 /supabase/.temp
+*.tsbuildinfo
+vitest.out
+test_results.txt
+local_migrations*.txt
+
+.claude/*
+.claude
+.vercel/*
+.vercel
