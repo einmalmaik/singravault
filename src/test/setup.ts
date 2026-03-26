@@ -24,6 +24,24 @@ Object.defineProperty(window, "matchMedia", {
   }),
 });
 
+if (typeof window !== "undefined" && !window.ResizeObserver) {
+  class MockResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+
+  Object.defineProperty(window, "ResizeObserver", {
+    writable: true,
+    value: MockResizeObserver,
+  });
+
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    writable: true,
+    value: MockResizeObserver,
+  });
+}
+
 // ============================================================================
 // Web Crypto API Mock
 // ============================================================================
