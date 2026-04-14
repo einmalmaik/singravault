@@ -28,7 +28,7 @@ Du kannst Singra ganz einfach auf deinem eigenen PC laufen lassen.
 1. **Repository klonen**
    ```sh
    git clone https://github.com/einmalmaik/singravault.git
-   cd singra-secure-vault
+   cd singra-vault
    ```
 
 2. **Abhängigkeiten installieren**
