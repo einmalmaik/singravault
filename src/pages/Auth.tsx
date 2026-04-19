@@ -130,12 +130,13 @@ export default function Auth() {
         // We use the full hash and search to ensure all tokens are passed back
         const appUrl = `singravault://auth/callback${window.location.search}${currentHash}`;
         
-        // Wait a short moment so the user sees the message
+        // IMPORTANT: Redirect to app and then STOP here. 
+        // Do not proceed to log in the web-user.
         setTimeout(() => {
           window.location.assign(appUrl);
-        }, 1500);
+        }, 1000);
         
-        return;
+        return; // <--- This prevents the local web login!
       }
 
       const tokens = extractCallbackTokens(callbackUrl);
