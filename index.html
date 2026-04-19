@@ -33,48 +33,39 @@
         window.__SINGRA_TAURI_OAUTH_BOUNCE__ = true;
         sessionStorage.setItem("singra_tauri_oauth_callback", appUrl);
 
-        var safeAppUrl = appUrl
-          .replace(/&/g, "&amp;")
-          .replace(/"/g, "&quot;")
-          .replace(/</g, "&lt;");
-        var bounceDocument = [
-          '<!doctype html>',
-          '<html lang="de">',
-          '<head>',
-          '<meta charset="UTF-8" />',
-          '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
-          '<title>Singra Vault</title>',
-          '<style>',
-          ':root{--background:206 31% 4%;--foreground:188 29% 95%;--primary:193 45% 86%;--primary-foreground:195 43% 5%;--muted-foreground:196 19% 67%;--border:198 22% 26%;}',
-          '*{box-sizing:border-box}',
-          'body{min-height:100vh;margin:0;display:grid;place-items:center;background:hsl(var(--background));color:hsl(var(--foreground));font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;}',
-          'main{width:min(100% - 40px,360px);display:grid;gap:20px;justify-items:center;}',
-          'img{width:64px;height:64px;border-radius:8px;box-shadow:0 18px 48px rgb(0 0 0 / .38)}',
-          'h1{margin:0;font-size:22px;line-height:1.2;font-weight:700}',
-          'p{margin:0;color:hsl(var(--muted-foreground));font-size:14px;line-height:1.6}',
-          'a{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 18px;border-radius:8px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));font-size:14px;font-weight:700;text-decoration:none}',
-          '.spinner{width:26px;height:26px;border:3px solid hsl(var(--border));border-top-color:hsl(var(--primary));border-radius:999px;animation:spin 900ms linear infinite}',
-          '@keyframes spin{to{transform:rotate(360deg)}}',
-          '</style>',
-          '</head>',
-          '<body>',
-          '<main>',
-          '<img src="/singra-icon.png" alt="" />',
-          '<div class="spinner" aria-hidden="true"></div>',
-          '<h1>Verbindung mit Singra Vault</h1>',
-          '<p>Die Desktop-App wird geöffnet. Bitte bestätige die Browser-Abfrage.</p>',
-          '<a href="' + safeAppUrl + '">App öffnen</a>',
-          '</main>',
-          '</body>',
-          '</html>',
-        ].join('');
+        document.documentElement.setAttribute("data-tauri-oauth-bounce", "true");
+        window.__SINGRA_TAURI_OAUTH_URL__ = appUrl;
 
-        document.open();
-        document.write(bounceDocument);
-        document.close();
+        var wireBounce = function () {
+          var openButton = document.getElementById("singra-open-app");
+          var callbackField = document.getElementById("singra-callback-url");
+          var copyButton = document.getElementById("singra-copy-link");
+
+          if (openButton) openButton.setAttribute("href", appUrl);
+          if (callbackField) callbackField.value = appUrl;
+          if (copyButton && callbackField) {
+            copyButton.addEventListener("click", function () {
+              var done = function () { copyButton.textContent = "Anmelde-Link kopiert"; };
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(appUrl).then(done).catch(function () {
+                  callbackField.select();
+                });
+              } else {
+                callbackField.select();
+              }
+            });
+          }
+        };
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", wireBounce, { once: true });
+        } else {
+          wireBounce();
+        }
+
         setTimeout(function () {
-          window.location.href = appUrl;
-        }, 100);
+          window.location.assign(appUrl);
+        }, 300);
       } catch (_) {
         // React fallback handles malformed callback URLs.
       }
@@ -101,6 +92,128 @@
   <meta name="theme-color" content="#c7e5ed" />
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' http://ipc.localhost http://localhost:8080 ws://localhost:8080 http://127.0.0.1:8080 ws://127.0.0.1:8080 https://*.supabase.co https://api.pwnedpasswords.com wss://*.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self';" />
+  <style>
+    #tauri-oauth-bounce {
+      display: none;
+    }
+
+    html[data-tauri-oauth-bounce="true"] body {
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(circle at 50% 10%, hsl(193 45% 86% / 0.10), transparent 34rem),
+        hsl(206 31% 4%);
+      color: hsl(188 29% 95%);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    html[data-tauri-oauth-bounce="true"] #root {
+      display: none;
+    }
+
+    html[data-tauri-oauth-bounce="true"] #tauri-oauth-bounce {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .oauth-bounce__content {
+      width: min(100%, 420px);
+      display: grid;
+      gap: 18px;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .oauth-bounce__logo {
+      width: 72px;
+      height: 72px;
+      border-radius: 8px;
+      box-shadow: 0 18px 48px rgb(0 0 0 / 0.38);
+    }
+
+    .oauth-bounce__spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid hsl(198 22% 26%);
+      border-top-color: hsl(193 45% 86%);
+      border-radius: 999px;
+      animation: oauth-bounce-spin 900ms linear infinite;
+    }
+
+    .oauth-bounce__title {
+      margin: 0;
+      font-size: clamp(1.35rem, 1rem + 1vw, 1.75rem);
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .oauth-bounce__text {
+      margin: 0;
+      color: hsl(196 19% 67%);
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    .oauth-bounce__actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+    }
+
+    .oauth-bounce__button {
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid hsl(198 22% 26%);
+      border-radius: 8px;
+      padding: 0 18px;
+      background: hsl(193 45% 86%);
+      color: hsl(195 43% 5%);
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .oauth-bounce__button--secondary {
+      background: hsl(198 30% 12%);
+      color: hsl(188 29% 95%);
+    }
+
+    .oauth-bounce__manual {
+      width: 100%;
+      color: hsl(196 19% 67%);
+      font-size: 0.85rem;
+    }
+
+    .oauth-bounce__manual summary {
+      cursor: pointer;
+    }
+
+    .oauth-bounce__manual textarea {
+      width: 100%;
+      min-height: 74px;
+      margin-top: 10px;
+      border: 1px solid hsl(198 22% 26%);
+      border-radius: 8px;
+      padding: 10px;
+      background: hsl(204 25% 10%);
+      color: hsl(188 29% 95%);
+      font: 0.78rem ui-monospace, SFMono-Regular, Consolas, monospace;
+      resize: vertical;
+    }
+
+    @keyframes oauth-bounce-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -115,6 +228,26 @@
 
 <body>
   <div id="root"></div>
+  <main id="tauri-oauth-bounce" aria-live="polite">
+    <section class="oauth-bounce__content">
+      <img class="oauth-bounce__logo" src="/singra-icon.png" alt="" />
+      <div class="oauth-bounce__spinner" aria-hidden="true"></div>
+      <h1 class="oauth-bounce__title">Verbindung mit Singra Vault</h1>
+      <p class="oauth-bounce__text">
+        Die Desktop-App wird geöffnet. Bitte bestätige die Browser-Abfrage.
+      </p>
+      <div class="oauth-bounce__actions">
+        <a id="singra-open-app" class="oauth-bounce__button" href="singravault://auth/callback">App öffnen</a>
+        <button id="singra-copy-link" class="oauth-bounce__button oauth-bounce__button--secondary" type="button">
+          Anmelde-Link kopieren
+        </button>
+      </div>
+      <details class="oauth-bounce__manual">
+        <summary>Manuell in der Desktop-App anmelden</summary>
+        <textarea id="singra-callback-url" readonly aria-label="Anmelde-Link"></textarea>
+      </details>
+    </section>
+  </main>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 

@@ -43,19 +43,25 @@ fn keyring_error(error: KeyringError) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+
+            let urls: Vec<String> = args
+                .into_iter()
+                .filter(|arg| arg.starts_with("singravault://"))
+                .collect();
+
+            if !urls.is_empty() {
+                let _ = app.emit("singra://deep-link", urls);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
-            }
-            if args.len() > 1 {
-                let _ = app.emit("singra://deep-link", args.clone());
-            }
-        }))
         .invoke_handler(tauri::generate_handler![
             save_refresh_token,
             load_refresh_token,

@@ -10,6 +10,7 @@ import { initPremium } from '@singra/premium';
 declare global {
   interface Window {
     __SINGRA_TAURI_OAUTH_BOUNCE__?: boolean;
+    __SINGRA_TAURI_OAUTH_URL__?: string;
   }
 }
 
