@@ -1,5 +1,5 @@
 use keyring::{Entry, Error as KeyringError};
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 
 const KEYCHAIN_SERVICE: &str = "Singra Vault";
 const REFRESH_TOKEN_ACCOUNT: &str = "active-refresh-token";
@@ -48,9 +48,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
+            }
+            if args.len() > 1 {
+                let _ = app.emit("singra://deep-link", args.clone());
             }
         }))
         .invoke_handler(tauri::generate_handler![
