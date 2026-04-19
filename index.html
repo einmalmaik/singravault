@@ -3,6 +3,42 @@
 
 <head>
   <meta charset="UTF-8" />
+  <script>
+    // IMMEDIATE TAURI BOUNCE - Must run before any other script!
+    (function() {
+      const url = window.location.href;
+      const hash = window.location.hash;
+      const search = window.location.search;
+      
+      if (url.includes('source=tauri')) {
+        // Save hash/search immediately before anything clears it
+        if (hash.includes('access_token=') || search.includes('access_token=') || search.includes('code=')) {
+          sessionStorage.setItem('tauri_login_hash', hash);
+          sessionStorage.setItem('tauri_login_search', search);
+          
+          // HARD STOP: Prevent React/Supabase from loading and stealing the token
+          window.stop();
+          
+          // Execute redirect to Tauri app
+          const appUrl = 'singravault://auth/callback' + search + hash;
+          window.location.assign(appUrl);
+          
+          // Visual feedback
+          document.documentElement.innerHTML = '<body style="background:#020617;color:white;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;text-align:center;">' +
+            '<div style="padding:20px;max-width:300px;">' +
+              '<img src="/singra-icon.png" style="width:64px;height:64px;border-radius:16px;margin-bottom:20px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">' +
+              '<h2 style="margin:0 0 10px 0;font-size:20px;">Verbindung mit Singra Vault...</h2>' +
+              '<p style="color:#94a3b8;font-size:14px;margin-bottom:24px;">Desktop-App wird gestartet. Bitte bestätige die Browser-Abfrage.</p>' +
+              '<div style="margin:0 auto 24px auto;border:3px solid #1e293b;border-top-color:#6366f1;border-radius:50%;width:24px;height:24px;animation:spin 1s linear infinite;"></div>' +
+              '<a href="' + appUrl + '" style="background:#6366f1;color:white;text-decoration:none;font-size:14px;padding:10px 20px;border-radius:8px;display:block;font-weight:600;box-shadow:0 4px 12px rgba(99,102,241,0.3);">Link manuell öffnen</a>' +
+              '<p style="margin-top:20px;font-size:10px;color:#475569;word-break:break-all;">' + hash.slice(0, 50) + '...</p>' +
+            '</div>' +
+            '<style>@keyframes spin { to { transform: rotate(360deg); } } body { overflow: hidden; }</style>' +
+          '</body>';
+        }
+      }
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Singra Vault Passwort Manager - Sicherer Zero-Knowledge Passwort-Manager</title>
   <meta name="description"
