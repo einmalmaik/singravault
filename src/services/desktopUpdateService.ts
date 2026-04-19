@@ -1,7 +1,7 @@
 import { isTauriRuntime } from "@/platform/runtime";
 
 export async function checkForDesktopUpdates(): Promise<void> {
-  if (!isTauriRuntime()) {
+  if (!isTauriRuntime() || import.meta.env.DEV) {
     return;
   }
 

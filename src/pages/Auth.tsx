@@ -68,6 +68,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 type SignupFormData = z.infer<typeof signupSchema>;
 type RecoverFormData = z.infer<typeof recoverSchema>;
 type UpdatePasswordFormData = z.infer<typeof updatePasswordSchema>;
+type ParsedOAuthCallbackPayload = NonNullable<ReturnType<typeof parseOAuthCallbackPayload>>;
 
 export default function Auth() {
   const { t } = useTranslation();
@@ -95,7 +96,15 @@ export default function Auth() {
   const [isBouncing, setIsBouncing] = useState(false);
   const [bounceUrl, setBounceUrl] = useState<string | null>(null);
   const [bouncePreview, setBouncePreview] = useState<string | null>(null);
-  const processedCallbacks = useRef(new Set<string>());
+  const authCallbackRuntimeRef = useRef({ API_URL, usesCookieSession, t, toast });
+  const pendingCallbacks = useRef(new Set<string>());
+  const settledCallbacks = useRef(new Set<string>());
+  const bouncedCallbacks = useRef(new Set<string>());
+  const notifiedCallbacks = useRef(new Set<string>());
+
+  useEffect(() => {
+    authCallbackRuntimeRef.current = { API_URL, usesCookieSession, t, toast };
+  }, [API_URL, t, toast, usesCookieSession]);
 
   const applyCallbackSession = useCallback(async (callbackUrl: string) => {
     const callbackPayload = parseOAuthCallbackPayload(callbackUrl, window.location.origin);
@@ -103,8 +112,14 @@ export default function Auth() {
       return;
     }
 
+    const callbackKey = getCallbackKey(callbackUrl, callbackPayload);
     const appCallbackUrl = buildTauriOAuthCallbackUrl(callbackUrl, window.location.origin);
     if (!isTauriRuntime() && appCallbackUrl) {
+      if (bouncedCallbacks.current.has(callbackKey)) {
+        return;
+      }
+
+      bouncedCallbacks.current.add(callbackKey);
       console.info('[Auth] Tauri OAuth callback detected on web, bouncing to app...');
       setBounceUrl(appCallbackUrl);
       setBouncePreview(getCallbackPreview(callbackPayload.params));
@@ -118,26 +133,30 @@ export default function Auth() {
     }
 
     if (callbackPayload.error) {
+      if (settledCallbacks.current.has(callbackKey)) {
+        return;
+      }
+
+      settledCallbacks.current.add(callbackKey);
       console.error('[Auth] OAuth callback returned an error:', callbackPayload.error);
-      toast({
-        variant: 'destructive',
-        title: t('common.error'),
-        description: callbackPayload.error.description ?? callbackPayload.error.error,
+      const { t: translate, toast: showToast } = authCallbackRuntimeRef.current;
+      notifyCallbackFailure(notifiedCallbacks.current, callbackKey, () => {
+        showToast({
+          variant: 'destructive',
+          title: translate('common.error'),
+          description: callbackPayload.error?.description ?? callbackPayload.error?.error ?? translate('auth.errors.generic'),
+        });
       });
       setLoading(false);
       return;
     }
 
-    const callbackKey = callbackPayload.tokens
-      ? `tokens:${callbackPayload.tokens.access_token}:${callbackPayload.tokens.refresh_token}`
-      : callbackPayload.code
-        ? `code:${callbackPayload.code}`
-        : callbackUrl;
-
-    if (processedCallbacks.current.has(callbackKey)) {
+    if (pendingCallbacks.current.has(callbackKey) || settledCallbacks.current.has(callbackKey)) {
       return;
     }
-    processedCallbacks.current.add(callbackKey);
+
+    pendingCallbacks.current.add(callbackKey);
+    setLoading(true);
 
     try {
       const session = callbackPayload.tokens
@@ -148,8 +167,10 @@ export default function Auth() {
         return;
       }
 
-      if (usesCookieSession) {
-        const syncResponse = await fetch(`${API_URL}/auth-session`, {
+      const { API_URL: authApiUrl, usesCookieSession: shouldUseCookieSession } = authCallbackRuntimeRef.current;
+
+      if (shouldUseCookieSession) {
+        const syncResponse = await fetch(`${authApiUrl}/auth-session`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -178,19 +199,25 @@ export default function Auth() {
           }
         }
       }
+
+      settledCallbacks.current.add(callbackKey);
     } catch (err) {
-      processedCallbacks.current.delete(callbackKey);
+      settledCallbacks.current.add(callbackKey);
       console.error('[Auth] Failed to apply OAuth callback session:', err);
-      toast({
-        variant: 'destructive',
-        title: t('common.error'),
-        description: t('auth.errors.generic'),
+      const { t: translate, toast: showToast } = authCallbackRuntimeRef.current;
+      notifyCallbackFailure(notifiedCallbacks.current, callbackKey, () => {
+        showToast({
+          variant: 'destructive',
+          title: translate('common.error'),
+          description: translate('auth.errors.generic'),
+        });
       });
       setLoading(false);
     } finally {
+      pendingCallbacks.current.delete(callbackKey);
       cleanAuthCallbackUrl();
     }
-  }, [API_URL, t, toast, usesCookieSession]);
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1212,6 +1239,36 @@ async function exchangeOAuthCodeForSession(code: string | null): Promise<Session
 
   await persistAuthenticatedSession(data.session);
   return data.session;
+}
+
+function getCallbackKey(callbackUrl: string, payload: ParsedOAuthCallbackPayload): string {
+  if (payload.tokens) {
+    return `tokens:${payload.tokens.access_token}:${payload.tokens.refresh_token}`;
+  }
+
+  if (payload.code) {
+    return `code:${payload.code}`;
+  }
+
+  const errorKey = payload.error?.errorCode ?? payload.error?.error;
+  if (errorKey) {
+    return `error:${errorKey}:${payload.error?.description ?? ''}`;
+  }
+
+  return callbackUrl;
+}
+
+function notifyCallbackFailure(
+  notifiedCallbacks: Set<string>,
+  callbackKey: string,
+  notify: () => void,
+): void {
+  if (notifiedCallbacks.has(callbackKey)) {
+    return;
+  }
+
+  notifiedCallbacks.add(callbackKey);
+  notify();
 }
 
 function cleanAuthCallbackUrl(): void {

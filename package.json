@@ -60,6 +60,7 @@
     "@radix-ui/react-tooltip": "^1.2.7",
     "@serenity-kit/opaque": "^1.1.0",
     "@simplewebauthn/browser": "13.2.2",
+    "@supabase/auth-js": "^2.95.3",
     "@supabase/supabase-js": "2.95.3",
     "@tanstack/react-query": "^5.83.0",
     "@tauri-apps/api": "^2.10.1",

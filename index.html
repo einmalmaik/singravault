@@ -30,6 +30,7 @@
         if (!hasPayload) return;
 
         var appUrl = "singravault://auth/callback?" + params.toString();
+        window.__SINGRA_TAURI_OAUTH_BOUNCE__ = true;
         sessionStorage.setItem("singra_tauri_oauth_callback", appUrl);
         if (window.stop) window.stop();
 
@@ -69,7 +70,7 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <meta name="theme-color" content="#c7e5ed" />
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://api.pwnedpasswords.com wss://*.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self';" />
+    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' http://ipc.localhost http://localhost:8080 ws://localhost:8080 http://127.0.0.1:8080 ws://127.0.0.1:8080 https://*.supabase.co https://api.pwnedpasswords.com wss://*.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self';" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
