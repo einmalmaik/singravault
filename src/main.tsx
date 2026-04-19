@@ -3,12 +3,13 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import { isTauriRuntime } from "@/platform/runtime";
 
 import { initPremium } from '@singra/premium';
 
 initPremium();
 
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
+if (import.meta.env.PROD && !isTauriRuntime() && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js")

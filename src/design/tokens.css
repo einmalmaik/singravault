@@ -1,0 +1,146 @@
+/* ================================================================
+   SINGRA VAULT - Password Manager Design System v2
+   Based on singra-core-ai Design with Password Manager adaptations
+   
+   All colors are HSL.
+================================================================ */
+
+@layer base {
+  :root {
+    /* iOS Safe Area Insets */
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
+
+    /* ------ Core Palette (Maunting cool dark) ------------------------------------------------------------------ */
+    --background: 206 31% 4%;
+    --foreground: 188 29% 95%;
+
+    --card: 204 25% 10%;
+    --card-foreground: 188 29% 95%;
+
+    --popover: 204 25% 10%;
+    --popover-foreground: 188 29% 95%;
+
+    --primary: 193 45% 86%;
+    --primary-foreground: 195 43% 5%;
+
+    --secondary: 198 30% 12%;
+    --secondary-foreground: 185 20% 87%;
+
+    --muted: 201 27% 13%;
+    --muted-foreground: 196 19% 67%;
+
+    --accent: 194 31% 65%;
+    --accent-foreground: 195 43% 5%;
+
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Success - Green for secure/passwords */
+    --success: 158 64% 52%;
+    --success-foreground: 195 43% 5%;
+
+    /* Warning - Amber */
+    --warning: 38 92% 50%;
+    --warning-foreground: 195 43% 5%;
+
+    --border: 198 22% 26%;
+    --input: 198 22% 26%;
+    --ring: 194 44% 68%;
+
+    --radius: 0.75rem;
+
+    /* ------ Elevation Layers --------------------------------------------------------------------------------------------------------------------- */
+    /* Each level is ~3-4% lighter than the previous.
+       Consistent with Material Design elevation metaphor. */
+    --el-0: 206 31% 4%;    /* Below ground --- deepest wells */
+    --el-1: 205 30% 7%;    /* Ground level */
+    --el-2: 204 28% 10%;   /* Raised --- cards, panels */
+    --el-3: 202 26% 14%;   /* Floating --- dropdowns, overlays */
+    --el-4: 200 24% 19%;   /* High --- hover surfaces */
+    --el-5: 198 22% 24%;   /* Peak --- selected states */
+
+    /* ------ Password Strength Mode Accent Colors --------------------------------------------------------- */
+    --mode-weak: 0 72% 58%;
+    --mode-weak-fg: 0 60% 12%;
+    --mode-weak-muted: 0 55% 18%;
+    --mode-weak-border: 0 65% 40%;
+
+    --mode-fair: 38 92% 52%;
+    --mode-fair-fg: 38 70% 12%;
+    --mode-fair-muted: 38 65% 18%;
+    --mode-fair-border: 38 72% 40%;
+
+    --mode-strong: 158 64% 52%;
+    --mode-strong-fg: 158 50% 10%;
+    --mode-strong-muted: 158 52% 14%;
+    --mode-strong-border: 158 60% 36%;
+
+    /* ------ Feature Mode Accent Colors --------------------------------------------------------------------------------------- */
+    --mode-generator: 270 48% 72%;
+    --mode-generator-fg: 270 40% 12%;
+    --mode-generator-muted: 270 38% 16%;
+    --mode-generator-border: 270 45% 42%;
+
+    --mode-vault: 194 44% 68%;
+    --mode-vault-fg: 194 40% 10%;
+    --mode-vault-muted: 194 42% 14%;
+    --mode-vault-border: 194 44% 40%;
+
+    /* ------ Glow FX ------------------------------------------------------------------------------------------------------------------------------------------------ */
+    --glow-primary: 194 44% 68% / 0.18;
+    --glow-secondary: 194 44% 68% / 0.09;
+    --glow-strong: 194 44% 68% / 0.35;
+
+    /* ------ Password specific Glow Colors --------------------------------------------------------------------------- */
+    --glow-weak: 0 72% 58% / 0.25;
+    --glow-success: 158 64% 52% / 0.25;
+    --glow-vault: 194 44% 68% / 0.2;
+
+    /* ------ Gradients ------------------------------------------------------------------------------------------------------------------------------------------ */
+    --gradient-singularity: hsl(206 31% 4%);
+    --gradient-orbit: linear-gradient(
+      90deg,
+      hsl(194 44% 68% / 0.14) 0%,
+      hsl(164 40% 56% / 0.12) 100%
+    );
+    --gradient-vault: linear-gradient(
+      135deg,
+      hsl(194 44% 68% / 0.08) 0%,
+      hsl(158 64% 52% / 0.04) 100%
+    );
+    --gradient-password: linear-gradient(
+      135deg,
+      hsl(198 30% 14%) 0%,
+      hsl(200 28% 12%) 100%
+    );
+    --gradient-generator: linear-gradient(
+      135deg,
+      hsl(270 48% 72% / 0.07) 0%,
+      hsl(270 38% 40% / 0.03) 100%
+    );
+
+    /* ------ Sidebar ------------------------------------------------------------------------------------------------------------------------------------------------ */
+    --sidebar-background: 206 29% 5%;
+    --sidebar-foreground: 190 23% 89%;
+    --sidebar-primary: 193 45% 86%;
+    --sidebar-primary-foreground: 195 43% 5%;
+    --sidebar-accent: 201 27% 13%;
+    --sidebar-accent-foreground: 193 45% 86%;
+    --sidebar-border: 198 22% 26%;
+    --sidebar-ring: 194 44% 68%;
+
+    /* ------ Transition Tokens ------------------------------------------------------------------------------------------------------------------ */
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-spring: 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    /* ------ Singra Brand Colors ------------------------------------------------------------------------------------------------------------ */
+    --zingra-blue: 193 49% 70%;
+    --zingra-blue-dark: 196 44% 54%;
+    --zingra-blue-light: 190 56% 80%;
+  }
+}

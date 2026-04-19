@@ -22,6 +22,8 @@ import { ProtectedRoute } from "./components/layout/ProtectedRoute";
 import { VaultUnlockRequiredRoute } from "./components/layout/VaultUnlockRequiredRoute";
 import { CookieConsent } from "./components/CookieConsent";
 import { getExtensionRoutes, getExtension } from "@/extensions/registry";
+import { checkForDesktopUpdates } from "@/services/desktopUpdateService";
+import { useEffect } from "react";
 
 // Import i18n configuration
 import "@/i18n";
@@ -51,6 +53,10 @@ const App = () => {
   const premiumRoutes = getExtensionRoutes();
   
   const SupportWidget = getExtension('layout.support-widget');
+
+  useEffect(() => {
+    void checkForDesktopUpdates();
+  }, []);
 
   return (
     <HelmetProvider>

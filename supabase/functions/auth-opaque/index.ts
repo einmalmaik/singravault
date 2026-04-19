@@ -31,6 +31,8 @@ const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 const OPAQUE_SERVER_SETUP = Deno.env.get("OPAQUE_SERVER_SETUP")!;
+const SESSION_COOKIE_NAME = "sb-bff-session";
+const SESSION_COOKIE_MAX_AGE = Number(Deno.env.get("SESSION_COOKIE_MAX_AGE_SECONDS") ?? 60 * 60 * 24 * 400);
 
 await opaque.ready;
 
@@ -334,7 +336,7 @@ async function issueSession(
     email: string,
     headers: Headers,
     skipCookie?: boolean,
-): Promise<any | null> {
+): Promise<Record<string, unknown> | null> {
     const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
         type: "magiclink",
         email,
@@ -360,16 +362,30 @@ async function issueSession(
     }
 
     if (!skipCookie) {
-        setCookie(headers, {
-            name: "sb-bff-session",
-            value: sessionData.session.refresh_token,
-            path: "/",
-            httpOnly: true,
-            secure: true,
-            sameSite: "None",
-            maxAge: 60 * 60 * 24 * 7,
-        });
+        setSessionCookie(headers, sessionData.session.refresh_token);
     }
 
     return sessionData.session;
+}
+
+function setSessionCookie(headers: Headers, refreshToken: string): void {
+    setCookie(headers, {
+        name: SESSION_COOKIE_NAME,
+        value: refreshToken,
+        path: "/",
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        maxAge: SESSION_COOKIE_MAX_AGE,
+    });
+    appendPartitionedCookieAttribute(headers);
+}
+
+function appendPartitionedCookieAttribute(headers: Headers): void {
+    const currentCookie = headers.get("set-cookie");
+    if (!currentCookie || /;\s*Partitioned/i.test(currentCookie)) {
+        return;
+    }
+
+    headers.set("set-cookie", `${currentCookie}; Partitioned`);
 }

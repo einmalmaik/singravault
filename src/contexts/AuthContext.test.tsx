@@ -24,6 +24,7 @@ const mockSupabase = vi.hoisted(() => ({
         onAuthStateChange: vi.fn(),
         signOut: vi.fn(),
         setSession: vi.fn(),
+        getSession: vi.fn(),
     },
 }));
 
@@ -58,7 +59,10 @@ let authCallback: (event: string, session: unknown) => void;
 
 beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "test-publishable-key");
     sessionStorage.clear();
+    localStorage.clear();
 
     // Default: auth state listener returns unsubscribe fn and captures callback
     mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
@@ -84,11 +88,17 @@ beforeEach(() => {
         data: { session: null },
         error: null,
     });
+    mockSupabase.auth.getSession.mockResolvedValue({
+        data: { session: null },
+        error: null,
+    });
 });
 
 afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     sessionStorage.clear();
+    localStorage.clear();
 });
 
 // ============ Helper: Wrapper Component ============
@@ -397,7 +407,7 @@ describe("AuthContext", () => {
     });
 
     describe("Session fallback persistence", () => {
-        it("stores session tokens in sessionStorage on SIGNED_IN", async () => {
+        it("does not store session tokens in sessionStorage for normal web sessions", async () => {
             renderHook(() => useAuth(), { wrapper });
 
             act(() => {
@@ -405,9 +415,7 @@ describe("AuthContext", () => {
             });
 
             await waitFor(() => {
-                const stored = JSON.parse(sessionStorage.getItem("singra-auth-session-fallback")!);
-                expect(stored.access_token).toBe("test-token");
-                expect(stored.refresh_token).toBe("test-refresh");
+                expect(sessionStorage.getItem("singra-auth-session-fallback")).toBeNull();
             });
         });
 

@@ -1,10 +1,11 @@
-import { defineConfig } from "vite";
+import { defineConfig, type PluginContext } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import fs from "fs";
 import { componentTagger } from "lovable-tagger";
 import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
+import { VitePWA } from "vite-plugin-pwa";
 
 function getSecurityHeaders(mode: string) {
   const dev = mode === "development";
@@ -40,6 +41,8 @@ function getSecurityHeaders(mode: string) {
 export default defineConfig(({ mode }) => {
   const securityHeaders = getSecurityHeaders(mode);
   const isDev = mode === "development";
+  const tauriDevHost = process.env.TAURI_DEV_HOST;
+  const isTauriBuild = Boolean(process.env.TAURI_ENV_PLATFORM);
 
   const premiumSrc = path.resolve(__dirname, "../singra-premium/src");
   const coreSrc = path.resolve(__dirname, "./src");
@@ -68,7 +71,7 @@ export default defineConfig(({ mode }) => {
     return {
       name: "premium-resolve",
       enforce: "pre" as const,
-      async resolveId(this: any, source: string, importer: string | undefined) {
+      async resolveId(this: PluginContext, source: string, importer: string | undefined) {
         if (!importer) return null;
 
         // Normalize the source path
@@ -140,11 +143,16 @@ export default defineConfig(({ mode }) => {
 
   return {
     server: {
-      host: "::",
+      host: tauriDevHost || "::",
       port: 8080,
+      strictPort: isTauriBuild,
       headers: securityHeaders,
       hmr: {
         overlay: false,
+        ...(tauriDevHost ? { protocol: "ws", host: tauriDevHost, port: 8080 } : {}),
+      },
+      watch: {
+        ignored: ["**/src-tauri/**"],
       },
       fs: {
         // Allow serving files from the sibling premium repo
@@ -161,6 +169,19 @@ export default defineConfig(({ mode }) => {
       react(),
       isDev && componentTagger(),
       isDev && hasPremiumDevRepo && premiumResolvePlugin(),
+      VitePWA({
+        strategies: "injectManifest",
+        srcDir: "src",
+        filename: "sw.ts",
+        manifest: false,
+        injectManifest: {
+          globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest}"],
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        },
+        devOptions: {
+          enabled: false,
+        },
+      }),
     ].filter(Boolean),
     resolve: {
       alias: {

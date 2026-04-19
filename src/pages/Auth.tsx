@@ -28,6 +28,10 @@ import { SEO } from '@/components/SEO';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService';
+import { applyAuthenticatedSession } from '@/services/authSessionManager';
+import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
+import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
+import { isTauriRuntime } from '@/platform/runtime';
 import * as opaqueClient from '@/services/opaqueService';
 
 const loginSchema = z.object({
@@ -79,45 +83,54 @@ export default function Auth() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
+  const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
+  const inIframe = (() => {
+    try { return window.self !== window.top; } catch { return true; }
+  })();
+  const usesCookieSession = !inIframe && !isTauriRuntime();
 
   useEffect(() => {
-    if (!window.location.hash.includes('access_token=')) {
-      return;
-    }
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
 
-    const applyCallbackSession = async () => {
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-      const runningInIframe = (() => {
-        try {
-          return window.self !== window.top;
-        } catch {
-          return true;
+    const extractCallbackTokens = (callbackUrl: string) => {
+      try {
+        const parsed = new URL(callbackUrl, window.location.origin);
+        const hashParams = new URLSearchParams(parsed.hash.startsWith('#') ? parsed.hash.slice(1) : '');
+        const searchParams = parsed.searchParams;
+        const accessToken = hashParams.get('access_token') ?? searchParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token') ?? searchParams.get('refresh_token');
+
+        if (!accessToken || !refreshToken) {
+          return null;
         }
-      })();
 
-      if (!accessToken || !refreshToken) {
+        return { access_token: accessToken, refresh_token: refreshToken };
+      } catch {
+        return null;
+      }
+    };
+
+    const applyCallbackSession = async (callbackUrl: string) => {
+      const tokens = extractCallbackTokens(callbackUrl);
+      if (!tokens || cancelled) {
         return;
       }
 
       try {
-        await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        });
+        await applyAuthenticatedSession(tokens);
 
-        if (!runningInIframe) {
+        if (usesCookieSession) {
           const syncResponse = await fetch(`${API_URL}/auth-session`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${accessToken}`,
+              'Authorization': `Bearer ${tokens.access_token}`,
             },
             credentials: 'include',
             body: JSON.stringify({
               action: 'oauth-sync',
-              refreshToken,
+              refreshToken: tokens.refresh_token,
             }),
           });
 
@@ -130,7 +143,7 @@ export default function Auth() {
             const syncedSession = syncPayload?.session;
 
             if (syncedSession?.access_token && syncedSession?.refresh_token) {
-              await supabase.auth.setSession({
+              await applyAuthenticatedSession({
                 access_token: syncedSession.access_token,
                 refresh_token: syncedSession.refresh_token,
               });
@@ -140,13 +153,28 @@ export default function Auth() {
       } catch (err) {
         console.error('[Auth] Failed to apply callback session from URL hash:', err);
       } finally {
-        const cleanUrl = `${window.location.pathname}${window.location.search}`;
-        window.history.replaceState({}, document.title, cleanUrl);
+        if (window.location.hash.includes('access_token=')) {
+          const cleanUrl = `${window.location.pathname}${window.location.search}`;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
       }
     };
 
-    void applyCallbackSession();
-  }, []);
+    void applyCallbackSession(window.location.href);
+    void getInitialDeepLinks().then((urls) => {
+      urls.forEach((url) => void applyCallbackSession(url));
+    });
+    void listenForDeepLinks((urls) => {
+      urls.forEach((url) => void applyCallbackSession(url));
+    }).then((cleanup) => {
+      unlisten = cleanup;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [API_URL, usesCookieSession]);
 
   useEffect(() => {
     if (!authReady) {
@@ -206,17 +234,6 @@ export default function Auth() {
     defaultValues: { password: '', confirmPassword: '' },
   });
 
-  // Supabase REST Edge Function Base URL
-  const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
-
-  /**
-   * Erkennt ob die App in einem Iframe läuft (z.B. Lovable Preview).
-   * In Iframes werden Third-Party Cookies blockiert.
-   */
-  const inIframe = (() => {
-    try { return window.self !== window.top; } catch { return true; }
-  })();
-
   const handleLogin = async (data: LoginFormData, totpCode?: string, isBackupCode?: boolean) => {
     setLoading(true);
     try {
@@ -230,7 +247,7 @@ export default function Auth() {
         return; // 2FA modal shown
       }
       if (opaqueSession) {
-        await supabase.auth.setSession({
+        await applyAuthenticatedSession({
           access_token: opaqueSession.access_token,
           refresh_token: opaqueSession.refresh_token || '',
         });
@@ -273,7 +290,7 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        credentials: inIframe ? 'omit' : 'include',
+        credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({
           action: 'login-start',
           userIdentifier: data.email,
@@ -304,13 +321,13 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        credentials: inIframe ? 'omit' : 'include',
+        credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({
           action: 'login-finish',
           userIdentifier: data.email,
           finishLoginRequest,
           loginId,
-          skipCookie: inIframe,
+          skipCookie: !usesCookieSession,
         }),
       });
 
@@ -346,7 +363,7 @@ export default function Auth() {
       totpCode,
       isBackupCode,
     };
-    if (inIframe) {
+    if (!usesCookieSession) {
       bodyPayload.skipCookie = true;
     }
 
@@ -356,7 +373,7 @@ export default function Auth() {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
       },
-      credentials: inIframe ? 'omit' : 'include',
+      credentials: usesCookieSession ? 'include' : 'omit',
       body: JSON.stringify(bodyPayload),
     });
 
@@ -371,7 +388,7 @@ export default function Auth() {
     }
 
     if (session) {
-      await supabase.auth.setSession({
+      await applyAuthenticatedSession({
         access_token: session.access_token,
         refresh_token: session.refresh_token || '',
       });
@@ -468,7 +485,7 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
         },
-        credentials: inIframe ? 'omit' : 'include',
+        credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({ email: data.email, password: data.password })
       });
 
@@ -548,7 +565,7 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
         },
-        credentials: inIframe ? 'omit' : 'include',
+        credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({ email: data.email })
       });
 
@@ -581,7 +598,7 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
         },
-        credentials: inIframe ? 'omit' : 'include',
+        credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({ email, action: 'verify', code: data.code })
       });
 
@@ -594,7 +611,7 @@ export default function Auth() {
 
       // Session setzen für das Passwort-Update
       if (session) {
-        await supabase.auth.setSession({
+        await applyAuthenticatedSession({
           access_token: session.access_token,
           refresh_token: session.refresh_token || '',
         });
@@ -633,7 +650,7 @@ export default function Auth() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${sessionData.session.access_token}`
         },
-        credentials: 'include',
+        credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({ newPassword: data.password })
       });
 
@@ -658,7 +675,7 @@ export default function Auth() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: `${window.location.origin}/auth`,
+        redirectTo: getOAuthRedirectUrl(),
       }
     });
 

@@ -39,4 +39,7 @@ CLAUDE.md
 notizen.md
 .env.production
 *.json
+!/src-tauri/**/*.json
+/src-tauri/gen/
+/src-tauri/target/
 /supabase/.temp

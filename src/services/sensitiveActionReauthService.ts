@@ -8,6 +8,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
+import { refreshCurrentSession } from '@/services/authSessionManager';
 
 const DEFAULT_SENSITIVE_ACTION_MAX_AGE_SECONDS = 300;
 const PASSWORD_AUTH_PROVIDER = 'email';
@@ -155,19 +156,13 @@ export async function getSensitiveActionReauthMethod(): Promise<SensitiveActionR
  */
 export async function reauthenticateWithSessionRefresh(): Promise<SensitiveActionReauthResult> {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError || !session?.refresh_token) {
-        return { success: false, error: 'AUTH_REQUIRED' };
+    const hasKnownRefreshToken = !sessionError && Boolean(session?.refresh_token);
+    const refreshedSession = await refreshCurrentSession();
+    if (!refreshedSession?.access_token) {
+        return { success: false, error: hasKnownRefreshToken ? 'REAUTH_FAILED' : 'AUTH_REQUIRED' };
     }
 
-    const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession({
-        refresh_token: session.refresh_token,
-    });
-
-    if (refreshError || !refreshedData.session?.access_token) {
-        return { success: false, error: 'REAUTH_FAILED' };
-    }
-
-    const issuedAt = parseJwtIssuedAt(refreshedData.session.access_token);
+    const issuedAt = parseJwtIssuedAt(refreshedSession.access_token);
     if (!issuedAt) {
         return { success: false, error: 'REAUTH_FAILED' };
     }

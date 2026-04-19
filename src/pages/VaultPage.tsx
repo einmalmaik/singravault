@@ -50,7 +50,7 @@ export default function VaultPage() {
     const navigate = useNavigate();
     const { toast } = useToast();
     const isMobile = useIsMobile();
-    const { user, loading: authLoading, authReady } = useAuth();
+    const { user, authReady, isOfflineSession } = useAuth();
     const { isLocked, isSetupRequired, isLoading: vaultLoading } = useVault();
 
     // State
@@ -119,7 +119,7 @@ export default function VaultPage() {
         // 2. User ist Supabase-authentifiziert
         // 3. Vault ist entsperrt (nicht im Setup/Lock-State)
         // Verhindert race condition 401s beim App-Start
-        if (!isPremiumActive() || !authReady || !user || isLocked || isSetupRequired) {
+        if (!isPremiumActive() || !authReady || !user || isOfflineSession || isLocked || isSetupRequired) {
             setShowAdminButton(false);
             return;
         }
@@ -152,7 +152,7 @@ export default function VaultPage() {
         return () => {
             cancelled = true;
         };
-    }, [authReady, user, isLocked, isSetupRequired]);
+    }, [authReady, user, isOfflineSession, isLocked, isSetupRequired]);
 
     // Loading state
     if (vaultLoading) {
@@ -192,7 +192,7 @@ export default function VaultPage() {
     };
 
     return (
-        <div className="min-h-screen flex overflow-hidden" style={{ background: 'hsl(206 31% 4%)' }}>
+        <div className="min-h-screen flex overflow-hidden bg-background">
             {/* Sidebar */}
             {!isMobile && (
                 <VaultSidebar
@@ -217,7 +217,7 @@ export default function VaultPage() {
             {/* Main Content */}
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Header */}
-                <header className="sticky top-0 z-10 border-b border-[hsl(198_22%_26%/0.55)] bg-[hsl(206_31%_4%/0.92)] backdrop-blur-xl px-4 lg:px-6 py-4">
+                <header className="sticky top-0 z-10 border-b border-border/55 bg-background/90 backdrop-blur-xl px-4 lg:px-6 py-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:gap-4 items-start sm:items-center justify-between">
                         {/* Search */}
                         <div className="relative w-full sm:max-w-md min-w-0">
@@ -342,7 +342,7 @@ export default function VaultPage() {
                     />
                 </main>
 
-                <footer className="border-t border-[hsl(198_22%_26%/0.4)] px-4 lg:px-6 py-3 text-xs text-muted-foreground">
+                <footer className="border-t border-border/40 px-4 lg:px-6 py-3 text-xs text-muted-foreground">
                     <nav className="flex flex-wrap items-center gap-3">
                         <Link to="/privacy" className="hover:text-foreground transition-colors">
                             {t('landing.footer.privacy')}

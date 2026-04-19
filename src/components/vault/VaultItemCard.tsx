@@ -38,6 +38,7 @@ import { ViewMode } from '@/pages/VaultPage';
 import { VaultItemData } from '@/services/cryptoService';
 import { writeClipboard } from '@/services/clipboardService';
 import { TOTPDisplay } from './TOTPDisplay';
+import { openExternalUrl } from '@/platform/openExternalUrl';
 
 interface VaultItemCardProps {
     item: {
@@ -107,7 +108,15 @@ export function VaultItemCard({ item, viewMode, onEdit, showTotpCode = false }: 
 
     const openUrl = () => {
         if (resolvedWebsiteUrl) {
-            window.open(resolvedWebsiteUrl, '_blank', 'noopener,noreferrer');
+            void openExternalUrl(resolvedWebsiteUrl).catch(() => {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: t('vault.openWebsiteFailed', {
+                        defaultValue: 'Link konnte nicht geöffnet werden.',
+                    }),
+                });
+            });
         }
     };
 

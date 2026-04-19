@@ -18,7 +18,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-    const { user, loading, authReady } = useAuth();
+    const { user, loading, authReady, isOfflineSession } = useAuth();
     const location = useLocation();
     const { t } = useTranslation();
     const [showSpinner, setShowSpinner] = useState(false);
@@ -54,6 +54,10 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
                 replace
             />
         );
+    }
+
+    if (isOfflineSession && !location.pathname.startsWith("/vault")) {
+        return <Navigate to="/vault" replace />;
     }
 
     // 3. Auth is ready and user is defined: render protected content

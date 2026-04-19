@@ -9,6 +9,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import { FunctionsHttpError } from '@supabase/supabase-js';
+import { refreshCurrentSession } from '@/services/authSessionManager';
 
 const loggedRetryWarnings = new Set<string>();
 
@@ -38,8 +39,8 @@ export async function invokeAuthedFunction<
     logSessionDiagnostics(functionName, 'initial', session);
 
     if ((sessionError || !session?.access_token) && typeof window !== 'undefined') {
-        console.warn(`[EdgeFunctionService] No usable in-memory session for '${functionName}'. Attempting BFF rehydration...`);
-        session = await rehydrateSessionFromBff(functionName);
+        console.warn(`[EdgeFunctionService] No usable in-memory session for '${functionName}'. Attempting persisted session hydration...`);
+        session = await refreshCurrentSession();
         sessionError = session ? null : sessionError;
     }
 
@@ -52,9 +53,9 @@ export async function invokeAuthedFunction<
             const nowSec = Math.floor(Date.now() / 1000);
             if (expiresAt - nowSec < 30) {
                 console.debug(`[EdgeFunctionService] Access token expiring/expired for '${functionName}', attempting BFF refresh…`);
-                const refreshed = await supabase.auth.refreshSession({ refresh_token: session.refresh_token });
-                if (!refreshed.error && refreshed.data.session) {
-                    session = refreshed.data.session;
+                const refreshed = await refreshCurrentSession();
+                if (refreshed) {
+                    session = refreshed;
                     logSessionDiagnostics(functionName, 'refresh-session', session);
                 }
             }
@@ -81,12 +82,12 @@ export async function invokeAuthedFunction<
         }
 
         logRetryWarningOnce(functionName);
-        const rehydratedSession = await rehydrateSessionFromBff(functionName);
+        const rehydratedSession = await refreshCurrentSession();
         if (!rehydratedSession?.access_token) {
             throw error;
         }
 
-        logSessionDiagnostics(functionName, 'retry-after-bff', rehydratedSession);
+        logSessionDiagnostics(functionName, 'retry-after-refresh', rehydratedSession);
         return await invokeWithSession<TResponse, TBody>(functionName, rehydratedSession.access_token, body);
     }
 }
@@ -130,54 +131,6 @@ async function invokeWithSession<
     }
 
     return (data || null) as TResponse;
-}
-
-async function rehydrateSessionFromBff(functionName: string) {
-    const apiUrl = import.meta.env.VITE_SUPABASE_URL;
-    const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-    if (!apiUrl || !publishableKey) {
-        console.warn(`[EdgeFunctionService] Cannot rehydrate session for '${functionName}' because Supabase env vars are missing.`);
-        return null;
-    }
-
-    try {
-        const response = await fetch(`${apiUrl}/functions/v1/auth-session`, {
-            method: 'GET',
-            headers: {
-                Authorization: `Bearer ${publishableKey}`,
-            },
-            credentials: 'include',
-        });
-
-        if (!response.ok) {
-            console.warn(`[EdgeFunctionService] BFF rehydration for '${functionName}' failed with status ${response.status}.`);
-            return null;
-        }
-
-        const payload = await response.json().catch(() => null) as { session?: AuthSessionLike } | null;
-        const rehydratedSession = payload?.session;
-
-        if (!rehydratedSession?.access_token || !rehydratedSession?.refresh_token) {
-            console.warn(`[EdgeFunctionService] BFF rehydration for '${functionName}' returned no usable session.`);
-            return null;
-        }
-
-        const { data, error } = await supabase.auth.setSession({
-            access_token: rehydratedSession.access_token,
-            refresh_token: rehydratedSession.refresh_token,
-        });
-
-        if (error || !data.session) {
-            console.warn(`[EdgeFunctionService] Failed to apply rehydrated session for '${functionName}'.`, error);
-            return null;
-        }
-
-        return data.session;
-    } catch (error) {
-        console.warn(`[EdgeFunctionService] Session rehydration threw for '${functionName}'.`, error);
-        return null;
-    }
 }
 
 function decodeJwtPayload(token: string): JwtPayload | null {
@@ -237,15 +190,20 @@ function isRetryableAuthError(error: unknown): boolean {
     return isEdgeFunctionServiceError(error) && error.code === 'AUTH_REQUIRED' && error.status === 401;
 }
 
-async function normalizeSupabaseFunctionError(error: any): Promise<EdgeFunctionServiceError> {
+interface FunctionsHttpErrorContext {
+    status?: number;
+    json?: () => Promise<Record<string, unknown>>;
+}
+
+async function normalizeSupabaseFunctionError(error: unknown): Promise<EdgeFunctionServiceError> {
     let status: number | undefined;
     let code: EdgeFunctionErrorCode = 'UNKNOWN';
     let details: Record<string, unknown> | undefined;
-    let message = error?.message || 'Edge function request failed';
+    let message = error instanceof Error ? error.message : 'Edge function request failed';
 
     if (error instanceof FunctionsHttpError) {
         // Extracted context from FunctionsHttpError if available
-        const context = (error as any).context;
+        const context = (error as { context?: FunctionsHttpErrorContext }).context;
         if (context) {
             if (context.status) {
                 status = context.status;

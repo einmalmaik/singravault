@@ -96,12 +96,12 @@ export function PWASection() {
                         {securityPoints.map((point) => (
                             <Card
                                 key={point.key}
-                                className="border-[hsl(158_64%_52%/0.18)] bg-[hsl(158_64%_52%/0.04)] hover:border-[hsl(158_64%_52%/0.3)] transition-colors"
+                                className="border-success/20 bg-success/5 hover:border-success/30 transition-colors"
                             >
                                 <CardContent className="p-6">
                                     <div className="flex gap-4">
-                                        <div className="w-10 h-10 rounded-lg bg-[hsl(158_64%_52%/0.12)] flex items-center justify-center shrink-0">
-                                            <point.icon className="w-5 h-5 text-[hsl(var(--success))]" />
+                                        <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center shrink-0">
+                                            <point.icon className="w-5 h-5 text-success" />
                                         </div>
                                         <div>
                                             <h4 className="font-semibold mb-1 text-foreground/90">
@@ -120,10 +120,10 @@ export function PWASection() {
 
                 {/* Important Notes - Accordion */}
                 <ScrollReveal delay={150} className="max-w-3xl mx-auto">
-                    <Card className="border-[hsl(38_92%_50%/0.18)] bg-[hsl(38_92%_50%/0.04)]">
+                    <Card className="border-warning/20 bg-warning/5">
                         <CardContent className="p-6">
                             <div className="flex items-start gap-3 mb-4">
-                                <AlertTriangle className="w-5 h-5 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
+                                <AlertTriangle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
                                 <h3 className="font-semibold text-foreground/90">
                                     {t('landing.pwa.notes.title')}
                                 </h3>

@@ -17,27 +17,43 @@
  *   import { corsHeaders } from "../_shared/cors.ts";
  */
 
-const configuredOrigin = (globalThis as any).Deno?.env?.get("ALLOWED_ORIGIN")?.trim()
+interface DenoRuntime {
+    env?: {
+        get?: (key: string) => string | undefined;
+    };
+}
+
+function readEnv(key: string): string {
+    return ((globalThis as typeof globalThis & { Deno?: DenoRuntime }).Deno?.env?.get?.(key) || "");
+}
+
+const configuredOrigin = readEnv("ALLOWED_ORIGIN").trim()
     || "https://singravault.mauntingstudios.de";
 const productionOrigins = configuredOrigin
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(isConfiguredOriginSafe);
 
-const allowPreviewOrigins = ((globalThis as any).Deno?.env?.get("ALLOW_PREVIEW_ORIGINS") || "")
+const allowPreviewOrigins = readEnv("ALLOW_PREVIEW_ORIGINS")
     .trim()
     .toLowerCase() === "true";
-const configuredPreviewOrigins = ((globalThis as any).Deno?.env?.get("ALLOWED_PREVIEW_ORIGINS") || "")
+const configuredPreviewOrigins = readEnv("ALLOWED_PREVIEW_ORIGINS")
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(isConfiguredOriginSafe);
-const configuredPreviewOriginSuffixes = ((globalThis as any).Deno?.env?.get("ALLOWED_PREVIEW_ORIGIN_SUFFIXES") || "")
+const configuredDesktopOrigins = (readEnv("ALLOWED_DESKTOP_ORIGINS")
+    || "tauri://localhost,http://tauri.localhost")
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(isConfiguredOriginSafe);
+const configuredPreviewOriginSuffixes = readEnv("ALLOWED_PREVIEW_ORIGIN_SUFFIXES")
     .split(",")
     .map((suffix) => normalizeHostnameSuffix(suffix))
     .filter((suffix): suffix is string => Boolean(suffix));
 
 function isAllowedOrigin(origin: string): boolean {
     if (productionOrigins.includes(origin)) return true;
+    if (configuredDesktopOrigins.includes(origin)) return true;
 
     // Fallback: Erlaube immer alle lokalen Entwicklungs-Server
     if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
@@ -123,7 +139,11 @@ function isConfiguredOriginSafe(origin: string): boolean {
 
     try {
         const parsed = new URL(origin);
-        return parsed.protocol === "https:" || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+        return parsed.protocol === "https:"
+            || parsed.protocol === "tauri:"
+            || parsed.hostname === "localhost"
+            || parsed.hostname === "127.0.0.1"
+            || parsed.hostname === "tauri.localhost";
     } catch {
         return false;
     }

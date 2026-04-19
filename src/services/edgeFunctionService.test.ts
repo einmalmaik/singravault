@@ -4,7 +4,7 @@
  * @fileoverview Unit tests for edgeFunctionService.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 
 const { mockInvoke, mockGetSession, mockRefreshSession, mockSetSession, supabaseMock, validTestToken } = vi.hoisted(() => {
@@ -64,10 +64,25 @@ import {
   isEdgeFunctionServiceError,
 } from "@/services/edgeFunctionService";
 
+interface TestFunctionsHttpErrorContext {
+  status: number;
+  json: ReturnType<typeof vi.fn>;
+}
+
+function attachContext(error: FunctionsHttpError, context: TestFunctionsHttpErrorContext): void {
+  (error as FunctionsHttpError & { context: TestFunctionsHttpErrorContext }).context = context;
+}
+
 describe("edgeFunctionService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "test-publishable-key");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fetch not mocked")));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("invokes function securely using supabase.functions.invoke", async () => {
@@ -89,10 +104,10 @@ describe("edgeFunctionService", () => {
 
   it("throws AUTH_REQUIRED when status is 401", async () => {
     const error = new FunctionsHttpError("Edge Function returned a non-2xx status code");
-    (error as any).context = {
+    attachContext(error, {
       status: 401,
       json: vi.fn().mockResolvedValue({ error: "Unauthorized" }),
-    };
+    });
 
     mockInvoke.mockResolvedValueOnce({
       data: null,
@@ -110,10 +125,10 @@ describe("edgeFunctionService", () => {
 
   it("normalizes 403 function responses", async () => {
     const error = new FunctionsHttpError("Edge Function returned a non-2xx status code");
-    (error as any).context = {
+    attachContext(error, {
       status: 403,
       json: vi.fn().mockResolvedValue({ error: "Families subscription required" }),
-    };
+    });
 
     mockInvoke.mockResolvedValueOnce({
       data: null,
@@ -131,10 +146,10 @@ describe("edgeFunctionService", () => {
 
   it("exposes backend message on 400 responses using json() method", async () => {
     const error = new FunctionsHttpError("Edge Function returned a non-2xx status code");
-    (error as any).context = {
+    attachContext(error, {
       status: 400,
       json: vi.fn().mockResolvedValue({ details: "Invalid email address format" }),
-    };
+    });
 
     mockInvoke.mockResolvedValueOnce({
       data: null,
@@ -169,10 +184,10 @@ describe("edgeFunctionService", () => {
 
   it("rehydrates the session from auth-session and retries once after a 401", async () => {
     const error = new FunctionsHttpError("Edge Function returned a non-2xx status code");
-    (error as any).context = {
+    attachContext(error, {
       status: 401,
       json: vi.fn().mockResolvedValue({ error: "Unauthorized" }),
-    };
+    });
 
     mockInvoke
       .mockResolvedValueOnce({
