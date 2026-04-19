@@ -87,6 +87,35 @@ export function hasOAuthCallbackPayload(callbackUrl: string, baseUrl?: string): 
   return Boolean(payload?.hasAuthPayload);
 }
 
+export function normalizeOAuthCallbackInput(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const withoutHash = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  const shouldTreatAsRawParams = trimmed.startsWith("#") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(trimmed);
+  if (shouldTreatAsRawParams) {
+    const params = new URLSearchParams(withoutHash);
+    if (!hasOAuthPayload(params)) {
+      return null;
+    }
+
+    const appUrl = new URL(TAURI_OAUTH_CALLBACK_URL);
+    params.forEach((value, key) => {
+      appUrl.searchParams.append(key, value);
+    });
+
+    return appUrl.toString();
+  }
+
+  if (parseOAuthCallbackPayload(trimmed)?.hasAuthPayload) {
+    return trimmed;
+  }
+
+  return null;
+}
+
 function parseCallbackUrl(callbackUrl: string, baseUrl = "http://localhost"): URL | null {
   try {
     return new URL(callbackUrl, baseUrl);

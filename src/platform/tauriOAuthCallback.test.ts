@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildTauriOAuthCallbackUrl,
   hasOAuthCallbackPayload,
+  normalizeOAuthCallbackInput,
   parseOAuthCallbackPayload,
 } from "./tauriOAuthCallback";
 
@@ -60,5 +61,18 @@ describe("tauriOAuthCallback", () => {
     expect(hasOAuthCallbackPayload("singravault://auth/callback?code=abc")).toBe(true);
     expect(hasOAuthCallbackPayload("singravault://auth/callback#access_token=a")).toBe(true);
     expect(hasOAuthCallbackPayload("singravault://auth/callback?source=tauri")).toBe(false);
+  });
+
+  it("normalizes manually pasted token fragments into app callbacks", () => {
+    expect(normalizeOAuthCallbackInput("#access_token=access&refresh_token=refresh")).toBe(
+      "singravault://auth/callback?access_token=access&refresh_token=refresh",
+    );
+    expect(normalizeOAuthCallbackInput("access_token=access&refresh_token=refresh")).toBe(
+      "singravault://auth/callback?access_token=access&refresh_token=refresh",
+    );
+  });
+
+  it("rejects manual input without an auth payload", () => {
+    expect(normalizeOAuthCallbackInput("https://example.com/auth?source=tauri")).toBeNull();
   });
 });

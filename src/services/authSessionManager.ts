@@ -130,7 +130,11 @@ export async function persistAuthenticatedSession(session: Session | null): Prom
   }
 
   if (isTauriRuntime()) {
-    await saveRefreshTokenToKeychain(session.refresh_token);
+    try {
+      await saveRefreshTokenToKeychain(session.refresh_token);
+    } catch (error) {
+      console.error("[Auth] Failed to persist desktop refresh token in keychain:", error);
+    }
   } else if (isInIframe()) {
     persistSessionFallback(session);
   } else {

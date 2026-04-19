@@ -32,19 +32,49 @@
         var appUrl = "singravault://auth/callback?" + params.toString();
         window.__SINGRA_TAURI_OAUTH_BOUNCE__ = true;
         sessionStorage.setItem("singra_tauri_oauth_callback", appUrl);
-        if (window.stop) window.stop();
 
-        document.documentElement.innerHTML = '<head><title>Singra Vault</title></head><body style="background:#020617;color:white;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;text-align:center;overflow:hidden;">' +
-          '<div style="padding:20px;max-width:320px;">' +
-          '<img src="/singra-icon.png" alt="" style="width:64px;height:64px;border-radius:16px;margin-bottom:20px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">' +
-          '<h2 style="margin:0 0 10px 0;font-size:20px;">Verbindung mit Singra Vault...</h2>' +
-          '<p style="color:#94a3b8;font-size:14px;margin-bottom:24px;">Desktop-App wird geoeffnet. Bitte bestaetige die Browser-Abfrage.</p>' +
-          '<div style="margin:0 auto 24px auto;border:3px solid #1e293b;border-top-color:#6366f1;border-radius:50%;width:24px;height:24px;animation:spin 1s linear infinite;"></div>' +
-          '<a id="singra-open-app" style="background:#6366f1;color:white;text-decoration:none;font-size:14px;padding:10px 20px;border-radius:8px;display:block;font-weight:600;box-shadow:0 4px 12px rgba(99,102,241,0.3);">Link manuell oeffnen</a>' +
-          '</div><style>@keyframes spin { to { transform: rotate(360deg); } }</style></body>';
+        var safeAppUrl = appUrl
+          .replace(/&/g, "&amp;")
+          .replace(/"/g, "&quot;")
+          .replace(/</g, "&lt;");
+        var bounceDocument = [
+          '<!doctype html>',
+          '<html lang="de">',
+          '<head>',
+          '<meta charset="UTF-8" />',
+          '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+          '<title>Singra Vault</title>',
+          '<style>',
+          ':root{--background:206 31% 4%;--foreground:188 29% 95%;--primary:193 45% 86%;--primary-foreground:195 43% 5%;--muted-foreground:196 19% 67%;--border:198 22% 26%;}',
+          '*{box-sizing:border-box}',
+          'body{min-height:100vh;margin:0;display:grid;place-items:center;background:hsl(var(--background));color:hsl(var(--foreground));font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;}',
+          'main{width:min(100% - 40px,360px);display:grid;gap:20px;justify-items:center;}',
+          'img{width:64px;height:64px;border-radius:8px;box-shadow:0 18px 48px rgb(0 0 0 / .38)}',
+          'h1{margin:0;font-size:22px;line-height:1.2;font-weight:700}',
+          'p{margin:0;color:hsl(var(--muted-foreground));font-size:14px;line-height:1.6}',
+          'a{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 18px;border-radius:8px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));font-size:14px;font-weight:700;text-decoration:none}',
+          '.spinner{width:26px;height:26px;border:3px solid hsl(var(--border));border-top-color:hsl(var(--primary));border-radius:999px;animation:spin 900ms linear infinite}',
+          '@keyframes spin{to{transform:rotate(360deg)}}',
+          '</style>',
+          '</head>',
+          '<body>',
+          '<main>',
+          '<img src="/singra-icon.png" alt="" />',
+          '<div class="spinner" aria-hidden="true"></div>',
+          '<h1>Verbindung mit Singra Vault</h1>',
+          '<p>Die Desktop-App wird geöffnet. Bitte bestätige die Browser-Abfrage.</p>',
+          '<a href="' + safeAppUrl + '">App öffnen</a>',
+          '</main>',
+          '</body>',
+          '</html>',
+        ].join('');
 
-        document.getElementById("singra-open-app").setAttribute("href", appUrl);
-        window.location.replace(appUrl);
+        document.open();
+        document.write(bounceDocument);
+        document.close();
+        setTimeout(function () {
+          window.location.href = appUrl;
+        }, 100);
       } catch (_) {
         // React fallback handles malformed callback URLs.
       }

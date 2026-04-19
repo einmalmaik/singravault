@@ -31,7 +31,7 @@ import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService'
 import { applyAuthenticatedSession, persistAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
-import { buildTauriOAuthCallbackUrl, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
+import { buildTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
 import { runtimeConfig } from '@/config/runtimeConfig';
@@ -96,27 +96,27 @@ export default function Auth() {
   const [isBouncing, setIsBouncing] = useState(false);
   const [bounceUrl, setBounceUrl] = useState<string | null>(null);
   const [bouncePreview, setBouncePreview] = useState<string | null>(null);
-  const authCallbackRuntimeRef = useRef({ API_URL, usesCookieSession, t, toast });
+  const authCallbackRuntimeRef = useRef({ API_URL, mode, navigate, postAuthRedirectPath, usesCookieSession, t, toast });
   const pendingCallbacks = useRef(new Set<string>());
   const settledCallbacks = useRef(new Set<string>());
   const bouncedCallbacks = useRef(new Set<string>());
   const notifiedCallbacks = useRef(new Set<string>());
 
   useEffect(() => {
-    authCallbackRuntimeRef.current = { API_URL, usesCookieSession, t, toast };
-  }, [API_URL, t, toast, usesCookieSession]);
+    authCallbackRuntimeRef.current = { API_URL, mode, navigate, postAuthRedirectPath, usesCookieSession, t, toast };
+  }, [API_URL, mode, navigate, postAuthRedirectPath, t, toast, usesCookieSession]);
 
-  const applyCallbackSession = useCallback(async (callbackUrl: string) => {
+  const applyCallbackSession = useCallback(async (callbackUrl: string): Promise<boolean> => {
     const callbackPayload = parseOAuthCallbackPayload(callbackUrl, window.location.origin);
     if (!callbackPayload?.hasAuthPayload) {
-      return;
+      return false;
     }
 
     const callbackKey = getCallbackKey(callbackUrl, callbackPayload);
     const appCallbackUrl = buildTauriOAuthCallbackUrl(callbackUrl, window.location.origin);
     if (!isTauriRuntime() && appCallbackUrl) {
       if (bouncedCallbacks.current.has(callbackKey)) {
-        return;
+        return true;
       }
 
       bouncedCallbacks.current.add(callbackKey);
@@ -129,12 +129,12 @@ export default function Auth() {
         window.location.replace(appCallbackUrl);
       }, 150);
 
-      return;
+      return true;
     }
 
     if (callbackPayload.error) {
       if (settledCallbacks.current.has(callbackKey)) {
-        return;
+        return false;
       }
 
       settledCallbacks.current.add(callbackKey);
@@ -148,26 +148,34 @@ export default function Auth() {
         });
       });
       setLoading(false);
-      return;
+      return false;
     }
 
     if (pendingCallbacks.current.has(callbackKey) || settledCallbacks.current.has(callbackKey)) {
-      return;
+      return true;
     }
 
     pendingCallbacks.current.add(callbackKey);
     setLoading(true);
 
     try {
+      console.info('[Auth] Applying OAuth callback session...');
       const session = callbackPayload.tokens
         ? await applyAuthenticatedSession(callbackPayload.tokens)
         : await exchangeOAuthCodeForSession(callbackPayload.code);
 
       if (!session) {
-        return;
+        setLoading(false);
+        return false;
       }
 
-      const { API_URL: authApiUrl, usesCookieSession: shouldUseCookieSession } = authCallbackRuntimeRef.current;
+      const {
+        API_URL: authApiUrl,
+        mode: currentMode,
+        navigate: goToPostAuthPath,
+        postAuthRedirectPath: redirectPath,
+        usesCookieSession: shouldUseCookieSession,
+      } = authCallbackRuntimeRef.current;
 
       if (shouldUseCookieSession) {
         const syncResponse = await fetch(`${authApiUrl}/auth-session`, {
@@ -201,6 +209,12 @@ export default function Auth() {
       }
 
       settledCallbacks.current.add(callbackKey);
+      console.info('[Auth] OAuth callback session applied.');
+      setLoading(false);
+      if (currentMode !== 'update_password') {
+        goToPostAuthPath(redirectPath, { replace: true });
+      }
+      return true;
     } catch (err) {
       settledCallbacks.current.add(callbackKey);
       console.error('[Auth] Failed to apply OAuth callback session:', err);
@@ -213,6 +227,7 @@ export default function Auth() {
         });
       });
       setLoading(false);
+      return false;
     } finally {
       pendingCallbacks.current.delete(callbackKey);
       cleanAuthCallbackUrl();
@@ -767,9 +782,21 @@ export default function Auth() {
 
   const handleManualDeepLink = async () => {
     const link = prompt('Bitte füge den Anmelde-Link oder das Token hier ein:');
-    if (link) {
-      await applyCallbackSession(link);
+    if (!link) {
+      return;
     }
+
+    const callbackUrl = normalizeOAuthCallbackInput(link);
+    if (!callbackUrl) {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: 'Der eingefügte Link enthält keinen gültigen Anmelde-Callback.',
+      });
+      return;
+    }
+
+    await applyCallbackSession(callbackUrl);
   };
 
   return (
