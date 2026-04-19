@@ -51,7 +51,9 @@ export default defineConfig(({ mode }) => {
   const premiumStubEntry = path.resolve(__dirname, "./src/extensions/premiumStub.ts");
   const hasPremiumDevRepo = fs.existsSync(premiumDevEntry);
   const hasInstalledPremiumPackage = fs.existsSync(premiumInstalledEntry);
-  const premiumEntry = isDev && hasPremiumDevRepo
+  const shouldUsePremiumSource =
+    hasPremiumDevRepo && (isDev || isTauriBuild || process.env.SINGRA_PREMIUM_SOURCE === "true");
+  const premiumEntry = shouldUsePremiumSource
     ? premiumDevEntry
     : hasInstalledPremiumPackage
       ? premiumInstalledEntry
@@ -168,7 +170,7 @@ export default defineConfig(({ mode }) => {
       topLevelAwait(),
       react(),
       isDev && componentTagger(),
-      isDev && hasPremiumDevRepo && premiumResolvePlugin(),
+      shouldUsePremiumSource && premiumResolvePlugin(),
       VitePWA({
         strategies: "injectManifest",
         srcDir: "src",
