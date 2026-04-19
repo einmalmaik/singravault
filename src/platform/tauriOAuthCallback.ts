@@ -3,7 +3,10 @@
 
 export const TAURI_OAUTH_CALLBACK_URL = "singravault://auth/callback";
 
-const TAURI_SOURCE_VALUE = "tauri";
+const TAURI_CALLBACK_PROTOCOL = "singravault:";
+const TAURI_CALLBACK_HOST = "auth";
+const TAURI_CALLBACK_PATH = "/callback";
+const WEB_CALLBACK_PATH = "/auth";
 const AUTH_PAYLOAD_KEYS = [
   "access_token",
   "refresh_token",
@@ -26,7 +29,6 @@ export interface OAuthCallbackError {
 
 export interface OAuthCallbackPayload {
   params: URLSearchParams;
-  isTauriSource: boolean;
   hasAuthPayload: boolean;
   tokens: OAuthSessionTokens | null;
   code: string | null;
@@ -39,6 +41,10 @@ export function parseOAuthCallbackPayload(callbackUrl: string, baseUrl?: string)
     return null;
   }
 
+  if (!isExpectedCallbackLocation(parsed, baseUrl)) {
+    return null;
+  }
+
   const params = collectCallbackParams(parsed);
   const error = params.get("error") || params.get("error_code");
   const accessToken = params.get("access_token");
@@ -47,7 +53,6 @@ export function parseOAuthCallbackPayload(callbackUrl: string, baseUrl?: string)
 
   return {
     params,
-    isTauriSource: isTauriOAuthSource(params),
     hasAuthPayload: hasOAuthPayload(params),
     tokens: accessToken && refreshToken
       ? { access_token: accessToken, refresh_token: refreshToken }
@@ -61,25 +66,6 @@ export function parseOAuthCallbackPayload(callbackUrl: string, baseUrl?: string)
       }
       : null,
   };
-}
-
-export function buildTauriOAuthCallbackUrl(callbackUrl: string, baseUrl?: string): string | null {
-  const parsed = parseCallbackUrl(callbackUrl, baseUrl);
-  if (!parsed) {
-    return null;
-  }
-
-  const params = collectCallbackParams(parsed);
-  if (!isTauriOAuthSource(params) || !hasOAuthPayload(params)) {
-    return null;
-  }
-
-  const appUrl = new URL(TAURI_OAUTH_CALLBACK_URL);
-  params.forEach((value, key) => {
-    appUrl.searchParams.append(key, value);
-  });
-
-  return appUrl.toString();
 }
 
 export function hasOAuthCallbackPayload(callbackUrl: string, baseUrl?: string): boolean {
@@ -124,6 +110,23 @@ function parseCallbackUrl(callbackUrl: string, baseUrl = "http://localhost"): UR
   }
 }
 
+function isExpectedCallbackLocation(parsed: URL, baseUrl?: string): boolean {
+  if (parsed.protocol === TAURI_CALLBACK_PROTOCOL) {
+    return parsed.hostname === TAURI_CALLBACK_HOST && parsed.pathname === TAURI_CALLBACK_PATH;
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return false;
+  }
+
+  if (!baseUrl) {
+    return false;
+  }
+
+  const base = parseCallbackUrl(baseUrl);
+  return parsed.origin === base?.origin && parsed.pathname === WEB_CALLBACK_PATH;
+}
+
 function collectCallbackParams(parsed: URL): URLSearchParams {
   const params = new URLSearchParams(parsed.search);
   const hash = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
@@ -136,14 +139,6 @@ function collectCallbackParams(parsed: URL): URLSearchParams {
   }
 
   return params;
-}
-
-function isTauriOAuthSource(params: URLSearchParams): boolean {
-  if (params.get("source") === TAURI_SOURCE_VALUE) {
-    return true;
-  }
-
-  return params.get("redirect")?.includes("source=tauri") ?? false;
 }
 
 function hasOAuthPayload(params: URLSearchParams): boolean {

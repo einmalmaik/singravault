@@ -1,38 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTauriOAuthCallbackUrl,
   hasOAuthCallbackPayload,
   normalizeOAuthCallbackInput,
   parseOAuthCallbackPayload,
 } from "./tauriOAuthCallback";
 
 describe("tauriOAuthCallback", () => {
-  it("moves implicit hash tokens into the app callback query", () => {
-    const appUrl = buildTauriOAuthCallbackUrl(
-      "https://singravault.mauntingstudios.de/auth?source=tauri#access_token=access&refresh_token=refresh&expires_in=3600",
-    );
-
-    expect(appUrl).toBe(
-      "singravault://auth/callback?source=tauri&access_token=access&refresh_token=refresh&expires_in=3600",
-    );
-  });
-
-  it("preserves PKCE codes for exchange inside the Tauri client", () => {
-    const appUrl = buildTauriOAuthCallbackUrl(
-      "https://singravault.mauntingstudios.de/auth?source=tauri&code=oauth-code",
-    );
-
-    expect(appUrl).toBe("singravault://auth/callback?source=tauri&code=oauth-code");
-  });
-
-  it("does not build an app callback for normal web auth callbacks", () => {
-    const appUrl = buildTauriOAuthCallbackUrl(
-      "https://singravault.mauntingstudios.de/auth#access_token=access&refresh_token=refresh",
-    );
-
-    expect(appUrl).toBeNull();
-  });
-
   it("parses session tokens from custom-scheme query params", () => {
     const payload = parseOAuthCallbackPayload(
       "singravault://auth/callback?access_token=access&refresh_token=refresh",
@@ -42,6 +15,39 @@ describe("tauriOAuthCallback", () => {
       access_token: "access",
       refresh_token: "refresh",
     });
+  });
+
+  it("parses session tokens from custom-scheme hash params", () => {
+    const payload = parseOAuthCallbackPayload(
+      "singravault://auth/callback#access_token=access&refresh_token=refresh",
+    );
+
+    expect(payload?.tokens).toEqual({
+      access_token: "access",
+      refresh_token: "refresh",
+    });
+  });
+
+  it("parses same-origin web auth callbacks", () => {
+    const payload = parseOAuthCallbackPayload(
+      "https://singravault.mauntingstudios.de/auth#access_token=access&refresh_token=refresh",
+      "https://singravault.mauntingstudios.de",
+    );
+
+    expect(payload?.tokens).toEqual({
+      access_token: "access",
+      refresh_token: "refresh",
+    });
+  });
+
+  it("rejects unexpected callback locations", () => {
+    expect(parseOAuthCallbackPayload("singravault://profile/callback?code=abc")).toBeNull();
+    expect(
+      parseOAuthCallbackPayload(
+        "https://example.com/auth#access_token=access&refresh_token=refresh",
+        "https://singravault.mauntingstudios.de",
+      ),
+    ).toBeNull();
   });
 
   it("parses PKCE code and OAuth errors", () => {
@@ -60,7 +66,7 @@ describe("tauriOAuthCallback", () => {
   it("detects auth payload in either search or hash", () => {
     expect(hasOAuthCallbackPayload("singravault://auth/callback?code=abc")).toBe(true);
     expect(hasOAuthCallbackPayload("singravault://auth/callback#access_token=a")).toBe(true);
-    expect(hasOAuthCallbackPayload("singravault://auth/callback?source=tauri")).toBe(false);
+    expect(hasOAuthCallbackPayload("singravault://auth/callback?state=opaque")).toBe(false);
   });
 
   it("normalizes manually pasted token fragments into app callbacks", () => {
@@ -73,6 +79,6 @@ describe("tauriOAuthCallback", () => {
   });
 
   it("rejects manual input without an auth payload", () => {
-    expect(normalizeOAuthCallbackInput("https://example.com/auth?source=tauri")).toBeNull();
+    expect(normalizeOAuthCallbackInput("https://example.com/auth?state=opaque")).toBeNull();
   });
 });

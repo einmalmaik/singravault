@@ -7,41 +7,32 @@ import { isTauriRuntime } from "@/platform/runtime";
 
 import { initPremium } from '@singra/premium';
 
-declare global {
-  interface Window {
-    __SINGRA_TAURI_OAUTH_BOUNCE__?: boolean;
-    __SINGRA_TAURI_OAUTH_URL__?: string;
-  }
-}
+initPremium();
 
-if (!window.__SINGRA_TAURI_OAUTH_BOUNCE__) {
-  initPremium();
+if (import.meta.env.PROD && !isTauriRuntime() && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then((registration) => {
+        registration.update().catch(() => undefined);
 
-  if (import.meta.env.PROD && !isTauriRuntime() && "serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker
-        .register("/sw.js")
-        .then((registration) => {
-          registration.update().catch(() => undefined);
+        registration.addEventListener("updatefound", () => {
+          const installing = registration.installing;
+          if (!installing) {
+            return;
+          }
 
-          registration.addEventListener("updatefound", () => {
-            const installing = registration.installing;
-            if (!installing) {
-              return;
+          installing.addEventListener("statechange", () => {
+            if (installing.state === "installed" && navigator.serviceWorker.controller) {
+              console.info("A new service worker version is waiting to activate.");
             }
-
-            installing.addEventListener("statechange", () => {
-              if (installing.state === "installed" && navigator.serviceWorker.controller) {
-                console.info("A new service worker version is waiting to activate.");
-              }
-            });
           });
-        })
-        .catch((err) => {
-          console.error("Service worker registration failed:", err);
         });
-    });
-  }
-
-  createRoot(document.getElementById("root")!).render(<App />);
+      })
+      .catch((err) => {
+        console.error("Service worker registration failed:", err);
+      });
+  });
 }
+
+createRoot(document.getElementById("root")!).render(<App />);

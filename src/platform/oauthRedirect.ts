@@ -1,12 +1,9 @@
 import { isTauriRuntime } from "./runtime";
-import { runtimeConfig } from "@/config/runtimeConfig";
+import { TAURI_OAUTH_CALLBACK_URL } from "./tauriOAuthCallback";
 
 export function getOAuthRedirectUrl(): string {
   if (isTauriRuntime()) {
-    // We use the web URL as a bounce page to ensure compatibility with 
-    // OAuth providers that don't allow custom schemes (like singravault://).
-    const webUrl = runtimeConfig.webUrl;
-    return `${webUrl}/auth?source=tauri`;
+    return TAURI_OAUTH_CALLBACK_URL;
   }
 
   return `${window.location.origin}/auth`;

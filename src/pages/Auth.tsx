@@ -31,7 +31,7 @@ import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService'
 import { applyAuthenticatedSession, persistAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
-import { buildTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
+import { normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
 import { runtimeConfig } from '@/config/runtimeConfig';
@@ -93,13 +93,9 @@ export default function Auth() {
   })();
   const usesCookieSession = !inIframe && !isTauriRuntime();
 
-  const [isBouncing, setIsBouncing] = useState(false);
-  const [bounceUrl, setBounceUrl] = useState<string | null>(null);
-  const [bouncePreview, setBouncePreview] = useState<string | null>(null);
   const authCallbackRuntimeRef = useRef({ API_URL, mode, navigate, postAuthRedirectPath, usesCookieSession, t, toast });
   const pendingCallbacks = useRef(new Set<string>());
   const settledCallbacks = useRef(new Set<string>());
-  const bouncedCallbacks = useRef(new Set<string>());
   const notifiedCallbacks = useRef(new Set<string>());
 
   useEffect(() => {
@@ -113,25 +109,6 @@ export default function Auth() {
     }
 
     const callbackKey = getCallbackKey(callbackUrl, callbackPayload);
-    const appCallbackUrl = buildTauriOAuthCallbackUrl(callbackUrl, window.location.origin);
-    if (!isTauriRuntime() && appCallbackUrl) {
-      if (bouncedCallbacks.current.has(callbackKey)) {
-        return true;
-      }
-
-      bouncedCallbacks.current.add(callbackKey);
-      console.info('[Auth] Tauri OAuth callback detected on web, bouncing to app...');
-      setBounceUrl(appCallbackUrl);
-      setBouncePreview(getCallbackPreview(callbackPayload.params));
-      setIsBouncing(true);
-
-      setTimeout(() => {
-        window.location.replace(appCallbackUrl);
-      }, 150);
-
-      return true;
-    }
-
     if (callbackPayload.error) {
       if (settledCallbacks.current.has(callbackKey)) {
         return false;
@@ -803,45 +780,6 @@ export default function Auth() {
     <div className="min-h-screen flex overflow-hidden">
       <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
 
-      {isBouncing && (
-        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-background/80 backdrop-blur-md animate-in fade-in duration-500">
-          <div className="flex flex-col items-center space-y-6 max-w-xs text-center">
-            <div className="relative">
-              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
-              <img src="/singra-icon.png" alt="" className="relative w-16 h-16 rounded-full shadow-2xl" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-xl font-bold tracking-tight">Verbindung wird hergestellt</h2>
-              <p className="text-sm text-muted-foreground">
-                Wir leiten dich zurück zu deiner Desktop-App weiter. Bitte bestätige eventuelle Browser-Abfragen.
-              </p>
-            </div>
-            {bouncePreview && (
-              <div className="flex flex-col space-y-2 w-full">
-                <div className="p-2 bg-muted rounded text-[10px] break-all opacity-70 font-mono text-left max-h-20 overflow-y-auto">
-                  {bouncePreview}
-                </div>
-                <Button 
-                  variant="outline" 
-                  size="xs" 
-                  className="text-[10px] h-6"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(bounceUrl ?? bouncePreview);
-                    toast({ title: 'Kopiert!', description: 'Füge den Anmelde-Link in der App ein.' });
-                  }}
-                >
-                  Link kopieren
-                </Button>
-              </div>
-            )}
-            <Loader2 className="w-8 h-8 animate-spin text-primary/60" />
-            <Button variant="ghost" size="sm" disabled={!bounceUrl} onClick={() => bounceUrl && window.location.assign(bounceUrl)}>
-              Klicke hier, falls nichts passiert
-            </Button>
-          </div>
-        </div>
-      )}
-
       {/* ── Brand Panel (desktop only, left 45%) ────────────────── */}
       <div className="hidden lg:flex relative w-[45%] flex-shrink-0 overflow-hidden auth-brand-gradient auth-brand-reveal">
         <NebulaHeroBackground variant="panel" showText showParticles />
@@ -1326,26 +1264,4 @@ function cleanAuthCallbackUrl(): void {
 
   const cleanUrl = `${window.location.pathname}${cleanSearch.toString() ? `?${cleanSearch.toString()}` : ''}`;
   window.history.replaceState({}, document.title, cleanUrl);
-}
-
-function getCallbackPreview(params: URLSearchParams): string {
-  const preview = new URLSearchParams();
-
-  params.forEach((value, key) => {
-    preview.set(key, isSensitiveOAuthParam(key) ? redactCallbackValue(value) : value);
-  });
-
-  return preview.toString();
-}
-
-function isSensitiveOAuthParam(key: string): boolean {
-  return key.includes('token') || key === 'code';
-}
-
-function redactCallbackValue(value: string): string {
-  if (value.length <= 12) {
-    return '***';
-  }
-
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
