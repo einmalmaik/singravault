@@ -5,6 +5,11 @@ const MISSING_SUPABASE_URL = "https://missing-supabase-url.invalid";
 const MISSING_SUPABASE_PUBLISHABLE_KEY = "missing-supabase-publishable-key";
 
 function readEnv(name: "VITE_SUPABASE_URL" | "VITE_SUPABASE_PUBLISHABLE_KEY"): string {
+  // Check localStorage override first (useful for self-hosters in Tauri)
+  const overrideKey = `SINGRA_${name}_OVERRIDE`;
+  const override = typeof window !== 'undefined' ? localStorage.getItem(overrideKey) : null;
+  if (override) return override.trim();
+
   return String(import.meta.env[name] ?? "").trim();
 }
 

@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 
 import { CookieBanner } from '@/components/CookieBanner';
 import { CookieSettingsDialog } from '@/components/CookieSettingsDialog';
+import { isTauriRuntime } from '@/platform/runtime';
 import {
     clearOptionalCookieData,
     readCookieConsent,
@@ -28,6 +29,10 @@ export function CookieConsent({ variant: _variant = 'default' }: CookieConsentPr
     const [optional, setOptional] = useState(false);
 
     useEffect(() => {
+        if (isTauriRuntime()) {
+            return;
+        }
+
         const consent = readCookieConsent();
         if (!consent) {
             clearOptionalCookieData();

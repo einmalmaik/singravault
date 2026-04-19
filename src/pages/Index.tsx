@@ -7,7 +7,13 @@
  */
 
 import Landing from './Landing';
+import { isTauriRuntime } from '@/platform/runtime';
+import { Navigate } from 'react-router-dom';
 
 export default function Index() {
+  if (isTauriRuntime()) {
+    return <Navigate to="/auth" replace />;
+  }
+  
   return <Landing />;
 }
