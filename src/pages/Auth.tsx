@@ -32,6 +32,7 @@ import { applyAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
 import { isTauriRuntime } from '@/platform/runtime';
+import { openExternalUrl } from '@/platform/openExternalUrl';
 import { runtimeConfig } from '@/config/runtimeConfig';
 import * as opaqueClient from '@/services/opaqueService';
 
@@ -113,6 +114,23 @@ export default function Auth() {
     };
 
     const applyCallbackSession = async (callbackUrl: string) => {
+      // Priority 1: If we are on web but the login was initiated by Tauri (source=tauri),
+      // bounce immediately back to the app using the custom protocol.
+      const isWeb = !isTauriRuntime();
+      const hasTauriSource = searchParams.get('source') === 'tauri' || searchParams.get('redirect')?.includes('source=tauri');
+      const hasTokens = window.location.hash.includes('access_token=') || window.location.search.includes('access_token=');
+
+      if (isWeb && hasTauriSource && hasTokens) {
+        console.info('[Auth] Tauri source detected on web, bouncing to app...');
+        // We use the full hash and search to ensure all tokens are passed back
+        const appUrl = `singravault://auth/callback${window.location.search}${window.location.hash}`;
+        window.location.assign(appUrl);
+        
+        // Optional: Show a small hint to the user
+        toast({ title: 'Weiterleitung...', description: 'Du wirst zur Desktop-App zurückgeleitet.' });
+        return;
+      }
+
       const tokens = extractCallbackTokens(callbackUrl);
       if (!tokens || cancelled) {
         return;
@@ -673,20 +691,35 @@ export default function Auth() {
 
   const handleOAuth = async (provider: 'google' | 'discord' | 'github') => {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo: getOAuthRedirectUrl(),
-      }
-    });
 
-    if (error) {
+    try {
+      const isTauri = isTauriRuntime();
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: getOAuthRedirectUrl(),
+          skipBrowserRedirect: isTauri,
+        }
+      });
+
+      if (error) throw error;
+
+      if (isTauri && data?.url) {
+        // Open the login URL in the user's default system browser
+        await openExternalUrl(data.url);
+      }
+    } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common.error'),
         description: t('auth.errors.generic'),
       });
-      setLoading(false);
+    } finally {
+      // For Tauri, we keep the loading state until the deep link arrives 
+      // or the user manually interacts again. For Web, the redirect happens anyway.
+      if (!isTauriRuntime()) {
+        setLoading(false);
+      }
     }
   };
 
