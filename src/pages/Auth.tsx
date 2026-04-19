@@ -728,6 +728,13 @@ export default function Auth() {
     }
   };
 
+  const handleManualDeepLink = async () => {
+    const link = prompt('Bitte füge den Anmelde-Link oder das Token hier ein:');
+    if (link) {
+      await applyCallbackSession(link);
+    }
+  };
+
   return (
     <div className="min-h-screen flex overflow-hidden">
       <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
@@ -1127,6 +1134,11 @@ export default function Auth() {
 
             {/* Toggle mode */}
             <div className="mt-6 text-center text-sm flex flex-col gap-2">
+              {isTauriRuntime() && (
+                <button type="button" className="text-muted-foreground hover:underline font-medium mb-2" onClick={handleManualDeepLink}>
+                  Anmelde-Link manuell einfügen
+                </button>
+              )}
               {mode !== 'login' && (
                 <button type="button" className="text-primary hover:underline font-medium" onClick={() => setMode('login')}>
                   Zurück zum Login
