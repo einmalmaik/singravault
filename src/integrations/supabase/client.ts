@@ -11,16 +11,18 @@ const SUPABASE_PUBLISHABLE_KEY = runtimeConfig.supabasePublishableKey;
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
+const memoryStore = new Map<string, string>();
+
 const inMemoryStorage = {
-  getItem: () => null,
-  setItem: () => { },
-  removeItem: () => { },
+  getItem: (key: string) => memoryStore.get(key) || null,
+  setItem: (key: string, value: string) => { memoryStore.set(key, value); },
+  removeItem: (key: string) => { memoryStore.delete(key); },
 };
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
     storage: inMemoryStorage,
-    persistSession: false,
+    persistSession: true,
     autoRefreshToken: false,
     detectSessionInUrl: true,
   }

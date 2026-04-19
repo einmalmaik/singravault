@@ -59,6 +59,21 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
   }
 
   if (isTauriRuntime()) {
+    // Check if we have incoming deep links (a login is in progress).
+    // If so, do NOT attempt to refresh the old keychain token, as its failure 
+    // would trigger a SIGNED_OUT event that destroys the newly applied deep link session.
+    try {
+      const { getInitialDeepLinks } = await import("@/platform/deepLink");
+      const initialLinks = await getInitialDeepLinks();
+      const hasLoginLink = initialLinks.some(url => url.includes('access_token='));
+      if (hasLoginLink) {
+        console.info("[Auth] Incoming deep link detected, skipping keychain refresh to prevent race condition.");
+        return offlineOrUnauthenticatedState();
+      }
+    } catch (e) {
+      console.warn("Failed to check initial deep links during hydration", e);
+    }
+
     const tauriSession = await refreshFromTauriKeychain();
     if (tauriSession) {
       return onlineState(tauriSession);
@@ -311,8 +326,20 @@ async function refreshFromTauriKeychain(): Promise<Session | null> {
     return null;
   }
 
+  // Prevent race condition: if a new session was set in memory while we were loading from keychain,
+  // do not attempt to refresh the old token (which would fail and emit SIGNED_OUT).
+  const currentMemSession = await getMemorySession();
+  if (currentMemSession?.access_token) {
+    return currentMemSession;
+  }
+
   const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
   if (error || !data.session) {
+    // Check if memory session was updated concurrently by a deep link before we clear anything
+    const concurrentSession = await getMemorySession();
+    if (concurrentSession?.access_token) {
+      return concurrentSession;
+    }
     await clearRefreshTokenFromKeychain();
     return null;
   }

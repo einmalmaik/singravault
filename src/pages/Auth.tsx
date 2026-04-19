@@ -115,6 +115,8 @@ export default function Auth() {
       }
     };
 
+    const processedTokens = new Set<string>();
+
     const applyCallbackSession = async (callbackUrl: string) => {
       // Priority 1: If we are on web but the login was initiated by Tauri (source=tauri),
       // bounce immediately back to the app using the custom protocol.
@@ -143,6 +145,13 @@ export default function Auth() {
       if (!tokens || cancelled) {
         return;
       }
+
+      // Deduplicate to avoid applying the exact same tokens twice rapidly
+      const tokenKey = `${tokens.access_token}:${tokens.refresh_token}`;
+      if (processedTokens.has(tokenKey)) {
+        return;
+      }
+      processedTokens.add(tokenKey);
 
       try {
         await applyAuthenticatedSession(tokens);
