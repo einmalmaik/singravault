@@ -91,6 +91,8 @@ export default function Auth() {
   })();
   const usesCookieSession = !inIframe && !isTauriRuntime();
 
+  const [isBouncing, setIsBouncing] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
@@ -122,12 +124,15 @@ export default function Auth() {
 
       if (isWeb && hasTauriSource && hasTokens) {
         console.info('[Auth] Tauri source detected on web, bouncing to app...');
+        setIsBouncing(true);
         // We use the full hash and search to ensure all tokens are passed back
         const appUrl = `singravault://auth/callback${window.location.search}${window.location.hash}`;
-        window.location.assign(appUrl);
         
-        // Optional: Show a small hint to the user
-        toast({ title: 'Weiterleitung...', description: 'Du wirst zur Desktop-App zurückgeleitet.' });
+        // Wait a short moment so the user sees the message
+        setTimeout(() => {
+          window.location.assign(appUrl);
+        }, 1500);
+        
         return;
       }
 
@@ -726,6 +731,27 @@ export default function Auth() {
   return (
     <div className="min-h-screen flex overflow-hidden">
       <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
+
+      {isBouncing && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-background/80 backdrop-blur-md animate-in fade-in duration-500">
+          <div className="flex flex-col items-center space-y-6 max-w-xs text-center">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+              <img src="/singra-icon.png" alt="" className="relative w-16 h-16 rounded-full shadow-2xl" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold tracking-tight">Verbindung wird hergestellt</h2>
+              <p className="text-sm text-muted-foreground">
+                Wir leiten dich zurück zu deiner Desktop-App weiter. Bitte bestätige eventuelle Browser-Abfragen.
+              </p>
+            </div>
+            <Loader2 className="w-8 h-8 animate-spin text-primary/60" />
+            <Button variant="ghost" size="sm" onClick={() => window.location.assign(`singravault://auth/callback${window.location.hash}`)}>
+              Klicke hier, falls nichts passiert
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* ── Brand Panel (desktop only, left 45%) ────────────────── */}
       <div className="hidden lg:flex relative w-[45%] flex-shrink-0 overflow-hidden auth-brand-gradient auth-brand-reveal">
