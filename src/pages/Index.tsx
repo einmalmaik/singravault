@@ -8,30 +8,28 @@
 
 import Landing from './Landing';
 import { isTauriRuntime } from '@/platform/runtime';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { buildTauriOAuthCallbackUrl } from '@/platform/tauriOAuthCallback';
+import { Navigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 export default function Index() {
-  const [searchParams] = useSearchParams();
   const [isBouncing, setIsBouncing] = useState(false);
 
   useEffect(() => {
     // If we are on web and see a login token with source=tauri, bounce back to the app.
     // This handles cases where Supabase redirects to the root instead of /auth.
     const isWeb = !isTauriRuntime();
-    const hasTauriSource = searchParams.get('source') === 'tauri' || searchParams.get('redirect')?.includes('source=tauri');
-    const hasTokens = window.location.hash.includes('access_token=') || window.location.search.includes('access_token=');
+    const appCallbackUrl = buildTauriOAuthCallbackUrl(window.location.href, window.location.origin);
 
-    if (isWeb && hasTauriSource && hasTokens) {
+    if (isWeb && appCallbackUrl) {
       setIsBouncing(true);
-      const appUrl = `singravault://auth/callback${window.location.search}${window.location.hash}`;
       
       setTimeout(() => {
-        window.location.assign(appUrl);
-      }, 1000);
+        window.location.replace(appCallbackUrl);
+      }, 150);
     }
-  }, [searchParams]);
+  }, []);
 
   if (isTauriRuntime()) {
     // IMPORTANT: Preserve the hash (#access_token=...) and search (?source=tauri) 

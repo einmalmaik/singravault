@@ -9,6 +9,8 @@ export default {
     "./components/**/*.{ts,tsx}",
     "./app/**/*.{ts,tsx}",
     "./src/**/*.{ts,tsx}",
+    "../singra-premium/src/**/*.{ts,tsx}",
+    "../singra-premium/dist/**/*.{js,mjs}",
     "./node_modules/@singra/premium/dist/**/*.{js,mjs}",
   ],
   prefix: "",

@@ -6,7 +6,7 @@
  * Handles login, passkey, and signup flows via Custom Edge Functions (BFF Pattern).
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { Session } from '@supabase/supabase-js';
@@ -28,9 +28,10 @@ import { SEO } from '@/components/SEO';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService';
-import { applyAuthenticatedSession } from '@/services/authSessionManager';
+import { applyAuthenticatedSession, persistAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
+import { buildTauriOAuthCallbackUrl, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
 import { runtimeConfig } from '@/config/runtimeConfig';
@@ -92,109 +93,107 @@ export default function Auth() {
   const usesCookieSession = !inIframe && !isTauriRuntime();
 
   const [isBouncing, setIsBouncing] = useState(false);
+  const [bounceUrl, setBounceUrl] = useState<string | null>(null);
+  const [bouncePreview, setBouncePreview] = useState<string | null>(null);
+  const processedCallbacks = useRef(new Set<string>());
 
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
+  const applyCallbackSession = useCallback(async (callbackUrl: string) => {
+    const callbackPayload = parseOAuthCallbackPayload(callbackUrl, window.location.origin);
+    if (!callbackPayload?.hasAuthPayload) {
+      return;
+    }
 
-    const extractCallbackTokens = (callbackUrl: string) => {
-      try {
-        const parsed = new URL(callbackUrl, window.location.origin);
-        const hashParams = new URLSearchParams(parsed.hash.startsWith('#') ? parsed.hash.slice(1) : '');
-        const searchParams = parsed.searchParams;
-        const accessToken = hashParams.get('access_token') ?? searchParams.get('access_token');
-        const refreshToken = hashParams.get('refresh_token') ?? searchParams.get('refresh_token');
+    const appCallbackUrl = buildTauriOAuthCallbackUrl(callbackUrl, window.location.origin);
+    if (!isTauriRuntime() && appCallbackUrl) {
+      console.info('[Auth] Tauri OAuth callback detected on web, bouncing to app...');
+      setBounceUrl(appCallbackUrl);
+      setBouncePreview(getCallbackPreview(callbackPayload.params));
+      setIsBouncing(true);
 
-        if (!accessToken || !refreshToken) {
-          return null;
-        }
+      setTimeout(() => {
+        window.location.replace(appCallbackUrl);
+      }, 150);
 
-        return { access_token: accessToken, refresh_token: refreshToken };
-      } catch {
-        return null;
-      }
-    };
+      return;
+    }
 
-    const processedTokens = new Set<string>();
+    if (callbackPayload.error) {
+      console.error('[Auth] OAuth callback returned an error:', callbackPayload.error);
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: callbackPayload.error.description ?? callbackPayload.error.error,
+      });
+      setLoading(false);
+      return;
+    }
 
-    const applyCallbackSession = async (callbackUrl: string) => {
-      // Priority 1: If we are on web but the login was initiated by Tauri (source=tauri),
-      // bounce immediately back to the app using the custom protocol.
-      const isWeb = !isTauriRuntime();
-      const hasTauriSource = searchParams.get('source') === 'tauri' || searchParams.get('redirect')?.includes('source=tauri');
-      
-      const currentHash = window.location.hash || sessionStorage.getItem('tauri_login_hash') || '';
-      const hasTokens = currentHash.includes('access_token=') || window.location.search.includes('access_token=');
+    const callbackKey = callbackPayload.tokens
+      ? `tokens:${callbackPayload.tokens.access_token}:${callbackPayload.tokens.refresh_token}`
+      : callbackPayload.code
+        ? `code:${callbackPayload.code}`
+        : callbackUrl;
 
-      if (isWeb && hasTauriSource && hasTokens) {
-        console.info('[Auth] Tauri source detected on web, bouncing to app...');
-        setIsBouncing(true);
-        // We use the full hash and search to ensure all tokens are passed back
-        const appUrl = `singravault://auth/callback${window.location.search}${currentHash}`;
-        
-        // IMPORTANT: Redirect to app and then STOP here. 
-        // Do not proceed to log in the web-user.
-        setTimeout(() => {
-          window.location.assign(appUrl);
-        }, 1000);
-        
-        return; // <--- This prevents the local web login!
-      }
+    if (processedCallbacks.current.has(callbackKey)) {
+      return;
+    }
+    processedCallbacks.current.add(callbackKey);
 
-      const tokens = extractCallbackTokens(callbackUrl);
-      if (!tokens || cancelled) {
+    try {
+      const session = callbackPayload.tokens
+        ? await applyAuthenticatedSession(callbackPayload.tokens)
+        : await exchangeOAuthCodeForSession(callbackPayload.code);
+
+      if (!session) {
         return;
       }
 
-      // Deduplicate to avoid applying the exact same tokens twice rapidly
-      const tokenKey = `${tokens.access_token}:${tokens.refresh_token}`;
-      if (processedTokens.has(tokenKey)) {
-        return;
-      }
-      processedTokens.add(tokenKey);
+      if (usesCookieSession) {
+        const syncResponse = await fetch(`${API_URL}/auth-session`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            action: 'oauth-sync',
+            refreshToken: session.refresh_token,
+          }),
+        });
 
-      try {
-        await applyAuthenticatedSession(tokens);
+        if (!syncResponse.ok) {
+          console.warn('[Auth] OAuth session cookie sync failed:', syncResponse.status);
+        } else {
+          const syncPayload = await syncResponse.json().catch(() => null) as {
+            session?: Session;
+          } | null;
+          const syncedSession = syncPayload?.session;
 
-        if (usesCookieSession) {
-          const syncResponse = await fetch(`${API_URL}/auth-session`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${tokens.access_token}`,
-            },
-            credentials: 'include',
-            body: JSON.stringify({
-              action: 'oauth-sync',
-              refreshToken: tokens.refresh_token,
-            }),
-          });
-
-          if (!syncResponse.ok) {
-            console.warn('[Auth] OAuth session cookie sync failed:', syncResponse.status);
-          } else {
-            const syncPayload = await syncResponse.json().catch(() => null) as {
-              session?: Session;
-            } | null;
-            const syncedSession = syncPayload?.session;
-
-            if (syncedSession?.access_token && syncedSession?.refresh_token) {
-              await applyAuthenticatedSession({
-                access_token: syncedSession.access_token,
-                refresh_token: syncedSession.refresh_token,
-              });
-            }
+          if (syncedSession?.access_token && syncedSession?.refresh_token) {
+            await applyAuthenticatedSession({
+              access_token: syncedSession.access_token,
+              refresh_token: syncedSession.refresh_token,
+            });
           }
         }
-      } catch (err) {
-        console.error('[Auth] Failed to apply callback session from URL hash:', err);
-      } finally {
-        if (window.location.hash.includes('access_token=')) {
-          const cleanUrl = `${window.location.pathname}${window.location.search}`;
-          window.history.replaceState({}, document.title, cleanUrl);
-        }
       }
-    };
+    } catch (err) {
+      processedCallbacks.current.delete(callbackKey);
+      console.error('[Auth] Failed to apply OAuth callback session:', err);
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: t('auth.errors.generic'),
+      });
+      setLoading(false);
+    } finally {
+      cleanAuthCallbackUrl();
+    }
+  }, [API_URL, t, toast, usesCookieSession]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
 
     void applyCallbackSession(window.location.href);
     void getInitialDeepLinks().then((urls) => {
@@ -207,10 +206,9 @@ export default function Auth() {
     });
 
     return () => {
-      cancelled = true;
       unlisten?.();
     };
-  }, [API_URL, usesCookieSession]);
+  }, [applyCallbackSession]);
 
   useEffect(() => {
     if (!authReady) {
@@ -764,26 +762,26 @@ export default function Auth() {
                 Wir leiten dich zurück zu deiner Desktop-App weiter. Bitte bestätige eventuelle Browser-Abfragen.
               </p>
             </div>
-            {currentHash.includes('access_token=') && (
+            {bouncePreview && (
               <div className="flex flex-col space-y-2 w-full">
                 <div className="p-2 bg-muted rounded text-[10px] break-all opacity-70 font-mono text-left max-h-20 overflow-y-auto">
-                  {currentHash}
+                  {bouncePreview}
                 </div>
                 <Button 
                   variant="outline" 
                   size="xs" 
                   className="text-[10px] h-6"
                   onClick={() => {
-                    navigator.clipboard.writeText(currentHash);
-                    toast({ title: 'Kopiert!', description: 'Füge das Token in der App ein.' });
+                    void navigator.clipboard.writeText(bounceUrl ?? bouncePreview);
+                    toast({ title: 'Kopiert!', description: 'Füge den Anmelde-Link in der App ein.' });
                   }}
                 >
-                  Token kopieren
+                  Link kopieren
                 </Button>
               </div>
             )}
             <Loader2 className="w-8 h-8 animate-spin text-primary/60" />
-            <Button variant="ghost" size="sm" onClick={() => window.location.assign(`singravault://auth/callback${window.location.search}${currentHash}`)}>
+            <Button variant="ghost" size="sm" disabled={!bounceUrl} onClick={() => bounceUrl && window.location.assign(bounceUrl)}>
               Klicke hier, falls nichts passiert
             </Button>
           </div>
@@ -1200,4 +1198,70 @@ export default function Auth() {
       />
     </div>
   );
+}
+
+async function exchangeOAuthCodeForSession(code: string | null): Promise<Session | null> {
+  if (!code) {
+    return null;
+  }
+
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+  if (error || !data.session?.access_token || !data.session.refresh_token) {
+    throw error ?? new Error('OAuth code exchange did not return a session');
+  }
+
+  await persistAuthenticatedSession(data.session);
+  return data.session;
+}
+
+function cleanAuthCallbackUrl(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const payload = parseOAuthCallbackPayload(window.location.href, window.location.origin);
+  if (!payload?.hasAuthPayload) {
+    return;
+  }
+
+  const cleanSearch = new URLSearchParams(window.location.search);
+  [
+    'access_token',
+    'refresh_token',
+    'expires_at',
+    'expires_in',
+    'token_type',
+    'type',
+    'code',
+    'error',
+    'error_code',
+    'error_description',
+    'provider_token',
+    'provider_refresh_token',
+  ].forEach((key) => cleanSearch.delete(key));
+
+  const cleanUrl = `${window.location.pathname}${cleanSearch.toString() ? `?${cleanSearch.toString()}` : ''}`;
+  window.history.replaceState({}, document.title, cleanUrl);
+}
+
+function getCallbackPreview(params: URLSearchParams): string {
+  const preview = new URLSearchParams();
+
+  params.forEach((value, key) => {
+    preview.set(key, isSensitiveOAuthParam(key) ? redactCallbackValue(value) : value);
+  });
+
+  return preview.toString();
+}
+
+function isSensitiveOAuthParam(key: string): boolean {
+  return key.includes('token') || key === 'code';
+}
+
+function redactCallbackValue(value: string): string {
+  if (value.length <= 12) {
+    return '***';
+  }
+
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }

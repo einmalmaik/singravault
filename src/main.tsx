@@ -7,11 +7,6 @@ import { isTauriRuntime } from "@/platform/runtime";
 
 import { initPremium } from '@singra/premium';
 
-// IMMEDIATELY capture hash before any router/library clears it
-if (typeof window !== 'undefined' && window.location.hash.includes('access_token=')) {
-  sessionStorage.setItem('tauri_login_hash', window.location.hash);
-}
-
 initPremium();
 
 if (import.meta.env.PROD && !isTauriRuntime() && "serviceWorker" in navigator) {

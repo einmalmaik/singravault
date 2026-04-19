@@ -9,6 +9,7 @@
 
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { hasOAuthCallbackPayload } from "@/platform/tauriOAuthCallback";
 import { isTauriRuntime } from "@/platform/runtime";
 import { runtimeConfig } from "@/config/runtimeConfig";
 
@@ -65,7 +66,7 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
     try {
       const { getInitialDeepLinks } = await import("@/platform/deepLink");
       const initialLinks = await getInitialDeepLinks();
-      const hasLoginLink = initialLinks.some(url => url.includes('access_token='));
+      const hasLoginLink = initialLinks.some((url) => hasOAuthCallbackPayload(url));
       if (hasLoginLink) {
         console.info("[Auth] Incoming deep link detected, skipping keychain refresh to prevent race condition.");
         return offlineOrUnauthenticatedState();
