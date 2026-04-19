@@ -2,7 +2,7 @@
 
 Wilkommen bei **Singra Vault**, deinem sicheren, Open-Source Passwort-Manager.
 
-**Live-URL**: [singrapw.mauntingstudios.de](https://singrapw.mauntingstudios.de)
+**Live-URL**: [singravault.mauntingstudios.de](https://singravault.mauntingstudios.de)
 
 ## Was ist Singra?
 
@@ -27,8 +27,8 @@ Du kannst Singra ganz einfach auf deinem eigenen PC laufen lassen.
 
 1. **Repository klonen**
    ```sh
-   git clone https://github.com/einmalmaik/singra-secure-vault.git
-   cd singra-secure-vault
+   git clone https://github.com/einmalmaik/singravault.git
+   cd singra-vault
    ```
 
 2. **Abhängigkeiten installieren**
