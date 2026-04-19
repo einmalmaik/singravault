@@ -120,13 +120,15 @@ export default function Auth() {
       // bounce immediately back to the app using the custom protocol.
       const isWeb = !isTauriRuntime();
       const hasTauriSource = searchParams.get('source') === 'tauri' || searchParams.get('redirect')?.includes('source=tauri');
-      const hasTokens = window.location.hash.includes('access_token=') || window.location.search.includes('access_token=');
+      
+      const currentHash = window.location.hash || sessionStorage.getItem('tauri_login_hash') || '';
+      const hasTokens = currentHash.includes('access_token=') || window.location.search.includes('access_token=');
 
       if (isWeb && hasTauriSource && hasTokens) {
         console.info('[Auth] Tauri source detected on web, bouncing to app...');
         setIsBouncing(true);
         // We use the full hash and search to ensure all tokens are passed back
-        const appUrl = `singravault://auth/callback${window.location.search}${window.location.hash}`;
+        const appUrl = `singravault://auth/callback${window.location.search}${currentHash}`;
         
         // Wait a short moment so the user sees the message
         setTimeout(() => {
@@ -752,8 +754,26 @@ export default function Auth() {
                 Wir leiten dich zurück zu deiner Desktop-App weiter. Bitte bestätige eventuelle Browser-Abfragen.
               </p>
             </div>
+            {currentHash.includes('access_token=') && (
+              <div className="flex flex-col space-y-2 w-full">
+                <div className="p-2 bg-muted rounded text-[10px] break-all opacity-70 font-mono text-left max-h-20 overflow-y-auto">
+                  {currentHash}
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="xs" 
+                  className="text-[10px] h-6"
+                  onClick={() => {
+                    navigator.clipboard.writeText(currentHash);
+                    toast({ title: 'Kopiert!', description: 'Füge das Token in der App ein.' });
+                  }}
+                >
+                  Token kopieren
+                </Button>
+              </div>
+            )}
             <Loader2 className="w-8 h-8 animate-spin text-primary/60" />
-            <Button variant="ghost" size="sm" onClick={() => window.location.assign(`singravault://auth/callback${window.location.hash}`)}>
+            <Button variant="ghost" size="sm" onClick={() => window.location.assign(`singravault://auth/callback${window.location.search}${currentHash}`)}>
               Klicke hier, falls nichts passiert
             </Button>
           </div>
