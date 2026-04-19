@@ -9,6 +9,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import { refreshCurrentSession } from '@/services/authSessionManager';
+import { runtimeConfig } from '@/config/runtimeConfig';
 
 const DEFAULT_SENSITIVE_ACTION_MAX_AGE_SECONDS = 300;
 const PASSWORD_AUTH_PROVIDER = 'email';
@@ -77,11 +78,12 @@ export async function reauthenticateWithAccountPassword(
     }
 
     try {
-        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/auth-session`, {
+        const apiUrl = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
+        const response = await fetch(`${apiUrl}/auth-session`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+                'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`,
             },
             credentials: inIframe ? 'omit' : 'include',
             body: JSON.stringify(requestBody),

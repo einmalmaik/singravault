@@ -21,6 +21,7 @@ import { SubscriptionProvider } from "@/contexts/SubscriptionContext";
 import { ProtectedRoute } from "./components/layout/ProtectedRoute";
 import { VaultUnlockRequiredRoute } from "./components/layout/VaultUnlockRequiredRoute";
 import { CookieConsent } from "./components/CookieConsent";
+import { AppConfigurationNotice } from "@/components/AppConfigurationNotice";
 import { getExtensionRoutes, getExtension } from "@/extensions/registry";
 import { checkForDesktopUpdates } from "@/services/desktopUpdateService";
 import { useEffect } from "react";
@@ -74,6 +75,7 @@ const App = () => {
                       v7_relativeSplatPath: true,
                     }}
                   >
+                    <AppConfigurationNotice />
                     <CookieConsent />
                     {SupportWidget && <SupportWidget />}
                     <Routes>

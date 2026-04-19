@@ -19,6 +19,7 @@ import {
   persistAuthenticatedSession,
 } from "@/services/authSessionManager";
 import { isTauriRuntime } from "@/platform/runtime";
+import { runtimeConfig } from "@/config/runtimeConfig";
 
 interface AuthContextType {
   user: User | null;
@@ -100,11 +101,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (!isInIframe() && !isTauriRuntime()) {
-      const apiUrl = import.meta.env.VITE_SUPABASE_URL + "/functions/v1";
+      const apiUrl = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
       const res = await fetch(`${apiUrl}/auth-session`, {
         method: "DELETE",
         headers: {
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          Authorization: `Bearer ${runtimeConfig.supabasePublishableKey}`,
         },
         credentials: "include",
       });

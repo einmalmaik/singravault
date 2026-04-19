@@ -10,6 +10,7 @@
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { isTauriRuntime } from "@/platform/runtime";
+import { runtimeConfig } from "@/config/runtimeConfig";
 
 export const SESSION_FALLBACK_STORAGE_KEY = "singra-auth-session-fallback";
 export const AUTH_OFFLINE_IDENTITY_STORAGE_KEY = "singra-auth-offline-identity";
@@ -141,7 +142,7 @@ export async function clearPersistentSession(): Promise<void> {
 
 export async function hydrateFromBffCookie(): Promise<Session | null> {
   const apiUrl = getFunctionsUrl();
-  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const publishableKey = runtimeConfig.supabasePublishableKey;
 
   if (!apiUrl || !publishableKey) {
     return null;
@@ -504,6 +505,5 @@ function finishTransaction(tx: IDBTransaction): Promise<void> {
 }
 
 function getFunctionsUrl(): string | null {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  return supabaseUrl ? `${supabaseUrl}/functions/v1` : null;
+  return runtimeConfig.supabaseFunctionsUrl;
 }

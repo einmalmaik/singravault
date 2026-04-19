@@ -32,6 +32,7 @@ import { applyAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
 import { isTauriRuntime } from '@/platform/runtime';
+import { runtimeConfig } from '@/config/runtimeConfig';
 import * as opaqueClient from '@/services/opaqueService';
 
 const loginSchema = z.object({
@@ -83,7 +84,7 @@ export default function Auth() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
-  const API_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
+  const API_URL = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
   const inIframe = (() => {
     try { return window.self !== window.top; } catch { return true; }
   })();
@@ -288,7 +289,7 @@ export default function Auth() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`,
         },
         credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({
@@ -319,7 +320,7 @@ export default function Auth() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`,
         },
         credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({
@@ -371,7 +372,7 @@ export default function Auth() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`,
       },
       credentials: usesCookieSession ? 'include' : 'omit',
       body: JSON.stringify(bodyPayload),
@@ -483,7 +484,7 @@ export default function Auth() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`
         },
         credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({ email: data.email, password: data.password })
@@ -563,7 +564,7 @@ export default function Auth() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`
         },
         credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({ email: data.email })
@@ -596,7 +597,7 @@ export default function Auth() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`
         },
         credentials: usesCookieSession ? 'include' : 'omit',
         body: JSON.stringify({ email, action: 'verify', code: data.code })
