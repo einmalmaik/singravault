@@ -34,7 +34,10 @@ export default function Index() {
   }, [searchParams]);
 
   if (isTauriRuntime()) {
-    return <Navigate to="/auth" replace />;
+    // IMPORTANT: Preserve the hash (#access_token=...) and search (?source=tauri) 
+    // when redirecting to /auth, otherwise the login data is lost!
+    const target = `/auth${window.location.search}${window.location.hash}`;
+    return <Navigate to={target} replace />;
   }
 
   if (isBouncing) {
