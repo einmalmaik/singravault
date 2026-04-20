@@ -7,6 +7,7 @@ const TAURI_CALLBACK_PROTOCOL = "singravault:";
 const TAURI_CALLBACK_HOST = "auth";
 const TAURI_CALLBACK_PATH = "/callback";
 const WEB_CALLBACK_PATH = "/auth";
+const BRIDGE_ONLY_CALLBACK_KEYS = new Set(["source"]);
 const AUTH_PAYLOAD_KEYS = [
   "access_token",
   "refresh_token",
@@ -78,7 +79,7 @@ export function isTauriOAuthCallbackUrl(callbackUrl: string): boolean {
   return Boolean(parsed && isTauriCallbackLocation(parsed));
 }
 
-export function normalizeOAuthCallbackInput(input: string): string | null {
+export function normalizeOAuthCallbackInput(input: string, webCallbackOrigin = getConfiguredWebCallbackOrigin()): string | null {
   const trimmed = input.trim();
   if (!trimmed) {
     return null;
@@ -92,19 +93,31 @@ export function normalizeOAuthCallbackInput(input: string): string | null {
       return null;
     }
 
-    const appUrl = new URL(TAURI_OAUTH_CALLBACK_URL);
-    params.forEach((value, key) => {
-      appUrl.searchParams.append(key, value);
-    });
-
-    return appUrl.toString();
+    return createTauriOAuthCallbackUrl(params);
   }
 
-  if (parseOAuthCallbackPayload(trimmed)?.hasAuthPayload) {
-    return trimmed;
+  const tauriPayload = parseOAuthCallbackPayload(trimmed);
+  if (tauriPayload?.hasAuthPayload) {
+    return createTauriOAuthCallbackUrl(tauriPayload.params);
+  }
+
+  const webBridgePayload = parseOAuthCallbackPayload(trimmed, webCallbackOrigin);
+  if (webBridgePayload?.hasAuthPayload) {
+    return createTauriOAuthCallbackUrl(webBridgePayload.params);
   }
 
   return null;
+}
+
+export function createTauriOAuthCallbackUrl(params: URLSearchParams): string {
+  const appUrl = new URL(TAURI_OAUTH_CALLBACK_URL);
+  params.forEach((value, key) => {
+    if (!BRIDGE_ONLY_CALLBACK_KEYS.has(key)) {
+      appUrl.searchParams.append(key, value);
+    }
+  });
+
+  return appUrl.toString();
 }
 
 function parseCallbackUrl(callbackUrl: string, baseUrl = "http://localhost"): URL | null {
@@ -154,4 +167,12 @@ function collectCallbackParams(parsed: URL): URLSearchParams {
 
 function hasOAuthPayload(params: URLSearchParams): boolean {
   return AUTH_PAYLOAD_KEYS.some((key) => params.has(key));
+}
+
+function getConfiguredWebCallbackOrigin(): string | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return window.location.origin;
 }

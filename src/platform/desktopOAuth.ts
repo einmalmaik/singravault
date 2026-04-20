@@ -4,13 +4,13 @@
 import type { Session } from "@supabase/supabase-js";
 import { runtimeConfig } from "@/config/runtimeConfig";
 import { clearPkceVerifier, loadPkceVerifier, savePkceVerifier } from "./pkceVerifierStore";
-import { TAURI_OAUTH_CALLBACK_URL } from "./tauriOAuthCallback";
 
 export type DesktopOAuthProvider = "google" | "discord" | "github";
 export type DesktopOAuthTokens = Pick<Session, "access_token" | "refresh_token">;
 
 const DESKTOP_OAUTH_KEY_PREFIX = "singra-desktop-oauth";
 const ACTIVE_DESKTOP_OAUTH_KEY = `${DESKTOP_OAUTH_KEY_PREFIX}:active`;
+const DESKTOP_OAUTH_BRIDGE_PATH = "/auth";
 
 interface TokenResponse {
   access_token?: string;
@@ -24,30 +24,25 @@ interface TokenResponse {
 export async function createDesktopOAuthUrl(provider: DesktopOAuthProvider): Promise<string> {
   const verifier = createVerifier();
   const challenge = await createChallenge(verifier);
-  const state = createVerifier();
 
-  await savePkceVerifier(getDesktopOAuthStorageKey(state), verifier);
   await savePkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY, verifier);
 
   const authUrl = new URL(`${runtimeConfig.supabaseUrl}/auth/v1/authorize`);
   authUrl.searchParams.set("provider", provider);
-  authUrl.searchParams.set("redirect_to", TAURI_OAUTH_CALLBACK_URL);
+  authUrl.searchParams.set("redirect_to", getDesktopOAuthBridgeUrl());
   authUrl.searchParams.set("code_challenge", challenge);
   authUrl.searchParams.set("code_challenge_method", "s256");
-  authUrl.searchParams.set("state", state);
 
   return authUrl.toString();
 }
 
 export async function exchangeDesktopOAuthCode(
   code: string | null,
-  state: string | null,
 ): Promise<DesktopOAuthTokens> {
   if (!code) {
     throw new Error("Desktop OAuth callback did not include an auth code");
   }
-  const stateStorageKey = state ? getDesktopOAuthStorageKey(state) : null;
-  const verifier = await loadDesktopOAuthVerifier(stateStorageKey);
+  const verifier = await loadPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY);
   if (!verifier) {
     throw new Error("Desktop OAuth verifier is missing or expired");
   }
@@ -80,30 +75,14 @@ export async function exchangeDesktopOAuthCode(
       refresh_token: payload.refresh_token,
     };
   } finally {
-    await clearDesktopOAuthVerifiers(stateStorageKey);
+    await clearPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY);
   }
 }
 
-function getDesktopOAuthStorageKey(state: string): string {
-  return `${DESKTOP_OAUTH_KEY_PREFIX}:${state}`;
-}
-
-async function loadDesktopOAuthVerifier(stateStorageKey: string | null): Promise<string | null> {
-  if (stateStorageKey) {
-    const stateVerifier = await loadPkceVerifier(stateStorageKey);
-    if (stateVerifier) {
-      return stateVerifier;
-    }
-  }
-
-  return loadPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY);
-}
-
-async function clearDesktopOAuthVerifiers(stateStorageKey: string | null): Promise<void> {
-  await Promise.all([
-    clearPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY),
-    stateStorageKey ? clearPkceVerifier(stateStorageKey) : Promise.resolve(),
-  ]);
+export function getDesktopOAuthBridgeUrl(): string {
+  const bridgeUrl = new URL(DESKTOP_OAUTH_BRIDGE_PATH, `${runtimeConfig.webUrl}/`);
+  bridgeUrl.searchParams.set("source", "tauri");
+  return bridgeUrl.toString();
 }
 
 function createVerifier(): string {

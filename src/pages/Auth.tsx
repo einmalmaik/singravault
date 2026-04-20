@@ -31,7 +31,7 @@ import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService'
 import { applyAuthenticatedSession, persistAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
-import { isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
+import { createTauriOAuthCallbackUrl, isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
 import { createDesktopOAuthUrl, exchangeDesktopOAuthCode, type DesktopOAuthProvider } from '@/platform/desktopOAuth';
@@ -87,6 +87,8 @@ export default function Auth() {
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [desktopBridgeLink, setDesktopBridgeLink] = useState<string | null>(null);
+  const isDesktopBridgePage = !isTauriRuntime() && searchParams.get('source') === 'tauri';
   const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
   const API_URL = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
   const inIframe = (() => {
@@ -124,6 +126,18 @@ export default function Auth() {
     }
 
     const callbackKey = getCallbackKey(callbackUrl, callbackPayload);
+    if (isDesktopBridgeCallback(callbackPayload)) {
+      if (settledCallbacks.current.has(callbackKey)) {
+        return true;
+      }
+
+      settledCallbacks.current.add(callbackKey);
+      const appCallbackUrl = createTauriOAuthCallbackUrl(callbackPayload.params);
+      setDesktopBridgeLink(appCallbackUrl);
+      window.location.assign(appCallbackUrl);
+      return true;
+    }
+
     if (callbackPayload.error) {
       if (settledCallbacks.current.has(callbackKey)) {
         return false;
@@ -779,7 +793,7 @@ export default function Auth() {
       return;
     }
 
-    const callbackUrl = normalizeOAuthCallbackInput(link);
+    const callbackUrl = normalizeOAuthCallbackInput(link, runtimeConfig.webUrl);
     if (!callbackUrl) {
       toast({
         variant: 'destructive',
@@ -791,6 +805,38 @@ export default function Auth() {
 
     await applyCallbackSession(callbackUrl);
   };
+
+  if (isDesktopBridgePage) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-6">
+        <SEO title="Desktop-App verbinden" description="Singra Vault Desktop-App verbinden." noIndex={true} />
+        <div className="w-full max-w-md text-center space-y-6">
+          <img src="/singra-icon.png" alt="Singra Vault" className="mx-auto h-16 w-16 rounded-full shadow-lg shadow-primary/20 ring-1 ring-border/70" />
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold tracking-tight">Verbindung mit Singra Vault</h1>
+            <p className="text-sm text-muted-foreground">
+              Die Desktop-App wird geöffnet. Bestätige die Browser-Abfrage.
+            </p>
+          </div>
+          <div className="flex items-center justify-center text-primary">
+            <Loader2 className="h-6 w-6 animate-spin" />
+          </div>
+          {desktopBridgeLink && (
+            <div className="space-y-2 text-sm">
+              <p className="text-muted-foreground">Falls nichts passiert, öffne den Anmelde-Link manuell in der Desktop-App.</p>
+              <button
+                type="button"
+                className="break-all rounded-md border border-border px-3 py-2 text-left text-xs text-foreground hover:bg-muted"
+                onClick={() => void navigator.clipboard?.writeText(desktopBridgeLink)}
+              >
+                {desktopBridgeLink}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex overflow-hidden">
@@ -1223,8 +1269,12 @@ async function exchangeOAuthCodeForSession(code: string | null): Promise<Session
 }
 
 async function exchangeDesktopOAuthCodeForSession(payload: ParsedOAuthCallbackPayload): Promise<Session> {
-  const tokens = await exchangeDesktopOAuthCode(payload.code, payload.params.get('state'));
+  const tokens = await exchangeDesktopOAuthCode(payload.code);
   return applyAuthenticatedSession(tokens);
+}
+
+function isDesktopBridgeCallback(payload: ParsedOAuthCallbackPayload): boolean {
+  return !isTauriRuntime() && payload.params.get('source') === 'tauri';
 }
 
 function getCallbackKey(callbackUrl: string, payload: ParsedOAuthCallbackPayload): string {

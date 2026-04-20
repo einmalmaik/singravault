@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createTauriOAuthCallbackUrl,
   hasOAuthCallbackPayload,
   isTauriOAuthCallbackUrl,
   normalizeOAuthCallbackInput,
@@ -83,6 +84,21 @@ describe("tauriOAuthCallback", () => {
     expect(normalizeOAuthCallbackInput("access_token=access&refresh_token=refresh")).toBe(
       "singravault://auth/callback?access_token=access&refresh_token=refresh",
     );
+  });
+
+  it("normalizes manually pasted web bridge callbacks into app callbacks", () => {
+    expect(
+      normalizeOAuthCallbackInput(
+        "https://singravault.mauntingstudios.de/auth?source=tauri&code=abc",
+        "https://singravault.mauntingstudios.de",
+      ),
+    ).toBe("singravault://auth/callback?code=abc");
+  });
+
+  it("omits bridge-only params when creating app callbacks", () => {
+    const params = new URLSearchParams("source=tauri&code=abc");
+
+    expect(createTauriOAuthCallbackUrl(params)).toBe("singravault://auth/callback?code=abc");
   });
 
   it("rejects manual input without an auth payload", () => {
