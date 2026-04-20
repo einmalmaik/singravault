@@ -4,6 +4,7 @@ import { createAuthStorage, isPkceVerifierStorageKey } from "./authStorage";
 describe("authStorage", () => {
   afterEach(() => {
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
   it("keeps normal auth session data in memory only", () => {
@@ -14,6 +15,7 @@ describe("authStorage", () => {
 
     expect(storage.getItem(sessionKey)).toBe("session-json");
     expect(window.sessionStorage.getItem(sessionKey)).toBeNull();
+    expect(window.localStorage.getItem(sessionKey)).toBeNull();
   });
 
   it("returns empty memory values without falling through to session storage", () => {
@@ -31,6 +33,16 @@ describe("authStorage", () => {
     createAuthStorage().setItem(verifierKey, "verifier");
 
     expect(window.sessionStorage.getItem(verifierKey)).toBe("verifier");
+    expect(window.localStorage.getItem(verifierKey)).toBe("verifier");
+    expect(createAuthStorage().getItem(verifierKey)).toBe("verifier");
+  });
+
+  it("restores the PKCE verifier from local storage when session storage is gone", () => {
+    const verifierKey = "sb-project-auth-token-code-verifier";
+
+    createAuthStorage().setItem(verifierKey, "verifier");
+    window.sessionStorage.clear();
+
     expect(createAuthStorage().getItem(verifierKey)).toBe("verifier");
   });
 
@@ -43,6 +55,7 @@ describe("authStorage", () => {
 
     expect(storage.getItem(verifierKey)).toBeNull();
     expect(window.sessionStorage.getItem(verifierKey)).toBeNull();
+    expect(window.localStorage.getItem(verifierKey)).toBeNull();
   });
 
   it("detects Supabase PKCE verifier keys", () => {

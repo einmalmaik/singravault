@@ -10,6 +10,8 @@ export interface AuthStorage {
 }
 
 const PKCE_VERIFIER_SUFFIX = "-code-verifier";
+const PKCE_VERIFIER_CREATED_AT_SUFFIX = "-created-at";
+const PKCE_VERIFIER_MAX_AGE_MS = 10 * 60 * 1000;
 
 export function createAuthStorage(): AuthStorage {
   const memoryStore = new Map<string, string>();
@@ -47,7 +49,17 @@ function readPkceVerifier(key: string): StorageValue {
     return null;
   }
 
-  return withSessionStorage((storage) => storage.getItem(key));
+  const sessionValue = withWebStorage("sessionStorage", (storage) => storage.getItem(key));
+  if (sessionValue) {
+    return sessionValue;
+  }
+
+  if (isPkceVerifierExpired(key)) {
+    removePkceVerifier(key);
+    return null;
+  }
+
+  return withWebStorage("localStorage", (storage) => storage.getItem(key));
 }
 
 function writePkceVerifier(key: string, value: string): void {
@@ -55,8 +67,10 @@ function writePkceVerifier(key: string, value: string): void {
     return;
   }
 
-  withSessionStorage((storage) => {
+  const createdAt = Date.now().toString();
+  forEachPkceStorage((storage) => {
     storage.setItem(key, value);
+    storage.setItem(getPkceVerifierCreatedAtKey(key), createdAt);
   });
 }
 
@@ -65,18 +79,44 @@ function removePkceVerifier(key: string): void {
     return;
   }
 
-  withSessionStorage((storage) => {
+  forEachPkceStorage((storage) => {
     storage.removeItem(key);
+    storage.removeItem(getPkceVerifierCreatedAtKey(key));
   });
 }
 
-function withSessionStorage<T>(action: (storage: Storage) => T): T | null {
+function isPkceVerifierExpired(key: string): boolean {
+  const rawCreatedAt = withWebStorage("localStorage", (storage) => (
+    storage.getItem(getPkceVerifierCreatedAtKey(key))
+  ));
+
+  if (!rawCreatedAt) {
+    return false;
+  }
+
+  const createdAt = Number.parseInt(rawCreatedAt, 10);
+  return Number.isNaN(createdAt) || Date.now() - createdAt > PKCE_VERIFIER_MAX_AGE_MS;
+}
+
+function getPkceVerifierCreatedAtKey(key: string): string {
+  return `${key}${PKCE_VERIFIER_CREATED_AT_SUFFIX}`;
+}
+
+function forEachPkceStorage(action: (storage: Storage) => void): void {
+  withWebStorage("sessionStorage", action);
+  withWebStorage("localStorage", action);
+}
+
+function withWebStorage<T>(
+  storageName: "localStorage" | "sessionStorage",
+  action: (storage: Storage) => T,
+): T | null {
   if (typeof window === "undefined") {
     return null;
   }
 
   try {
-    return action(window.sessionStorage);
+    return action(window[storageName]);
   } catch {
     return null;
   }
