@@ -6,6 +6,7 @@ import type { LockFunc } from '@supabase/auth-js';
 import type { Database } from './types';
 import { runtimeConfig } from '@/config/runtimeConfig';
 import { isTauriRuntime } from '@/platform/runtime';
+import { createAuthStorage } from './authStorage';
 
 const SUPABASE_URL = runtimeConfig.supabaseUrl;
 const SUPABASE_PUBLISHABLE_KEY = runtimeConfig.supabasePublishableKey;
@@ -13,22 +14,16 @@ const SUPABASE_PUBLISHABLE_KEY = runtimeConfig.supabasePublishableKey;
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-const memoryStore = new Map<string, string>();
+const authStorage = createAuthStorage();
 
-const inMemoryStorage = {
-  getItem: (key: string) => memoryStore.get(key) || null,
-  setItem: (key: string, value: string) => { memoryStore.set(key, value); },
-  removeItem: (key: string) => { memoryStore.delete(key); },
-};
-
-// The storage above is local to one WebView process, so cross-tab Web Locks are
-// unnecessary and can abort OAuth callbacks in Tauri.
+// Auth state is scoped to one WebView. A cross-tab Web Lock is unnecessary here
+// and can abort OAuth callbacks in Tauri.
 const inMemoryAuthLock: LockFunc = async (_name, _acquireTimeout, fn) => await fn();
 const authFlowType = isTauriRuntime() ? 'pkce' : 'implicit';
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
-    storage: inMemoryStorage,
+    storage: authStorage,
     persistSession: true,
     autoRefreshToken: false,
     detectSessionInUrl: true,
