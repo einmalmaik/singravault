@@ -10,7 +10,7 @@
  * - Vault item encryption/decryption helpers
  */
 
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
 import {
     deriveKey,
     deriveRawKey,
@@ -215,6 +215,7 @@ interface VaultProviderProps {
 
 export function VaultProvider({ children }: VaultProviderProps) {
     const { user, authReady } = useAuth();
+    const lastUserIdRef = useRef<string | null>(null);
 
     // Get initial auto-lock timeout from localStorage
     const getInitialAutoLockTimeout = () => {
@@ -270,6 +271,41 @@ export function VaultProvider({ children }: VaultProviderProps) {
     const [integrityKey, setIntegrityKey] = useState<CryptoKey | null>(null);
     const [integrityVerified, setIntegrityVerified] = useState(false);
     const [lastIntegrityResult, setLastIntegrityResult] = useState<IntegrityVerificationResult | null>(null);
+    const [lastActivity, setLastActivity] = useState(Date.now());
+
+    const resetVaultState = useCallback(() => {
+        setEncryptionKey(null);
+        setIntegrityKey(null);
+        setIsLocked(true);
+        setIsSetupRequired(false);
+        setSalt(null);
+        setVerificationHash(null);
+        setKdfVersion(1);
+        setHasPasskeyUnlock(false);
+        setIsDuressMode(false);
+        setDuressConfig(null);
+        setDeviceKeyActive(false);
+        setCurrentDeviceKey(null);
+        setEncryptedUserKey(null);
+        setIntegrityVerified(false);
+        setLastIntegrityResult(null);
+        setPendingSessionRestore(false);
+        setLastActivity(Date.now());
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(SESSION_TIMESTAMP_KEY);
+        sessionStorage.removeItem(SESSION_PASSWORD_HINT_KEY);
+    }, []);
+
+    useEffect(() => {
+        const currentUserId = user?.id ?? null;
+        if (lastUserIdRef.current === currentUserId) {
+            return;
+        }
+
+        lastUserIdRef.current = currentUserId;
+        resetVaultState();
+        setIsLoading(Boolean(currentUserId));
+    }, [resetVaultState, user?.id]);
 
     const setAutoLockTimeout = (timeout: number) => {
         // Check for optional cookie consent
@@ -286,8 +322,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
         }
         setAutoLockTimeoutState(timeout);
     };
-
-    const [lastActivity, setLastActivity] = useState(Date.now());
 
     const refreshPasskeyUnlockStatus = useCallback(async (): Promise<void> => {
         if (!authReady || !user || !webAuthnAvailable) {
@@ -1375,17 +1409,9 @@ export function VaultProvider({ children }: VaultProviderProps) {
      * Locks the vault and clears encryption key from memory
      */
     const lock = useCallback(() => {
-        setEncryptionKey(null);
-        setIntegrityKey(null);
-        setIsLocked(true);
-        setIsDuressMode(false);
-        setIntegrityVerified(false);
-        setLastIntegrityResult(null);
-        // Clear session data
-        sessionStorage.removeItem(SESSION_KEY);
-        sessionStorage.removeItem(SESSION_TIMESTAMP_KEY);
-        setPendingSessionRestore(false);
-    }, []);
+        resetVaultState();
+        setIsLoading(false);
+    }, [resetVaultState]);
 
     /**
      * Enables Device Key protection on this device.

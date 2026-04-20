@@ -77,7 +77,7 @@ export default function Auth() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const { user, authReady } = useAuth();
+  const { user, authReady, authMode } = useAuth();
 
   const urlToken = searchParams.get('token') || (window.location.hash.includes('type=recovery') ? 'supabase-recovery' : null);
   const [mode, setMode] = useState<'login' | 'signup' | 'verify_signup' | 'recover' | 'verify_recover' | 'update_password'>(
@@ -265,10 +265,10 @@ export default function Auth() {
       return;
     }
 
-    if (user && mode !== 'update_password') {
+    if (user && authMode === 'online' && mode !== 'update_password') {
       navigate(postAuthRedirectPath, { replace: true });
     }
-  }, [authReady, user, mode, navigate, postAuthRedirectPath]);
+  }, [authMode, authReady, user, mode, navigate, postAuthRedirectPath]);
 
   // Note: 2FA Logik (TOTP) bleibt bestehen, wird hier vereinfacht
   const [show2FAModal, setShow2FAModal] = useState(false);

@@ -69,7 +69,7 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
       const hasLoginLink = initialLinks.some((url) => hasOAuthCallbackPayload(url));
       if (hasLoginLink) {
         console.info("[Auth] Incoming deep link detected, skipping keychain refresh to prevent race condition.");
-        return offlineOrUnauthenticatedState();
+        return unauthenticatedState();
       }
     } catch (e) {
       console.warn("Failed to check initial deep links during hydration", e);
@@ -80,7 +80,7 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
       return onlineState(tauriSession);
     }
 
-    return offlineOrUnauthenticatedState();
+    return unauthenticatedState();
   }
 
   if (isInIframe()) {
@@ -379,12 +379,7 @@ async function getMemorySession(): Promise<Session | null> {
 async function offlineOrUnauthenticatedState(): Promise<HydratedAuthState> {
   const offlineIdentity = await readOfflineIdentity();
   if (!offlineIdentity) {
-    return {
-      mode: "unauthenticated",
-      session: null,
-      user: null,
-      offlineIdentity: null,
-    };
+    return unauthenticatedState();
   }
 
   return {
@@ -392,6 +387,15 @@ async function offlineOrUnauthenticatedState(): Promise<HydratedAuthState> {
     session: null,
     user: createOfflineUser(offlineIdentity),
     offlineIdentity,
+  };
+}
+
+function unauthenticatedState(): HydratedAuthState {
+  return {
+    mode: "unauthenticated",
+    session: null,
+    user: null,
+    offlineIdentity: null,
   };
 }
 

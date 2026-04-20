@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const runtimeState = vi.hoisted(() => ({
+  isTauri: false,
+  deepLinks: [] as string[],
+  invoke: vi.fn(),
+}));
+
 const { mockGetSession, mockSetSession, mockRefreshSession, supabaseMock } = vi.hoisted(() => {
   const mockGetSession = vi.fn();
   const mockSetSession = vi.fn();
@@ -24,7 +30,15 @@ vi.mock("@/integrations/supabase/client", () => ({
 }));
 
 vi.mock("@/platform/runtime", () => ({
-  isTauriRuntime: () => false,
+  isTauriRuntime: () => runtimeState.isTauri,
+}));
+
+vi.mock("@/platform/tauriInvoke", () => ({
+  getTauriInvoke: async () => runtimeState.isTauri ? runtimeState.invoke : null,
+}));
+
+vi.mock("@/platform/deepLink", () => ({
+  getInitialDeepLinks: async () => runtimeState.deepLinks,
 }));
 
 import {
@@ -60,6 +74,9 @@ describe("authSessionManager", () => {
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "test-publishable-key");
     sessionStorage.clear();
     localStorage.clear();
+    runtimeState.isTauri = false;
+    runtimeState.deepLinks = [];
+    runtimeState.invoke.mockReset();
     vi.stubGlobal("fetch", vi.fn());
     mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
     mockSetSession.mockResolvedValue({ data: { session: mockSession }, error: null });
@@ -126,5 +143,36 @@ describe("authSessionManager", () => {
 
     expect(sessionStorage.getItem(SESSION_FALLBACK_STORAGE_KEY)).toBeNull();
     expect(localStorage.getItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY)).toBeNull();
+  });
+
+  it("does not hydrate a desktop session from token-free offline identity alone", async () => {
+    runtimeState.isTauri = true;
+    runtimeState.invoke.mockResolvedValue(null);
+    localStorage.setItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY, JSON.stringify({
+      userId: "offline-user",
+      email: "offline@example.com",
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const result = await hydrateAuthSession();
+
+    expect(result.mode).toBe("unauthenticated");
+    expect(result.user).toBeNull();
+    expect(result.offlineIdentity).toBeNull();
+  });
+
+  it("keeps the desktop callback path unauthenticated until the deep link is applied", async () => {
+    runtimeState.isTauri = true;
+    runtimeState.deepLinks = ["singravault://auth/callback?code=desktop-code"];
+    localStorage.setItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY, JSON.stringify({
+      userId: "offline-user",
+      email: "offline@example.com",
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const result = await hydrateAuthSession();
+
+    expect(result.mode).toBe("unauthenticated");
+    expect(mockRefreshSession).not.toHaveBeenCalled();
   });
 });

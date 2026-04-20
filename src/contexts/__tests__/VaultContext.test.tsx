@@ -300,6 +300,65 @@ describe("VaultContext", () => {
       // Supabase must never have been touched — no user, no fetch.
       expect(mockSupabase.from).not.toHaveBeenCalledWith("profiles");
     });
+
+    it("clears prior user credentials before loading a different account", async () => {
+      const authState = {
+        user: mockUser,
+        authReady: true,
+      };
+      mockUseAuth.mockImplementation(() => authState);
+
+      mockSupabase.from.mockImplementation(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn((_column: string, value: string) => ({
+            single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            maybeSingle: vi.fn().mockResolvedValue(
+              value === mockUser.id
+                ? {
+                    data: {
+                      encryption_salt: "first-user-salt",
+                      master_password_verifier: "first-user-verifier",
+                      kdf_version: 2,
+                      encrypted_user_key: "first-user-usk",
+                    },
+                    error: null,
+                  }
+                : { data: null, error: null },
+            ),
+            limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+          })),
+        }),
+        insert: vi.fn().mockReturnValue({
+          select: vi.fn().mockResolvedValue({ data: [{ id: "vault-123" }], error: null }),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      }));
+
+      const { result, rerender } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+      expect(result.current.isSetupRequired).toBe(false);
+
+      authState.user = { id: "second-user-456", email: "second@example.com" };
+      rerender();
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+        expect(result.current.isSetupRequired).toBe(true);
+      });
+
+      let unlockResult: Awaited<ReturnType<typeof result.current.unlock>> | null = null;
+      await act(async () => {
+        unlockResult = await result.current.unlock("test-password");
+      });
+
+      expect(unlockResult?.error?.message).toBe("Vault not set up");
+      expect(mockVerifyKey).not.toHaveBeenCalled();
+    });
   });
 
   describe("setupMasterPassword", () => {
