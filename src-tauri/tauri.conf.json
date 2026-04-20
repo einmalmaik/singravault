@@ -18,6 +18,7 @@
         "height": 820,
         "minWidth": 960,
         "minHeight": 640,
+        "useHttpsScheme": true,
         "resizable": true,
         "fullscreen": false
       }

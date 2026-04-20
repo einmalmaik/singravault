@@ -1,5 +1,3 @@
-import { getCookies, setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
-
 /**
  * @fileoverview WebAuthn Edge Function for Passkey Registration & Authentication 
  *
@@ -34,36 +32,44 @@ import type {
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
-function createSupabaseAuthClient(supabaseUrl: string, supabaseAnonKey: string) {
-    return createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-        },
-    });
-}
+const DEFAULT_SITE_URL = "https://singravault.mauntingstudios.de";
+const FIRST_PARTY_DESKTOP_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+] as const;
 
 // ============ Configuration ============
 
 /**
  * Relying Party configuration.
- * rpID must match the domain the user is on.
- * In production this is "singrapw.mauntingstudios.de".
+ * The active request origin decides the registration RP ID. Verification accepts
+ * known first-party Web and Tauri origins so Web and Desktop can coexist
+ * without forking the WebAuthn implementation.
  */
-function getRpConfig(req: Request): { rpName: string; rpID: string; origin: string } {
-    const rawOrigin = req.headers.get("origin") || Deno.env.get("SITE_URL") || "https://singrapw.mauntingstudios.de";
-    let url: URL;
-
-    try {
-        url = new URL(rawOrigin);
-    } catch {
-        url = new URL("https://singrapw.mauntingstudios.de");
-    }
+function getRpConfig(req: Request): {
+    rpName: string;
+    rpID: string;
+    origin: string;
+    expectedOrigins: string[];
+    expectedRPIDs: string[];
+} {
+    const configuredSiteOrigin = normalizeHttpOrigin(Deno.env.get("SITE_URL")) ?? DEFAULT_SITE_URL;
+    const requestedOrigin = normalizeHttpOrigin(req.headers.get("origin"));
+    const primaryOrigin = requestedOrigin ?? configuredSiteOrigin;
+    const expectedOrigins = dedupeOrigins([
+        primaryOrigin,
+        configuredSiteOrigin,
+        ...FIRST_PARTY_DESKTOP_ORIGINS,
+    ]);
 
     return {
         rpName: "Singra Vault",
-        rpID: url.hostname,
-        origin: url.origin,
+        rpID: new URL(primaryOrigin).hostname,
+        origin: primaryOrigin,
+        expectedOrigins,
+        expectedRPIDs: dedupeRpIds(expectedOrigins),
     };
 }
 
@@ -85,7 +91,6 @@ Deno.serve(async (req: Request) => {
         console.log("WebAuthn function called. Method:", req.method);
 
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-        const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -246,7 +251,7 @@ async function handleGenerateRegistrationOptions(
 
 async function handleVerifyRegistration(
     user: { id: string },
-    rp: { rpName: string; rpID: string; origin: string },
+    rp: { rpName: string; rpID: string; origin: string; expectedOrigins: string[]; expectedRPIDs: string[] },
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
@@ -289,8 +294,8 @@ async function handleVerifyRegistration(
         const verification = await verifyRegistrationResponse({
             response: credential as RegistrationResponseJSON,
             expectedChallenge: storedChallenge.challenge,
-            expectedOrigin: rp.origin,
-            expectedRPID: rp.rpID,
+            expectedOrigin: rp.expectedOrigins,
+            expectedRPID: rp.expectedRPIDs,
         });
 
         if (!verification.verified || !verification.registrationInfo) {
@@ -420,7 +425,7 @@ async function handleGenerateAuthenticationOptions(
 
 async function handleVerifyAuthentication(
     user: { id: string },
-    rp: { rpID: string; origin: string },
+    rp: { rpID: string; expectedOrigins: string[]; expectedRPIDs: string[] },
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
@@ -490,8 +495,8 @@ async function handleVerifyAuthentication(
         const verification = await verifyAuthenticationResponse({
             response: credential as AuthenticationResponseJSON,
             expectedChallenge: storedChallenge.challenge,
-            expectedOrigin: rp.origin,
-            expectedRPID: rp.rpID,
+            expectedOrigin: rp.expectedOrigins,
+            expectedRPID: rp.expectedRPIDs,
             credential: {
                 id: dbCredential.credential_id,
                 publicKey: isoBase64URL.toBuffer(dbCredential.public_key),
@@ -515,63 +520,14 @@ async function handleVerifyAuthentication(
 
         // Challenge wurde bereits vor der Verifikation gelöscht (Replay-Schutz)
 
-        // === Session Generierung (BFF Pattern OTP Hack) ===
-        let sessionCookieToken = "";
-        let sessionDataToClient = null;
-
-        try {
-            const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-                type: 'magiclink',
-                email: user.email!, // Email is guaranteed to exist for login flow
-            });
-
-            if (linkError || !linkData.properties?.action_link) throw new Error("Failed to generate session link");
-
-            const url = new URL(linkData.properties.action_link);
-            const token = url.searchParams.get('token');
-
-            if (!token) throw new Error("No token in magic link");
-
-            const authClient = createSupabaseAuthClient(supabaseUrl, supabaseAnonKey);
-            const { data: sessionData, error: verifyError } = await authClient.auth.verifyOtp({
-                email: user.email!,
-                token,
-                type: 'magiclink'
-            });
-
-            if (verifyError || !sessionData.session) throw new Error("Failed to verify OTP for session");
-
-            sessionCookieToken = sessionData.session.refresh_token;
-            sessionDataToClient = sessionData.session;
-        } catch (e) {
-            console.error("Failed to generate BFF session after webauthn:", e);
-            throw new Error("Session generation aborted");
-        }
-
-        const responseHeaders = new Headers({
-            ...corsHeaders,
-            "Content-Type": "application/json"
-        });
-
-        if (sessionCookieToken) {
-            setCookie(responseHeaders, {
-                name: "sb-bff-session",
-                value: sessionCookieToken,
-                path: "/",
-                httpOnly: true,
-                secure: true,
-                sameSite: "None",
-                maxAge: 60 * 60 * 24 * 7, // 7 Days
-            });
-        }
-
-        return new Response(JSON.stringify({
+        // Dieser Endpoint bestätigt nur den Passkey und liefert den
+        // verschlüsselten Vault-Schlüssel zurück.
+        return jsonResponse({
             verified: true,
             credentialId: dbCredential.credential_id,
             wrappedMasterKey: dbCredential.wrapped_master_key,
             prfEnabled: dbCredential.prf_enabled,
-            session: sessionDataToClient
-        }), { status: 200, headers: responseHeaders });
+        }, 200, corsHeaders);
     } catch (err) {
         console.error("Authentication verification error:", err);
         return jsonResponse({ error: "Verification failed" }, 400, corsHeaders);
@@ -580,7 +536,7 @@ async function handleVerifyAuthentication(
 
 async function handleActivatePrf(
     user: { id: string },
-    rp: { rpID: string; origin: string },
+    rp: { rpID: string; expectedOrigins: string[]; expectedRPIDs: string[] },
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
@@ -652,8 +608,8 @@ async function handleActivatePrf(
         const verification = await verifyAuthenticationResponse({
             response: credential as AuthenticationResponseJSON,
             expectedChallenge: storedChallenge.challenge,
-            expectedOrigin: rp.origin,
-            expectedRPID: rp.rpID,
+            expectedOrigin: rp.expectedOrigins,
+            expectedRPID: rp.expectedRPIDs,
             credential: {
                 id: dbCredential.credential_id,
                 publicKey: isoBase64URL.toBuffer(dbCredential.public_key),
@@ -760,4 +716,48 @@ function isLikelyBase64UrlCredentialId(value: string): boolean {
     return typeof value === "string"
         && value.length >= 16
         && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function normalizeHttpOrigin(value: string | null | undefined): string | null {
+    if (!value) {
+        return null;
+    }
+
+    try {
+        const parsed = new URL(value);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+            return null;
+        }
+
+        return parsed.origin;
+    } catch {
+        return null;
+    }
+}
+
+function dedupeOrigins(origins: Array<string | null | undefined>): string[] {
+    const uniqueOrigins = new Set<string>();
+
+    for (const origin of origins) {
+        const normalizedOrigin = normalizeHttpOrigin(origin);
+        if (normalizedOrigin) {
+            uniqueOrigins.add(normalizedOrigin);
+        }
+    }
+
+    return Array.from(uniqueOrigins);
+}
+
+function dedupeRpIds(origins: string[]): string[] {
+    const uniqueRpIds = new Set<string>();
+
+    for (const origin of origins) {
+        try {
+            uniqueRpIds.add(new URL(origin).hostname);
+        } catch {
+            // Ignore malformed origins in the allow-list.
+        }
+    }
+
+    return Array.from(uniqueRpIds);
 }

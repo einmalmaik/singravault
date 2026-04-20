@@ -35,6 +35,7 @@ import { SEO, createArticleStructuredData, createBreadcrumbStructuredData } from
 
 import { Header } from '@/components/landing/Header';
 import { Footer } from '@/components/landing/Footer';
+import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
 type WhitepaperTag =
     | 'crypto'
@@ -68,6 +69,7 @@ export default function SecurityWhitepaper() {
     const { t } = useTranslation();
     const [query, setQuery] = useState('');
     const [activeTags, setActiveTags] = useState<Set<WhitepaperTag>>(new Set());
+    const showWebsiteChrome = shouldShowWebsiteChrome();
 
     // Scroll to top on mount (fixes navigation from other pages)
     useEffect(() => {
@@ -287,8 +289,8 @@ export default function SecurityWhitepaper() {
                 ]}
                 structuredData={structuredData}
             />
-            <Header />
-            <main className="flex-grow py-28 px-4 sm:px-6 lg:px-8">
+            {showWebsiteChrome && <Header />}
+            <main className={`flex-grow px-4 sm:px-6 lg:px-8 ${showWebsiteChrome ? 'py-28' : 'py-10'}`}>
                 <div className="mx-auto w-full max-w-5xl space-y-8">
                     {/* Hero Section */}
                     <div className="relative overflow-hidden rounded-2xl border bg-card">
@@ -492,7 +494,7 @@ export default function SecurityWhitepaper() {
                     </Card>
                 </div>
             </main>
-            <Footer />
+            {showWebsiteChrome && <Footer />}
         </div>
     );
 }

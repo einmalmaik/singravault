@@ -66,6 +66,7 @@ import {
     TwoFactorStatus,
 } from '@/services/twoFactorService';
 import { writeClipboard } from '@/services/clipboardService';
+import { saveExportFile } from '@/services/exportFileService';
 
 type SetupStep = 'idle' | 'qrcode' | 'verify' | 'backup' | 'complete';
 
@@ -172,7 +173,7 @@ export function TwoFactorSettings() {
     };
 
     // Download backup codes
-    const downloadBackupCodes = () => {
+    const downloadBackupCodes = async () => {
         const content = [
             'Singra Vault - Backup Codes',
             '========================',
@@ -184,13 +185,15 @@ export function TwoFactorSettings() {
             `Erstellt am: ${new Date().toLocaleDateString('de-DE')}`,
         ].join('\n');
 
-        const blob = new Blob([content], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'singra-backup-codes.txt';
-        a.click();
-        URL.revokeObjectURL(url);
+        const saved = await saveExportFile({
+            name: 'singra-backup-codes.txt',
+            mime: 'text/plain',
+            content,
+        });
+
+        if (!saved) {
+            return;
+        }
 
         toast({
             title: t('common.success'),

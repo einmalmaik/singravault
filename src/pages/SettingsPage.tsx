@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState, useMemo } from 'react';
-import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Settings, ArrowLeft, Shield, Search, Wrench } from 'lucide-react';
 
@@ -22,11 +22,13 @@ import { SecuritySettings } from '@/components/settings/SecuritySettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { PasswordSettings } from '@/components/settings/PasswordSettings';
 import { AccountDataExportSettings } from '@/components/settings/AccountDataExportSettings';
+import { DesktopLegalSettings } from '@/components/settings/DesktopLegalSettings';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { getExtension, isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import type { SettingsSlotProps } from '@/extensions/types';
+import { getPrimaryAppPath, isDesktopAppShell } from '@/platform/appShell';
 
 type SettingsSection = {
     id: string;
@@ -38,9 +40,12 @@ type SettingsSection = {
 export default function SettingsPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const location = useLocation();
     const [searchParams, setSearchParams] = useSearchParams();
     const { toast } = useToast();
     const { user, authReady } = useAuth();
+    const isDesktopShell = isDesktopAppShell();
+    const primaryAppPath = getPrimaryAppPath();
 
     const [searchQuery, setSearchQuery] = useState('');
     const [showAdminButton, setShowAdminButton] = useState(false);
@@ -64,6 +69,22 @@ export default function SettingsPage() {
             setSearchParams(searchParams, { replace: true });
         }
     }, [searchParams, setSearchParams, t, toast]);
+
+    useEffect(() => {
+        if (!location.hash) {
+            return;
+        }
+
+        const targetId = decodeURIComponent(location.hash.slice(1));
+        const target = document.getElementById(targetId);
+        if (!target) {
+            return;
+        }
+
+        window.requestAnimationFrame(() => {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    }, [location.hash]);
 
     useEffect(() => {
         let isCancelled = false;
@@ -166,8 +187,17 @@ export default function SettingsPage() {
             });
         }
 
+        if (isDesktopShell) {
+            result.push({
+                id: 'legal',
+                component: <DesktopLegalSettings />,
+                title: t('settings.desktopLegal.title', 'Rechtliches & Informationen'),
+                keywords: ['rechtlich', 'privacy', 'datenschutz', 'impressum', 'security', 'whitepaper'],
+            });
+        }
+
         return result;
-    }, [t]);
+    }, [isDesktopShell, t]);
 
     const filteredSections = useMemo(() => {
         const query = searchQuery.toLowerCase().trim();
@@ -193,7 +223,7 @@ export default function SettingsPage() {
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => navigate('/')}
+                                onClick={() => navigate(primaryAppPath)}
                                 className="rounded-full"
                             >
                                 <ArrowLeft className="w-5 h-5" />
@@ -216,13 +246,15 @@ export default function SettingsPage() {
                                 <span>{t('admin.title')}</span>
                             </Button>
                         )}
-                        <Link
-                            to="/"
-                            className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                            <Shield className="w-5 h-5" />
-                            <span className="hidden sm:inline font-semibold">Singra Vault</span>
-                        </Link>
+                        {!isDesktopShell && (
+                            <Link
+                                to="/"
+                                className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                                <Shield className="w-5 h-5" />
+                                <span className="hidden sm:inline font-semibold">Singra Vault</span>
+                            </Link>
+                        )}
                     </div>
                 </div>
             </header>
@@ -256,7 +288,7 @@ export default function SettingsPage() {
                 ) : (
                     <div className="space-y-6">
                         {filteredSections.map((section, index) => (
-                            <div key={section.id}>
+                            <div key={section.id} id={section.id}>
                                 {section.component}
                                 {index < filteredSections.length - 1 && <Separator className="mt-6" />}
                             </div>

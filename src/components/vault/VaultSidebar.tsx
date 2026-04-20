@@ -342,7 +342,7 @@ export function VaultSidebar({
                     'bg-[hsl(var(--sidebar-background))] border-[hsl(var(--sidebar-border)/0.55)]',
                     compactMode
                         ? 'h-full w-full'
-                        : cn('h-screen transition-all duration-300', collapsed ? 'w-16' : 'w-64')
+                        : cn('self-stretch min-h-full transition-all duration-300', collapsed ? 'w-16' : 'w-64')
                 )}
             >
                 {/* Header */}

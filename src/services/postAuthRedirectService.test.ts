@@ -9,17 +9,24 @@ import { describe, expect, it } from "vitest";
 import { resolvePostAuthRedirectPath } from "@/services/postAuthRedirectService";
 
 describe("resolvePostAuthRedirectPath", () => {
-  it("always returns landing page for protected-route redirects", () => {
-    expect(resolvePostAuthRedirectPath("/vault", { from: { pathname: "/vault" } })).toBe("/");
+  it("prefers an explicit safe redirect target", () => {
+    expect(resolvePostAuthRedirectPath("/settings", { from: { pathname: "/vault" } })).toBe("/settings");
   });
 
-  it("always returns landing page for auth-like redirect params", () => {
-    expect(resolvePostAuthRedirectPath("/authenticator", null)).toBe("/");
-    expect(resolvePostAuthRedirectPath("/auth", null)).toBe("/");
+  it("falls back to the guarded route when no query redirect is present", () => {
+    expect(
+      resolvePostAuthRedirectPath(null, { from: { pathname: "/vault/settings", search: "?tab=security", hash: "#mfa" } }),
+    ).toBe("/vault/settings?tab=security#mfa");
   });
 
-  it("always returns landing page without redirect input", () => {
-    expect(resolvePostAuthRedirectPath(null, undefined)).toBe("/");
+  it("rejects auth routes and external-looking redirects", () => {
+    expect(resolvePostAuthRedirectPath("/auth", { from: { pathname: "/auth" } })).toBe("/vault");
+    expect(resolvePostAuthRedirectPath("//evil.example", undefined)).toBe("/vault");
+    expect(resolvePostAuthRedirectPath("https://evil.example", undefined)).toBe("/vault");
+  });
+
+  it("defaults to the vault without redirect input", () => {
+    expect(resolvePostAuthRedirectPath(null, undefined)).toBe("/vault");
   });
 });
 

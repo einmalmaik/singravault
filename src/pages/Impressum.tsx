@@ -5,8 +5,11 @@ import React from "react";
 import { Header } from "@/components/landing/Header";
 import { Footer } from "@/components/landing/Footer";
 import { SEO } from '@/components/SEO';
+import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
 const Impressum = () => {
+    const showWebsiteChrome = shouldShowWebsiteChrome();
+
     return (
         <div className="min-h-screen bg-background flex flex-col">
             <SEO
@@ -15,8 +18,8 @@ const Impressum = () => {
                 path="/impressum"
                 keywords={['Impressum', 'Kontakt', 'Rechtliche Hinweise', 'TMG']}
             />
-            <Header />
-            <main className="flex-grow flex flex-col items-center py-32 px-4 sm:px-6 lg:px-8">
+            {showWebsiteChrome && <Header />}
+            <main className={`flex-grow flex flex-col items-center px-4 sm:px-6 lg:px-8 ${showWebsiteChrome ? 'py-32' : 'py-10'}`}>
                 <div className="w-full max-w-2xl space-y-8">
                     <div className="text-center mb-8">
                         <h1 className="text-3xl font-bold tracking-tight">Impressum</h1>
@@ -58,7 +61,7 @@ const Impressum = () => {
                     </div>
                 </div>
             </main>
-            <Footer />
+            {showWebsiteChrome && <Footer />}
         </div>
     );
 };

@@ -18,6 +18,7 @@ import { DataSettings } from '@/components/settings/DataSettings';
 import { useAuth } from '@/contexts/AuthContext';
 import { getExtension, getServiceHooks, isPremiumActive } from '@/extensions/registry';
 import type { SettingsSlotProps } from '@/extensions/types';
+import { isDesktopAppShell } from '@/platform/appShell';
 
 type VaultSettingsSection = {
     id: string;
@@ -28,6 +29,7 @@ export default function VaultSettingsPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
     const { user, authReady } = useAuth();
+    const isDesktopShell = isDesktopAppShell();
 
     const [showAdminButton, setShowAdminButton] = useState(false);
     const [isAdminUser, setIsAdminUser] = useState(false);
@@ -137,13 +139,15 @@ export default function VaultSettingsPage() {
                                 <span>{t('admin.title')}</span>
                             </Button>
                         )}
-                        <Link
-                            to="/"
-                            className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                            <Shield className="w-5 h-5" />
-                            <span className="hidden sm:inline font-semibold">Singra Vault</span>
-                        </Link>
+                        {!isDesktopShell && (
+                            <Link
+                                to="/"
+                                className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                                <Shield className="w-5 h-5" />
+                                <span className="hidden sm:inline font-semibold">Singra Vault</span>
+                            </Link>
+                        )}
                     </div>
                 </div>
             </header>

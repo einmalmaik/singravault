@@ -41,6 +41,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
+import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
 export type ViewMode = 'grid' | 'list';
@@ -65,6 +66,7 @@ export default function VaultPage() {
     const [isOnline, setIsOnline] = useState(() => navigator.onLine);
     const [isSyncing, setIsSyncing] = useState(false);
     const [showAdminButton, setShowAdminButton] = useState(false);
+    const showWebsiteChrome = shouldShowWebsiteChrome();
 
     useEffect(() => {
         const goOnline = () => setIsOnline(true);
@@ -243,9 +245,11 @@ export default function VaultPage() {
                                 </Button>
                             )}
 
-                            <Button asChild variant="outline">
-                                <Link to="/">{t('nav.home')}</Link>
-                            </Button>
+                            {showWebsiteChrome && (
+                                <Button asChild variant="outline">
+                                    <Link to="/">{t('nav.home')}</Link>
+                                </Button>
+                            )}
 
                             {showAdminButton && (
                                 <Button
@@ -342,23 +346,25 @@ export default function VaultPage() {
                     />
                 </main>
 
-                <footer className="border-t border-border/40 px-4 lg:px-6 py-3 text-xs text-muted-foreground">
-                    <nav className="flex flex-wrap items-center gap-3">
-                        <Link to="/privacy" className="hover:text-foreground transition-colors">
-                            {t('landing.footer.privacy')}
-                        </Link>
-                        <Link to="/impressum" className="hover:text-foreground transition-colors">
-                            {t('landing.footer.imprint')}
-                        </Link>
-                        <button
-                            type="button"
-                            onClick={() => window.dispatchEvent(new Event('singra:open-cookie-settings'))}
-                            className="hover:text-foreground transition-colors"
-                        >
-                            {t('landing.footer.cookies')}
-                        </button>
-                    </nav>
-                </footer>
+                {showWebsiteChrome && (
+                    <footer className="border-t border-border/40 px-4 lg:px-6 py-3 text-xs text-muted-foreground">
+                        <nav className="flex flex-wrap items-center gap-3">
+                            <Link to="/privacy" className="hover:text-foreground transition-colors">
+                                {t('landing.footer.privacy')}
+                            </Link>
+                            <Link to="/impressum" className="hover:text-foreground transition-colors">
+                                {t('landing.footer.imprint')}
+                            </Link>
+                            <button
+                                type="button"
+                                onClick={() => window.dispatchEvent(new Event('singra:open-cookie-settings'))}
+                                className="hover:text-foreground transition-colors"
+                            >
+                                {t('landing.footer.cookies')}
+                            </button>
+                        </nav>
+                    </footer>
+                )}
             </div>
 
             {/* Create/Edit Dialog */}

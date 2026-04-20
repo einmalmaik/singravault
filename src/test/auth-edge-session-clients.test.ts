@@ -18,15 +18,19 @@ describe("auth edge functions use anon auth clients for user sessions", () => {
     it("keeps other session-issuing auth flows on anon auth clients", () => {
         const opaqueSource = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
         const recoverySource = readFileSync("supabase/functions/auth-recovery/index.ts", "utf-8");
-        const webauthnSource = readFileSync("supabase/functions/webauthn/index.ts", "utf-8");
 
         expect(opaqueSource).toContain('const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!');
         expect(opaqueSource).toContain("authClient.auth.verifyOtp");
 
         expect(recoverySource).toContain('const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!');
         expect(recoverySource).toContain("authClient.auth.verifyOtp");
+    });
 
-        expect(webauthnSource).toContain('const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!');
-        expect(webauthnSource).toContain("authClient.auth.verifyOtp");
+    it("keeps webauthn focused on passkey verification without issuing auth sessions", () => {
+        const webauthnSource = readFileSync("supabase/functions/webauthn/index.ts", "utf-8");
+
+        expect(webauthnSource).not.toContain("authClient.auth.verifyOtp");
+        expect(webauthnSource).not.toContain("createSupabaseAuthClient");
+        expect(webauthnSource).not.toContain("setCookie(");
     });
 });

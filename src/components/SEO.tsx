@@ -11,7 +11,7 @@
 import { Helmet } from 'react-helmet-async';
 
 const SITE_NAME = 'Singra Vault';
-const BASE_URL = 'https://singrapw.mauntingstudios.de';
+const BASE_URL = 'https://singravault.mauntingstudios.de';
 const DEFAULT_OG_IMAGE = '/singra-icon.png';
 
 interface SEOProps {

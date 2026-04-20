@@ -18,6 +18,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { DesktopOAuthBridgeView } from '@/components/auth/DesktopOAuthBridgeView';
 import { NebulaHeroBackground } from '@/components/NebulaHeroBackground';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
@@ -31,7 +32,7 @@ import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService'
 import { applyAuthenticatedSession, persistAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
-import { createTauriOAuthCallbackUrl, isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
+import { isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
 import { createDesktopOAuthUrl, exchangeDesktopOAuthCode, type DesktopOAuthProvider } from '@/platform/desktopOAuth';
@@ -89,7 +90,6 @@ export default function Auth() {
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [desktopBridgeLink, setDesktopBridgeLink] = useState<string | null>(null);
   const isDesktopBridgePage = !isTauriRuntime() && searchParams.get('source') === 'tauri';
   const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
   const API_URL = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
@@ -133,16 +133,7 @@ export default function Auth() {
     }
 
     if (isDesktopBridgeCallback(callbackPayload)) {
-      if (settledCallbacks.current.has(callbackKey)) {
-        return true;
-      }
-
-      settledCallbacks.current.add(callbackKey);
-      processedCallbackKeys.add(callbackKey);
-      const appCallbackUrl = createTauriOAuthCallbackUrl(callbackPayload.params);
-      setDesktopBridgeLink(appCallbackUrl);
-      window.location.assign(appCallbackUrl);
-      return true;
+      return false;
     }
 
     if (callbackPayload.error) {
@@ -815,35 +806,7 @@ export default function Auth() {
   };
 
   if (isDesktopBridgePage) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-6">
-        <SEO title="Desktop-App verbinden" description="Singra Vault Desktop-App verbinden." noIndex={true} />
-        <div className="w-full max-w-md text-center space-y-6">
-          <img src="/singra-icon.png" alt="Singra Vault" className="mx-auto h-16 w-16 rounded-full shadow-lg shadow-primary/20 ring-1 ring-border/70" />
-          <div className="space-y-2">
-            <h1 className="text-2xl font-semibold tracking-tight">Verbindung mit Singra Vault</h1>
-            <p className="text-sm text-muted-foreground">
-              Die Desktop-App wird geöffnet. Bestätige die Browser-Abfrage.
-            </p>
-          </div>
-          <div className="flex items-center justify-center text-primary">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
-          {desktopBridgeLink && (
-            <div className="space-y-2 text-sm">
-              <p className="text-muted-foreground">Falls nichts passiert, öffne den Anmelde-Link manuell in der Desktop-App.</p>
-              <button
-                type="button"
-                className="break-all rounded-md border border-border px-3 py-2 text-left text-xs text-foreground hover:bg-muted"
-                onClick={() => void navigator.clipboard?.writeText(desktopBridgeLink)}
-              >
-                {desktopBridgeLink}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
+    return <DesktopOAuthBridgeView />;
   }
 
   return (

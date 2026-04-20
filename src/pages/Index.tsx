@@ -9,11 +9,14 @@
 import Landing from './Landing';
 import { isTauriRuntime } from '@/platform/runtime';
 import { Navigate } from 'react-router-dom';
+import { hasOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 
 export default function Index() {
   if (isTauriRuntime()) {
-    // Preserve possible auth params if a desktop callback ever lands on the root route.
-    const target = `/auth${window.location.search}${window.location.hash}`;
+    const callbackSuffix = `${window.location.search}${window.location.hash}`;
+    const target = hasOAuthCallbackPayload(window.location.href, window.location.origin)
+      ? `/auth${callbackSuffix}`
+      : '/vault';
     return <Navigate to={target} replace />;
   }
 

@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { toExportSubscriptionSnapshot } from '@/services/subscriptionExportStatusService';
+import { saveExportFile } from '@/services/exportFileService';
 
 export function AccountDataExportSettings() {
     const { t } = useTranslation();
@@ -96,17 +97,15 @@ export function AccountDataExportSettings() {
                 warnings,
             };
 
-            const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-                type: 'application/json',
+            const saved = await saveExportFile({
+                name: `singra-account-data-export-${new Date().toISOString().split('T')[0]}.json`,
+                mime: 'application/json',
+                content: JSON.stringify(exportData, null, 2),
             });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `singra-account-data-export-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+
+            if (!saved) {
+                return;
+            }
 
             toast({
                 title: t('common.success'),

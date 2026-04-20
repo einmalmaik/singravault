@@ -16,6 +16,11 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+const mockNavigate = vi.fn();
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => mockNavigate,
+}));
+
 const mockToast = vi.fn();
 vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: mockToast }),
@@ -26,6 +31,17 @@ vi.mock("@/contexts/VaultContext", () => ({
   useVault: () => ({
     setupMasterPassword: (...args: unknown[]) => mockSetupMasterPassword(...args),
   }),
+}));
+
+const mockSignOut = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/contexts/AuthContext", () => ({
+  useAuth: () => ({
+    signOut: mockSignOut,
+  }),
+}));
+
+vi.mock("@/platform/runtime", () => ({
+  isTauriRuntime: () => false,
 }));
 
 vi.mock("@/services/passwordGenerator", () => ({
@@ -65,6 +81,7 @@ describe("MasterPasswordSetup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSetupMasterPassword.mockResolvedValue({ error: null });
+    mockSignOut.mockResolvedValue(undefined);
     mockOnPasswordSubmit.mockResolvedValue({
       score: 4, isStrong: true, isPwned: false, pwnedCount: 0,
       feedback: [], crackTimeDisplay: "centuries", isAcceptable: true,
@@ -77,6 +94,8 @@ describe("MasterPasswordSetup", () => {
     expect(screen.getByLabelText("auth.masterPassword.password")).toBeInTheDocument();
     expect(screen.getByLabelText("auth.masterPassword.confirmPassword")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /auth\.masterPassword\.submit/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Zur Startseite/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Anderes Konto verwenden/i })).toBeInTheDocument();
   });
 
   it("should disable submit when password is empty", () => {
@@ -159,6 +178,25 @@ describe("MasterPasswordSetup", () => {
 
     await waitFor(() => {
       expect(mockSetupMasterPassword).toHaveBeenCalledWith("Xy9!kL#mP2qR@wZv8nBj");
+    });
+  });
+
+  it("should navigate to the landing page when home button is clicked", () => {
+    render(<MasterPasswordSetup />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Zur Startseite/i }));
+
+    expect(mockNavigate).toHaveBeenCalledWith("/", { replace: true });
+  });
+
+  it("should sign out and navigate to login when another account is requested", async () => {
+    render(<MasterPasswordSetup />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Anderes Konto verwenden/i }));
+
+    await waitFor(() => {
+      expect(mockSignOut).toHaveBeenCalled();
+      expect(mockNavigate).toHaveBeenCalledWith("/auth?mode=login", { replace: true });
     });
   });
 

@@ -29,6 +29,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { saveExportFile } from '@/services/exportFileService';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
@@ -115,18 +116,15 @@ export function DataSettings() {
                 items: validItems,
             };
 
-            // Download as JSON
-            const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-                type: 'application/json',
+            const saved = await saveExportFile({
+                name: `singra-vault-export-${new Date().toISOString().split('T')[0]}.json`,
+                mime: 'application/json',
+                content: JSON.stringify(exportData, null, 2),
             });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `singra-vault-export-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+
+            if (!saved) {
+                return;
+            }
 
             toast({
                 title: t('common.success'),

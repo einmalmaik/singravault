@@ -9,7 +9,8 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Shield, Lock, Eye, EyeOff, AlertTriangle, Loader2, Wand2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Shield, Lock, Eye, EyeOff, AlertTriangle, Loader2, Wand2, Home, LogOut } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,8 +20,10 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { generatePassword } from '@/services/passwordGenerator';
+import { isTauriRuntime } from '@/platform/runtime';
 
 const MASTER_PASSWORD_LENGTH = 20;
 const WEAK_PARTS = ['password', 'qwerty', 'admin', 'welcome', 'letmein', 'singra'];
@@ -38,13 +41,16 @@ function hasWeakMasterPasswordPattern(password: string): boolean {
 
 export function MasterPasswordSetup() {
     const { t } = useTranslation();
+    const navigate = useNavigate();
     const { toast } = useToast();
     const { setupMasterPassword } = useVault();
+    const { signOut } = useAuth();
 
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [signOutLoading, setSignOutLoading] = useState(false);
 
     const passwordCheck = usePasswordCheck({ enforceStrong: true });
 
@@ -152,6 +158,26 @@ export function MasterPasswordSetup() {
             title: t('common.info'),
             description: 'Starkes Master-Passwort generiert. Bitte sicher speichern.',
         });
+    };
+
+    const handleUseDifferentAccount = async () => {
+        setSignOutLoading(true);
+        try {
+            await signOut();
+            navigate('/auth?mode=login', { replace: true });
+        } catch (error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: error instanceof Error ? error.message : t('auth.errors.generic'),
+            });
+        } finally {
+            setSignOutLoading(false);
+        }
+    };
+
+    const handleGoHome = () => {
+        navigate('/', { replace: true });
     };
 
     return (
@@ -266,6 +292,32 @@ export function MasterPasswordSetup() {
                             {t('auth.masterPassword.submit')}
                         </Button>
                     </form>
+
+                    <div className="mt-6 border-t pt-4 space-y-2">
+                        {!isTauriRuntime() && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="w-full"
+                                onClick={handleGoHome}
+                            >
+                                <Home className="w-4 h-4 mr-2" />
+                                Zur Startseite
+                            </Button>
+                        )}
+
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            className="w-full text-muted-foreground"
+                            disabled={loading || signOutLoading}
+                            onClick={() => void handleUseDifferentAccount()}
+                        >
+                            {signOutLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                            {!signOutLoading && <LogOut className="w-4 h-4 mr-2" />}
+                            Anderes Konto verwenden
+                        </Button>
+                    </div>
                 </CardContent>
             </Card>
         </div>

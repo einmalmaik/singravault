@@ -8,9 +8,11 @@ import { Shield, Lock, Eye, Server, Cookie, HelpCircle } from 'lucide-react';
 import { Header } from "@/components/landing/Header";
 import { Footer } from "@/components/landing/Footer";
 import { SEO } from '@/components/SEO';
+import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
 const PrivacyPolicy = () => {
     const { t } = useTranslation();
+    const showWebsiteChrome = shouldShowWebsiteChrome();
 
     const sections = [
         {
@@ -66,8 +68,8 @@ const PrivacyPolicy = () => {
                     'Datenverarbeitung',
                 ]}
             />
-            <Header />
-            <main className="flex-grow flex flex-col items-center py-32 px-4 sm:px-6 lg:px-8">
+            {showWebsiteChrome && <Header />}
+            <main className={`flex-grow flex flex-col items-center px-4 sm:px-6 lg:px-8 ${showWebsiteChrome ? 'py-32' : 'py-10'}`}>
                 <div className="w-full max-w-4xl space-y-8">
                     <div className="text-center space-y-4">
                         <h1 className="text-4xl font-bold tracking-tight text-foreground">
@@ -123,7 +125,7 @@ const PrivacyPolicy = () => {
                     </div>
                 </div>
             </main>
-            <Footer />
+            {showWebsiteChrome && <Footer />}
         </div>
     );
 };
