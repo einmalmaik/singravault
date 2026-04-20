@@ -19,14 +19,15 @@ const authStorage = createAuthStorage();
 // Auth state is scoped to one WebView. A cross-tab Web Lock is unnecessary here
 // and can abort OAuth callbacks in Tauri.
 const inMemoryAuthLock: LockFunc = async (_name, _acquireTimeout, fn) => await fn();
-const authFlowType = isTauriRuntime() ? 'pkce' : 'implicit';
+const isDesktopRuntime = isTauriRuntime();
+const authFlowType = isDesktopRuntime ? 'pkce' : 'implicit';
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
     storage: authStorage,
     persistSession: true,
     autoRefreshToken: false,
-    detectSessionInUrl: true,
+    detectSessionInUrl: !isDesktopRuntime,
     flowType: authFlowType,
     lock: inMemoryAuthLock,
   }

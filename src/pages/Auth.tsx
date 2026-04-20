@@ -34,6 +34,7 @@ import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
 import { isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
+import { createDesktopOAuthUrl, exchangeDesktopOAuthCode, type DesktopOAuthProvider } from '@/platform/desktopOAuth';
 import { runtimeConfig } from '@/config/runtimeConfig';
 import * as opaqueClient from '@/services/opaqueService';
 
@@ -153,7 +154,9 @@ export default function Auth() {
       console.info('[Auth] Applying OAuth callback session...');
       const session = callbackPayload.tokens
         ? await applyAuthenticatedSession(callbackPayload.tokens)
-        : await exchangeOAuthCodeForSession(callbackPayload.code);
+        : isTauriRuntime()
+          ? await exchangeDesktopOAuthCodeForSession(callbackPayload)
+          : await exchangeOAuthCodeForSession(callbackPayload.code);
 
       if (!session) {
         setLoading(false);
@@ -737,25 +740,24 @@ export default function Auth() {
   };
 
 
-  const handleOAuth = async (provider: 'google' | 'discord' | 'github') => {
+  const handleOAuth = async (provider: DesktopOAuthProvider) => {
     setLoading(true);
 
     try {
       const isTauri = isTauriRuntime();
-      const { data, error } = await supabase.auth.signInWithOAuth({
+      if (isTauri) {
+        await openExternalUrl(await createDesktopOAuthUrl(provider));
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
           redirectTo: getOAuthRedirectUrl(),
-          skipBrowserRedirect: isTauri,
         }
       });
 
       if (error) throw error;
-
-      if (isTauri && data?.url) {
-        // Open the login URL in the user's default system browser
-        await openExternalUrl(data.url);
-      }
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -1218,6 +1220,11 @@ async function exchangeOAuthCodeForSession(code: string | null): Promise<Session
 
   await persistAuthenticatedSession(data.session);
   return data.session;
+}
+
+async function exchangeDesktopOAuthCodeForSession(payload: ParsedOAuthCallbackPayload): Promise<Session> {
+  const tokens = await exchangeDesktopOAuthCode(payload.code, payload.params.get('state'));
+  return applyAuthenticatedSession(tokens);
 }
 
 function getCallbackKey(callbackUrl: string, payload: ParsedOAuthCallbackPayload): string {

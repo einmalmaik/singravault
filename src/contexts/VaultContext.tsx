@@ -364,7 +364,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     .from('profiles')
                     .select('encryption_salt, master_password_verifier, kdf_version, encrypted_user_key')
                     .eq('user_id', user.id)
-                    .single() as { data: Record<string, unknown> | null; error: unknown };
+                    .maybeSingle() as { data: Record<string, unknown> | null; error: unknown };
 
                 if (error || !profile?.encryption_salt) {
                     // No profile found — try cache fallback for any error

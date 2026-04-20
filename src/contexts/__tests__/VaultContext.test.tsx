@@ -134,8 +134,10 @@ describe("VaultContext", () => {
     const mockEqChain = {
       eq: vi.fn().mockReturnValue({
         single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
       }),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
       limit: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
 
@@ -192,6 +194,14 @@ describe("VaultContext", () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({
+              data: {
+                encryption_salt: "test-salt-123",
+                master_password_verifier: "test-verifier-456",
+                kdf_version: 2,
+              },
+              error: null,
+            }),
+            maybeSingle: vi.fn().mockResolvedValue({
               data: {
                 encryption_salt: "test-salt-123",
                 master_password_verifier: "test-verifier-456",
@@ -352,6 +362,14 @@ describe("VaultContext", () => {
               },
               error: null,
             }),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                encryption_salt: "existing-salt",
+                master_password_verifier: "existing-verifier",
+                kdf_version: 2,
+              },
+              error: null,
+            }),
             limit: vi.fn().mockResolvedValue({
               data: [],
               error: null,
@@ -479,6 +497,14 @@ describe("VaultContext", () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({
+              data: {
+                encryption_salt: "existing-salt",
+                master_password_verifier: "existing-verifier",
+                kdf_version: 2,
+              },
+              error: null,
+            }),
+            maybeSingle: vi.fn().mockResolvedValue({
               data: {
                 encryption_salt: "existing-salt",
                 master_password_verifier: "existing-verifier",
