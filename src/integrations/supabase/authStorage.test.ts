@@ -1,59 +1,94 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAuthStorage, isPkceVerifierStorageKey } from "./authStorage";
+
+const invokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/platform/tauriInvoke", () => ({
+  getTauriInvoke: vi.fn(async () => invokeMock),
+}));
 
 describe("authStorage", () => {
   afterEach(() => {
+    invokeMock.mockReset();
     window.sessionStorage.clear();
     window.localStorage.clear();
   });
 
-  it("keeps normal auth session data in memory only", () => {
+  it("keeps normal auth session data in memory only", async () => {
     const storage = createAuthStorage();
     const sessionKey = "sb-project-auth-token";
 
-    storage.setItem(sessionKey, "session-json");
+    await storage.setItem(sessionKey, "session-json");
 
-    expect(storage.getItem(sessionKey)).toBe("session-json");
+    await expect(storage.getItem(sessionKey)).resolves.toBe("session-json");
     expect(window.sessionStorage.getItem(sessionKey)).toBeNull();
     expect(window.localStorage.getItem(sessionKey)).toBeNull();
   });
 
-  it("returns empty memory values without falling through to session storage", () => {
+  it("returns empty memory values without falling through to session storage", async () => {
     const storage = createAuthStorage();
     const sessionKey = "sb-project-auth-token";
 
-    storage.setItem(sessionKey, "");
+    await storage.setItem(sessionKey, "");
 
-    expect(storage.getItem(sessionKey)).toBe("");
+    await expect(storage.getItem(sessionKey)).resolves.toBe("");
   });
 
-  it("persists only the PKCE verifier across storage instances", () => {
+  it("persists only the PKCE verifier across storage instances", async () => {
     const verifierKey = "sb-project-auth-token-code-verifier";
 
-    createAuthStorage().setItem(verifierKey, "verifier");
+    await createAuthStorage().setItem(verifierKey, "verifier");
 
     expect(window.sessionStorage.getItem(verifierKey)).toBe("verifier");
     expect(window.localStorage.getItem(verifierKey)).toBe("verifier");
-    expect(createAuthStorage().getItem(verifierKey)).toBe("verifier");
+    await expect(createAuthStorage().getItem(verifierKey)).resolves.toBe("verifier");
   });
 
-  it("restores the PKCE verifier from local storage when session storage is gone", () => {
+  it("restores the PKCE verifier from local storage when session storage is gone", async () => {
     const verifierKey = "sb-project-auth-token-code-verifier";
 
-    createAuthStorage().setItem(verifierKey, "verifier");
+    await createAuthStorage().setItem(verifierKey, "verifier");
     window.sessionStorage.clear();
 
-    expect(createAuthStorage().getItem(verifierKey)).toBe("verifier");
+    await expect(createAuthStorage().getItem(verifierKey)).resolves.toBe("verifier");
   });
 
-  it("removes PKCE verifier data from memory and session storage", () => {
+  it("restores the PKCE verifier from native storage when Web storage is gone", async () => {
+    const verifierKey = "sb-project-auth-token-code-verifier";
+    const nativeStore = new Map<string, string>();
+    invokeMock.mockImplementation(async (command: string, args: Record<string, unknown> = {}) => {
+      if (command === "save_pkce_verifier") {
+        nativeStore.set(String(args.key), String(args.verifier));
+        return null;
+      }
+
+      if (command === "load_pkce_verifier") {
+        return nativeStore.get(String(args.key)) ?? null;
+      }
+
+      if (command === "clear_pkce_verifier") {
+        nativeStore.delete(String(args.key));
+        return null;
+      }
+
+      return null;
+    });
+
+    await createAuthStorage().setItem(verifierKey, "verifier");
+    window.sessionStorage.clear();
+    window.localStorage.clear();
+
+    await expect(createAuthStorage().getItem(verifierKey)).resolves.toBe("verifier");
+  });
+
+  it("removes PKCE verifier data from memory and session storage", async () => {
     const storage = createAuthStorage();
     const verifierKey = "sb-project-auth-token-code-verifier";
 
-    storage.setItem(verifierKey, "verifier");
-    storage.removeItem(verifierKey);
+    await storage.setItem(verifierKey, "verifier");
+    await storage.removeItem(verifierKey);
 
-    expect(storage.getItem(verifierKey)).toBeNull();
+    await expect(storage.getItem(verifierKey)).resolves.toBeNull();
     expect(window.sessionStorage.getItem(verifierKey)).toBeNull();
     expect(window.localStorage.getItem(verifierKey)).toBeNull();
   });

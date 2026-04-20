@@ -11,6 +11,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { hasOAuthCallbackPayload } from "@/platform/tauriOAuthCallback";
 import { isTauriRuntime } from "@/platform/runtime";
+import { getTauriInvoke } from "@/platform/tauriInvoke";
 import { runtimeConfig } from "@/config/runtimeConfig";
 
 export const SESSION_FALLBACK_STORAGE_KEY = "singra-auth-session-fallback";
@@ -36,7 +37,6 @@ export interface HydratedAuthState {
 }
 
 type SessionTokens = Pick<Session, "access_token" | "refresh_token">;
-type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
 let refreshInFlight: Promise<Session | null> | null = null;
 
@@ -456,19 +456,6 @@ async function clearRefreshTokenFromKeychain(): Promise<void> {
   }
 
   await invoke<void>("clear_refresh_token");
-}
-
-async function getTauriInvoke(): Promise<TauriInvoke | null> {
-  if (!isTauriRuntime()) {
-    return null;
-  }
-
-  try {
-    const api = await import("@tauri-apps/api/core");
-    return api.invoke as TauriInvoke;
-  } catch {
-    return null;
-  }
 }
 
 async function withOfflineIdentityStorage<T>(

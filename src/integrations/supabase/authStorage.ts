@@ -1,12 +1,15 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
+import { getTauriInvoke } from "@/platform/tauriInvoke";
+
 type StorageValue = string | null;
+type StorageReturn<T> = T | Promise<T>;
 
 export interface AuthStorage {
-  getItem: (key: string) => StorageValue;
-  setItem: (key: string, value: string) => void;
-  removeItem: (key: string) => void;
+  getItem: (key: string) => StorageReturn<StorageValue>;
+  setItem: (key: string, value: string) => StorageReturn<void>;
+  removeItem: (key: string) => StorageReturn<void>;
 }
 
 const PKCE_VERIFIER_SUFFIX = "-code-verifier";
@@ -17,25 +20,25 @@ export function createAuthStorage(): AuthStorage {
   const memoryStore = new Map<string, string>();
 
   return {
-    getItem: (key) => {
+    getItem: async (key) => {
       if (memoryStore.has(key)) {
         return memoryStore.get(key) ?? null;
       }
 
-      const verifier = readPkceVerifier(key);
+      const verifier = await readPkceVerifier(key);
       if (verifier) {
         memoryStore.set(key, verifier);
       }
 
       return verifier;
     },
-    setItem: (key, value) => {
+    setItem: async (key, value) => {
       memoryStore.set(key, value);
-      writePkceVerifier(key, value);
+      await writePkceVerifier(key, value);
     },
-    removeItem: (key) => {
+    removeItem: async (key) => {
       memoryStore.delete(key);
-      removePkceVerifier(key);
+      await removePkceVerifier(key);
     },
   };
 }
@@ -44,7 +47,7 @@ export function isPkceVerifierStorageKey(key: string): boolean {
   return key.endsWith(PKCE_VERIFIER_SUFFIX);
 }
 
-function readPkceVerifier(key: string): StorageValue {
+async function readPkceVerifier(key: string): Promise<StorageValue> {
   if (!isPkceVerifierStorageKey(key)) {
     return null;
   }
@@ -55,14 +58,19 @@ function readPkceVerifier(key: string): StorageValue {
   }
 
   if (isPkceVerifierExpired(key)) {
-    removePkceVerifier(key);
+    await removePkceVerifier(key);
     return null;
   }
 
-  return withWebStorage("localStorage", (storage) => storage.getItem(key));
+  const localValue = withWebStorage("localStorage", (storage) => storage.getItem(key));
+  if (localValue) {
+    return localValue;
+  }
+
+  return loadNativePkceVerifier(key);
 }
 
-function writePkceVerifier(key: string, value: string): void {
+async function writePkceVerifier(key: string, value: string): Promise<void> {
   if (!isPkceVerifierStorageKey(key)) {
     return;
   }
@@ -72,9 +80,10 @@ function writePkceVerifier(key: string, value: string): void {
     storage.setItem(key, value);
     storage.setItem(getPkceVerifierCreatedAtKey(key), createdAt);
   });
+  await saveNativePkceVerifier(key, value);
 }
 
-function removePkceVerifier(key: string): void {
+async function removePkceVerifier(key: string): Promise<void> {
   if (!isPkceVerifierStorageKey(key)) {
     return;
   }
@@ -83,6 +92,7 @@ function removePkceVerifier(key: string): void {
     storage.removeItem(key);
     storage.removeItem(getPkceVerifierCreatedAtKey(key));
   });
+  await clearNativePkceVerifier(key);
 }
 
 function isPkceVerifierExpired(key: string): boolean {
@@ -119,5 +129,44 @@ function withWebStorage<T>(
     return action(window[storageName]);
   } catch {
     return null;
+  }
+}
+
+async function saveNativePkceVerifier(key: string, verifier: string): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) {
+    return;
+  }
+
+  try {
+    await invoke<void>("save_pkce_verifier", { key, verifier });
+  } catch {
+    // Web storage fallback remains available when native keychain access fails.
+  }
+}
+
+async function loadNativePkceVerifier(key: string): Promise<StorageValue> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) {
+    return null;
+  }
+
+  try {
+    return await invoke<string | null>("load_pkce_verifier", { key }) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function clearNativePkceVerifier(key: string): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) {
+    return;
+  }
+
+  try {
+    await invoke<void>("clear_pkce_verifier", { key });
+  } catch {
+    // Removing from Web storage is enough to keep the browser session clean.
   }
 }
