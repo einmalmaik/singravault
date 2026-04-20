@@ -11,6 +11,7 @@ export type DesktopOAuthTokens = Pick<Session, "access_token" | "refresh_token">
 const DESKTOP_OAUTH_KEY_PREFIX = "singra-desktop-oauth";
 const ACTIVE_DESKTOP_OAUTH_KEY = `${DESKTOP_OAUTH_KEY_PREFIX}:active`;
 const DESKTOP_OAUTH_BRIDGE_PATH = "/auth";
+const desktopExchangeInFlight = new Map<string, Promise<DesktopOAuthTokens>>();
 
 interface TokenResponse {
   access_token?: string;
@@ -42,11 +43,28 @@ export async function exchangeDesktopOAuthCode(
   if (!code) {
     throw new Error("Desktop OAuth callback did not include an auth code");
   }
+
+  const normalizedCode = code.trim();
+  const existingExchange = desktopExchangeInFlight.get(normalizedCode);
+  if (existingExchange) {
+    return existingExchange;
+  }
+
+  const exchangePromise = exchangeDesktopOAuthCodeUncached(normalizedCode).finally(() => {
+    desktopExchangeInFlight.delete(normalizedCode);
+  });
+  desktopExchangeInFlight.set(normalizedCode, exchangePromise);
+
+  return exchangePromise;
+}
+
+async function exchangeDesktopOAuthCodeUncached(code: string): Promise<DesktopOAuthTokens> {
   const verifier = await loadPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY);
   if (!verifier) {
     throw new Error("Desktop OAuth verifier is missing or expired");
   }
 
+  let shouldClearVerifier = false;
   try {
     const response = await fetch(`${runtimeConfig.supabaseUrl}/auth/v1/token?grant_type=pkce`, {
       method: "POST",
@@ -63,19 +81,24 @@ export async function exchangeDesktopOAuthCode(
 
     const payload = await response.json().catch(() => null) as TokenResponse | null;
     if (!response.ok) {
+      shouldClearVerifier = !isRetryableDesktopOAuthError(response.status);
       throw new Error(payload?.error_description ?? payload?.message ?? payload?.msg ?? payload?.error ?? "Desktop OAuth token exchange failed");
     }
 
     if (!payload?.access_token || !payload.refresh_token) {
+      shouldClearVerifier = true;
       throw new Error("Desktop OAuth token exchange did not return a session");
     }
 
+    shouldClearVerifier = true;
     return {
       access_token: payload.access_token,
       refresh_token: payload.refresh_token,
     };
   } finally {
-    await clearPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY);
+    if (shouldClearVerifier) {
+      await clearPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY);
+    }
   }
 }
 
@@ -107,4 +130,8 @@ function base64UrlEncode(bytes: Uint8Array): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+}
+
+function isRetryableDesktopOAuthError(status: number): boolean {
+  return status === 429 || status >= 500;
 }

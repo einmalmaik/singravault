@@ -68,6 +68,53 @@ describe("desktopOAuth", () => {
     });
   });
 
+  it("deduplicates concurrent exchanges for the same auth code", async () => {
+    await createDesktopOAuthUrl("google");
+    let resolveResponse!: (value: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>((resolve) => {
+        resolveResponse = resolve;
+      }),
+    );
+
+    const first = exchangeDesktopOAuthCode("shared-code");
+    const second = exchangeDesktopOAuthCode("shared-code");
+    await Promise.resolve();
+    resolveResponse(new Response(JSON.stringify({
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    await expect(first).resolves.toEqual({
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+    });
+    await expect(second).resolves.toEqual({
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the verifier for retryable rate limits", async () => {
+    await createDesktopOAuthUrl("discord");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        error: "rate_limit",
+        error_description: "Request rate limit reached",
+      }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(exchangeDesktopOAuthCode("auth-code")).rejects.toThrow("Request rate limit reached");
+    expect(window.localStorage.getItem("singra-desktop-oauth:active")).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
   it("fails before token exchange when no verifier exists", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 

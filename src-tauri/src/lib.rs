@@ -1,7 +1,7 @@
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{Manager, Emitter};
+use tauri::Manager;
 
 const KEYCHAIN_SERVICE: &str = "Singra Vault";
 const REFRESH_TOKEN_ACCOUNT: &str = "active-refresh-token";
@@ -134,18 +134,9 @@ fn now_millis() -> Result<u128, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
-            }
-
-            let urls: Vec<String> = args
-                .into_iter()
-                .filter(|arg| arg.starts_with("singravault://"))
-                .collect();
-
-            if !urls.is_empty() {
-                let _ = app.emit("singra://deep-link", urls);
             }
         }))
         .plugin(tauri_plugin_opener::init())

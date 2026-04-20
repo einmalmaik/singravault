@@ -71,6 +71,8 @@ type RecoverFormData = z.infer<typeof recoverSchema>;
 type UpdatePasswordFormData = z.infer<typeof updatePasswordSchema>;
 type ParsedOAuthCallbackPayload = NonNullable<ReturnType<typeof parseOAuthCallbackPayload>>;
 
+const processedCallbackKeys = new Set<string>();
+
 export default function Auth() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -126,12 +128,17 @@ export default function Auth() {
     }
 
     const callbackKey = getCallbackKey(callbackUrl, callbackPayload);
+    if (processedCallbackKeys.has(callbackKey)) {
+      return true;
+    }
+
     if (isDesktopBridgeCallback(callbackPayload)) {
       if (settledCallbacks.current.has(callbackKey)) {
         return true;
       }
 
       settledCallbacks.current.add(callbackKey);
+      processedCallbackKeys.add(callbackKey);
       const appCallbackUrl = createTauriOAuthCallbackUrl(callbackPayload.params);
       setDesktopBridgeLink(appCallbackUrl);
       window.location.assign(appCallbackUrl);
@@ -217,6 +224,7 @@ export default function Auth() {
       }
 
       settledCallbacks.current.add(callbackKey);
+      processedCallbackKeys.add(callbackKey);
       console.info('[Auth] OAuth callback session applied.');
       setLoading(false);
       if (currentMode !== 'update_password') {
