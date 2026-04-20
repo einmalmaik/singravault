@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   hasOAuthCallbackPayload,
+  isTauriOAuthCallbackUrl,
   normalizeOAuthCallbackInput,
   parseOAuthCallbackPayload,
 } from "./tauriOAuthCallback";
@@ -48,6 +49,12 @@ describe("tauriOAuthCallback", () => {
         "https://singravault.mauntingstudios.de",
       ),
     ).toBeNull();
+  });
+
+  it("detects desktop callback locations without requiring a payload", () => {
+    expect(isTauriOAuthCallbackUrl("singravault://auth/callback")).toBe(true);
+    expect(isTauriOAuthCallbackUrl("https://singravault.mauntingstudios.de/auth?code=abc")).toBe(false);
+    expect(isTauriOAuthCallbackUrl("singravault://profile/callback?code=abc")).toBe(false);
   });
 
   it("parses PKCE code and OAuth errors", () => {

@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import type { LockFunc } from '@supabase/auth-js';
 import type { Database } from './types';
 import { runtimeConfig } from '@/config/runtimeConfig';
+import { isTauriRuntime } from '@/platform/runtime';
 
 const SUPABASE_URL = runtimeConfig.supabaseUrl;
 const SUPABASE_PUBLISHABLE_KEY = runtimeConfig.supabasePublishableKey;
@@ -23,6 +24,7 @@ const inMemoryStorage = {
 // The storage above is local to one WebView process, so cross-tab Web Locks are
 // unnecessary and can abort OAuth callbacks in Tauri.
 const inMemoryAuthLock: LockFunc = async (_name, _acquireTimeout, fn) => await fn();
+const authFlowType = isTauriRuntime() ? 'pkce' : 'implicit';
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
@@ -30,6 +32,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     persistSession: true,
     autoRefreshToken: false,
     detectSessionInUrl: true,
+    flowType: authFlowType,
     lock: inMemoryAuthLock,
   }
 });

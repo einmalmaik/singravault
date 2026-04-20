@@ -31,7 +31,7 @@ import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService'
 import { applyAuthenticatedSession, persistAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
-import { normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
+import { isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
 import { runtimeConfig } from '@/config/runtimeConfig';
@@ -105,6 +105,20 @@ export default function Auth() {
   const applyCallbackSession = useCallback(async (callbackUrl: string): Promise<boolean> => {
     const callbackPayload = parseOAuthCallbackPayload(callbackUrl, window.location.origin);
     if (!callbackPayload?.hasAuthPayload) {
+      if (isTauriOAuthCallbackUrl(callbackUrl)) {
+        const callbackKey = `empty:${callbackUrl}`;
+        console.warn('[Auth] Tauri OAuth callback arrived without auth payload.');
+        const { t: translate, toast: showToast } = authCallbackRuntimeRef.current;
+        notifyCallbackFailure(notifiedCallbacks.current, callbackKey, () => {
+          showToast({
+            variant: 'destructive',
+            title: translate('common.error'),
+            description: translate('auth.errors.generic'),
+          });
+        });
+        setLoading(false);
+      }
+
       return false;
     }
 

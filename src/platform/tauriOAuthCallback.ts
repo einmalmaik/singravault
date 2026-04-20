@@ -73,6 +73,11 @@ export function hasOAuthCallbackPayload(callbackUrl: string, baseUrl?: string): 
   return Boolean(payload?.hasAuthPayload);
 }
 
+export function isTauriOAuthCallbackUrl(callbackUrl: string): boolean {
+  const parsed = parseCallbackUrl(callbackUrl);
+  return Boolean(parsed && isTauriCallbackLocation(parsed));
+}
+
 export function normalizeOAuthCallbackInput(input: string): string | null {
   const trimmed = input.trim();
   if (!trimmed) {
@@ -111,8 +116,8 @@ function parseCallbackUrl(callbackUrl: string, baseUrl = "http://localhost"): UR
 }
 
 function isExpectedCallbackLocation(parsed: URL, baseUrl?: string): boolean {
-  if (parsed.protocol === TAURI_CALLBACK_PROTOCOL) {
-    return parsed.hostname === TAURI_CALLBACK_HOST && parsed.pathname === TAURI_CALLBACK_PATH;
+  if (isTauriCallbackLocation(parsed)) {
+    return true;
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -125,6 +130,12 @@ function isExpectedCallbackLocation(parsed: URL, baseUrl?: string): boolean {
 
   const base = parseCallbackUrl(baseUrl);
   return parsed.origin === base?.origin && parsed.pathname === WEB_CALLBACK_PATH;
+}
+
+function isTauriCallbackLocation(parsed: URL): boolean {
+  return parsed.protocol === TAURI_CALLBACK_PROTOCOL
+    && parsed.hostname === TAURI_CALLBACK_HOST
+    && parsed.pathname === TAURI_CALLBACK_PATH;
 }
 
 function collectCallbackParams(parsed: URL): URLSearchParams {
