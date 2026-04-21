@@ -12,6 +12,7 @@ function getSecurityHeaders(mode: string) {
   const scriptSrc = dev
     ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
     : "script-src 'self' 'wasm-unsafe-eval'";
+  const workerSrc = "worker-src 'self' blob:";
   const connectSrc = dev
     ? "connect-src 'self' ws: wss: http: https:"
     : "connect-src 'self' https://*.supabase.co wss://*.supabase.co";
@@ -23,6 +24,7 @@ function getSecurityHeaders(mode: string) {
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data: https:",
+      workerSrc,
       connectSrc,
       "object-src 'none'",
       "base-uri 'self'",
@@ -34,6 +36,7 @@ function getSecurityHeaders(mode: string) {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()",
     "X-Permitted-Cross-Domain-Policies": "none",
+    ...(dev ? { "Cache-Control": "no-store" } : {}),
   };
 }
 
@@ -49,26 +52,58 @@ export default defineConfig(({ mode }) => {
   const premiumDevEntry = path.resolve(__dirname, "../singra-premium/src/extensions/initPremium.ts");
   const premiumInstalledEntry = path.resolve(__dirname, "./node_modules/@singra/premium/dist/initPremium.mjs");
   const premiumStubEntry = path.resolve(__dirname, "./src/extensions/premiumStub.ts");
+  const isPremiumDisabled = process.env.SINGRA_DISABLE_PREMIUM === "true";
   const hasPremiumDevRepo = fs.existsSync(premiumDevEntry);
   const hasInstalledPremiumPackage = fs.existsSync(premiumInstalledEntry);
   const shouldUsePremiumSource =
-    hasPremiumDevRepo && (isDev || isTauriBuild || process.env.SINGRA_PREMIUM_SOURCE === "true");
-  const premiumEntry = shouldUsePremiumSource
+    !isPremiumDisabled
+    && hasPremiumDevRepo
+    && (isDev || isTauriBuild || process.env.SINGRA_PREMIUM_SOURCE === "true");
+  const premiumEntry = isPremiumDisabled
+    ? premiumStubEntry
+    : shouldUsePremiumSource
     ? premiumDevEntry
     : hasInstalledPremiumPackage
       ? premiumInstalledEntry
       : premiumStubEntry;
 
-  /**
-   * Dev-only Vite plugin: After Vite's alias resolution converts @/ to the core
-   * src/ path, this plugin checks if the resolved file actually exists in core.
-   * If not (because it was extracted to the premium repo), it redirects to the
-   * premium repo's src/ directory. Core files (like registry.ts) still resolve
-   * normally because they exist in core.
-   */
   function premiumResolvePlugin() {
     const coreSrcNormalized = coreSrc.replace(/\\/g, "/");
     const premiumSrcNormalized = premiumSrc.replace(/\\/g, "/");
+    const moduleExtensions = ["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx"];
+    const coreResolverImporter = path.resolve(__dirname, "src/main.tsx");
+
+    const findExistingModulePath = (basePath: string) => {
+      for (const ext of moduleExtensions) {
+        const candidate = `${basePath}${ext}`;
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
+
+      return null;
+    };
+
+    const resolveCoreModuleId = async (context: PluginContext, modulePath: string) => {
+      const relativeToCore = path.relative(coreSrc, modulePath).replace(/\\/g, "/");
+      const resolved = await context.resolve(`@/${relativeToCore}`, coreResolverImporter, {
+        skipSelf: true,
+      });
+
+      return resolved?.id ?? modulePath;
+    };
+
+    const resolveAliasedBasePath = (importSource: string) => {
+      if (importSource.startsWith("@/")) {
+        return path.join(coreSrc, importSource.slice(2));
+      }
+
+      if (importSource.startsWith("/src/")) {
+        return path.join(__dirname, importSource.slice(1));
+      }
+
+      return null;
+    };
 
     return {
       name: "premium-resolve",
@@ -76,63 +111,60 @@ export default defineConfig(({ mode }) => {
       async resolveId(this: PluginContext, source: string, importer: string | undefined) {
         if (!importer) return null;
 
-        // Normalize the source path
         const normalizedSource = source.replace(/\\/g, "/");
         const normalizedImporter = importer.replace(/\\/g, "/");
+        const isPremiumImporter = normalizedImporter.includes(premiumSrcNormalized + "/");
 
-        // Case 1: Source is already an absolute path pointing into core src/
-        // This happens when Vite's alias resolution has already converted @/ → core src path
+        if (isPremiumImporter) {
+          const aliasedBasePath = resolveAliasedBasePath(source);
+
+          if (aliasedBasePath) {
+            const coreModulePath = findExistingModulePath(aliasedBasePath);
+            if (coreModulePath) {
+              return resolveCoreModuleId(this, coreModulePath);
+            }
+
+            const relativeToCore = path.relative(coreSrc, aliasedBasePath);
+            const premiumModulePath = findExistingModulePath(path.join(premiumSrc, relativeToCore));
+            if (premiumModulePath) {
+              return premiumModulePath;
+            }
+          }
+        }
+
         if (normalizedSource.startsWith(coreSrcNormalized + "/")) {
-          // Check if the file exists in core
-          const exts = ["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx"];
-          const existsInCore = exts.some(ext => fs.existsSync(source + ext));
+          const coreModulePath = findExistingModulePath(source);
 
-          if (!existsInCore) {
-            // Try the premium repo instead
+          if (!coreModulePath) {
             const relativePath = normalizedSource.slice(coreSrcNormalized.length);
-            for (const ext of exts) {
-              const premiumCandidate = path.join(premiumSrc, relativePath + ext);
-              if (fs.existsSync(premiumCandidate)) {
-                return premiumCandidate;
-              }
+            const premiumModulePath = findExistingModulePath(path.join(premiumSrc, relativePath));
+            if (premiumModulePath) {
+              return premiumModulePath;
+            }
+          } else if (isPremiumImporter) {
+            return resolveCoreModuleId(this, coreModulePath);
+          }
+        }
+
+        if ((source.startsWith("./") || source.startsWith("../")) && isPremiumImporter) {
+          const importerDir = path.dirname(importer);
+          const resolvedAbsolute = path.resolve(importerDir, source);
+          const localModulePath = findExistingModulePath(resolvedAbsolute);
+
+          if (!localModulePath) {
+            const importerRelativeToSrc = path.relative(premiumSrc, importer);
+            const importerDirInSrc = path.dirname(importerRelativeToSrc);
+            const targetRelative = path.join(importerDirInSrc, source);
+            const coreModulePath = findExistingModulePath(path.join(coreSrc, targetRelative));
+
+            if (coreModulePath) {
+              return resolveCoreModuleId(this, coreModulePath);
             }
           }
         }
 
-        // Case 2: Relative import from a file inside the premium repo
-        // e.g. duressService.ts (in premium) does `import './cryptoService'`
-        // Vite resolves this relative to the premium file's directory, but
-        // cryptoService.ts lives in core. Redirect to core's equivalent path.
-        if (source.startsWith("./") || source.startsWith("../")) {
-          if (normalizedImporter.includes("singra-premium/src/")) {
-            const importerDir = path.dirname(importer);
-            const resolvedAbsolute = path.resolve(importerDir, source);
-            const exts = ["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx"];
-            const existsLocally = exts.some(ext => fs.existsSync(resolvedAbsolute + ext));
-
-            if (!existsLocally) {
-              // Map the premium path to the equivalent core path
-              const premiumSrcIndex = normalizedImporter.indexOf("singra-premium/src/");
-              if (premiumSrcIndex !== -1) {
-                const importerRelativeToSrc = normalizedImporter.slice(premiumSrcIndex + "singra-premium/src/".length);
-                const importerDirInSrc = path.dirname(importerRelativeToSrc);
-                const targetRelative = path.join(importerDirInSrc, source).replace(/\\/g, "/");
-                for (const ext of exts) {
-                  const coreCandidate = path.join(coreSrc, targetRelative + ext);
-                  if (fs.existsSync(coreCandidate)) {
-                    return coreCandidate;
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // Case 3: Bare module imports from premium repo files (e.g. 'react', 'lucide-react')
-        // These need to resolve from the core repo's node_modules
         if (!source.startsWith(".") && !source.startsWith("/") && !source.startsWith("@/")) {
           if (normalizedImporter.includes("singra-premium/")) {
-            // Re-resolve the same import as if it came from main.tsx (inside core)
             const resolved = await this.resolve(source, path.resolve(__dirname, "src/main.tsx"), { skipSelf: true });
             if (resolved) return resolved;
           }
@@ -157,7 +189,6 @@ export default defineConfig(({ mode }) => {
         ignored: ["**/src-tauri/**"],
       },
       fs: {
-        // Allow serving files from the sibling premium repo
         allow: [coreSrc, premiumSrc, path.resolve(__dirname, "node_modules")],
         strict: false,
       },
@@ -186,6 +217,7 @@ export default defineConfig(({ mode }) => {
       }),
     ].filter(Boolean),
     resolve: {
+      dedupe: ["react", "react-dom", "react-router-dom"],
       alias: {
         "@": path.resolve(__dirname, "./src"),
         "@singra/premium": premiumEntry,

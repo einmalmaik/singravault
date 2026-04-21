@@ -40,6 +40,7 @@ import type {
 } from '@simplewebauthn/browser';
 import { invokeAuthedFunction } from '@/services/edgeFunctionService';
 import { importMasterKey } from '@/services/cryptoService';
+import { buildAuthenticationPrfExtension } from '@/services/passkeyPrf';
 
 // ============ WebAuthn PRF Extension Types ============
 // PRF is a WebAuthn Level 3 extension not yet reflected in
@@ -158,6 +159,83 @@ export async function isPlatformAuthenticatorAvailable(): Promise<boolean> {
         return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
     } catch {
         return false;
+    }
+}
+
+export interface PasskeyClientSupport {
+    webAuthnAvailable: boolean;
+    platformAuthenticatorAvailable: boolean;
+    clientCapabilitiesAvailable: boolean;
+    prfExtensionSupported: boolean | null;
+}
+
+type PublicKeyCredentialWithCapabilities = typeof PublicKeyCredential & {
+    getClientCapabilities?: () => Promise<Record<string, boolean>>;
+};
+
+/**
+ * Returns the current relying-party identifier used by the browser context.
+ * WebAuthn credentials are scoped to this hostname.
+ */
+export function getCurrentPasskeyRpId(): string | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    try {
+        return window.location.hostname || null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Checks whether the current browser client reports support for the PRF
+ * extension. This is a client-level signal only: the authenticator itself may
+ * still reject PRF, so registration/authentication results remain authoritative.
+ */
+export async function getPasskeyClientSupport(): Promise<PasskeyClientSupport> {
+    const webAuthnAvailable = isWebAuthnAvailable();
+
+    if (!webAuthnAvailable) {
+        return {
+            webAuthnAvailable: false,
+            platformAuthenticatorAvailable: false,
+            clientCapabilitiesAvailable: false,
+            prfExtensionSupported: null,
+        };
+    }
+
+    const platformAuthenticatorAvailable = await isPlatformAuthenticatorAvailable();
+    const publicKeyCredential = PublicKeyCredential as PublicKeyCredentialWithCapabilities;
+
+    if (typeof publicKeyCredential.getClientCapabilities !== 'function') {
+        return {
+            webAuthnAvailable: true,
+            platformAuthenticatorAvailable,
+            clientCapabilitiesAvailable: false,
+            prfExtensionSupported: null,
+        };
+    }
+
+    try {
+        const capabilities = await publicKeyCredential.getClientCapabilities();
+
+        return {
+            webAuthnAvailable: true,
+            platformAuthenticatorAvailable,
+            clientCapabilitiesAvailable: true,
+            prfExtensionSupported: Object.prototype.hasOwnProperty.call(capabilities, 'extension:prf')
+                ? capabilities['extension:prf'] === true
+                : null,
+        };
+    } catch {
+        return {
+            webAuthnAvailable: true,
+            platformAuthenticatorAvailable,
+            clientCapabilitiesAvailable: false,
+            prfExtensionSupported: null,
+        };
     }
 }
 
@@ -304,7 +382,7 @@ export async function activatePasskeyPrf(
     const prfSalts: Record<string, string> = serverData.prfSalts || {};
 
     // Build PRF extension
-    const prfExtension = buildPrfExtension(prfSalts);
+    const prfExtension = buildAuthenticationPrfExtension(prfSalts);
 
     // 2. Call startAuthentication with PRF
     let authResponse: AuthenticationResponseJSON;
@@ -313,7 +391,7 @@ export async function activatePasskeyPrf(
             ...options,
             extensions: {
                 ...(options.extensions || {}),
-                prf: Object.keys(prfExtension).length > 0 ? prfExtension : undefined,
+                prf: prfExtension,
             },
         };
         authResponse = await startAuthentication({
@@ -388,7 +466,7 @@ export async function authenticatePasskey(): Promise<PasskeyAuthenticationResult
     const prfSalts: Record<string, string> = serverData.prfSalts || {};
 
     // 2. Build PRF extension
-    const prfExtension = buildPrfExtension(prfSalts);
+    const prfExtension = buildAuthenticationPrfExtension(prfSalts);
 
     // 3. Call startAuthentication with PRF extension
     let authResponse: AuthenticationResponseJSON;
@@ -397,7 +475,7 @@ export async function authenticatePasskey(): Promise<PasskeyAuthenticationResult
             ...options,
             extensions: {
                 ...(options.extensions || {}),
-                prf: Object.keys(prfExtension).length > 0 ? prfExtension : undefined,
+                prf: prfExtension,
             },
         };
         authResponse = await startAuthentication({
@@ -526,7 +604,7 @@ async function deriveWrappingKey(prfOutput: Uint8Array): Promise<CryptoKey> {
     // Import PRF output as HKDF key material
     const baseKey = await crypto.subtle.importKey(
         'raw',
-        prfOutput as any,
+        prfOutput,
         'HKDF',
         false,
         ['deriveKey'],
@@ -566,7 +644,7 @@ async function encryptRawKeyBytes(
     const ciphertext = await crypto.subtle.encrypt(
         { name: 'AES-GCM', iv, tagLength: 128 },
         wrappingKey,
-        rawKeyBytes as any,
+        rawKeyBytes,
     );
 
     // Combine IV + ciphertext (includes auth tag appended by AES-GCM)
@@ -601,39 +679,6 @@ async function decryptRawKeyBytes(
     );
 
     return new Uint8Array(plaintext);
-}
-
-/**
- * Builds the PRF extension object for startAuthentication.
- * Handles both single and multiple credential scenarios.
- *
- * @param prfSalts - Map of credential_id -> base64url PRF salt
- * @returns PRF extension object for WebAuthn options
- */
-function buildPrfExtension(prfSalts: Record<string, string>): Record<string, unknown> {
-    const credentialIds = Object.keys(prfSalts);
-
-    if (credentialIds.length === 0) {
-        return {};
-    }
-
-    if (credentialIds.length === 1) {
-        // Single credential: use eval.first directly
-        return {
-            eval: {
-                first: base64URLStringToBuffer(prfSalts[credentialIds[0]]),
-            },
-        };
-    }
-
-    // Multiple credentials: use evalByCredential
-    const evalByCredential: Record<string, { first: ArrayBuffer }> = {};
-    for (const [credId, salt] of Object.entries(prfSalts)) {
-        evalByCredential[credId] = {
-            first: base64URLStringToBuffer(salt),
-        };
-    }
-    return { evalByCredential };
 }
 
 // ============ Utility Functions ============

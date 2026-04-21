@@ -31,8 +31,9 @@ const mockRefreshPasskeyUnlockStatus = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/contexts/VaultContext", () => ({
   useVault: () => ({
     webAuthnAvailable: true,
-    getRawKeyForPasskey: (...args: unknown[]) => mockGetRawKeyForPasskey(...args),
-    refreshPasskeyUnlockStatus: () => mockRefreshPasskeyUnlockStatus(),
+    isLocked: false,
+    getRawKeyForPasskey: mockGetRawKeyForPasskey,
+    refreshPasskeyUnlockStatus: mockRefreshPasskeyUnlockStatus,
   }),
 }));
 
@@ -40,14 +41,15 @@ const mockRegisterPasskey = vi.fn();
 const mockActivatePasskeyPrf = vi.fn();
 const mockListPasskeys = vi.fn();
 const mockDeletePasskey = vi.fn();
+const mockGetPasskeyClientSupport = vi.fn();
 
 vi.mock("@/services/passkeyService", () => ({
   registerPasskey: (...args: unknown[]) => mockRegisterPasskey(...args),
   activatePasskeyPrf: (...args: unknown[]) => mockActivatePasskeyPrf(...args),
   listPasskeys: (...args: unknown[]) => mockListPasskeys(...args),
   deletePasskey: (...args: unknown[]) => mockDeletePasskey(...args),
+  getPasskeyClientSupport: (...args: unknown[]) => mockGetPasskeyClientSupport(...args),
   isWebAuthnAvailable: vi.fn().mockReturnValue(true),
-  isPlatformAuthenticatorAvailable: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("@/services/edgeFunctionService", () => ({
@@ -63,6 +65,12 @@ describe("PasskeySettings", () => {
     mockDeletePasskey.mockResolvedValue({ success: true });
     mockGetRawKeyForPasskey.mockResolvedValue(new Uint8Array(32));
     mockRefreshPasskeyUnlockStatus.mockResolvedValue(undefined);
+    mockGetPasskeyClientSupport.mockResolvedValue({
+      webAuthnAvailable: true,
+      platformAuthenticatorAvailable: true,
+      clientCapabilitiesAvailable: true,
+      prfExtensionSupported: true,
+    });
   });
 
   it("activates PRF when registration requires a second ceremony", async () => {
@@ -148,6 +156,23 @@ describe("PasskeySettings", () => {
     // A stale closure returning early would leave the list empty.
     await waitFor(() => {
       expect(screen.getByText("Touch ID")).toBeInTheDocument();
+    });
+  });
+
+  it("shows a PRF warning when the current client does not support the extension", async () => {
+    mockGetPasskeyClientSupport.mockResolvedValue({
+      webAuthnAvailable: true,
+      platformAuthenticatorAvailable: true,
+      clientCapabilitiesAvailable: true,
+      prfExtensionSupported: false,
+    });
+
+    render(<PasskeySettings />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/does not expose the PRF extension required for vault unlock/i),
+      ).toBeInTheDocument();
     });
   });
 });

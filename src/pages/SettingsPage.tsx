@@ -1,307 +1,81 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 /**
- * @fileoverview Settings Page — Open Core Architecture
+ * @fileoverview Profile Settings Page
  *
- * Searchable, filterable settings page. Premium sections are loaded
- * dynamically via the Extension Registry — if no premium package is
- * installed, those sections simply don't appear.
+ * Tab-based profile settings surface composed from core descriptors and
+ * optional premium descriptors registered through the extension registry.
  */
 
-import { useEffect, useState, useMemo } from 'react';
-import { useNavigate, Link, useLocation, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Settings, ArrowLeft, Shield, Search, Wrench } from 'lucide-react';
+import { Settings } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
-
-import { AccountSettings } from '@/components/settings/AccountSettings';
-import { SecuritySettings } from '@/components/settings/SecuritySettings';
-import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
-import { PasswordSettings } from '@/components/settings/PasswordSettings';
-import { AccountDataExportSettings } from '@/components/settings/AccountDataExportSettings';
-import { DesktopLegalSettings } from '@/components/settings/DesktopLegalSettings';
-
-import { useAuth } from '@/contexts/AuthContext';
+import { SettingsSurfaceLayout, type RenderableSettingsSection } from '@/components/settings/SettingsSurfaceLayout';
+import { getCoreProfileSettingsSections } from '@/components/settings/coreSettingsSections';
+import { getSettingsSections } from '@/extensions/registry';
+import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
 import { useToast } from '@/hooks/use-toast';
-import { getExtension, isPremiumActive, getServiceHooks } from '@/extensions/registry';
-import type { SettingsSlotProps } from '@/extensions/types';
-import { getPrimaryAppPath, isDesktopAppShell } from '@/platform/appShell';
-
-type SettingsSection = {
-    id: string;
-    component: React.ReactNode;
-    title: string;
-    keywords: string[];
-};
+import { getPrimaryAppPath } from '@/platform/appShell';
 
 export default function SettingsPage() {
-    const { t } = useTranslation();
-    const navigate = useNavigate();
-    const location = useLocation();
-    const [searchParams, setSearchParams] = useSearchParams();
-    const { toast } = useToast();
-    const { user, authReady } = useAuth();
-    const isDesktopShell = isDesktopAppShell();
-    const primaryAppPath = getPrimaryAppPath();
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { isAdminUser, showAdminButton } = useAdminPanelAccess();
 
-    const [searchQuery, setSearchQuery] = useState('');
-    const [showAdminButton, setShowAdminButton] = useState(false);
-    const [isAdminUser, setIsAdminUser] = useState(false);
+  useEffect(() => {
+    const checkoutState = searchParams.get('checkout');
+    if (!checkoutState) {
+      return;
+    }
 
-    useEffect(() => {
-        if (searchParams.get('checkout') === 'success') {
-            toast({
-                title: t('subscription.paymentSuccessful', 'Zahlung erfolgreich!'),
-                description: t('subscription.paymentSuccessfulBody', 'Dein Abonnement wurde erfolgreich aktualisiert.'),
-            });
-            searchParams.delete('checkout');
-            setSearchParams(searchParams, { replace: true });
-        } else if (searchParams.get('checkout') === 'cancel') {
-            toast({
-                title: t('subscription.paymentCanceled', 'Zahlung abgebrochen'),
-                description: t('subscription.paymentCanceledBody', 'Der Checkout wurde abgebrochen.'),
-                variant: 'destructive',
-            });
-            searchParams.delete('checkout');
-            setSearchParams(searchParams, { replace: true });
-        }
-    }, [searchParams, setSearchParams, t, toast]);
+    if (checkoutState === 'success') {
+      toast({
+        title: t('subscription.paymentSuccessful', 'Zahlung erfolgreich!'),
+        description: t(
+          'subscription.paymentSuccessfulBody',
+          'Dein Abonnement wurde erfolgreich aktualisiert.',
+        ),
+      });
+    } else if (checkoutState === 'cancel') {
+      toast({
+        title: t('subscription.paymentCanceled', 'Zahlung abgebrochen'),
+        description: t('subscription.paymentCanceledBody', 'Der Checkout wurde abgebrochen.'),
+        variant: 'destructive',
+      });
+    }
 
-    useEffect(() => {
-        if (!location.hash) {
-            return;
-        }
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete('checkout');
+    setSearchParams(nextSearchParams, { replace: true });
+  }, [searchParams, setSearchParams, t, toast]);
 
-        const targetId = decodeURIComponent(location.hash.slice(1));
-        const target = document.getElementById(targetId);
-        if (!target) {
-            return;
-        }
+  const sections = useMemo<RenderableSettingsSection[]>(() => {
+    const descriptors = [
+      ...getCoreProfileSettingsSections(t),
+      ...getSettingsSections('profile'),
+    ];
 
-        window.requestAnimationFrame(() => {
-            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-    }, [location.hash]);
+    return descriptors.map((descriptor) => ({
+      id: descriptor.id,
+      title: descriptor.title,
+      tab: descriptor.tab,
+      order: descriptor.order,
+      keywords: descriptor.keywords,
+      content: descriptor.render({ bypassFeatureGate: isAdminUser }),
+    }));
+  }, [isAdminUser, t]);
 
-    useEffect(() => {
-        let isCancelled = false;
-
-        const loadAdminAccess = async () => {
-            if (!authReady || !user) {
-                if (!isCancelled) {
-                    setShowAdminButton(false);
-                    setIsAdminUser(false);
-                }
-                return;
-            }
-
-            const hooks = getServiceHooks();
-            if (!hooks.getTeamAccess) {
-                setShowAdminButton(false);
-                setIsAdminUser(false);
-                return;
-            }
-            console.debug('[SettingsPage] authReady is true, fetching admin access...');
-            const { access, error } = await hooks.getTeamAccess();
-            if (isCancelled) {
-                return;
-            }
-
-            if (error || !access) {
-                setShowAdminButton(false);
-                setIsAdminUser(false);
-                return;
-            }
-
-            setIsAdminUser(access.is_admin);
-            setShowAdminButton(access.can_access_admin);
-        };
-
-        void loadAdminAccess();
-
-        return () => {
-            isCancelled = true;
-        };
-    }, [authReady, user]);
-
-    // ============ Build Sections (Core + Premium Slots) ============
-
-    const sections: SettingsSection[] = useMemo(() => {
-        const result: SettingsSection[] = [
-            {
-                id: 'appearance',
-                component: <AppearanceSettings />,
-                title: t('settings.appearance.title'),
-                keywords: ['appearance', 'theme', 'dark', 'light', 'language', 'sprache', 'design', 'aussehen'],
-            },
-            {
-                id: 'security',
-                component: <SecuritySettings mode="account" />,
-                title: t('settings.security.title'),
-                keywords: ['security', 'sicherheit', '2fa', 'totp', 'authenticator', 'konto-schutz', 'account security'],
-            },
-            {
-                id: 'password',
-                component: <PasswordSettings />,
-                title: t('settings.password.title'),
-                keywords: ['password', 'passwort', 'change password', 'reset password'],
-            },
-            {
-                id: 'account-data-export',
-                component: <AccountDataExportSettings />,
-                title: t('settings.accountDataExport.title'),
-                keywords: ['dsgvo', 'gdpr', 'export', 'privacy', 'datenexport', 'account export'],
-            },
-        ];
-
-        // --- Premium Slots (only rendered if registered) ---
-
-        const SubscriptionSection = getExtension<SettingsSlotProps>('settings.subscription');
-        if (SubscriptionSection) {
-            result.push({
-                id: 'subscription',
-                component: <SubscriptionSection />,
-                title: t('subscription.settings_title'),
-                keywords: ['subscription', 'billing', 'abonnement', 'zahlung', 'premium', 'families', 'plan'],
-            });
-        }
-
-        // Account always present (core)
-        result.push({
-            id: 'account',
-            component: <AccountSettings />,
-            title: t('settings.account.title'),
-            keywords: ['account', 'konto', 'email', 'logout', 'delete', 'löschen'],
-        });
-
-        const SupportSection = getExtension<SettingsSlotProps>('settings.support');
-        if (SupportSection) {
-            result.push({
-                id: 'support',
-                component: <SupportSection />,
-                title: t('settings.support.title', 'Support'),
-                keywords: ['support', 'hilfe', 'help', 'ticket'],
-            });
-        }
-
-        if (isDesktopShell) {
-            result.push({
-                id: 'legal',
-                component: <DesktopLegalSettings />,
-                title: t('settings.desktopLegal.title', 'Rechtliches & Informationen'),
-                keywords: ['rechtlich', 'privacy', 'datenschutz', 'impressum', 'security', 'whitepaper'],
-            });
-        }
-
-        return result;
-    }, [isDesktopShell, t]);
-
-    const filteredSections = useMemo(() => {
-        const query = searchQuery.toLowerCase().trim();
-        if (!query) {
-            return sections;
-        }
-
-        return sections.filter((section) => {
-            const titleMatch = section.title.toLowerCase().includes(query);
-            const keywordMatch = section.keywords.some((kw) => kw.toLowerCase().includes(query));
-
-            return titleMatch || keywordMatch;
-        });
-    }, [searchQuery, sections]);
-
-    return (
-        <div className="min-h-screen bg-background">
-            {/* Header */}
-            <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-                <div className="container max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-3">
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => navigate(primaryAppPath)}
-                                className="rounded-full"
-                            >
-                                <ArrowLeft className="w-5 h-5" />
-                            </Button>
-                            <div className="flex items-center gap-2">
-                                <Settings className="w-6 h-6 text-primary" />
-                                <h1 className="text-xl font-bold">{t('settings.accountPage.title')}</h1>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        {showAdminButton && isPremiumActive() && (
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => navigate('/admin')}
-                                className="flex items-center gap-2"
-                            >
-                                <Wrench className="w-4 h-4" />
-                                <span>{t('admin.title')}</span>
-                            </Button>
-                        )}
-                        {!isDesktopShell && (
-                            <Link
-                                to="/"
-                                className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                                <Shield className="w-5 h-5" />
-                                <span className="hidden sm:inline font-semibold">Singra Vault</span>
-                            </Link>
-                        )}
-                    </div>
-                </div>
-            </header>
-
-            {/* Main Content */}
-            <main className="container max-w-4xl mx-auto px-4 py-8">
-                {/* Search Bar */}
-                <div className="mb-8">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                        <Input
-                            type="search"
-                            placeholder={t('settings.searchPlaceholder')}
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="pl-10"
-                        />
-                    </div>
-                    {searchQuery && (
-                        <p className="mt-2 text-sm text-muted-foreground">
-                            {t('settings.searchResults', { count: filteredSections.length })}
-                        </p>
-                    )}
-                </div>
-
-                {/* Settings Sections */}
-                {filteredSections.length === 0 ? (
-                    <div className="text-center py-12">
-                        <p className="text-muted-foreground">{t('settings.noResults')}</p>
-                    </div>
-                ) : (
-                    <div className="space-y-6">
-                        {filteredSections.map((section, index) => (
-                            <div key={section.id} id={section.id}>
-                                {section.component}
-                                {index < filteredSections.length - 1 && <Separator className="mt-6" />}
-                            </div>
-                        ))}
-                    </div>
-                )}
-
-                {/* Footer */}
-                <div className="mt-12 text-center text-sm text-muted-foreground">
-                    <p>Singra Vault v1.0.0</p>
-                    <p className="mt-1">{t('settings.footer')}</p>
-                </div>
-            </main>
-        </div>
-    );
+  return (
+    <SettingsSurfaceLayout
+      surface="profile"
+      title={t('settings.accountPage.title')}
+      icon={<Settings className="h-6 w-6 text-primary" />}
+      sections={sections}
+      backFallbackPath={getPrimaryAppPath()}
+      showAdminButton={showAdminButton}
+    />
+  );
 }

@@ -27,6 +27,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { DesktopSubpageHeader } from '@/components/layout/DesktopSubpageHeader';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
@@ -289,8 +290,15 @@ export default function SecurityWhitepaper() {
                 ]}
                 structuredData={structuredData}
             />
-            {showWebsiteChrome && <Header />}
-            <main className={`flex-grow px-4 sm:px-6 lg:px-8 ${showWebsiteChrome ? 'py-28' : 'py-10'}`}>
+            {showWebsiteChrome ? (
+                <Header />
+            ) : (
+                <DesktopSubpageHeader
+                    title={t('securityWhitepaper.title')}
+                    description={t('securityWhitepaper.subtitle')}
+                />
+            )}
+            <main className={`flex-grow px-4 sm:px-6 lg:px-8 ${showWebsiteChrome ? 'py-28' : 'py-6'}`}>
                 <div className="mx-auto w-full max-w-5xl space-y-8">
                     {/* Hero Section */}
                     <div className="relative overflow-hidden rounded-2xl border bg-card">

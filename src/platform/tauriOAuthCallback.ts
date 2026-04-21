@@ -74,6 +74,28 @@ export function hasOAuthCallbackPayload(callbackUrl: string, baseUrl?: string): 
   return Boolean(payload?.hasAuthPayload);
 }
 
+export function isDesktopOAuthBridgeUrl(callbackUrl: string, baseUrl?: string): boolean {
+  const parsed = parseCallbackUrl(callbackUrl, baseUrl);
+  if (!parsed) {
+    return false;
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return false;
+  }
+
+  if (!baseUrl) {
+    return false;
+  }
+
+  const base = parseCallbackUrl(baseUrl);
+  if (parsed.origin !== base?.origin || parsed.pathname !== WEB_CALLBACK_PATH) {
+    return false;
+  }
+
+  return collectCallbackParams(parsed).get("source") === "tauri";
+}
+
 export function isTauriOAuthCallbackUrl(callbackUrl: string): boolean {
   const parsed = parseCallbackUrl(callbackUrl);
   return Boolean(parsed && isTauriCallbackLocation(parsed));

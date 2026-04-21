@@ -9,6 +9,25 @@ import { initPremium } from '@singra/premium';
 
 initPremium();
 
+// Dev should always load the live Vite graph, never a stale PWA shell.
+if (import.meta.env.DEV && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      registrations.forEach((registration) => {
+        registration.unregister().catch(() => undefined);
+      });
+    }).catch(() => undefined);
+
+    if ("caches" in window) {
+      caches.keys().then((cacheKeys) => {
+        cacheKeys.forEach((cacheKey) => {
+          caches.delete(cacheKey).catch(() => undefined);
+        });
+      }).catch(() => undefined);
+    }
+  });
+}
+
 if (import.meta.env.PROD && !isTauriRuntime() && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker

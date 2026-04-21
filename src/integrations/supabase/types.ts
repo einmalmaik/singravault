@@ -325,6 +325,7 @@ export type Database = {
           prf_enabled: boolean
           prf_salt: string | null
           public_key: string
+          rp_id: string | null
           transports: string[] | null
           user_id: string
           wrapped_master_key: string | null
@@ -340,6 +341,7 @@ export type Database = {
           prf_enabled?: boolean
           prf_salt?: string | null
           public_key: string
+          rp_id?: string | null
           transports?: string[] | null
           user_id: string
           wrapped_master_key?: string | null
@@ -355,6 +357,7 @@ export type Database = {
           prf_enabled?: boolean
           prf_salt?: string | null
           public_key?: string
+          rp_id?: string | null
           transports?: string[] | null
           user_id?: string
           wrapped_master_key?: string | null

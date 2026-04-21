@@ -93,7 +93,7 @@ export function VaultUnlock() {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
-                description: t('passkey.unlockFailed', 'Passkey unlock failed. Please try your master password.'),
+                description: error.message || t('passkey.unlockFailed', 'Passkey unlock failed. Please try your master password.'),
             });
         }
     };

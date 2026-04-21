@@ -98,7 +98,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
             featureOverridePromise,
         ]);
 
-        setSubscription(subscriptionData);
+        setSubscription((subscriptionData as SubscriptionData | null) ?? null);
         setHasFeatureOverride(accessResult.hasFullAccess === true);
         setLoading(false);
     }, [authReady, user]);

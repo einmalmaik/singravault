@@ -7,10 +7,17 @@ import { clearPkceVerifier, loadPkceVerifier, savePkceVerifier } from "./pkceVer
 
 export type DesktopOAuthProvider = "google" | "discord" | "github";
 export type DesktopOAuthTokens = Pick<Session, "access_token" | "refresh_token">;
+export interface DesktopOAuthExchangeInput {
+  code: string | null;
+  flowId?: string | null;
+  state?: string | null;
+}
 
 const DESKTOP_OAUTH_KEY_PREFIX = "singra-desktop-oauth";
-const ACTIVE_DESKTOP_OAUTH_KEY = `${DESKTOP_OAUTH_KEY_PREFIX}:active`;
+const ACTIVE_DESKTOP_OAUTH_FLOW_KEY = `${DESKTOP_OAUTH_KEY_PREFIX}:active-flow`;
+const LEGACY_ACTIVE_DESKTOP_OAUTH_KEY = `${DESKTOP_OAUTH_KEY_PREFIX}:active`;
 const DESKTOP_OAUTH_BRIDGE_PATH = "/auth";
+const DESKTOP_OAUTH_FLOW_QUERY_KEY = "desktop_oauth_flow";
 const desktopExchangeInFlight = new Map<string, Promise<DesktopOAuthTokens>>();
 
 interface TokenResponse {
@@ -24,13 +31,17 @@ interface TokenResponse {
 
 export async function createDesktopOAuthUrl(provider: DesktopOAuthProvider): Promise<string> {
   const verifier = createVerifier();
+  const flowId = createFlowId();
   const challenge = await createChallenge(verifier);
 
-  await savePkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY, verifier);
+  await Promise.all([
+    savePkceVerifier(getDesktopOAuthVerifierKey(flowId), verifier),
+    savePkceVerifier(ACTIVE_DESKTOP_OAUTH_FLOW_KEY, flowId),
+  ]);
 
   const authUrl = new URL(`${runtimeConfig.supabaseUrl}/auth/v1/authorize`);
   authUrl.searchParams.set("provider", provider);
-  authUrl.searchParams.set("redirect_to", getDesktopOAuthBridgeUrl());
+  authUrl.searchParams.set("redirect_to", getDesktopOAuthBridgeUrl(flowId));
   authUrl.searchParams.set("code_challenge", challenge);
   authUrl.searchParams.set("code_challenge_method", "s256");
 
@@ -38,8 +49,9 @@ export async function createDesktopOAuthUrl(provider: DesktopOAuthProvider): Pro
 }
 
 export async function exchangeDesktopOAuthCode(
-  code: string | null,
+  input: DesktopOAuthExchangeInput,
 ): Promise<DesktopOAuthTokens> {
+  const code = input.code;
   if (!code) {
     throw new Error("Desktop OAuth callback did not include an auth code");
   }
@@ -50,7 +62,7 @@ export async function exchangeDesktopOAuthCode(
     return existingExchange;
   }
 
-  const exchangePromise = exchangeDesktopOAuthCodeUncached(normalizedCode).finally(() => {
+  const exchangePromise = exchangeDesktopOAuthCodeUncached(normalizedCode, input.flowId ?? input.state).finally(() => {
     desktopExchangeInFlight.delete(normalizedCode);
   });
   desktopExchangeInFlight.set(normalizedCode, exchangePromise);
@@ -58,9 +70,12 @@ export async function exchangeDesktopOAuthCode(
   return exchangePromise;
 }
 
-async function exchangeDesktopOAuthCodeUncached(code: string): Promise<DesktopOAuthTokens> {
-  const verifier = await loadPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY);
-  if (!verifier) {
+async function exchangeDesktopOAuthCodeUncached(
+  code: string,
+  flowId?: string | null,
+): Promise<DesktopOAuthTokens> {
+  const flow = await loadDesktopOAuthFlow(flowId);
+  if (!flow) {
     throw new Error("Desktop OAuth verifier is missing or expired");
   }
 
@@ -75,7 +90,7 @@ async function exchangeDesktopOAuthCodeUncached(code: string): Promise<DesktopOA
       },
       body: JSON.stringify({
         auth_code: code,
-        code_verifier: verifier,
+        code_verifier: flow.verifier,
       }),
     });
 
@@ -97,15 +112,24 @@ async function exchangeDesktopOAuthCodeUncached(code: string): Promise<DesktopOA
     };
   } finally {
     if (shouldClearVerifier) {
-      await clearPkceVerifier(ACTIVE_DESKTOP_OAUTH_KEY);
+      await clearDesktopOAuthFlow(flow);
     }
   }
 }
 
-export function getDesktopOAuthBridgeUrl(): string {
+export function getDesktopOAuthBridgeUrl(flowId?: string | null): string {
   const bridgeUrl = new URL(DESKTOP_OAUTH_BRIDGE_PATH, `${runtimeConfig.webUrl}/`);
   bridgeUrl.searchParams.set("source", "tauri");
+  if (flowId?.trim()) {
+    bridgeUrl.searchParams.set(DESKTOP_OAUTH_FLOW_QUERY_KEY, flowId.trim());
+  }
   return bridgeUrl.toString();
+}
+
+function createFlowId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
 }
 
 function createVerifier(): string {
@@ -134,4 +158,74 @@ function base64UrlEncode(bytes: Uint8Array): string {
 
 function isRetryableDesktopOAuthError(status: number): boolean {
   return status === 429 || status >= 500;
+}
+
+interface DesktopOAuthFlow {
+  flowId: string | null;
+  verifier: string;
+  verifierKey: string;
+}
+
+async function loadDesktopOAuthFlow(flowIdOrLegacyState?: string | null): Promise<DesktopOAuthFlow | null> {
+  const normalizedFlowId = flowIdOrLegacyState?.trim() || null;
+  if (normalizedFlowId) {
+    const flowVerifier = await loadPkceVerifier(getDesktopOAuthVerifierKey(normalizedFlowId));
+    if (flowVerifier) {
+      return {
+        flowId: normalizedFlowId,
+        verifier: flowVerifier,
+        verifierKey: getDesktopOAuthVerifierKey(normalizedFlowId),
+      };
+    }
+  }
+
+  const activeFlowId = (await loadPkceVerifier(ACTIVE_DESKTOP_OAUTH_FLOW_KEY))?.trim() || null;
+  if (activeFlowId) {
+    const activeVerifier = await loadPkceVerifier(getDesktopOAuthVerifierKey(activeFlowId));
+    if (activeVerifier) {
+      return {
+        flowId: activeFlowId,
+        verifier: activeVerifier,
+        verifierKey: getDesktopOAuthVerifierKey(activeFlowId),
+      };
+    }
+  }
+
+  const legacyVerifier = await loadPkceVerifier(LEGACY_ACTIVE_DESKTOP_OAUTH_KEY);
+  if (!legacyVerifier) {
+    return null;
+  }
+
+  return {
+    flowId: null,
+    verifier: legacyVerifier,
+    verifierKey: LEGACY_ACTIVE_DESKTOP_OAUTH_KEY,
+  };
+}
+
+async function clearDesktopOAuthFlow(flow: DesktopOAuthFlow): Promise<void> {
+  await clearPkceVerifier(flow.verifierKey);
+  await clearLegacyDesktopOAuthVerifier();
+
+  if (!flow.flowId) {
+    return;
+  }
+
+  const activeFlowId = (await loadPkceVerifier(ACTIVE_DESKTOP_OAUTH_FLOW_KEY))?.trim() || null;
+  if (activeFlowId === flow.flowId) {
+    await clearPkceVerifier(ACTIVE_DESKTOP_OAUTH_FLOW_KEY);
+  }
+}
+
+async function clearLegacyDesktopOAuthVerifier(): Promise<void> {
+  const legacyVerifier = await loadPkceVerifier(LEGACY_ACTIVE_DESKTOP_OAUTH_KEY);
+  if (!legacyVerifier) {
+    return;
+  }
+
+  await clearPkceVerifier(LEGACY_ACTIVE_DESKTOP_OAUTH_KEY);
+}
+
+function getDesktopOAuthVerifierKey(state: string): string {
+  return `${DESKTOP_OAUTH_KEY_PREFIX}:verifier:${state}`;
 }

@@ -9,20 +9,28 @@
  */
 
 import type { ComponentType } from 'react';
-import type { ExtensionSlot, ExtensionComponent, ExtensionRoute, ServiceHooks } from './types';
+import type {
+    ExtensionSlot,
+    ExtensionComponent,
+    ExtensionRoute,
+    ServiceHooks,
+    SettingsSectionDescriptor,
+    SettingsSurface,
+} from './types';
 
 // ============ Internal State ============
 
 const componentRegistry = new Map<ExtensionSlot, ExtensionComponent>();
 const routeRegistry: ExtensionRoute[] = [];
 const serviceHooks: Partial<ServiceHooks> = {};
+const settingsSectionRegistry = new Map<string, SettingsSectionDescriptor>();
 
 // ============ Component Registration ============
 
 /**
  * Register a component into a named slot.
  *
- * @param slot - The slot identifier (e.g. 'settings.family')
+ * @param slot - The slot identifier (e.g. 'layout.support-widget')
  * @param component - The React component to render in that slot
  */
 export function registerExtension(slot: ExtensionSlot, component: ExtensionComponent): void {
@@ -38,7 +46,7 @@ export function registerExtension(slot: ExtensionSlot, component: ExtensionCompo
  * @param slot - The slot identifier
  * @returns The registered component, or null
  */
-export function getExtension<P = any>(slot: ExtensionSlot): ComponentType<P> | null {
+export function getExtension<P = unknown>(slot: ExtensionSlot): ComponentType<P> | null {
     return (componentRegistry.get(slot) as ComponentType<P>) ?? null;
 }
 
@@ -50,6 +58,41 @@ export function getExtension<P = any>(slot: ExtensionSlot): ComponentType<P> | n
  */
 export function hasExtension(slot: ExtensionSlot): boolean {
     return componentRegistry.has(slot);
+}
+
+// ============ Settings Section Registration ============
+
+/**
+ * Register a settings section descriptor.
+ *
+ * @param descriptor - Settings metadata plus render function
+ */
+export function registerSettingsSection(descriptor: SettingsSectionDescriptor): void {
+    if (settingsSectionRegistry.has(descriptor.id)) {
+        console.warn(`[ExtensionRegistry] Settings section "${descriptor.id}" is being overwritten.`);
+    }
+
+    settingsSectionRegistry.set(descriptor.id, descriptor);
+}
+
+/**
+ * Get registered settings sections, optionally filtered by surface.
+ *
+ * @param surface - Optional settings surface filter
+ * @returns Sorted settings descriptors
+ */
+export function getSettingsSections(surface?: SettingsSurface): ReadonlyArray<SettingsSectionDescriptor> {
+    const sections = Array.from(settingsSectionRegistry.values())
+        .filter((descriptor) => !surface || descriptor.surface === surface)
+        .sort((left, right) => {
+            if (left.order !== right.order) {
+                return left.order - right.order;
+            }
+
+            return left.title.localeCompare(right.title);
+        });
+
+    return sections;
 }
 
 // ============ Route Registration ============
@@ -110,7 +153,10 @@ export function getServiceHooks(): Readonly<Partial<ServiceHooks>> {
  * @returns true if premium extensions are active
  */
 export function isPremiumActive(): boolean {
-    return componentRegistry.size > 0 || routeRegistry.length > 0 || Object.keys(serviceHooks).length > 0;
+    return componentRegistry.size > 0
+        || routeRegistry.length > 0
+        || settingsSectionRegistry.size > 0
+        || Object.keys(serviceHooks).length > 0;
 }
 
 /**
@@ -119,6 +165,7 @@ export function isPremiumActive(): boolean {
 export function clearRegistry(): void {
     componentRegistry.clear();
     routeRegistry.length = 0;
+    settingsSectionRegistry.clear();
     for (const key of Object.keys(serviceHooks) as Array<keyof ServiceHooks>) {
         delete serviceHooks[key];
     }

@@ -20,7 +20,8 @@ import {
     MoreHorizontal,
     Pencil,
     Activity,
-    QrCode
+    QrCode,
+    Shield,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -40,7 +41,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { CategoryIcon } from './CategoryIcon';
 import { CategoryDialog } from './CategoryDialog';
@@ -51,6 +52,7 @@ import {
     upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
 import { isPremiumActive } from '@/extensions/registry';
+import { buildReturnState } from '@/services/returnNavigationState';
 
 interface Category {
     id: string;
@@ -78,6 +80,7 @@ export function VaultSidebar({
 }: VaultSidebarProps) {
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const location = useLocation();
     const { lock, encryptData, decryptData, decryptItem, encryptItem, isDuressMode } = useVault();
     const { user } = useAuth();
     const [collapsed, setCollapsed] = useState(false);
@@ -497,11 +500,22 @@ export function VaultSidebar({
                 <div className="p-2 space-y-1">
                     <SidebarItem
                         icon={<Settings className="w-4 h-4" />}
-                        label={t('vault.sidebar.settings')}
+                        label={t('settings.accountPage.title')}
                         collapsed={collapsed}
+                        active={location.pathname === '/settings'}
                         onClick={() => {
                             onActionComplete?.();
-                            navigate('/vault/settings');
+                            navigate('/settings', { state: buildReturnState(location) });
+                        }}
+                    />
+                    <SidebarItem
+                        icon={<Shield className="w-4 h-4" />}
+                        label={t('settings.vaultPage.title')}
+                        collapsed={collapsed}
+                        active={location.pathname === '/vault/settings'}
+                        onClick={() => {
+                            onActionComplete?.();
+                            navigate('/vault/settings', { state: buildReturnState(location) });
                         }}
                     />
                     <SidebarItem

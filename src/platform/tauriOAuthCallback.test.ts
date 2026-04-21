@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createTauriOAuthCallbackUrl,
   hasOAuthCallbackPayload,
+  isDesktopOAuthBridgeUrl,
   isTauriOAuthCallbackUrl,
   normalizeOAuthCallbackInput,
   parseOAuthCallbackPayload,
@@ -58,6 +59,21 @@ describe("tauriOAuthCallback", () => {
     expect(isTauriOAuthCallbackUrl("singravault://profile/callback?code=abc")).toBe(false);
   });
 
+  it("detects web desktop bridge callbacks without treating other auth URLs as bridge pages", () => {
+    expect(
+      isDesktopOAuthBridgeUrl(
+        "https://singravault.mauntingstudios.de/auth?source=tauri&code=abc",
+        "https://singravault.mauntingstudios.de",
+      ),
+    ).toBe(true);
+    expect(
+      isDesktopOAuthBridgeUrl(
+        "https://singravault.mauntingstudios.de/auth?code=abc",
+        "https://singravault.mauntingstudios.de",
+      ),
+    ).toBe(false);
+  });
+
   it("parses PKCE code and OAuth errors", () => {
     expect(parseOAuthCallbackPayload("singravault://auth/callback?code=abc")?.code).toBe("abc");
     expect(
@@ -89,16 +105,16 @@ describe("tauriOAuthCallback", () => {
   it("normalizes manually pasted web bridge callbacks into app callbacks", () => {
     expect(
       normalizeOAuthCallbackInput(
-        "https://singravault.mauntingstudios.de/auth?source=tauri&code=abc",
+        "https://singravault.mauntingstudios.de/auth?source=tauri&code=abc&desktop_oauth_flow=flow-123",
         "https://singravault.mauntingstudios.de",
       ),
-    ).toBe("singravault://auth/callback?code=abc");
+    ).toBe("singravault://auth/callback?code=abc&desktop_oauth_flow=flow-123");
   });
 
   it("omits bridge-only params when creating app callbacks", () => {
-    const params = new URLSearchParams("source=tauri&code=abc");
+    const params = new URLSearchParams("source=tauri&code=abc&desktop_oauth_flow=flow-123");
 
-    expect(createTauriOAuthCallbackUrl(params)).toBe("singravault://auth/callback?code=abc");
+    expect(createTauriOAuthCallbackUrl(params)).toBe("singravault://auth/callback?code=abc&desktop_oauth_flow=flow-123");
   });
 
   it("rejects manual input without an auth payload", () => {

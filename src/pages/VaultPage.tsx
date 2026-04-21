@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     Plus,
     Search,
@@ -42,6 +42,7 @@ import { isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
 import { shouldShowWebsiteChrome } from '@/platform/appShell';
+import { buildReturnState } from '@/services/returnNavigationState';
 
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
 export type ViewMode = 'grid' | 'list';
@@ -49,6 +50,7 @@ export type ViewMode = 'grid' | 'list';
 export default function VaultPage() {
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const location = useLocation();
     const { toast } = useToast();
     const isMobile = useIsMobile();
     const { user, authReady, isOfflineSession } = useAuth();
@@ -254,7 +256,7 @@ export default function VaultPage() {
                             {showAdminButton && (
                                 <Button
                                     variant="outline"
-                                    onClick={() => navigate('/admin')}
+                                    onClick={() => navigate('/admin', { state: buildReturnState(location) })}
                                     className="flex items-center gap-2"
                                 >
                                     <Wrench className="w-4 h-4" />

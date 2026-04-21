@@ -34,7 +34,7 @@ import {
     activatePasskeyPrf,
     listPasskeys,
     deletePasskey,
-    isPlatformAuthenticatorAvailable,
+    getPasskeyClientSupport,
     PasskeyCredential,
 } from '@/services/passkeyService';
 import { isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
@@ -49,6 +49,8 @@ export function PasskeySettings() {
     const [loading, setLoading] = useState(false);
     const [registering, setRegistering] = useState(false);
     const [hasPlatformAuth, setHasPlatformAuth] = useState(false);
+    const [clientCapabilitiesKnown, setClientCapabilitiesKnown] = useState(false);
+    const [prfExtensionSupported, setPrfExtensionSupported] = useState<boolean | null>(null);
 
     // Registration form
     const [showRegisterForm, setShowRegisterForm] = useState(false);
@@ -104,7 +106,11 @@ export function PasskeySettings() {
     useEffect(() => {
         if (authReady && webAuthnAvailable && user) {
             void loadPasskeys();
-            isPlatformAuthenticatorAvailable().then(setHasPlatformAuth);
+            void getPasskeyClientSupport().then((support) => {
+                setHasPlatformAuth(support.platformAuthenticatorAvailable);
+                setClientCapabilitiesKnown(support.clientCapabilitiesAvailable);
+                setPrfExtensionSupported(support.prfExtensionSupported);
+            });
         }
     }, [authReady, webAuthnAvailable, loadPasskeys, user]);
 
@@ -283,6 +289,30 @@ export function PasskeySettings() {
                             {t('passkey.noPlatformAuth', 'No platform authenticator detected. You can still use a security key (e.g. YubiKey).')}
                         </p>
                     </div>
+                )}
+
+                {prfExtensionSupported === false && (
+                    <Alert className="border-amber-500/40 bg-amber-500/10">
+                        <ShieldAlert className="h-4 w-4 text-amber-600" />
+                        <AlertDescription>
+                            {t(
+                                'passkey.clientPrfUnavailable',
+                                'This client supports passkeys, but it does not expose the PRF extension required for vault unlock. You can keep using your master password, but passkey-based vault unlock will not work on this client.',
+                            )}
+                        </AlertDescription>
+                    </Alert>
+                )}
+
+                {clientCapabilitiesKnown && prfExtensionSupported === null && (
+                    <Alert className="border-blue-500/30 bg-blue-500/10">
+                        <Info className="h-4 w-4 text-blue-500" />
+                        <AlertDescription>
+                            {t(
+                                'passkey.clientPrfUnknown',
+                                'This client did not report PRF support one way or the other. Passkey registration will verify vault-unlock capability during setup.',
+                            )}
+                        </AlertDescription>
+                    </Alert>
                 )}
 
                 {/* Registered passkeys list */}

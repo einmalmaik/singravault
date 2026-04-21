@@ -49,6 +49,7 @@ import {
 import {
     authenticatePasskey,
     isWebAuthnAvailable,
+    listPasskeys,
 } from '@/services/passkeyService';
 import { getServiceHooks } from '@/extensions/registry';
 import type {
@@ -332,14 +333,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
         console.debug('[VaultContext] authReady is true, refreshing passkey unlock status...');
 
         try {
-            const { data: passkeys } = await supabase
-                .from('passkey_credentials')
-                .select('id')
-                .eq('user_id', user.id)
-                .eq('prf_enabled', true)
-                .limit(1);
-
-            setHasPasskeyUnlock((passkeys?.length || 0) > 0);
+            const passkeys = await listPasskeys();
+            setHasPasskeyUnlock(passkeys.some((passkey) => passkey.prf_enabled));
         } catch {
             // Non-fatal: passkey status check can fail silently
             setHasPasskeyUnlock(false);
@@ -1403,7 +1398,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             console.error('Failed to derive raw key for passkey:', err);
             return null;
         }
-    }, [user, salt, kdfVersion, isLocked, verificationHash, encryptedUserKey]);
+    }, [user, salt, kdfVersion, isLocked, verificationHash, encryptedUserKey, currentDeviceKey]);
 
     /**
      * Locks the vault and clears encryption key from memory

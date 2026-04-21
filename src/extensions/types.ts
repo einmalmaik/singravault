@@ -9,16 +9,39 @@
 
 import type { ComponentType, ReactNode } from 'react';
 
-// ============ Settings Slots ============
+// ============ Settings Sections ============
 
-/** Slots for settings page sections */
-export type SettingsSlot =
-    | 'settings.family'
-    | 'settings.shared-collections'
-    | 'settings.emergency'
-    | 'settings.duress'
-    | 'settings.subscription'
-    | 'settings.support';
+/** Settings surfaces exposed by the core shell. */
+export type SettingsSurface = 'profile' | 'vault';
+
+/** Canonical tabs available across settings surfaces. */
+export type SettingsTabId =
+    | 'general'
+    | 'security'
+    | 'billing-support'
+    | 'data'
+    | 'data-legal'
+    | 'sharing-emergency';
+
+/** Shared props exposed to registered settings section renderers. */
+export interface SettingsSectionRenderProps {
+    bypassFeatureGate?: boolean;
+}
+
+/**
+ * Descriptor for a settings section contributed by core or premium.
+ * The shell controls ordering, searchability, and tab grouping; the
+ * renderer stays local to the owning package.
+ */
+export interface SettingsSectionDescriptor {
+    id: string;
+    surface: SettingsSurface;
+    tab: SettingsTabId;
+    order: number;
+    title: string;
+    keywords: string[];
+    render: (props: SettingsSectionRenderProps) => ReactNode;
+}
 
 // ============ Page Slots ============
 
@@ -42,24 +65,19 @@ export type ComponentSlot =
 // ============ Combined Slot Type ============
 
 /** All available extension slots */
-export type ExtensionSlot = SettingsSlot | PageSlot | ComponentSlot;
+export type ExtensionSlot = PageSlot | ComponentSlot;
 
 // ============ Extension Component Types ============
 
-/** Props that settings slot components may receive */
-export interface SettingsSlotProps {
-    bypassFeatureGate?: boolean;
-}
-
-/** A registered extension component (any React component) */
-export type ExtensionComponent = ComponentType<any>;
+/** A registered extension component. */
+export type ExtensionComponent = ComponentType<unknown>;
 
 // ============ Route Registration ============
 
 /** A route registered by the premium package */
 export interface ExtensionRoute {
     path: string;
-    component: ComponentType<any>;
+    component: ComponentType<unknown>;
     /** Whether the route requires authentication */
     protected?: boolean;
     /** Whether the route requires an unlocked vault key in memory */
@@ -142,7 +160,7 @@ export interface ServiceHooks {
      * Load subscription data for the current user.
      * Returns null if no subscription found.
      */
-    getSubscription?: () => Promise<any | null>;
+    getSubscription?: () => Promise<unknown | null>;
 
     /**
      * Load the current user's team access (roles + permissions).

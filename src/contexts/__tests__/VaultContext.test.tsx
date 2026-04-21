@@ -91,8 +91,10 @@ vi.mock("@/services/offlineVaultService", () => ({
 
 // Mock passkey service
 const mockAuthenticatePasskey = vi.fn();
+const mockListPasskeys = vi.fn();
 vi.mock("@/services/passkeyService", () => ({
   authenticatePasskey: () => mockAuthenticatePasskey(),
+  listPasskeys: () => mockListPasskeys(),
   isWebAuthnAvailable: vi.fn(() => false),
 }));
 
@@ -127,6 +129,7 @@ describe("VaultContext", () => {
     mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
     mockImportMasterKey.mockResolvedValue({} as CryptoKey);
     mockAuthenticatePasskey.mockResolvedValue({ success: true, encryptionKey: {} as CryptoKey });
+    mockListPasskeys.mockResolvedValue([]);
     mockGetUnlockCooldown.mockReturnValue(null);
 
     // Default Supabase profile response - no vault setup yet

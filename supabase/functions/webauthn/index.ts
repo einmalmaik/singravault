@@ -33,6 +33,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
 const DEFAULT_SITE_URL = "https://singravault.mauntingstudios.de";
+const CONFIGURED_SITE_ORIGIN = normalizeHttpOrigin(Deno.env.get("SITE_URL")) ?? DEFAULT_SITE_URL;
+const CONFIGURED_SITE_RP_ID = new URL(CONFIGURED_SITE_ORIGIN).hostname;
 const FIRST_PARTY_DESKTOP_ORIGINS = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
@@ -55,12 +57,11 @@ function getRpConfig(req: Request): {
     expectedOrigins: string[];
     expectedRPIDs: string[];
 } {
-    const configuredSiteOrigin = normalizeHttpOrigin(Deno.env.get("SITE_URL")) ?? DEFAULT_SITE_URL;
     const requestedOrigin = normalizeHttpOrigin(req.headers.get("origin"));
-    const primaryOrigin = requestedOrigin ?? configuredSiteOrigin;
+    const primaryOrigin = requestedOrigin ?? CONFIGURED_SITE_ORIGIN;
     const expectedOrigins = dedupeOrigins([
         primaryOrigin,
-        configuredSiteOrigin,
+        CONFIGURED_SITE_ORIGIN,
         ...FIRST_PARTY_DESKTOP_ORIGINS,
     ]);
 
@@ -164,10 +165,10 @@ Deno.serve(async (req: Request) => {
                 return await handleActivatePrf(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "list-credentials":
-                return await handleListCredentials(user, supabaseAdmin, corsHeaders);
+                return await handleListCredentials(user, rp, supabaseAdmin, corsHeaders);
 
             case "delete-credential":
-                return await handleDeleteCredential(user, supabaseAdmin, body, corsHeaders);
+                return await handleDeleteCredential(user, rp, supabaseAdmin, body, corsHeaders);
 
             default:
                 return jsonResponse({ error: `Unknown action: ${action}` }, 400, corsHeaders);
@@ -197,10 +198,13 @@ async function handleGenerateRegistrationOptions(
     // Fetch existing credentials to exclude (prevent re-registration)
     const { data: existingCreds } = await supabase
         .from("passkey_credentials")
-        .select("credential_id")
+        .select("credential_id, rp_id")
         .eq("user_id", user.id);
 
     const excludeCredentials = (existingCreds || [])
+        .filter((c: { credential_id: string; rp_id?: string | null }) =>
+            isCredentialAvailableForRp(c.rp_id, rp.rpID)
+        )
         .map((c: { credential_id: string }) => c.credential_id)
         .filter(isLikelyBase64UrlCredentialId)
         .map((credentialId: string) => ({
@@ -310,6 +314,7 @@ async function handleVerifyRegistration(
             .insert({
                 user_id: user.id,
                 credential_id: regCredential.id,
+                rp_id: rp.rpID,
                 public_key: isoBase64URL.fromBuffer(regCredential.publicKey),
                 counter: regCredential.counter,
                 transports: regCredential.transports || [],
@@ -354,7 +359,7 @@ async function handleGenerateAuthenticationOptions(
     // Fetch user's registered credentials
     const { data: credentials } = await supabase
         .from("passkey_credentials")
-        .select("credential_id, transports, prf_salt, prf_enabled")
+        .select("credential_id, transports, prf_salt, prf_enabled, rp_id")
         .eq("user_id", user.id);
 
     if (!credentials || credentials.length === 0) {
@@ -365,11 +370,16 @@ async function handleGenerateAuthenticationOptions(
         ? credentials.filter((credential: { credential_id: string }) => credential.credential_id === credentialId)
         : credentials;
 
-    if (scopedCredentials.length === 0) {
+    const rpScopedCredentials = scopedCredentials.filter((credential: {
+        credential_id: string;
+        rp_id?: string | null;
+    }) => isCredentialAvailableForRp(credential.rp_id, rp.rpID));
+
+    if (rpScopedCredentials.length === 0) {
         return jsonResponse({ error: "Requested passkey credential not found" }, 404, corsHeaders);
     }
 
-    const validScopedCredentials = scopedCredentials.filter((c: { credential_id: string }) =>
+    const validScopedCredentials = rpScopedCredentials.filter((c: { credential_id: string }) =>
         isLikelyBase64UrlCredentialId(c.credential_id)
     );
 
@@ -484,12 +494,17 @@ async function handleVerifyAuthentication(
     const dbCredential = dbCredentials[0] as {
         id: string;
         credential_id: string;
+        rp_id?: string | null;
         public_key: string;
         counter: number;
         transports?: string[];
         wrapped_master_key?: string;
         prf_enabled?: boolean;
     };
+
+    if (!isCredentialAvailableForRp(dbCredential.rp_id, rp.rpID)) {
+        return jsonResponse({ error: "Credential not available for this app surface" }, 400, corsHeaders);
+    }
 
     try {
         const verification = await verifyAuthenticationResponse({
@@ -599,10 +614,15 @@ async function handleActivatePrf(
     const dbCredential = dbCredentials[0] as {
         id: string;
         credential_id: string;
+        rp_id?: string | null;
         public_key: string;
         counter: number;
         transports?: string[];
     };
+
+    if (!isCredentialAvailableForRp(dbCredential.rp_id, rp.rpID)) {
+        return jsonResponse({ error: "Credential not available for this app surface" }, 400, corsHeaders);
+    }
 
     try {
         const verification = await verifyAuthenticationResponse({
@@ -653,12 +673,13 @@ async function handleActivatePrf(
 
 async function handleListCredentials(
     user: { id: string },
+    rp: { rpID: string },
     supabase: ReturnType<typeof createClient>,
     corsHeaders: Record<string, string>,
 ) {
     const { data: credentials, error } = await supabase
         .from("passkey_credentials")
-        .select("id, credential_id, device_name, prf_enabled, created_at, last_used_at")
+        .select("id, credential_id, device_name, prf_enabled, created_at, last_used_at, rp_id")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
@@ -666,11 +687,16 @@ async function handleListCredentials(
         return jsonResponse({ error: "Failed to list credentials" }, 500, corsHeaders);
     }
 
-    return jsonResponse({ credentials: credentials || [] }, 200, corsHeaders);
+    const scopedCredentials = (credentials || []).filter((credential: { rp_id?: string | null }) =>
+        isCredentialAvailableForRp(credential.rp_id, rp.rpID)
+    );
+
+    return jsonResponse({ credentials: scopedCredentials }, 200, corsHeaders);
 }
 
 async function handleDeleteCredential(
     user: { id: string },
+    rp: { rpID: string },
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
@@ -679,6 +705,21 @@ async function handleDeleteCredential(
 
     if (!credentialId) {
         return jsonResponse({ error: "Missing credentialId" }, 400, corsHeaders);
+    }
+
+    const { data: credential, error: lookupError } = await supabase
+        .from("passkey_credentials")
+        .select("id, rp_id")
+        .eq("user_id", user.id)
+        .eq("id", credentialId)
+        .maybeSingle();
+
+    if (lookupError) {
+        return jsonResponse({ error: "Failed to load credential" }, 500, corsHeaders);
+    }
+
+    if (!credential || !isCredentialAvailableForRp((credential as { rp_id?: string | null }).rp_id, rp.rpID)) {
+        return jsonResponse({ error: "Credential not available for this app surface" }, 404, corsHeaders);
     }
 
     const { error } = await supabase
@@ -716,6 +757,20 @@ function isLikelyBase64UrlCredentialId(value: string): boolean {
     return typeof value === "string"
         && value.length >= 16
         && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function isCredentialAvailableForRp(
+    credentialRpId: string | null | undefined,
+    currentRpId: string,
+): boolean {
+    if (credentialRpId === currentRpId) {
+        return true;
+    }
+
+    // Legacy rows were created before RP scoping existed and belong to the
+    // hosted web surface. Keep them visible there so existing users do not lose
+    // their web passkeys, while desktop/local surfaces stay isolated.
+    return !credentialRpId && currentRpId === CONFIGURED_SITE_RP_ID;
 }
 
 function normalizeHttpOrigin(value: string | null | undefined): string | null {

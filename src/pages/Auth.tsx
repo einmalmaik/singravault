@@ -32,7 +32,7 @@ import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService'
 import { applyAuthenticatedSession, persistAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
-import { isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
+import { isDesktopOAuthBridgeUrl, isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
 import { createDesktopOAuthUrl, exchangeDesktopOAuthCode, type DesktopOAuthProvider } from '@/platform/desktopOAuth';
@@ -90,7 +90,7 @@ export default function Auth() {
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const isDesktopBridgePage = !isTauriRuntime() && searchParams.get('source') === 'tauri';
+  const isDesktopBridgePage = !isTauriRuntime() && isDesktopOAuthBridgeUrl(window.location.href, window.location.origin);
   const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
   const API_URL = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
   const inIframe = (() => {
@@ -319,6 +319,7 @@ export default function Auth() {
 
   const handleLogin = async (data: LoginFormData, totpCode?: string, isBackupCode?: boolean) => {
     setLoading(true);
+    let requiresTwoFactor = false;
     try {
       // Try OPAQUE first (password never leaves client)
       const opaqueSession = await tryOpaqueLogin(data, totpCode, isBackupCode);
@@ -327,6 +328,7 @@ export default function Auth() {
         return await legacyLogin(data, totpCode, isBackupCode);
       }
       if (opaqueSession === '2fa') {
+        requiresTwoFactor = true;
         return; // 2FA modal shown
       }
       if (opaqueSession) {
@@ -349,7 +351,9 @@ export default function Auth() {
       });
       return false;
     } finally {
-      if (!show2FAModal) setLoading(false);
+      if (!requiresTwoFactor) {
+        setLoading(false);
+      }
     }
   };
 
@@ -1240,7 +1244,11 @@ async function exchangeOAuthCodeForSession(code: string | null): Promise<Session
 }
 
 async function exchangeDesktopOAuthCodeForSession(payload: ParsedOAuthCallbackPayload): Promise<Session> {
-  const tokens = await exchangeDesktopOAuthCode(payload.code);
+  const tokens = await exchangeDesktopOAuthCode({
+    code: payload.code,
+    flowId: payload.params.get('desktop_oauth_flow'),
+    state: payload.params.get('state'),
+  });
   return applyAuthenticatedSession(tokens);
 }
 
