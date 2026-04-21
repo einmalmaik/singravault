@@ -2,6 +2,21 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## 0.2.3 Beta - 2026-04-21
+
+### Added
+
+- Desktop-Anmeldung bietet jetzt einen eingebauten Dialog für den manuellen Callback-Link statt eines Browser-Prompts
+
+### Changed
+
+- manueller Social-Login-Fallback ist jetzt direkt in die Auth-Oberfläche integriert und passt zum restlichen App-Design
+
+### Fixed
+
+- Tauri leitet OAuth-Callbacks bei bereits laufender App jetzt sauber an die bestehende Instanz weiter
+- nativer PKCE-Speicher unterstützt jetzt mehrere Schlüssel parallel, damit Desktop-Social-Login nicht an kollidierenden Flow-Zuständen scheitert
+
 ## 0.2.2 Beta - 2026-04-21
 
 ### Fixed
