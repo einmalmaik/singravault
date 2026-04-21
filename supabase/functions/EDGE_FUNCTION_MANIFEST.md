@@ -43,6 +43,7 @@ Jede ist mit `// @premium` im Quellcode markiert.
 
 | Function | Zweck |
 |----------|-------|
+| `desktop-release` | Desktop-Downloads für Website/Landing bereitstellen |
 | `support-submit` | Support-Ticket erstellen |
 | `support-list` | Tickets auflisten / Details / Antworten |
 | `support-metrics` | SLA-Metriken (Admin) |

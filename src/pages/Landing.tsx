@@ -16,12 +16,14 @@ import { Comparison } from '@/components/landing/Comparison';
 import { Footer } from '@/components/landing/Footer';
 import { SEO, createWebsiteStructuredData, createSoftwareAppStructuredData } from '@/components/SEO';
 import { FadeInSection } from '@/components/FadeInSection';
+import { getExtension } from '@/extensions/registry';
 
 export default function Landing() {
   const structuredData = {
     ...createWebsiteStructuredData(),
     ...createSoftwareAppStructuredData(),
   };
+  const AfterHeroSlot = getExtension('landing.after-hero');
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -44,6 +46,7 @@ export default function Landing() {
       <Header />
       <main className="flex-1">
         <Hero />
+        {AfterHeroSlot && <FadeInSection delay={50}><AfterHeroSlot /></FadeInSection>}
         <FadeInSection><SecurityFeatures /></FadeInSection>
         <FadeInSection delay={100}><Features /></FadeInSection>
         <FadeInSection delay={200}><PWASection /></FadeInSection>

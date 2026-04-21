@@ -60,6 +60,9 @@ verify_jwt = false
 [functions.support-metrics]
 verify_jwt = false
 
+[functions.desktop-release]
+verify_jwt = false
+
 [functions.admin-support]
 verify_jwt = false
 

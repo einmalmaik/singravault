@@ -58,6 +58,7 @@ export type PageSlot =
 
 /** Slots for inline premium components */
 export type ComponentSlot =
+    | 'landing.after-hero'
     | 'vault.file-attachments'
     | 'vault.pending-invitations'
     | 'subscription.feature-gate'
