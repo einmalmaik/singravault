@@ -55,7 +55,7 @@ jobs:
       - name: Install dependencies with private premium package
         run: node scripts/install-with-optional-premium.mjs
         env:
-          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
+          GITHUB_PAT: ${{ secrets.SINGRA_PREMIUM_PAT }}
           INSTALL_SINGRA_PREMIUM: "true"
           SINGRA_PREMIUM_REF: ${{ vars.SINGRA_PREMIUM_REF }}
 

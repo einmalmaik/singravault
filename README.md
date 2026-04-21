@@ -174,6 +174,8 @@ Wichtig:
 - der private Signierschlüssel darf niemals ins Repository
 - `.env` reicht für den Build des Updaters nicht, die Signaturdaten müssen als echte Umgebungsvariablen oder GitHub-Secrets gesetzt werden
 
+Für private Premium-Builds in GitHub Actions wird zusätzlich ein Repository-Secret `SINGRA_PREMIUM_PAT` benötigt, das Lesezugriff auf `einmalmaik/singra-premium` hat.
+
 ## Lizenz
 
 Dieses Projekt ist unter der **Business Source License 1.1 (BUSL-1.1)** lizenziert.

@@ -57,7 +57,7 @@ Für CI, Vercel und Desktop-Releases gibt es die generische Install-Logik:
 Sie:
 
 - injiziert das private Paket nur dann, wenn `INSTALL_SINGRA_PREMIUM=true` gesetzt ist
-- verwendet `GITHUB_PAT` für den Zugriff auf `einmalmaik/singra-premium`
+- verwendet zur Laufzeit die Umgebungsvariable `GITHUB_PAT`; in GitHub Actions wird dafür das Repository-Secret `SINGRA_PREMIUM_PAT` auf diese Variable gemappt
 - löscht das Lockfile im temporären Build-Workspace, damit die Auflösung konsistent neu erfolgt
 - führt anschließend `npm install` aus
 

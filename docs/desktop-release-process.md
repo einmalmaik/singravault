@@ -29,7 +29,7 @@
   - Inhalt des privaten Updater-Schlüssels
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
   - nur falls der Schlüssel passwortgeschützt ist
-- `GITHUB_PAT`
+- `SINGRA_PREMIUM_PAT`
   - GitHub Personal Access Token mit Lesezugriff auf `einmalmaik/singra-premium`
 
 ## Optionale GitHub-Variable
@@ -45,7 +45,7 @@
 3. Tag im öffentlichen Repository setzen, zum Beispiel `v0.2.0`.
 4. GitHub Actions baut die Desktop-Artefakte:
    - Checkout des öffentlichen Repos
-   - privates Premium-Paket per `GITHUB_PAT` injizieren
+   - privates Premium-Paket per `SINGRA_PREMIUM_PAT` injizieren
    - Tauri-Desktop-Build für Windows, Linux und macOS
    - Signaturen und `latest.json` erzeugen
    - Upload in den GitHub Release
