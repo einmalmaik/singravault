@@ -1,7 +1,7 @@
 {
   "name": "singra-secure-vault",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.2.0",
   "license": "BUSL-1.1",
   "type": "module",
   "engines": {
@@ -21,6 +21,8 @@
     "tauri:dev": "tauri dev",
     "tauri:dev:core-only": "node scripts/run-with-premium-disabled.mjs tauri dev",
     "tauri:build": "tauri build",
+    "tauri:build:core-only": "node scripts/run-with-premium-disabled.mjs tauri build",
+    "install:with-optional-premium": "node scripts/install-with-optional-premium.mjs",
     "loadtest:smoke": "node --env-file=.env scripts/loadtest/run-k6-with-env.mjs run -e K6_PROFILE=smoke loadtest/scenarios/vault-read.js",
     "loadtest:login": "node --env-file=.env scripts/loadtest/run-k6-with-env.mjs run loadtest/scenarios/login.js",
     "loadtest:vault-read": "node --env-file=.env scripts/loadtest/run-k6-with-env.mjs run loadtest/scenarios/vault-read.js",

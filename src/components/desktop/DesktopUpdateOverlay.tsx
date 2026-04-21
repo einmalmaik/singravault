@@ -112,7 +112,7 @@ export function DesktopUpdateOverlay() {
           />
           <div className="flex items-center justify-between text-xs text-[hsl(196_19%_67%)]">
             <span>{state.detail || "\u00A0"}</span>
-            {state.version ? <span>v{state.version}</span> : <span>\u00A0</span>}
+            {state.version ? <span>v{state.version}</span> : <span>{"\u00A0"}</span>}
           </div>
         </div>
       </div>

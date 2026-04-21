@@ -29,7 +29,7 @@ async function runDesktopUpdateCheck(): Promise<void> {
   setDesktopUpdateState({
     visible: true,
     stage: "checking",
-    title: "Pruefe auf Updates",
+    title: "Prüfe auf Updates",
     message:
       "Singra Vault gleicht diese Desktop-Installation mit dem neuesten Release ab.",
     detail: "Bitte einen Moment warten",
@@ -63,7 +63,7 @@ async function runDesktopUpdateCheck(): Promise<void> {
         stage: "upToDate",
         title: "Aktueller Stand",
         message: "Diese Installation ist bereits auf dem neuesten Stand.",
-        detail: "Die App wird jetzt geoeffnet",
+        detail: "Die App wird jetzt geöffnet",
         progress: 100,
         version: null,
       });
@@ -76,7 +76,7 @@ async function runDesktopUpdateCheck(): Promise<void> {
       stage: "downloading",
       title: `Update ${updateHandle.version} wird vorbereitet`,
       message:
-        "Das Update wird geladen und anschliessend automatisch installiert.",
+        "Das Update wird geladen und anschließend automatisch installiert.",
       detail: "Download wird gestartet",
       progress: 0,
       version: updateHandle.version,
@@ -93,8 +93,8 @@ async function runDesktopUpdateCheck(): Promise<void> {
           setDesktopUpdateState({
             stage: "downloading",
             detail: totalBytes
-              ? "Download laeuft"
-              : "Downloadgroesse wird vorbereitet",
+              ? "Download läuft"
+              : "Downloadgröße wird vorbereitet",
             progress: 8,
           });
           break;
@@ -105,7 +105,7 @@ async function runDesktopUpdateCheck(): Promise<void> {
             : null;
           setDesktopUpdateState({
             stage: "downloading",
-            detail: progress ? `${progress}% geladen` : "Download laeuft",
+            detail: progress ? `${progress}% geladen` : "Download läuft",
             progress,
           });
           break;
@@ -137,9 +137,9 @@ async function runDesktopUpdateCheck(): Promise<void> {
     setDesktopUpdateState({
       visible: true,
       stage: "error",
-      title: "Updatepruefung fehlgeschlagen",
+      title: "Updateprüfung fehlgeschlagen",
       message:
-        "Die App startet normal weiter. Beim naechsten Start wird erneut geprueft.",
+        "Die App startet normal weiter. Beim nächsten Start wird erneut geprüft.",
       detail: error instanceof Error ? error.message : "Unbekannter Fehler",
       progress: 100,
     });

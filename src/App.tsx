@@ -40,6 +40,7 @@ import NotFound from "./pages/NotFound";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import Impressum from "./pages/Impressum";
 import SecurityWhitepaper from "./pages/SecurityWhitepaper";
+import DesktopUpdatePreviewPage from "./pages/DesktopUpdatePreviewPage";
 
 const queryClient = new QueryClient();
 
@@ -99,6 +100,12 @@ const App = () => {
                       <Route path="/security" element={<SecurityWhitepaper />} />
                       <Route path="/privacy" element={<PrivacyPolicy />} />
                       <Route path="/impressum" element={<Impressum />} />
+                      {import.meta.env.DEV && (
+                        <Route
+                          path="/debug/desktop-update"
+                          element={<DesktopUpdatePreviewPage />}
+                        />
+                      )}
 
                       {/* Premium Routes (dynamically registered) */}
                       {premiumRoutes.map((route) => {

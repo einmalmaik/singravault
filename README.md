@@ -1,65 +1,185 @@
-# Singra Password Manager
+# Singra Vault
 
-Wilkommen bei **Singra Vault**, deinem sicheren, Open-Source Passwort-Manager.
+> **Beta-Status:** `0.2.0 Beta`
+>
+> Web, PWA und Desktop werden aktiv weiterentwickelt. Die Desktop-App ist funktionsfähig, aber noch nicht als final stabil freigegeben.
 
-**Live-URL**: [singravault.mauntingstudios.de](https://singravault.mauntingstudios.de)
+**Live-Instanz:** [singravault.mauntingstudios.de](https://singravault.mauntingstudios.de)
 
-## Was ist Singra?
+## Überblick
 
-Singra (abgeleitet von "Singularity") ist ein moderner, webbasierter Passwort-Manager, der deine Datensicherheit in den Mittelpunkt stellt. Er ermöglicht es dir, deine Passwörter sicher zu speichern, zu verwalten und von überall darauf zuzugreifen, ohne die Kontrolle über deine Daten aufzugeben.
+Singra Vault ist ein Zero-Knowledge Passwort-Manager mit Fokus auf Datenschutz, lokaler Verschlüsselung und klarer Trennung zwischen öffentlichem Core und privatem Premium-Bereich.
 
-### Sicherheitsarchitektur
+Dieses Repository enthält den **öffentlichen Core**:
 
-Singra verfolgt einen **Zero-Knowledge** Ansatz. Das bedeutet, dass deine Passwörter **ausschließlich auf deinem Gerät** ("Client-Side") verschlüsselt und entschlüsselt werden. Niemand – nicht einmal der Server-Administrator – kann deine Daten lesen.
+- Web-App
+- PWA
+- Tauri-Desktop-Basis
+- Self-Hosting-fähige Kernfunktionen
 
-Technische Details:
-- **Verschlüsselung**: AES-GCM (Advanced Encryption Standard im Galois/Counter Mode) für die sichere Verschlüsselung deiner Daten.
-- **Schlüsselableitung**: Argon2id Hash-Algorithmus, um dein Master-Passwort in einen kryptografisch sicheren Schlüssel zu verwandeln. Dies macht Brute-Force-Angriffe extrem schwierig.
+Nicht in diesem Repository enthalten:
 
-## Installation & Lokale Entwicklung
+- Abonnement-Logik
+- Billing- und Support-Oberflächen
+- Admin-Bereich
+- private Premium- und Family-Funktionen
 
-Du kannst Singra ganz einfach auf deinem eigenen PC laufen lassen.
+Diese Teile bleiben im privaten Paket `@singra/premium`.
 
-### Voraussetzungen
-- [Node.js](https://nodejs.org/) & npm müssen installiert sein.
+## Sicherheitsmodell
 
-### Schritte
+Singra Vault verfolgt einen **Zero-Knowledge** Ansatz:
 
-1. **Repository klonen**
-   ```sh
-   git clone https://github.com/einmalmaik/singravault.git
-   cd singra-vault
-   ```
+- Verschlüsselung und Entschlüsselung passieren clientseitig
+- das Master-Passwort verlässt das Gerät nicht im Klartext
+- sensible Schlüsselableitung erfolgt lokal
+- Server-seitige Dienste dürfen keinen Zugriff auf entschlüsselte Tresor-Inhalte haben
 
-2. **Abhängigkeiten installieren**
-   ```sh
-   npm install
-   ```
+Technische Eckpunkte:
 
-3. **Umgebungsvariablen konfigurieren**
-   Erstelle eine `.env` Datei im Hauptverzeichnis (basiert auf `.env.example`) und trage deine Supabase-Zugangsdaten ein.
+- **Verschlüsselung:** AES-GCM
+- **KDF:** Argon2id
+- **Passkeys / WebAuthn:** plattformabhängig pro Origin bzw. RP-ID
+- **Desktop-Session:** Refresh-Token im OS-Keychain, Access-Token nur im Speicher
 
-4. **Anwendung starten**
-   ```sh
-   npm run dev
-   ```
-   Die Anwendung ist nun unter `http://localhost:8080` (oder einem ähnlichen Port) erreichbar.
+## Core vs. Premium
 
-## Technologien
+### Core
 
-Dieses Projekt basiert auf modernen Web-Technologien:
-- **Frontend**: React, TypeScript, Vite
-- **UI**: Tailwind CSS, shadcn/ui
-- **Backend/Datenbank**: Supabase
-- **Kryptografie**: Web Crypto API, Argon2id
+Der öffentliche Core ist für Self-Hosting gedacht und umfasst die grundlegenden Passwortmanager-Funktionen:
+
+- Tresor
+- Passwortgenerator
+- sichere Notizen
+- lokale Verschlüsselung
+- Passkey-/Entsperrpfade
+- PWA- und Desktop-Basis
+
+### Premium
+
+Premium wird **nicht** in dieses Repository eingecheckt.
+
+- In lokaler Entwicklung wird Premium nur geladen, wenn das private Sibling-Repo vorhanden ist.
+- In Deployments und Release-Builds wird Premium nur über private Build-Zugriffe injiziert.
+- Fehlt das Paket, läuft der Core sauber mit einem Stub weiter.
+
+Details: [`docs/premium-loading.md`](docs/premium-loading.md)
+
+## Voraussetzungen
+
+- Node.js `>= 20.19.0`
+- npm
+- ein Supabase-Projekt für Self-Hosting
+- für Desktop-Builds zusätzlich die üblichen Tauri-Systemvoraussetzungen
+
+## Umgebungsvariablen
+
+Beispiel: [`env.example`](env.example)
+
+Mindestens erforderlich:
+
+- `VITE_SUPABASE_PROJECT_ID`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `VITE_SUPABASE_URL`
+- `VITE_SITE_URL`
+
+## Lokale Entwicklung
+
+### Schnellstart für Self-Hosting
+
+```bash
+git clone https://github.com/einmalmaik/singra-secure-vault.git
+cd singra-secure-vault
+cp env.example .env
+npm install
+```
+
+Danach die Werte in `.env` für das eigene Supabase-Projekt eintragen.
+
+### Web / PWA
+
+```bash
+npm run dev
+```
+
+Danach läuft die App unter `http://localhost:8080`.
+
+### Core-only, auch wenn lokal ein Premium-Repo existiert
+
+```bash
+npm install
+npm run dev:core-only
+```
+
+### Desktop lokal starten
+
+Wenn **kein** Premium-Repo installiert oder daneben vorhanden ist:
+
+```bash
+npm install
+npm run tauri:dev
+```
+
+Wenn lokal zwar Premium vorhanden ist, du aber bewusst nur den öffentlichen Core testen willst:
+
+```bash
+npm install
+npm run tauri:dev:core-only
+```
+
+## Builds
+
+### Web-Build
+
+```bash
+npm run build
+```
+
+### Core-only Desktop-Build
+
+```bash
+npm run tauri:build:core-only
+```
+
+## Release-Modell
+
+Das öffentliche Repository bleibt **Core-only**.
+
+Desktop-Releases dürfen trotzdem mit Premium gebaut werden, solange:
+
+- das private Premium-Paket nur im CI injiziert wird
+- der Premium-Source-Code nie ins öffentliche Repo gelangt
+- Premium-Funktionen serverseitig abgesichert bleiben
+
+Details: [`docs/desktop-release-process.md`](docs/desktop-release-process.md)
+
+## GitHub Actions
+
+Es gibt zwei Workflows:
+
+- `ci.yml`
+  - typprüft und baut den öffentlichen Core
+- `release-desktop.yml`
+  - baut signierte Tauri-Desktop-Artefakte aus einem öffentlichen Tag
+  - injiziert Premium nur während des CI-Builds
+  - lädt die Release-Artefakte und `latest.json` für den Updater hoch
+
+## Updater
+
+Die Desktop-App nutzt Tauri Updater mit signierten Release-Artefakten.
+
+Wichtig:
+
+- `latest.json` muss in einem veröffentlichten GitHub Release liegen
+- der private Signierschlüssel darf niemals ins Repository
+- `.env` reicht für den Build des Updaters nicht, die Signaturdaten müssen als echte Umgebungsvariablen oder GitHub-Secrets gesetzt werden
 
 ## Lizenz
 
-Dieses Projekt ist unter der **Business Source License 1.1 (BSL 1.1)** lizenziert.
+Dieses Projekt ist unter der **Business Source License 1.1 (BUSL-1.1)** lizenziert.
 
-- **Code einsehen**: Ja — der gesamte Quellcode ist öffentlich einsehbar
-- **Self-Hosting (privat)**: Ja — für persönliche, nicht-kommerzielle Nutzung
-- **Kommerzieller Verkauf/Hosting**: Nein — ohne schriftliche Genehmigung von Maunting Studios
-- **Change Date**: 4 Jahre nach Release wird der Code automatisch Apache 2.0
+- Quellcode öffentlich einsehbar: ja
+- Self-Hosting für private Nutzung: ja
+- kommerzielles Hosting / Weiterverkauf: nur mit Genehmigung
 
-Siehe [LICENSE](./LICENSE) für den vollständigen Lizenztext.
+Siehe [`LICENSE`](LICENSE).

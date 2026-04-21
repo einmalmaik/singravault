@@ -30,6 +30,13 @@ loadtest/tokens.txt
 AGENTS.md
 GEMINI.md
 CLAUDE.md
+.codex-artifacts/
+.codex-logs/
+.codex-*.log
+.vite-dev*.log
+vitest.out
+test_results.txt
+*.tsbuildinfo
 
 # GPG keys (never commit private key material)
 *.gpg

@@ -1,40 +1,70 @@
 # Optional Premium Loading
 
-The core repository must remain installable and buildable without the private `@singra/premium` package.
+Der öffentliche Core muss ohne das private Paket `@singra/premium` installierbar, testbar und buildbar bleiben.
 
-## Resolution Order
+## Auflösungsreihenfolge
 
-1. In development, if the sibling repository `../singra-premium` exists, Vite resolves `@singra/premium` to that source entry for side-by-side work.
-2. Otherwise, if `node_modules/@singra/premium/dist/initPremium.mjs` exists, Vite resolves to the installed package.
-3. If neither exists, Vite resolves `@singra/premium` to the local no-op stub at `src/extensions/premiumStub.ts`.
+`@singra/premium` wird in dieser Reihenfolge aufgelöst:
 
-## Expected Workflows
+1. In der lokalen Entwicklung auf das Sibling-Repo `../singra-premium`, falls vorhanden
+2. sonst auf ein installiertes Paket in `node_modules/@singra/premium`
+3. sonst auf den lokalen Stub unter `src/extensions/premiumStub.ts`
 
-- Core-only self-hosting:
-  - `npm install`
-  - `npm run build`
-  - deploy normally
+## Wichtige Schalter
 
-- Core-only local development with sibling premium repo present:
-  - run `npm run dev:core-only`
-  - or run `npm run tauri:dev:core-only`
-  - alternatively set `SINGRA_DISABLE_PREMIUM=true` manually
-  - the resolver forces the local stub and skips premium registration
+- `SINGRA_DISABLE_PREMIUM=true`
+  - erzwingt den Stub
+- `SINGRA_PREMIUM_SOURCE=true`
+  - erzwingt in passenden Szenarien die Verwendung des Sibling-Source-Repos
+- `INSTALL_SINGRA_PREMIUM=true`
+  - injiziert das private Paket im Build- oder CI-Kontext
 
-- Premium-enabled deployment:
-  - install `@singra/premium` into the root project
-  - `npm run build`
-  - premium features register automatically via `initPremium()`
+## Lokale Workflows
+
+### Core-only
+
+```bash
+npm install
+npm run dev:core-only
+npm run build:core-only
+npm run tauri:dev:core-only
+npm run tauri:build:core-only
+```
+
+### Premium lokal
+
+Voraussetzung:
+
+- `../singra-premium` existiert oder
+- `@singra/premium` ist installiert
+
+Dann reichen die normalen Skripte:
+
+```bash
+npm install
+npm run dev
+npm run build
+npm run tauri:dev
+npm run tauri:build
+```
+
+## CI und Release-Builds
+
+Für CI, Vercel und Desktop-Releases gibt es die generische Install-Logik:
+
+- [`scripts/install-with-optional-premium.mjs`](../scripts/install-with-optional-premium.mjs)
+
+Sie:
+
+- injiziert das private Paket nur dann, wenn `INSTALL_SINGRA_PREMIUM=true` gesetzt ist
+- verwendet `GITHUB_PAT` für den Zugriff auf `einmalmaik/singra-premium`
+- löscht das Lockfile im temporären Build-Workspace, damit die Auflösung konsistent neu erfolgt
+- führt anschließend `npm install` aus
 
 ## Vercel
 
-The Vercel install step uses `node scripts/vercel-install.mjs`.
+Wenn Vercel weiterhin dieselbe Logik nutzen soll, kann der bestehende Einstieg bestehen bleiben:
 
-- Core-only deployment:
-  - do not set `INSTALL_SINGRA_PREMIUM`
-- Premium-enabled deployment:
-  - set `INSTALL_SINGRA_PREMIUM=true`
-  - set `GITHUB_PAT` to a token with access to `einmalmaik/singra-premium`
-  - optionally set `SINGRA_PREMIUM_REF=master` or a pinned commit/tag
+- [`scripts/vercel-install.mjs`](../scripts/vercel-install.mjs)
 
-When `INSTALL_SINGRA_PREMIUM=true`, the install script injects `@singra/premium` into the temporary Vercel build workspace before running `npm install`.
+Dieser delegiert intern an die generische Install-Logik.
