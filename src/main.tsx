@@ -9,6 +9,10 @@ import { initPremium } from '@singra/premium';
 
 initPremium();
 
+if (isTauriRuntime()) {
+  purgeDesktopServiceWorkers();
+}
+
 // Dev should always load the live Vite graph, never a stale PWA shell.
 if (import.meta.env.DEV && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -55,3 +59,27 @@ if (import.meta.env.PROD && !isTauriRuntime() && "serviceWorker" in navigator) {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+function purgeDesktopServiceWorkers() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.addEventListener("load", () => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        registrations.forEach((registration) => {
+          registration.unregister().catch(() => undefined);
+        });
+      }).catch(() => undefined);
+    }
+
+    if ("caches" in window) {
+      caches.keys().then((cacheKeys) => {
+        cacheKeys.forEach((cacheKey) => {
+          caches.delete(cacheKey).catch(() => undefined);
+        });
+      }).catch(() => undefined);
+    }
+  }, { once: true });
+}

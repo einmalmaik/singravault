@@ -50,7 +50,7 @@ Die `OFFICIAL_VITE_*`-Variablen werden ausschließlich im offiziellen Desktop-Re
 1. Core auf den gewünschten Stand bringen.
 2. Versionen in `package.json`, `src-tauri/Cargo.toml` und `src-tauri/tauri.conf.json` anheben.
 3. Prüfen, dass alle `OFFICIAL_VITE_*`-Variablen gesetzt sind.
-4. Tag im öffentlichen Repository setzen, zum Beispiel `v0.2.1`.
+4. Tag im öffentlichen Repository setzen, zum Beispiel `v0.2.2`.
 5. GitHub Actions baut die Desktop-Artefakte:
    - Checkout des öffentlichen Repos
    - Checkout des privaten Premium-Repos per `SINGRA_PREMIUM_PAT`

@@ -46,6 +46,7 @@ export default defineConfig(({ mode }) => {
   const isDev = mode === "development";
   const tauriDevHost = process.env.TAURI_DEV_HOST;
   const isTauriBuild = Boolean(process.env.TAURI_ENV_PLATFORM);
+  const shouldEnablePwa = !isTauriBuild;
 
   const premiumSrc = path.resolve(__dirname, "../singra-premium/src");
   const coreSrc = path.resolve(__dirname, "./src");
@@ -202,11 +203,12 @@ export default defineConfig(({ mode }) => {
       react(),
       isDev && componentTagger(),
       shouldUsePremiumSource && premiumResolvePlugin(),
-      VitePWA({
+      shouldEnablePwa && VitePWA({
         strategies: "injectManifest",
         srcDir: "src",
         filename: "sw.ts",
         manifest: false,
+        injectRegister: "script",
         injectManifest: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest}"],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,

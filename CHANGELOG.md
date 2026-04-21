@@ -2,6 +2,14 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## 0.2.2 Beta - 2026-04-21
+
+### Fixed
+
+- Tauri-Desktop-Build injiziert keine PWA-Service-Worker-Registrierung mehr in `index.html`
+- Windows-Desktop-Build bereinigt alte WebView-Service-Worker-Caches vor dem Start, damit offizielle Releases nicht an einer veralteten App-Shell hängen bleiben
+- Tauri-Laufzeiterkennung berücksichtigt jetzt auch `tauri.localhost`, `asset.localhost` und `ipc.localhost`, damit Desktop-spezifische Pfade zuverlässig greifen
+
 ## 0.2.1 Beta - 2026-04-21
 
 ### Added

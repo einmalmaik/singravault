@@ -1,6 +1,6 @@
 [package]
 name = "singra-vault"
-version = "0.2.1"
+version = "0.2.2"
 description = "Singra Vault desktop application"
 authors = ["Maunting Studios"]
 license = "BUSL-1.1"

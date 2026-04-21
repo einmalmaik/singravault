@@ -1,6 +1,6 @@
 # Singra Vault
 
-> **Beta-Status:** `0.2.1 Beta`
+> **Beta-Status:** `0.2.2 Beta`
 >
 > Web, PWA und Desktop werden aktiv weiterentwickelt. Die Desktop-App ist funktionsfähig, aber noch nicht als final stabil freigegeben.
 

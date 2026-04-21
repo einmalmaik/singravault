@@ -1,5 +1,7 @@
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
@@ -133,6 +135,9 @@ fn now_millis() -> Result<u128, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    purge_stale_webview_service_worker_data(context.config().identifier.as_str());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -163,6 +168,33 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running Singra Vault");
+}
+
+fn purge_stale_webview_service_worker_data(app_identifier: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(default_profile_dir) = resolve_windows_webview_default_profile_dir(app_identifier) {
+            remove_dir_if_exists(default_profile_dir.join("Service Worker"));
+            remove_dir_if_exists(default_profile_dir.join("Cache").join("Cache_Data"));
+        }
+    }
+}
+
+fn remove_dir_if_exists(path: PathBuf) {
+    if path.exists() {
+        let _ = fs::remove_dir_all(path);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_webview_default_profile_dir(app_identifier: &str) -> Option<PathBuf> {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")?;
+    Some(
+        PathBuf::from(local_app_data)
+            .join(app_identifier)
+            .join("EBWebView")
+            .join("Default"),
+    )
 }
