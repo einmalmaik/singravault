@@ -2,6 +2,24 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## 0.3.0 - 2026-04-21
+
+### Added
+
+- Premium-only Desktop-Downloads können jetzt über einen Erweiterungsslot in die gehostete Oberfläche eingebunden werden, ohne den öffentlichen Core aufzublähen
+
+### Changed
+
+- `0.3.0` ist die erste Version, die wir als stabil markieren
+- deutsche UI-Texte in Einstellungen, Abo-Hinweisen und Rechtstexten wurden vereinheitlicht
+- Release-Dokumentation und Versionsmetadaten wurden auf den stabilen Desktop- und Web-Stand angehoben
+
+### Fixed
+
+- Desktop-Sitzungen bleiben über App-Neustarts hinweg stabil erhalten
+- manuell verwaltete Abos zeigen saubere Hinweise ohne fehlerhafte deutsche Zeichen
+- Premium/Core-Grenzen bleiben im Core-only-Build und in der gehosteten Premium-Integration konsistent
+
 ## 0.2.3 Beta - 2026-04-21
 
 ### Added
