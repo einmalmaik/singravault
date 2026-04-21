@@ -2,14 +2,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAuthStorage, isPkceVerifierStorageKey } from "./authStorage";
 
 const invokeMock = vi.hoisted(() => vi.fn());
+const runtimeState = vi.hoisted(() => ({
+  isTauri: false,
+}));
 
 vi.mock("@/platform/tauriInvoke", () => ({
   getTauriInvoke: vi.fn(async () => invokeMock),
 }));
 
+vi.mock("@/platform/runtime", () => ({
+  isTauriRuntime: () => runtimeState.isTauri,
+}));
+
 describe("authStorage", () => {
   afterEach(() => {
     invokeMock.mockReset();
+    runtimeState.isTauri = false;
     window.sessionStorage.clear();
     window.localStorage.clear();
   });
@@ -32,6 +40,16 @@ describe("authStorage", () => {
     await storage.setItem(sessionKey, "");
 
     await expect(storage.getItem(sessionKey)).resolves.toBe("");
+  });
+
+  it("persists desktop auth session data across storage instances in localStorage", async () => {
+    runtimeState.isTauri = true;
+    const sessionKey = "sb-project-auth-token";
+
+    await createAuthStorage().setItem(sessionKey, "session-json");
+
+    expect(window.localStorage.getItem(sessionKey)).toBe("session-json");
+    await expect(createAuthStorage().getItem(sessionKey)).resolves.toBe("session-json");
   });
 
   it("persists only the PKCE verifier across storage instances", async () => {
