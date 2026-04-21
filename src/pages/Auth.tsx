@@ -10,7 +10,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { Session } from '@supabase/supabase-js';
-import { Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Loader2, ClipboardPaste, Link2 } from 'lucide-react';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -21,6 +21,15 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { DesktopOAuthBridgeView } from '@/components/auth/DesktopOAuthBridgeView';
 import { NebulaHeroBackground } from '@/components/NebulaHeroBackground';
 import { Separator } from '@/components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { TwoFactorVerificationModal } from '@/components/auth/TwoFactorVerificationModal';
@@ -90,6 +99,9 @@ export default function Auth() {
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [manualDeepLinkOpen, setManualDeepLinkOpen] = useState(false);
+  const [manualDeepLinkValue, setManualDeepLinkValue] = useState('');
+  const [manualDeepLinkSubmitting, setManualDeepLinkSubmitting] = useState(false);
   const isDesktopBridgePage = !isTauriRuntime() && isDesktopOAuthBridgeUrl(window.location.href, window.location.origin);
   const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
   const API_URL = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
@@ -790,9 +802,30 @@ export default function Auth() {
     }
   };
 
-  const handleManualDeepLink = async () => {
-    const link = prompt('Bitte füge den Anmelde-Link oder das Token hier ein:');
+  const handlePasteManualDeepLink = async () => {
+    if (!navigator.clipboard?.readText) {
+      return;
+    }
+
+    try {
+      setManualDeepLinkValue(await navigator.clipboard.readText());
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: 'Die Zwischenablage konnte nicht gelesen werden.',
+      });
+    }
+  };
+
+  const handleManualDeepLinkSubmit = async () => {
+    const link = manualDeepLinkValue.trim();
     if (!link) {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: 'Bitte füge einen vollständigen Anmelde-Link ein.',
+      });
       return;
     }
 
@@ -806,7 +839,16 @@ export default function Auth() {
       return;
     }
 
-    await applyCallbackSession(callbackUrl);
+    setManualDeepLinkSubmitting(true);
+    try {
+      const applied = await applyCallbackSession(callbackUrl);
+      if (applied) {
+        setManualDeepLinkOpen(false);
+        setManualDeepLinkValue('');
+      }
+    } finally {
+      setManualDeepLinkSubmitting(false);
+    }
   };
 
   if (isDesktopBridgePage) {
@@ -1192,7 +1234,7 @@ export default function Auth() {
             {/* Toggle mode */}
             <div className="mt-6 text-center text-sm flex flex-col gap-2">
               {isTauriRuntime() && (
-                <button type="button" className="text-muted-foreground hover:underline font-medium mb-2" onClick={handleManualDeepLink}>
+                <button type="button" className="text-muted-foreground hover:underline font-medium mb-2" onClick={() => setManualDeepLinkOpen(true)}>
                   Anmelde-Link manuell einfügen
                 </button>
               )}
@@ -1225,6 +1267,51 @@ export default function Auth() {
           setLoading(false);
         }}
       />
+
+      <Dialog open={manualDeepLinkOpen} onOpenChange={setManualDeepLinkOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="h-4 w-4" />
+              Anmelde-Link einfügen
+            </DialogTitle>
+            <DialogDescription>
+              Füge den vollständigen Link aus dem Browser ein, falls die automatische Übergabe an die Desktop-App nicht greift.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <Textarea
+              value={manualDeepLinkValue}
+              onChange={(event) => setManualDeepLinkValue(event.target.value)}
+              placeholder="singravault://auth/callback?... oder https://singravault.mauntingstudios.de/auth?..."
+              className="min-h-28 resize-y"
+            />
+            <p className="text-xs text-muted-foreground">
+              Unterstützt sowohl den Rohlink aus der Browser-Seite als auch den vollständigen Callback-Link.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handlePasteManualDeepLink()}
+            >
+              <ClipboardPaste className="w-4 h-4 mr-2" />
+              Aus Zwischenablage
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleManualDeepLinkSubmit()}
+              disabled={manualDeepLinkSubmitting}
+            >
+              {manualDeepLinkSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Anmeldung fortsetzen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,14 +1,17 @@
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 const KEYCHAIN_SERVICE: &str = "Singra Vault";
 const REFRESH_TOKEN_ACCOUNT: &str = "active-refresh-token";
 const PKCE_VERIFIER_ACCOUNT: &str = "active-pkce-verifier";
 const PKCE_VERIFIER_MAX_AGE_MS: u128 = 10 * 60 * 1000;
+const SINGLE_INSTANCE_DEEP_LINK_EVENT: &str = "singra://deep-link";
+const TAURI_OAUTH_CALLBACK_PREFIX: &str = "singravault://auth/callback";
 
 #[derive(Serialize, Deserialize)]
 struct PkceVerifierRecord {
@@ -16,6 +19,14 @@ struct PkceVerifierRecord {
     verifier: String,
     created_at_ms: u128,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+struct PkceVerifierStoreEntry {
+    verifier: String,
+    created_at_ms: u128,
+}
+
+type PkceVerifierStore = HashMap<String, PkceVerifierStoreEntry>;
 
 #[tauri::command]
 fn save_refresh_token(refresh_token: String) -> Result<(), String> {
@@ -56,15 +67,12 @@ fn save_pkce_verifier(key: String, verifier: String) -> Result<(), String> {
         return Err("PKCE verifier must not be empty".to_string());
     }
 
-    let record = PkceVerifierRecord {
-        key: key.to_string(),
+    let mut store = load_pkce_store()?;
+    store.insert(key.to_string(), PkceVerifierStoreEntry {
         verifier: verifier.to_string(),
         created_at_ms: now_millis()?,
-    };
-    let payload = serde_json::to_string(&record)
-        .map_err(|error| format!("PKCE verifier serialization failed: {error}"))?;
-
-    pkce_entry()?.set_password(&payload).map_err(keyring_error)
+    });
+    save_pkce_store(&store)
 }
 
 #[tauri::command]
@@ -74,39 +82,30 @@ fn load_pkce_verifier(key: String) -> Result<Option<String>, String> {
         return Ok(None);
     }
 
-    let payload = match pkce_entry()?.get_password() {
-        Ok(payload) if payload.trim().is_empty() => return Ok(None),
-        Ok(payload) => payload,
-        Err(KeyringError::NoEntry) => return Ok(None),
-        Err(error) => return Err(keyring_error(error)),
-    };
+    let mut store = load_pkce_store()?;
+    let removed_expired = prune_expired_pkce_entries(&mut store)?;
+    let value = store
+        .get(requested_key)
+        .map(|record| record.verifier.trim().to_string())
+        .filter(|verifier| !verifier.is_empty());
 
-    let record = match serde_json::from_str::<PkceVerifierRecord>(&payload) {
-        Ok(record) => record,
-        Err(_) => {
-            clear_pkce_verifier(requested_key.to_string())?;
-            return Ok(None);
-        }
-    };
-
-    if is_pkce_record_expired(record.created_at_ms)? {
-        clear_pkce_verifier(requested_key.to_string())?;
-        return Ok(None);
+    if removed_expired {
+        save_pkce_store(&store)?;
     }
 
-    if record.key == requested_key && !record.verifier.trim().is_empty() {
-        Ok(Some(record.verifier))
-    } else {
-        Ok(None)
-    }
+    Ok(value)
 }
 
 #[tauri::command]
-fn clear_pkce_verifier(_key: String) -> Result<(), String> {
-    match pkce_entry()?.delete_credential() {
-        Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-        Err(error) => Err(keyring_error(error)),
+fn clear_pkce_verifier(key: String) -> Result<(), String> {
+    let requested_key = key.trim();
+    if requested_key.is_empty() {
+        return Ok(());
     }
+
+    let mut store = load_pkce_store()?;
+    store.remove(requested_key);
+    save_pkce_store(&store)
 }
 
 fn keychain_entry() -> Result<Entry, String> {
@@ -115,6 +114,64 @@ fn keychain_entry() -> Result<Entry, String> {
 
 fn pkce_entry() -> Result<Entry, String> {
     Entry::new(KEYCHAIN_SERVICE, PKCE_VERIFIER_ACCOUNT).map_err(keyring_error)
+}
+
+fn load_pkce_store() -> Result<PkceVerifierStore, String> {
+    let payload = match pkce_entry()?.get_password() {
+        Ok(payload) if payload.trim().is_empty() => return Ok(HashMap::new()),
+        Ok(payload) => payload,
+        Err(KeyringError::NoEntry) => return Ok(HashMap::new()),
+        Err(error) => return Err(keyring_error(error)),
+    };
+
+    match serde_json::from_str::<PkceVerifierStore>(&payload) {
+        Ok(store) => Ok(store),
+        Err(_) => match serde_json::from_str::<PkceVerifierRecord>(&payload) {
+            Ok(record) => {
+                let mut store = HashMap::new();
+                store.insert(record.key, PkceVerifierStoreEntry {
+                    verifier: record.verifier,
+                    created_at_ms: record.created_at_ms,
+                });
+                Ok(store)
+            }
+            Err(_) => {
+                let _ = pkce_entry()?.delete_credential();
+                Ok(HashMap::new())
+            }
+        },
+    }
+}
+
+fn save_pkce_store(store: &PkceVerifierStore) -> Result<(), String> {
+    if store.is_empty() {
+        return match pkce_entry()?.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(error) => Err(keyring_error(error)),
+        };
+    }
+
+    let payload = serde_json::to_string(store)
+        .map_err(|error| format!("PKCE verifier serialization failed: {error}"))?;
+
+    pkce_entry()?.set_password(&payload).map_err(keyring_error)
+}
+
+fn prune_expired_pkce_entries(store: &mut PkceVerifierStore) -> Result<bool, String> {
+    let mut expired_keys = Vec::new();
+
+    for (key, entry) in store.iter() {
+        if is_pkce_record_expired(entry.created_at_ms)? {
+            expired_keys.push(key.clone());
+        }
+    }
+
+    let had_expired_keys = !expired_keys.is_empty();
+    for key in expired_keys {
+        store.remove(&key);
+    }
+
+    Ok(had_expired_keys)
 }
 
 fn keyring_error(error: KeyringError) -> String {
@@ -139,7 +196,12 @@ pub fn run() {
     purge_stale_webview_service_worker_data(context.config().identifier.as_str());
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let deep_link_urls = extract_deep_link_urls(&args);
+            if !deep_link_urls.is_empty() {
+                let _ = app.emit(SINGLE_INSTANCE_DEEP_LINK_EVENT, deep_link_urls);
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
@@ -170,6 +232,19 @@ pub fn run() {
         })
         .run(context)
         .expect("error while running Singra Vault");
+}
+
+fn extract_deep_link_urls(args: &[String]) -> Vec<String> {
+    args.iter()
+        .filter_map(|arg| {
+            let candidate = arg.trim();
+            if candidate.starts_with(TAURI_OAUTH_CALLBACK_PREFIX) {
+                Some(candidate.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn purge_stale_webview_service_worker_data(app_identifier: &str) {
