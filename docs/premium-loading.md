@@ -68,6 +68,7 @@ Der Desktop-Release-Workflow verwendet bewusst **nicht** die Git-Install-Logik, 
 - checkt das private Repo `einmalmaik/singra-premium` per `SINGRA_PREMIUM_PAT` separat aus
 - staged es als Sibling-Repo `../singra-premium`
 - setzt `SINGRA_PREMIUM_SOURCE=true`
+- mappt die offiziellen `OFFICIAL_VITE_*`-Repository-Variablen auf die öffentlichen `VITE_*`-Buildvariablen
 - baut dann Tauri gegen den privaten Source-Checkout
 
 Damit bleibt der öffentliche Core reproduzierbar, und der Release-Build hängt nicht an GitHub-Headern aus dem primären Repository-Checkout.

@@ -9,6 +9,11 @@ jobs:
   publish-tauri:
     permissions:
       contents: write
+    env:
+      VITE_SITE_URL: ${{ vars.OFFICIAL_VITE_SITE_URL }}
+      VITE_SUPABASE_PROJECT_ID: ${{ vars.OFFICIAL_VITE_SUPABASE_PROJECT_ID }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.OFFICIAL_VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SUPABASE_URL: ${{ vars.OFFICIAL_VITE_SUPABASE_URL }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +72,9 @@ jobs:
       - name: Install core dependencies
         run: npm ci
 
+      - name: Validate official desktop configuration
+        run: node scripts/validate-official-desktop-config.mjs
+
       - name: Build and publish Tauri release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
@@ -80,10 +88,8 @@ jobs:
           releaseBody: |
             Beta-Release für Singra Vault Desktop.
 
-            Wichtige Hinweise:
-            - Der öffentliche Source-Code bleibt Core-only.
-            - Die Desktop-Artefakte werden im CI mit dem privaten Premium-Source-Checkout gebaut.
-            - Premium-Funktionen müssen weiterhin serverseitig erzwungen werden.
+            - Offizieller Desktop-Build mit vorkonfigurierter Singra-Cloud
+            - Öffentlicher Source-Code bleibt Core-only
           generateReleaseNotes: true
           releaseDraft: false
           prerelease: false

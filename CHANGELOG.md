@@ -2,6 +2,19 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## 0.2.1 Beta - 2026-04-21
+
+### Added
+
+- offizieller Desktop-Release-Build prüft jetzt die gehostete Singra-Supabase-Konfiguration vor dem Tag-Build
+- Windows-Installer-Ressourcen für NSIS und WiX mit eigenem Branding und Lizenzseite
+
+### Changed
+
+- öffentliche Desktop-Releases injizieren die offizielle Singra-Cloud-Konfiguration nur noch im GitHub-Action-Build
+- Windows-Installer bindet den WebView2-Bootstrapper ein, damit Erstinstallationen robuster funktionieren
+- Release-Notizen für Desktop-Tags wurden auf nutzerrelevante Hinweise reduziert
+
 ## 0.2.0 Beta - 2026-04-21
 
 ### Added

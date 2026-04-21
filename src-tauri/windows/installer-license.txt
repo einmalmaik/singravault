@@ -1,0 +1,14 @@
+Singra Vault Desktop Beta
+
+Mit der Installation und Nutzung dieser Desktop-App bestätigst du:
+
+1. Die Software wird unter der Business Source License 1.1 (BUSL-1.1) bereitgestellt.
+2. Für die Nutzung der von Maunting Studios betriebenen Singra-Dienste gelten die in der App und auf der Website veröffentlichten Nutzungs-, Datenschutz- und Rechtshinweise.
+3. Die Desktop-App befindet sich weiterhin im Beta-Status. Funktionen, Oberflächen und Update-Verhalten können sich noch ändern.
+
+Rechtliche Hinweise:
+- Datenschutzerklärung: https://singravault.mauntingstudios.de/privacy
+- Impressum: https://singravault.mauntingstudios.de/impressum
+- Lizenztext: https://github.com/einmalmaik/singravault/blob/main/LICENSE
+
+Wenn du den Bedingungen nicht zustimmst, brich die Installation ab.

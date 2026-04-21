@@ -1,6 +1,6 @@
 # Singra Vault
 
-> **Beta-Status:** `0.2.0 Beta`
+> **Beta-Status:** `0.2.1 Beta`
 >
 > Web, PWA und Desktop werden aktiv weiterentwickelt. Die Desktop-App ist funktionsfähig, aber noch nicht als final stabil freigegeben.
 
@@ -33,7 +33,7 @@ Singra Vault verfolgt einen **Zero-Knowledge** Ansatz:
 - Verschlüsselung und Entschlüsselung passieren clientseitig
 - das Master-Passwort verlässt das Gerät nicht im Klartext
 - sensible Schlüsselableitung erfolgt lokal
-- Server-seitige Dienste dürfen keinen Zugriff auf entschlüsselte Tresor-Inhalte haben
+- serverseitige Dienste dürfen keinen Zugriff auf entschlüsselte Tresor-Inhalte haben
 
 Technische Eckpunkte:
 
@@ -162,7 +162,21 @@ Es gibt zwei Workflows:
 - `release-desktop.yml`
   - baut signierte Tauri-Desktop-Artefakte aus einem öffentlichen Tag
   - injiziert Premium nur während des CI-Builds
+  - injiziert für offizielle Desktop-Releases zusätzlich die gehostete Singra-Supabase-Konfiguration
   - lädt die Release-Artefakte und `latest.json` für den Updater hoch
+
+### Offizielle Desktop-Releases
+
+Die veröffentlichten Desktop-Installer dürfen direkt mit der gehosteten Singra-Instanz funktionieren, ohne dass Self-Hoster-Werte in den öffentlichen Source-Code gelangen.
+
+Dafür liest `release-desktop.yml` diese Repository-Variablen nur im GitHub-Action-Build:
+
+- `OFFICIAL_VITE_SUPABASE_PROJECT_ID`
+- `OFFICIAL_VITE_SUPABASE_PUBLISHABLE_KEY`
+- `OFFICIAL_VITE_SUPABASE_URL`
+- `OFFICIAL_VITE_SITE_URL`
+
+Fehlt eine dieser Variablen, schlägt der Release-Build bewusst fehl, statt einen unkonfigurierten Installer zu veröffentlichen.
 
 ## Updater
 

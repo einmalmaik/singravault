@@ -22,6 +22,7 @@
 - Build-Zugriff auf das Premium-Repo
 - Signierschlüssel für Desktop-Updates
 - serverseitige Premium-Freischaltung
+- offizielle Desktop-Buildkonfiguration für die gehostete Singra-Instanz
 
 ## Benötigte GitHub-Secrets
 
@@ -32,21 +33,29 @@
 - `SINGRA_PREMIUM_PAT`
   - GitHub Personal Access Token mit Lesezugriff auf `einmalmaik/singra-premium`
 
-## Optionale GitHub-Variable
+## Benötigte GitHub-Variablen
 
 - `SINGRA_PREMIUM_REF`
   - Standard ist `master`
   - nützlich für Hotfixes oder einen gezielten Premium-Release-Branch
+- `OFFICIAL_VITE_SUPABASE_PROJECT_ID`
+- `OFFICIAL_VITE_SUPABASE_PUBLISHABLE_KEY`
+- `OFFICIAL_VITE_SUPABASE_URL`
+- `OFFICIAL_VITE_SITE_URL`
+
+Die `OFFICIAL_VITE_*`-Variablen werden ausschließlich im offiziellen Desktop-Release-Workflow auf die öffentlichen `VITE_*`-Buildvariablen gemappt. Dadurch bleibt der Source-Code self-hosting-fähig, während die veröffentlichten Installer direkt gegen die gehostete Singra-Instanz gebaut werden.
 
 ## Release-Ablauf
 
 1. Core auf den gewünschten Stand bringen.
 2. Versionen in `package.json`, `src-tauri/Cargo.toml` und `src-tauri/tauri.conf.json` anheben.
-3. Tag im öffentlichen Repository setzen, zum Beispiel `v0.2.0`.
-4. GitHub Actions baut die Desktop-Artefakte:
+3. Prüfen, dass alle `OFFICIAL_VITE_*`-Variablen gesetzt sind.
+4. Tag im öffentlichen Repository setzen, zum Beispiel `v0.2.1`.
+5. GitHub Actions baut die Desktop-Artefakte:
    - Checkout des öffentlichen Repos
    - Checkout des privaten Premium-Repos per `SINGRA_PREMIUM_PAT`
    - Staging des Premium-Source-Codes als Sibling-Repo `../singra-premium`
+   - Validierung der offiziellen Desktop-Konfiguration
    - Installation der Core-Dependencies per `npm ci`
    - Tauri-Desktop-Build für Windows, Linux und macOS
    - Signaturen und `latest.json` erzeugen
@@ -56,6 +65,7 @@
 
 - Die Source-Archive von GitHub enthalten **kein** Premium, weil sie nur aus dem öffentlichen Commit erzeugt werden.
 - Die Release-Artefakte werden hingegen im CI gebaut und dürfen den privaten Premium-Checkout verwenden.
+- Die offiziellen Desktop-Artefakte enthalten außerdem nur die öffentlichen Supabase-Clientwerte deiner gehosteten Instanz, nicht aber serverseitige Secrets.
 
 ## Wichtig für den Updater
 

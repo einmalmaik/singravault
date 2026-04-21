@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "licenseFile": "./windows/installer-license.txt",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "headerImage": "./windows/nsis-header.bmp",
+        "sidebarImage": "./windows/nsis-sidebar.bmp",
+        "installerIcon": "./icons/icon.ico",
+        "minimumWebview2Version": "110.0.1531.0",
+        "startMenuFolder": "Singra Vault"
+      },
+      "wix": {
+        "bannerPath": "./windows/wix-banner.bmp",
+        "dialogImagePath": "./windows/wix-dialog.bmp"
+      }
+    }
+  }
+}
