@@ -88,8 +88,8 @@ Mindestens erforderlich:
 ### Schnellstart für Self-Hosting
 
 ```bash
-git clone https://github.com/einmalmaik/singra-secure-vault.git
-cd singra-secure-vault
+git clone https://github.com/einmalmaik/singravault.git
+cd singravault
 cp env.example .env
 npm install
 ```

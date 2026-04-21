@@ -58,7 +58,7 @@
 ## Wichtig für den Updater
 
 - Der konfigurierte Endpoint lautet:
-  - `https://github.com/einmalmaik/singra-secure-vault/releases/latest/download/latest.json`
+  - `https://github.com/einmalmaik/singravault/releases/latest/download/latest.json`
 - Dafür muss der veröffentlichte Release **kein Draft** sein.
 - Der Release sollte für diesen Endpoint auch **nicht als GitHub-Prerelease** markiert werden, weil `releases/latest` sonst nicht zuverlässig auf ihn zeigt.
 - Wenn die Version noch Beta-Status hat, wird das im Release-Namen und in den Release-Notes gekennzeichnet, nicht über GitHub-Prerelease.

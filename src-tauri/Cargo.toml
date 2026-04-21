@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Singra Vault desktop application"
 authors = ["Maunting Studios"]
 license = "BUSL-1.1"
-repository = "https://github.com/einmalmaik/singra-secure-vault"
+repository = "https://github.com/einmalmaik/singravault"
 edition = "2021"
 
 [lib]
