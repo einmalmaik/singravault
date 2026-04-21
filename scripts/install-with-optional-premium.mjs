@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 const pat = process.env.GITHUB_PAT;
 const installPremiumFlag = process.env.INSTALL_SINGRA_PREMIUM;
 const premiumRef = process.env.SINGRA_PREMIUM_REF?.trim() || "master";
+const premiumRepoSlug = "einmalmaik/singra-premium";
+const premiumRepoUrl = `https://github.com/${premiumRepoSlug}.git`;
 
 function shouldInstallPremium() {
   if (!installPremiumFlag) {
@@ -38,6 +40,22 @@ function configureGitRewrite(baseUrl) {
   }
 }
 
+function verifyPremiumRepoAccess() {
+  try {
+    execSync(`git ls-remote "${premiumRepoUrl}" HEAD`, {
+      stdio: "ignore",
+    });
+  } catch (error) {
+    console.error(
+      `ERROR: Unable to access ${premiumRepoSlug}. Check that the premium token exists, is valid, and has read access to the private repository.`,
+    );
+    console.error(
+      error instanceof Error ? error.message : String(error),
+    );
+    process.exit(1);
+  }
+}
+
 const packageJsonPath = resolve(process.cwd(), "package.json");
 const lockfilePath = resolve(process.cwd(), "package-lock.json");
 
@@ -51,14 +69,13 @@ if (shouldInstallPremium()) {
     process.exit(1);
   }
 
-  const premiumDependency = `git+https://x-oauth-basic:${pat}@github.com/einmalmaik/singra-premium.git#${premiumRef}`;
-
   configureGitRewrite(`https://x-oauth-basic:${pat}@github.com/`);
+  verifyPremiumRepoAccess();
 
   try {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
     packageJson.dependencies ??= {};
-    packageJson.dependencies["@singra/premium"] = premiumDependency;
+    packageJson.dependencies["@singra/premium"] = `git+${premiumRepoUrl}#${premiumRef}`;
 
     writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
     console.log(`Injected @singra/premium from ref "${premiumRef}" into package.json`);
