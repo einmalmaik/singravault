@@ -48,9 +48,9 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
-## CI und Release-Builds
+## Paketbasierte CI- und Vercel-Builds
 
-Für CI, Vercel und Desktop-Releases gibt es die generische Install-Logik:
+Für paketbasierte CI- und Vercel-Builds gibt es die generische Install-Logik:
 
 - [`scripts/install-with-optional-premium.mjs`](../scripts/install-with-optional-premium.mjs)
 
@@ -61,10 +61,13 @@ Sie:
 - löscht das Lockfile im temporären Build-Workspace, damit die Auflösung konsistent neu erfolgt
 - führt anschließend `npm install` aus
 
-## Vercel
+## Desktop-Releases in GitHub Actions
 
-Wenn Vercel weiterhin dieselbe Logik nutzen soll, kann der bestehende Einstieg bestehen bleiben:
+Der Desktop-Release-Workflow verwendet bewusst **nicht** die Git-Install-Logik, sondern:
 
-- [`scripts/vercel-install.mjs`](../scripts/vercel-install.mjs)
+- checkt das private Repo `einmalmaik/singra-premium` per `SINGRA_PREMIUM_PAT` separat aus
+- staged es als Sibling-Repo `../singra-premium`
+- setzt `SINGRA_PREMIUM_SOURCE=true`
+- baut dann Tauri gegen den privaten Source-Checkout
 
-Dieser delegiert intern an die generische Install-Logik.
+Damit bleibt der öffentliche Core reproduzierbar, und der Release-Build hängt nicht an GitHub-Headern aus dem primären Repository-Checkout.

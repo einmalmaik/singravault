@@ -36,6 +36,18 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Checkout premium source
+        uses: actions/checkout@v4
+        with:
+          repository: einmalmaik/singra-premium
+          ref: ${{ vars.SINGRA_PREMIUM_REF || 'master' }}
+          token: ${{ secrets.SINGRA_PREMIUM_PAT }}
+          path: .premium-source
+          persist-credentials: false
+
+      - name: Stage premium source as sibling repository
+        run: node scripts/stage-premium-source.mjs .premium-source ../singra-premium
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -52,17 +64,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
 
-      - name: Install dependencies with private premium package
-        run: node scripts/install-with-optional-premium.mjs
-        env:
-          GITHUB_PAT: ${{ secrets.SINGRA_PREMIUM_PAT }}
-          INSTALL_SINGRA_PREMIUM: "true"
-          SINGRA_PREMIUM_REF: ${{ vars.SINGRA_PREMIUM_REF }}
+      - name: Install core dependencies
+        run: npm ci
 
       - name: Build and publish Tauri release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SINGRA_PREMIUM_SOURCE: "true"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -73,7 +82,7 @@ jobs:
 
             Wichtige Hinweise:
             - Der öffentliche Source-Code bleibt Core-only.
-            - Die Desktop-Artefakte werden im CI mit dem privaten Premium-Paket gebaut.
+            - Die Desktop-Artefakte werden im CI mit dem privaten Premium-Source-Checkout gebaut.
             - Premium-Funktionen müssen weiterhin serverseitig erzwungen werden.
           generateReleaseNotes: true
           releaseDraft: false

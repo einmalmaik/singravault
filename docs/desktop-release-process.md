@@ -3,7 +3,7 @@
 ## Zielbild
 
 - Das öffentliche Repository bleibt **Core-only**.
-- Das private Premium-Paket wird nur während privater Builds injiziert.
+- Das private Premium-Repo wird nur während privater Builds separat ausgecheckt.
 - Die GitHub-Release-Artefakte dürfen Premium enthalten.
 - Die öffentlichen GitHub-Source-Archive bleiben trotzdem Core-only, weil sie nur den Commit-Inhalt des öffentlichen Repos enthalten.
 
@@ -45,7 +45,9 @@
 3. Tag im öffentlichen Repository setzen, zum Beispiel `v0.2.0`.
 4. GitHub Actions baut die Desktop-Artefakte:
    - Checkout des öffentlichen Repos
-   - privates Premium-Paket per `SINGRA_PREMIUM_PAT` injizieren
+   - Checkout des privaten Premium-Repos per `SINGRA_PREMIUM_PAT`
+   - Staging des Premium-Source-Codes als Sibling-Repo `../singra-premium`
+   - Installation der Core-Dependencies per `npm ci`
    - Tauri-Desktop-Build für Windows, Linux und macOS
    - Signaturen und `latest.json` erzeugen
    - Upload in den GitHub Release
@@ -53,7 +55,7 @@
 ## Warum das mit öffentlichem GitHub-Repo funktioniert
 
 - Die Source-Archive von GitHub enthalten **kein** Premium, weil sie nur aus dem öffentlichen Commit erzeugt werden.
-- Die Release-Artefakte werden hingegen im CI gebaut und dürfen das private Paket enthalten.
+- Die Release-Artefakte werden hingegen im CI gebaut und dürfen den privaten Premium-Checkout verwenden.
 
 ## Wichtig für den Updater
 
