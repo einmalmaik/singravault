@@ -17,33 +17,20 @@ function shouldInstallPremium() {
   return normalizedFlag === "1" || normalizedFlag === "true" || normalizedFlag === "yes";
 }
 
-function configureGitRewrite(baseUrl) {
-  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  const rewriteSources = [
-    "ssh://git@github.com/",
-    "git@github.com:",
-    "https://github.com/",
-    "git+https://github.com/",
-  ];
-
-  for (const source of rewriteSources) {
-    try {
-      execSync(`git config --global url."${normalizedBaseUrl}".insteadOf "${source}"`, {
-        stdio: "ignore",
-      });
-    } catch (error) {
-      console.warn(
-        `Failed to configure git rewrite for ${source}:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
+function withGitHubRewriteEnv(baseEnv, token) {
+  return {
+    ...baseEnv,
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: `url.https://x-oauth-basic:${token}@github.com/.insteadOf`,
+    GIT_CONFIG_VALUE_0: "https://github.com/",
+  };
 }
 
-function verifyPremiumRepoAccess() {
+function verifyPremiumRepoAccess(token) {
   try {
     execSync(`git ls-remote "${premiumRepoUrl}" HEAD`, {
       stdio: "ignore",
+      env: withGitHubRewriteEnv(process.env, token),
     });
   } catch (error) {
     console.error(
@@ -69,8 +56,7 @@ if (shouldInstallPremium()) {
     process.exit(1);
   }
 
-  configureGitRewrite(`https://x-oauth-basic:${pat}@github.com/`);
-  verifyPremiumRepoAccess();
+  verifyPremiumRepoAccess(pat);
 
   try {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
@@ -88,13 +74,14 @@ if (shouldInstallPremium()) {
     console.error("Failed to inject premium dependency:", error);
     process.exit(1);
   }
-} else if (!pat) {
-  configureGitRewrite("https://github.com/");
 }
 
 console.log("Running npm install...");
 try {
-  execSync("npm install", { stdio: "inherit" });
+  execSync("npm install", {
+    stdio: "inherit",
+    env: shouldInstallPremium() ? withGitHubRewriteEnv(process.env, pat) : process.env,
+  });
   console.log("npm install completed successfully");
 } catch {
   console.error("npm install failed");
