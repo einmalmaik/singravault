@@ -17,6 +17,8 @@
  *   import { corsHeaders } from "../_shared/cors.ts";
  */
 
+import { FIRST_PARTY_DESKTOP_ORIGINS } from "./desktopOrigins.ts";
+
 interface DenoRuntime {
     env?: {
         get?: (key: string) => string | undefined;
@@ -42,7 +44,7 @@ const configuredPreviewOrigins = readEnv("ALLOWED_PREVIEW_ORIGINS")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(isConfiguredOriginSafe);
 const configuredDesktopOrigins = (readEnv("ALLOWED_DESKTOP_ORIGINS")
-    || "tauri://localhost,http://tauri.localhost")
+    || FIRST_PARTY_DESKTOP_ORIGINS.join(","))
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(isConfiguredOriginSafe);

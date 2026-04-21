@@ -31,16 +31,14 @@ import type {
 } from "jsr:@simplewebauthn/server@13.2.2";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import {
+    FIRST_PARTY_DESKTOP_ORIGINS,
+    FIRST_PARTY_LOCAL_DEV_ORIGINS,
+} from "../_shared/desktopOrigins.ts";
 
 const DEFAULT_SITE_URL = "https://singravault.mauntingstudios.de";
 const CONFIGURED_SITE_ORIGIN = normalizeHttpOrigin(Deno.env.get("SITE_URL")) ?? DEFAULT_SITE_URL;
 const CONFIGURED_SITE_RP_ID = new URL(CONFIGURED_SITE_ORIGIN).hostname;
-const FIRST_PARTY_DESKTOP_ORIGINS = [
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "http://tauri.localhost",
-    "https://tauri.localhost",
-] as const;
 
 // ============ Configuration ============
 
@@ -62,6 +60,7 @@ function getRpConfig(req: Request): {
     const expectedOrigins = dedupeOrigins([
         primaryOrigin,
         CONFIGURED_SITE_ORIGIN,
+        ...FIRST_PARTY_LOCAL_DEV_ORIGINS,
         ...FIRST_PARTY_DESKTOP_ORIGINS,
     ]);
 

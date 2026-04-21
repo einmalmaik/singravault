@@ -96,7 +96,7 @@ describe('core edge function CORS config', () => {
                         case 'ALLOWED_ORIGIN':
                             return 'https://singravault.mauntingstudios.de';
                         case 'ALLOWED_DESKTOP_ORIGINS':
-                            return 'tauri://localhost,http://tauri.localhost';
+                            return 'tauri://localhost,http://tauri.localhost,https://tauri.localhost,https://asset.localhost,https://ipc.localhost';
                         default:
                             return '';
                     }
@@ -111,8 +111,16 @@ describe('core edge function CORS config', () => {
         const devHeaders = getCorsHeaders(new Request('https://example.test', {
             headers: { Origin: 'http://tauri.localhost' },
         }));
+        const releaseHeaders = getCorsHeaders(new Request('https://example.test', {
+            headers: { Origin: 'https://tauri.localhost' },
+        }));
+        const assetHeaders = getCorsHeaders(new Request('https://example.test', {
+            headers: { Origin: 'https://asset.localhost' },
+        }));
 
         expect(tauriHeaders['Access-Control-Allow-Origin']).toBe('tauri://localhost');
         expect(devHeaders['Access-Control-Allow-Origin']).toBe('http://tauri.localhost');
+        expect(releaseHeaders['Access-Control-Allow-Origin']).toBe('https://tauri.localhost');
+        expect(assetHeaders['Access-Control-Allow-Origin']).toBe('https://asset.localhost');
     });
 });
