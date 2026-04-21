@@ -47,14 +47,14 @@ describe('subscriptionExportStatusService', () => {
         expect(snapshot.status).toBe('canceling');
         expect(snapshot.status_raw).toBe('active');
         expect(snapshot.status_effective).toBe('canceling');
-        expect(snapshot.status_human_de).toBe('Wird gekuendigt');
+        expect(snapshot.status_human_de).toBe('Wird gekündigt');
     });
 
     it('returns expected human labels', () => {
         expect(getExportSubscriptionHumanLabel('active')).toBe('Aktiv');
-        expect(getExportSubscriptionHumanLabel('canceling')).toBe('Wird gekuendigt');
-        expect(getExportSubscriptionHumanLabel('canceled')).toBe('Gekuendigt');
-        expect(getExportSubscriptionHumanLabel('past_due')).toBe('Zahlung ueberfaellig');
+        expect(getExportSubscriptionHumanLabel('canceling')).toBe('Wird gekündigt');
+        expect(getExportSubscriptionHumanLabel('canceled')).toBe('Gekündigt');
+        expect(getExportSubscriptionHumanLabel('past_due')).toBe('Zahlung überfällig');
         expect(getExportSubscriptionHumanLabel('ended')).toBe('Beendet');
     });
 });

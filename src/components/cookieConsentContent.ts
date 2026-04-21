@@ -52,22 +52,22 @@ export const COOKIE_DIALOG_COPY = {
             'Verwalte deine Cookie-Praeferenzen. Du kannst nicht-essenzielle Cookies jederzeit aktivieren oder deaktivieren.',
         save: 'Einstellungen speichern',
         requiredBadge: 'Erforderlich',
-        unavailableBadge: 'Nicht verfuegbar',
+        unavailableBadge: 'Nicht verfügbar',
         categories: {
             necessary: {
                 title: 'Notwendig',
-                description: 'Erforderlich fuer Authentifizierung, Sicherheit und grundlegende Funktionen. Kann nicht deaktiviert werden.',
+                description: 'Erforderlich für Authentifizierung, Sicherheit und grundlegende Funktionen. Kann nicht deaktiviert werden.',
                 items: ['Authentifizierungs-Session', 'Sicherheitskontrollen der Sitzung', 'Cookie-Einwilligungspraeferenzen'],
             },
             functional: {
                 title: 'Funktionale Cookies',
-                description: 'Speichern Praeferenzen und Einstellungen fuer eine bessere Erfahrung.',
+                description: 'Speichern Präferenzen und Einstellungen für eine bessere Erfahrung.',
                 items: ['Theme-Praeferenz', 'Sprachpraeferenz', 'Auto-Lock-Timer'],
             },
             analytics: {
                 title: 'Analytics-Cookies',
                 description: 'Analytics-Cookies sind derzeit nicht implementiert und in naher Zukunft nicht geplant.',
-                items: ['Nutzungsstatistiken (nicht verfuegbar)', 'Feature-Engagement-Metriken (nicht verfuegbar)'],
+                items: ['Nutzungsstatistiken (nicht verfügbar)', 'Feature-Engagement-Metriken (nicht verfügbar)'],
             },
         },
     },

@@ -79,11 +79,11 @@ export function getExportSubscriptionHumanLabel(status: ExportSubscriptionStatus
         case 'active':
             return 'Aktiv';
         case 'canceling':
-            return 'Wird gekuendigt';
+            return 'Wird gekündigt';
         case 'canceled':
-            return 'Gekuendigt';
+            return 'Gekündigt';
         case 'past_due':
-            return 'Zahlung ueberfaellig';
+            return 'Zahlung überfällig';
         case 'ended':
             return 'Beendet';
     }

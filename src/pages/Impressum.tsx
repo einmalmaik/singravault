@@ -68,7 +68,7 @@ const Impressum = () => {
     <>
       <SEO
         title="Impressum"
-        description="Impressum und rechtliche Angaben fuer Singra Vault."
+        description="Impressum und rechtliche Angaben für Singra Vault."
         path="/impressum"
         keywords={["Impressum", "Kontakt", "Rechtliche Hinweise", "TMG"]}
       />
