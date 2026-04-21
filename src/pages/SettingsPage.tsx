@@ -7,8 +7,7 @@
  * optional premium descriptors registered through the extension registry.
  */
 
-import { useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Settings } from 'lucide-react';
 
@@ -16,41 +15,11 @@ import { SettingsSurfaceLayout, type RenderableSettingsSection } from '@/compone
 import { getCoreProfileSettingsSections } from '@/components/settings/coreSettingsSections';
 import { getSettingsSections } from '@/extensions/registry';
 import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
-import { useToast } from '@/hooks/use-toast';
 import { getPrimaryAppPath } from '@/platform/appShell';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const { toast } = useToast();
-  const [searchParams, setSearchParams] = useSearchParams();
   const { isAdminUser, showAdminButton } = useAdminPanelAccess();
-
-  useEffect(() => {
-    const checkoutState = searchParams.get('checkout');
-    if (!checkoutState) {
-      return;
-    }
-
-    if (checkoutState === 'success') {
-      toast({
-        title: t('subscription.paymentSuccessful', 'Zahlung erfolgreich!'),
-        description: t(
-          'subscription.paymentSuccessfulBody',
-          'Dein Abonnement wurde erfolgreich aktualisiert.',
-        ),
-      });
-    } else if (checkoutState === 'cancel') {
-      toast({
-        title: t('subscription.paymentCanceled', 'Zahlung abgebrochen'),
-        description: t('subscription.paymentCanceledBody', 'Der Checkout wurde abgebrochen.'),
-        variant: 'destructive',
-      });
-    }
-
-    const nextSearchParams = new URLSearchParams(searchParams);
-    nextSearchParams.delete('checkout');
-    setSearchParams(nextSearchParams, { replace: true });
-  }, [searchParams, setSearchParams, t, toast]);
 
   const sections = useMemo<RenderableSettingsSection[]>(() => {
     const descriptors = [

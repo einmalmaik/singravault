@@ -9,15 +9,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useFeatureGate } from "../useFeatureGate";
-import type { SubscriptionTier } from "@/config/planConfig";
 
 // ============ Mock Setup ============
 
 // Mock the SubscriptionContext at module level
 const mockUseSubscription = vi.fn();
+const mockGetRequiredTier = vi.fn();
 
 vi.mock("@/contexts/SubscriptionContext", () => ({
   useSubscription: () => mockUseSubscription(),
+}));
+
+vi.mock("@/extensions/registry", () => ({
+  getServiceHooks: () => ({
+    getRequiredTier: mockGetRequiredTier,
+  }),
 }));
 
 // ============ Test Suite ============
@@ -25,12 +31,32 @@ vi.mock("@/contexts/SubscriptionContext", () => ({
 describe("useFeatureGate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetRequiredTier.mockImplementation((feature: string) => {
+      const featureRequirements: Record<string, string> = {
+        unlimited_passwords: "free",
+        device_sync: "free",
+        password_generator: "free",
+        secure_notes: "free",
+        external_2fa: "free",
+        post_quantum_encryption: "free",
+        file_attachments: "premium",
+        builtin_authenticator: "premium",
+        emergency_access: "premium",
+        vault_health_reports: "premium",
+        priority_support: "premium",
+        duress_password: "premium",
+        family_members: "families",
+        shared_collections: "families",
+      };
+
+      return featureRequirements[feature] ?? "premium";
+    });
   });
 
   describe("Free tier", () => {
     beforeEach(() => {
       mockUseSubscription.mockReturnValue({
-        tier: "free" as SubscriptionTier,
+        tier: "free",
         hasFeature: (feature: string) => {
           // Free tier features
           const freeFeatures = [
@@ -76,7 +102,7 @@ describe("useFeatureGate", () => {
   describe("Premium tier", () => {
     beforeEach(() => {
       mockUseSubscription.mockReturnValue({
-        tier: "premium" as SubscriptionTier,
+        tier: "premium",
         hasFeature: (feature: string) => {
           // Premium features (all free + premium)
           const blockedFeatures = ["family_members", "shared_collections"];
@@ -112,7 +138,7 @@ describe("useFeatureGate", () => {
   describe("Families tier", () => {
     beforeEach(() => {
       mockUseSubscription.mockReturnValue({
-        tier: "families" as SubscriptionTier,
+        tier: "families",
         hasFeature: () => true, // All features available
       });
     });
@@ -132,7 +158,7 @@ describe("useFeatureGate", () => {
   describe("Edge cases", () => {
     it("should handle all free-tier features correctly", () => {
       mockUseSubscription.mockReturnValue({
-        tier: "free" as SubscriptionTier,
+        tier: "free",
         hasFeature: (feature: string) => {
           const freeFeatures = [
             "unlimited_passwords",
@@ -162,7 +188,7 @@ describe("useFeatureGate", () => {
 
     it("should handle all premium-only features correctly", () => {
       mockUseSubscription.mockReturnValue({
-        tier: "premium" as SubscriptionTier,
+        tier: "premium",
         hasFeature: (feature: string) => {
           const blockedFeatures = ["family_members", "shared_collections"];
           return !blockedFeatures.includes(feature);
@@ -187,7 +213,7 @@ describe("useFeatureGate", () => {
 
     it("should expose post-quantum encryption as a free feature", () => {
       mockUseSubscription.mockReturnValue({
-        tier: "free" as SubscriptionTier,
+        tier: "free",
         hasFeature: (feature: string) => {
           const freeFeatures = [
             "unlimited_passwords",
@@ -208,7 +234,7 @@ describe("useFeatureGate", () => {
 
     it("should handle families-only features correctly", () => {
       mockUseSubscription.mockReturnValue({
-        tier: "families" as SubscriptionTier,
+        tier: "families",
         hasFeature: () => true,
       });
 

@@ -54,7 +54,7 @@ Singra Vault offers three subscription tiers: **FREE**, **PREMIUM**, and **FAMIL
 
 ### Key Design Decisions
 
-1. **Server-side price validation:** Client sends symbolic `plan_key` (e.g., `premium_monthly`), server resolves to Stripe Price ID via `planConfig.ts`. Client never determines prices.
+1. **Server-side price validation:** Client sends symbolic `plan_key` (e.g., `premium_monthly`), server resolves to Stripe Price IDs via the private Premium package configuration. Client never determines prices.
 
 2. **Webhook-driven state sync:** Subscription status in the database is updated exclusively through Stripe webhooks, ensuring consistency.
 

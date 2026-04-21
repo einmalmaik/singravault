@@ -4,10 +4,11 @@ import { ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { useAuthMock, getSubscriptionMock, getFeatureAccessOverrideMock } = vi.hoisted(() => ({
+const { useAuthMock, getSubscriptionMock, getFeatureAccessOverrideMock, hasFeatureAccessMock } = vi.hoisted(() => ({
   useAuthMock: vi.fn(),
   getSubscriptionMock: vi.fn(),
   getFeatureAccessOverrideMock: vi.fn(),
+  hasFeatureAccessMock: vi.fn(),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -18,6 +19,7 @@ vi.mock("@/extensions/registry", () => ({
   getServiceHooks: () => ({
     getSubscription: getSubscriptionMock,
     getFeatureAccessOverride: getFeatureAccessOverrideMock,
+    hasFeatureAccess: hasFeatureAccessMock,
   }),
 }));
 
@@ -64,6 +66,21 @@ describe("SubscriptionContext", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     getFeatureAccessOverrideMock.mockResolvedValue({ hasFullAccess: false });
+    hasFeatureAccessMock.mockImplementation((feature: string, context: { tier: string; isActive: boolean }) => {
+      if (!context.isActive && context.tier !== "free") {
+        return false;
+      }
+
+      if (feature === "file_attachments") {
+        return context.tier === "premium" || context.tier === "families";
+      }
+
+      if (feature === "family_members") {
+        return context.tier === "families";
+      }
+
+      return false;
+    });
 
     await loadContextModule();
   });

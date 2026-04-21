@@ -70,7 +70,7 @@ import { CategoryIcon } from './CategoryIcon';
 import { CategoryDialog } from './CategoryDialog';
 import { QRScanner } from './QRScanner';
 import { cn } from '@/lib/utils';
-import { getExtension, getServiceHooks } from '@/extensions/registry';
+import { getExtension, getServiceHooks, isPremiumActive } from '@/extensions/registry';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { useFeatureGate } from '@/hooks/useFeatureGate';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
@@ -140,9 +140,10 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const { user } = useAuth();
     const { encryptItem, decryptItem, encryptData, decryptData, isDuressMode } = useVault();
     const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
+    const hasPremiumAuthenticator = isPremiumActive();
 
     const [itemType, setItemType] = useState<'password' | 'note' | 'totp'>(
-        initialType === 'totp' && !canUseTotp ? 'password' : initialType
+        initialType === 'totp' && (!hasPremiumAuthenticator || !canUseTotp) ? 'password' : initialType
     );
     const [showPassword, setShowPassword] = useState(false);
     const [showGenerator, setShowGenerator] = useState(false);
@@ -298,7 +299,11 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     : !!item.is_favorite;
                 const candidateType = decrypted.itemType || item.item_type || 'password';
                 const resolvedType: 'password' | 'note' | 'totp' =
-                    candidateType === 'note' || candidateType === 'totp' ? candidateType : 'password';
+                    candidateType === 'note'
+                        ? 'note'
+                        : candidateType === 'totp' && hasPremiumAuthenticator
+                            ? 'totp'
+                            : 'password';
                 const resolvedCategoryId = decrypted.categoryId ?? item.category_id ?? null;
 
                 form.reset({
@@ -342,7 +347,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
     const onSubmit = async (data: ItemFormData) => {
         if (!user) return;
-        if (itemType === 'totp' && !canUseTotp) {
+        if (itemType === 'totp' && (!hasPremiumAuthenticator || !canUseTotp)) {
             toast({
                 title: t('subscription.feature_locked_title'),
                 description: t('subscription.feature_locked_description', {
@@ -566,13 +571,15 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                     <FileText className="w-4 h-4 mr-2" />
                                     {t('vault.itemTypes.note')}
                                 </TabsTrigger>
-                                <TabsTrigger value="totp" className="flex-1" disabled={!canUseTotp}>
-                                    {canUseTotp
-                                        ? <Shield className="w-4 h-4 mr-2" />
-                                        : <Lock className="w-4 h-4 mr-2" />
-                                    }
-                                    {t('vault.itemTypes.totp')}
-                                </TabsTrigger>
+                                {hasPremiumAuthenticator && (
+                                    <TabsTrigger value="totp" className="flex-1" disabled={!canUseTotp}>
+                                        {canUseTotp
+                                            ? <Shield className="w-4 h-4 mr-2" />
+                                            : <Lock className="w-4 h-4 mr-2" />
+                                        }
+                                        {t('vault.itemTypes.totp')}
+                                    </TabsTrigger>
+                                )}
                             </TabsList>
                         </Tabs>
                     )}

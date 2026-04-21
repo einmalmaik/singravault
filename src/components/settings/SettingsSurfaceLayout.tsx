@@ -11,7 +11,7 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { isPremiumActive } from '@/extensions/registry';
 import type { SettingsSurface, SettingsTabId } from '@/extensions/types';
-import { getPrimaryAppPath, shouldShowWebsiteChrome } from '@/platform/appShell';
+import { getAdminEntryPath, getPrimaryAppPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState, resolveReturnPath } from '@/services/returnNavigationState';
 import {
   filterSettingsSections,
@@ -54,6 +54,7 @@ export function SettingsSurfaceLayout({
   const [searchQuery, setSearchQuery] = useState('');
   const showWebsiteChrome = shouldShowWebsiteChrome();
   const primaryAppPath = getPrimaryAppPath();
+  const adminEntryPath = getAdminEntryPath();
   const backTo = resolveReturnPath(location.state, backFallbackPath);
   const allowedTabs = SETTINGS_TABS_BY_SURFACE[surface];
   const availableTabs = useMemo(
@@ -124,11 +125,11 @@ export function SettingsSurfaceLayout({
           </div>
 
           <div className="flex items-center gap-2">
-            {showAdminButton && isPremiumActive() && (
+            {showAdminButton && isPremiumActive() && adminEntryPath && (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => navigate('/admin', { state: buildReturnState(location) })}
+                onClick={() => navigate(adminEntryPath, { state: buildReturnState(location) })}
                 className="flex items-center gap-2"
               >
                 <Wrench className="h-4 w-4" />

@@ -9,6 +9,8 @@
 
 import type { ComponentType, ReactNode } from 'react';
 
+import type { FeatureAccessContext, SubscriptionSnapshot } from '@/subscription/types';
+
 // ============ Settings Sections ============
 
 /** Settings surfaces exposed by the core shell. */
@@ -160,7 +162,27 @@ export interface ServiceHooks {
      * Load subscription data for the current user.
      * Returns null if no subscription found.
      */
-    getSubscription?: () => Promise<unknown | null>;
+    getSubscription?: () => Promise<SubscriptionSnapshot | null>;
+
+    /**
+     * Evaluate whether a feature is available for the current subscription state.
+     */
+    hasFeatureAccess?: (feature: string, context: FeatureAccessContext) => boolean;
+
+    /**
+     * Return the minimum tier label for a feature gate prompt.
+     */
+    getRequiredTier?: (feature: string) => string;
+
+    /**
+     * Resolve the pricing entry path registered by the premium package.
+     */
+    getPricingEntryPath?: () => string;
+
+    /**
+     * Resolve the admin entry path registered by the premium package.
+     */
+    getAdminEntryPath?: () => string;
 
     /**
      * Load the current user's team access (roles + permissions).

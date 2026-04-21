@@ -43,14 +43,6 @@ import SecurityWhitepaper from "./pages/SecurityWhitepaper";
 
 const queryClient = new QueryClient();
 
-function isLegacyVaultUnlockRoute(path: string): boolean {
-  return (
-    path === "/vault-health" ||
-    path === "/authenticator" ||
-    path === "/vault/emergency/:id"
-  );
-}
-
 const App = () => {
   const premiumRoutes = getExtensionRoutes();
   
@@ -110,8 +102,7 @@ const App = () => {
 
                       {/* Premium Routes (dynamically registered) */}
                       {premiumRoutes.map((route) => {
-                        const requiresVaultUnlock =
-                          route.requiresVaultUnlock ?? isLegacyVaultUnlockRoute(route.path);
+                        const requiresVaultUnlock = route.requiresVaultUnlock === true;
 
                         const routeElement = requiresVaultUnlock
                           ? (

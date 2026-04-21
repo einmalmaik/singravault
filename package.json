@@ -9,7 +9,9 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:core-only": "node scripts/run-with-premium-disabled.mjs vite",
     "build": "vite build",
+    "build:core-only": "node scripts/run-with-premium-disabled.mjs vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -17,6 +19,7 @@
     "test:watch": "vitest",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "tauri:dev:core-only": "node scripts/run-with-premium-disabled.mjs tauri dev",
     "tauri:build": "tauri build",
     "loadtest:smoke": "node --env-file=.env scripts/loadtest/run-k6-with-env.mjs run -e K6_PROFILE=smoke loadtest/scenarios/vault-read.js",
     "loadtest:login": "node --env-file=.env scripts/loadtest/run-k6-with-env.mjs run loadtest/scenarios/login.js",

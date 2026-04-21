@@ -8,7 +8,8 @@
  */
 
 import { useSubscription } from '@/contexts/SubscriptionContext';
-import { type FeatureName, getRequiredTier, type SubscriptionTier } from '@/config/planConfig';
+import { getServiceHooks } from '@/extensions/registry';
+import { type FeatureName, type SubscriptionTier } from '@/subscription/types';
 
 interface FeatureGateResult {
     /** Whether the feature is available to the user */
@@ -30,10 +31,11 @@ interface FeatureGateResult {
  */
 export function useFeatureGate(feature: FeatureName): FeatureGateResult {
     const { tier, hasFeature } = useSubscription();
+    const requiredTier = getServiceHooks().getRequiredTier?.(feature) ?? 'premium';
 
     return {
         allowed: hasFeature(feature),
-        requiredTier: getRequiredTier(feature),
+        requiredTier,
         currentTier: tier,
     };
 }

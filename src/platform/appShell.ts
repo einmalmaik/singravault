@@ -1,3 +1,4 @@
+import { getServiceHooks, isPremiumActive } from "@/extensions/registry";
 import { isTauriRuntime } from "./runtime";
 
 export type AppShellMode = "web" | "desktop";
@@ -18,6 +19,18 @@ export function getPrimaryAppPath(): string {
   return isDesktopAppShell() ? "/vault" : "/";
 }
 
-export function getSubscriptionEntryPath(): string {
-  return "/pricing";
+export function getSubscriptionEntryPath(): string | null {
+  if (!isPremiumActive()) {
+    return null;
+  }
+
+  return getServiceHooks().getPricingEntryPath?.() ?? null;
+}
+
+export function getAdminEntryPath(): string | null {
+  if (!isPremiumActive()) {
+    return null;
+  }
+
+  return getServiceHooks().getAdminEntryPath?.() ?? null;
 }

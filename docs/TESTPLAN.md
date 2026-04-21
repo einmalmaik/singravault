@@ -154,7 +154,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: mockSupabase }));
 | 17 | SVG mit erlaubten Attributen (viewBox, fill, stroke) | Beibehalten |
 | 18 | SVG mit `aria-label` und `role` | Beibehalten |
 
-#### 3.3 `src/config/planConfig.ts`
+#### 3.3 Premium-Plan-Konfiguration (seit der Repo-Trennung im privaten Premium-Paket)
 
 | # | Test | Erwartung |
 |---|---|---|
@@ -767,7 +767,7 @@ Nach Abschluss aller 8 Phasen sollte die Abdeckung wie folgt aussehen:
 | `use-mobile.tsx` | 0% | **~50%** | Limitiert durch jsdom |
 | `lib/utils.ts` | 0% | **100%** | 100% |
 | `lib/sanitizeSvg.ts` | 0% | **100%** | 100% |
-| `config/planConfig.ts` | 33% | **100%** | 100% |
+| Premium plan config (privates Paket) | 33% | **100%** | 100% |
 | `i18n/index.ts` | 0% | **100%** | 100% |
 | Pages (12) | 0% | **~30%** | Basis-Rendering |
 | Components (38) | 3% | **~60%** | Kritische Interaktionen |

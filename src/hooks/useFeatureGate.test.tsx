@@ -10,19 +10,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useFeatureGate } from "./useFeatureGate";
-import type { SubscriptionTier } from "@/config/planConfig";
 
 // ============ Mocks ============
 
 const mockUseSubscription = vi.hoisted(() => vi.fn());
+const mockGetRequiredTier = vi.hoisted(() => vi.fn());
 
 vi.mock("@/contexts/SubscriptionContext", () => ({
     useSubscription: mockUseSubscription,
 }));
 
+vi.mock("@/extensions/registry", () => ({
+    getServiceHooks: () => ({
+        getRequiredTier: mockGetRequiredTier,
+    }),
+}));
+
 // ============ Test Helpers ============
 
-function setupMockSubscription(tier: SubscriptionTier) {
+function setupMockSubscription(tier: string) {
     const featureMatrix: Record<string, Record<string, boolean>> = {
         unlimited_passwords: { free: true, premium: true, families: true },
         device_sync: { free: true, premium: true, families: true },
@@ -54,6 +60,26 @@ function setupMockSubscription(tier: SubscriptionTier) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    mockGetRequiredTier.mockImplementation((feature: string) => {
+        const featureRequirements: Record<string, string> = {
+            unlimited_passwords: "free",
+            device_sync: "free",
+            password_generator: "free",
+            secure_notes: "free",
+            external_2fa: "free",
+            post_quantum_encryption: "free",
+            file_attachments: "premium",
+            builtin_authenticator: "premium",
+            emergency_access: "premium",
+            vault_health_reports: "premium",
+            priority_support: "premium",
+            duress_password: "premium",
+            family_members: "families",
+            shared_collections: "families",
+        };
+
+        return featureRequirements[feature] ?? "premium";
+    });
 });
 
 // ============ Tests ============

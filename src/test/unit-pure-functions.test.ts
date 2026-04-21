@@ -4,7 +4,7 @@
  * @fileoverview Phase 1 — Unit-Tests für reine Funktionen
  *
  * Testet alle reinen, zustandslosen Hilfsfunktionen ohne DB- oder
- * Netzwerk-Abhängigkeiten: cn(), sanitizeInlineSvg(), planConfig,
+ * Netzwerk-Abhängigkeiten: cn(), sanitizeInlineSvg(),
  * buildVaultItemRowFromInsert(),
  * buildCategoryRowFromInsert(), isLikelyOfflineError(), isAppOnline(),
  * i18n languages/changeLanguage, deriveRawKeySecure().
@@ -178,94 +178,6 @@ describe("sanitizeInlineSvg()", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 3.3 planConfig.ts
-// ---------------------------------------------------------------------------
-import {
-  PLAN_CONFIG,
-  VALID_PLAN_KEYS,
-  INTRO_COUPON_ID,
-  FEATURE_MATRIX,
-  getRequiredTier,
-} from "@/config/planConfig";
-
-describe("planConfig", () => {
-  it("PLAN_CONFIG has exactly 4 entries", () => {
-    const keys = Object.keys(PLAN_CONFIG);
-    expect(keys).toHaveLength(4);
-    expect(keys).toContain("premium_monthly");
-    expect(keys).toContain("premium_yearly");
-    expect(keys).toContain("families_monthly");
-    expect(keys).toContain("families_yearly");
-  });
-
-  it("every plan has priceId, tier, label, interval, amount", () => {
-    for (const key of VALID_PLAN_KEYS) {
-      const plan = PLAN_CONFIG[key];
-      expect(plan.priceId).toBeTruthy();
-      expect(typeof plan.priceId).toBe("string");
-      expect(["premium", "families"]).toContain(plan.tier);
-      expect(plan.label).toBeTruthy();
-      expect(["month", "year"]).toContain(plan.interval);
-      expect(typeof plan.amount).toBe("number");
-      expect(plan.amount).toBeGreaterThan(0);
-    }
-  });
-
-  it("VALID_PLAN_KEYS has 4 entries matching PLAN_CONFIG", () => {
-    expect(VALID_PLAN_KEYS).toHaveLength(4);
-    for (const key of VALID_PLAN_KEYS) {
-      expect(PLAN_CONFIG[key]).toBeDefined();
-    }
-  });
-
-  it('INTRO_COUPON_ID is "K3tViKjk"', () => {
-    expect(INTRO_COUPON_ID).toBe("K3tViKjk");
-    expect(typeof INTRO_COUPON_ID).toBe("string");
-    expect(INTRO_COUPON_ID.length).toBeGreaterThan(0);
-  });
-
-  it("FEATURE_MATRIX has all 14 features", () => {
-    const featureKeys = Object.keys(FEATURE_MATRIX);
-    expect(featureKeys).toHaveLength(14);
-    for (const key of featureKeys) {
-      const tiers = FEATURE_MATRIX[key as keyof typeof FEATURE_MATRIX];
-      expect(typeof tiers.free).toBe("boolean");
-      expect(typeof tiers.premium).toBe("boolean");
-      expect(typeof tiers.families).toBe("boolean");
-    }
-  });
-
-  it("6 features are free", () => {
-    const freeFeatures = Object.entries(FEATURE_MATRIX)
-      .filter(([, v]) => v.free === true)
-      .map(([k]) => k);
-    expect(freeFeatures).toHaveLength(6);
-    expect(freeFeatures).toContain("unlimited_passwords");
-    expect(freeFeatures).toContain("device_sync");
-    expect(freeFeatures).toContain("password_generator");
-    expect(freeFeatures).toContain("secure_notes");
-    expect(freeFeatures).toContain("external_2fa");
-    expect(freeFeatures).toContain("post_quantum_encryption");
-  });
-
-  it("families-only features: premium=false, families=true", () => {
-    expect(FEATURE_MATRIX.family_members).toEqual({ free: false, premium: false, families: true });
-    expect(FEATURE_MATRIX.shared_collections).toEqual({ free: false, premium: false, families: true });
-  });
-
-  it('getRequiredTier("unlimited_passwords") → "free"', () => {
-    expect(getRequiredTier("unlimited_passwords")).toBe("free");
-  });
-
-  it('getRequiredTier("file_attachments") → "premium"', () => {
-    expect(getRequiredTier("file_attachments")).toBe("premium");
-  });
-
-  it('getRequiredTier("family_members") → "families"', () => {
-    expect(getRequiredTier("family_members")).toBe("families");
-  });
-});
 
 
 // ---------------------------------------------------------------------------

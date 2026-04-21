@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/contexts/AuthContext';
+import { isPremiumActive } from '@/extensions/registry';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
@@ -26,6 +27,7 @@ export function AccountDataExportSettings() {
     const { toast } = useToast();
 
     const [isExporting, setIsExporting] = useState(false);
+    const includePremiumSubscriptionData = isPremiumActive();
 
     const handleAccountExport = async () => {
         if (!user) {
@@ -41,7 +43,9 @@ export function AccountDataExportSettings() {
         try {
             const [profileResult, subscriptionResult, twoFactorResult, passkeysResult, backupCodesResult] = await Promise.all([
                 supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
-                supabase.from('subscriptions').select('*').eq('user_id', user.id).maybeSingle(),
+                includePremiumSubscriptionData
+                    ? supabase.from('subscriptions').select('*').eq('user_id', user.id).maybeSingle()
+                    : Promise.resolve({ data: null, error: null }),
                 supabase.from('user_2fa').select('*').eq('user_id', user.id).maybeSingle(),
                 supabase
                     .from('passkey_credentials')
@@ -52,14 +56,16 @@ export function AccountDataExportSettings() {
 
             const warnings = [
                 ...asWarning('profile_unavailable', profileResult.error),
-                ...asWarning('subscription_unavailable', subscriptionResult.error),
+                ...asWarning('subscription_unavailable', includePremiumSubscriptionData ? subscriptionResult.error : null),
                 ...asWarning('two_factor_unavailable', twoFactorResult.error),
                 ...asWarning('passkeys_unavailable', passkeysResult.error),
                 ...asWarning('backup_codes_unavailable', backupCodesResult.error),
             ];
 
             const profile = profileResult.data ? sanitizeProfile(profileResult.data) : null;
-            const subscription = subscriptionResult.data ? toExportSubscriptionSnapshot(subscriptionResult.data) : null;
+            const subscription = includePremiumSubscriptionData && subscriptionResult.data
+                ? toExportSubscriptionSnapshot(subscriptionResult.data)
+                : null;
             const twoFactor = twoFactorResult.data ? sanitizeTwoFactor(twoFactorResult.data) : null;
             const passkeys = (passkeysResult.data || []).map((item) => ({
                 id: item.id,

@@ -41,7 +41,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { isPremiumActive, getServiceHooks } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
-import { shouldShowWebsiteChrome } from '@/platform/appShell';
+import { getAdminEntryPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState } from '@/services/returnNavigationState';
 
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
@@ -69,6 +69,7 @@ export default function VaultPage() {
     const [isSyncing, setIsSyncing] = useState(false);
     const [showAdminButton, setShowAdminButton] = useState(false);
     const showWebsiteChrome = shouldShowWebsiteChrome();
+    const adminEntryPath = getAdminEntryPath();
 
     useEffect(() => {
         const goOnline = () => setIsOnline(true);
@@ -253,10 +254,10 @@ export default function VaultPage() {
                                 </Button>
                             )}
 
-                            {showAdminButton && (
+                            {showAdminButton && adminEntryPath && (
                                 <Button
                                     variant="outline"
-                                    onClick={() => navigate('/admin', { state: buildReturnState(location) })}
+                                    onClick={() => navigate(adminEntryPath, { state: buildReturnState(location) })}
                                     className="flex items-center gap-2"
                                 >
                                     <Wrench className="w-4 h-4" />

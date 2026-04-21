@@ -517,7 +517,7 @@ Version 0x02: Hybrid ML-KEM-768 + RSA-4096
 - `src/services/emergencyAccessService.ts` — PQ-Integration
 - `src/services/collectionService.ts` — PQ-Integration
 - `src/components/settings/PostQuantumSettings.tsx` — UI-Komponente
-- `src/config/planConfig.ts` — Feature-Flag
+- private Premium-Plan-Konfiguration — Feature-Flag
 - `supabase/migrations/20260212004634_add_post_quantum_keys.sql` — DB-Schema
 
 **DB-Schema:**
@@ -566,7 +566,7 @@ Duress-Passwort → eigener Salt → eigener Argon2id-Key
 - `src/components/vault/VaultItemList.tsx` — Aktualisiert: Filtert Items basierend auf `isDuressMode`
 - `src/components/vault/VaultItemDialog.tsx` — Aktualisiert: Markiert neue Items im Duress-Modus automatisch
 - `src/services/cryptoService.ts` — `VaultItemData` Interface erweitert um `_duress?: boolean`
-- `src/config/planConfig.ts` — Feature-Flag hinzugefügt
+- private Premium-Plan-Konfiguration — Feature-Flag hinzugefügt
 - `supabase/migrations/20260212_add_duress_password_columns.sql` — **NEU** — DB-Schema
 
 **DB-Schema:**

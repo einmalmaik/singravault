@@ -16,8 +16,9 @@ The core repository must remain installable and buildable without the private `@
   - deploy normally
 
 - Core-only local development with sibling premium repo present:
-  - set `SINGRA_DISABLE_PREMIUM=true`
-  - start Vite or Tauri dev normally
+  - run `npm run dev:core-only`
+  - or run `npm run tauri:dev:core-only`
+  - alternatively set `SINGRA_DISABLE_PREMIUM=true` manually
   - the resolver forces the local stub and skips premium registration
 
 - Premium-enabled deployment:

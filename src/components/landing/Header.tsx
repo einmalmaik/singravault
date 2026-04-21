@@ -21,6 +21,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 
 import { getServiceHooks, isPremiumActive } from '@/extensions/registry';
+import { getAdminEntryPath, getSubscriptionEntryPath } from '@/platform/appShell';
 
 // Type for the BeforeInstallPromptEvent
 interface BeforeInstallPromptEvent extends Event {
@@ -37,6 +38,8 @@ export function Header() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstallable, setIsInstallable] = useState(false);
   const [showAdminButton, setShowAdminButton] = useState(false);
+  const pricingEntryPath = getSubscriptionEntryPath();
+  const adminEntryPath = getAdminEntryPath();
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
@@ -149,8 +152,8 @@ export function Header() {
             <a href="/#comparison" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
               Vergleich
             </a>
-            {isPremiumActive() && (
-              <Link to="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+            {isPremiumActive() && pricingEntryPath && (
+              <Link to={pricingEntryPath} className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
                 <CreditCard className="w-3.5 h-3.5" />
                 {t('subscription.pricing_title', 'Preise')}
               </Link>
@@ -180,9 +183,9 @@ export function Header() {
                   <Button asChild className="ms-header-primary-button min-h-[44px] rounded-full px-4 text-sm font-medium">
                     <Link to="/vault">{t('nav.vault')}</Link>
                   </Button>
-                  {showAdminButton && (
+                  {showAdminButton && adminEntryPath && (
                     <Button asChild className="ms-header-secondary-button min-h-[44px] rounded-full px-3 text-sm font-medium gap-2">
-                      <Link to="/admin">
+                      <Link to={adminEntryPath}>
                         <Wrench className="w-4 h-4" />
                         {t('admin.title')}
                       </Link>
@@ -257,9 +260,9 @@ export function Header() {
               >
               Vergleich
               </a>
-              {isPremiumActive() && (
+              {isPremiumActive() && pricingEntryPath && (
                 <Link
-                  to="/pricing"
+                  to={pricingEntryPath}
                   className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
                   onClick={() => setMobileMenuOpen(false)}
                 >
@@ -287,9 +290,9 @@ export function Header() {
                     <Button asChild className="flex-1">
                       <Link to="/vault">{t('nav.vault')}</Link>
                     </Button>
-                    {showAdminButton && (
+                    {showAdminButton && adminEntryPath && (
                       <Button asChild variant="outline" className="flex-1">
-                        <Link to="/admin">{t('admin.title')}</Link>
+                        <Link to={adminEntryPath}>{t('admin.title')}</Link>
                       </Button>
                     )}
                     <Button asChild variant="outline" className="flex-1">

@@ -10,24 +10,10 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
-import { FEATURE_MATRIX, type FeatureName, type SubscriptionTier } from '@/config/planConfig';
 import { getServiceHooks } from '@/extensions/registry';
+import type { FeatureName, SubscriptionSnapshot, SubscriptionTier } from '@/subscription/types';
 
-/** Subscription data shape (matches subscriptionService.SubscriptionData) */
-export interface SubscriptionData {
-    id: string;
-    user_id: string;
-    stripe_customer_id: string | null;
-    stripe_subscription_id: string | null;
-    stripe_price_id: string | null;
-    status: string | null;
-    tier: 'free' | 'premium' | 'families' | null;
-    current_period_end: string | null;
-    cancel_at_period_end: boolean;
-    has_used_intro_discount: boolean;
-    created_at: string;
-    updated_at: string;
-}
+export type SubscriptionData = SubscriptionSnapshot;
 
 interface SubscriptionContextType {
     /** Current subscription tier */
@@ -118,10 +104,23 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     const hasUsedIntroDiscount = subscription?.has_used_intro_discount ?? false;
 
     const hasFeature = useCallback((feature: FeatureName): boolean => {
-        if (hasFeatureOverride) return true;
-        if (!isActive && (tier as string) !== 'free') return false; // Expired paid plan
-        return FEATURE_MATRIX[feature]?.[tier] ?? false;
-    }, [hasFeatureOverride, tier, isActive]);
+        const hooks = getServiceHooks();
+
+        if (hasFeatureOverride) {
+            return true;
+        }
+
+        if (!hooks.hasFeatureAccess) {
+            return false;
+        }
+
+        return hooks.hasFeatureAccess(feature, {
+            tier,
+            subscription,
+            isActive,
+            hasFullAccess: hasFeatureOverride,
+        });
+    }, [hasFeatureOverride, isActive, subscription, tier]);
 
     const refresh = useCallback(async () => {
         setLoading(true);
