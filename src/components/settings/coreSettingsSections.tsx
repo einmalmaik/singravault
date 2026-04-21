@@ -8,9 +8,10 @@ import { LegalLinksSettings } from '@/components/settings/LegalLinksSettings';
 import { PasswordSettings } from '@/components/settings/PasswordSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
 import type { SettingsSectionDescriptor } from '@/extensions/types';
+import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
 export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDescriptor[] {
-  return [
+  const sections: SettingsSectionDescriptor[] = [
     {
       id: 'profile-appearance',
       surface: 'profile',
@@ -56,7 +57,10 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       keywords: ['dsgvo', 'gdpr', 'export', 'privacy', 'datenexport', 'account export'],
       render: () => <AccountDataExportSettings />,
     },
-    {
+  ];
+
+  if (!shouldShowWebsiteChrome()) {
+    sections.push({
       id: 'profile-legal-links',
       surface: 'profile',
       tab: 'data-legal',
@@ -64,8 +68,10 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       title: t('settings.desktopLegal.title', 'Rechtliches & Informationen'),
       keywords: ['rechtlich', 'privacy', 'datenschutz', 'impressum', 'security', 'whitepaper'],
       render: () => <LegalLinksSettings />,
-    },
-  ];
+    });
+  }
+
+  return sections;
 }
 
 export function getCoreVaultSettingsSections(t: TFunction): SettingsSectionDescriptor[] {

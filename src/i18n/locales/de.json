@@ -3,18 +3,18 @@
     "loading": "Laden...",
     "save": "Speichern",
     "cancel": "Abbrechen",
-    "delete": "LÃ¶schen",
+    "delete": "Löschen",
     "edit": "Bearbeiten",
     "create": "Erstellen",
     "search": "Suchen",
-    "close": "SchlieÃŸen",
+    "close": "Schließen",
     "copy": "Kopieren",
     "copied": "Kopiert!",
     "show": "Anzeigen",
     "hide": "Verbergen",
     "yes": "Ja",
     "no": "Nein",
-    "back": "ZurÃ¼ck",
+    "back": "Zurück",
     "next": "Weiter",
     "submit": "Absenden",
     "error": "Fehler",
@@ -49,9 +49,9 @@
   },
   "landing": {
     "hero": {
-      "title": "Deine PasswÃ¶rter.",
+      "title": "Deine Passwörter.",
       "titleHighlight": "Deine Kontrolle.",
-      "subtitle": "Der sichere Open-Source Passwortmanager mit Ende-zu-Ende-VerschlÃ¼sselung. Deine Daten gehÃ¶ren nur dir.",
+      "subtitle": "Der sichere Open-Source Passwortmanager mit Ende-zu-Ende-Verschlüsselung. Deine Daten gehören nur dir.",
       "cta": "Jetzt kostenlos starten",
       "ctaSecondary": "Mehr erfahren",
       "description": "AES-256-GCM Verschlüsselung. Argon2id Schlüsselableitung. Zero-Knowledge Architektur. Deine Passwörter verlassen dein Gerät niemals unverschlüsselt."
@@ -77,7 +77,7 @@
       },
       "postQuantum": {
         "title": "Post-Quantum-Verschlüsselung",
-        "description": "Security Standard v1 erzwingt ML-KEM-768 + RSA-4096 Hybrid-Schluesselaustausch fuer Notfallzugriff und geteilte Sammlungen (NIST FIPS 203)."
+        "description": "Security Standard v1 erzwingt ML-KEM-768 + RSA-4096 Hybrid-Schlüsselaustausch für Notfallzugriff und geteilte Sammlungen (NIST FIPS 203)."
       },
       "passkeyUnlock": {
         "title": "Passkey Tresor-Entsperrung",
@@ -97,11 +97,11 @@
       "subtitle": "Einfach, sicher und leistungsstark",
       "passwordManager": {
         "title": "Passwort-Manager",
-        "description": "Speichere alle deine PasswÃ¶rter sicher an einem Ort."
+        "description": "Speichere alle deine Passwörter sicher an einem Ort."
       },
       "generator": {
         "title": "Passwort-Generator",
-        "description": "Erstelle starke, einzigartige PasswÃ¶rter mit einem Klick."
+        "description": "Erstelle starke, einzigartige Passwörter mit einem Klick."
       },
       "totp": {
         "title": "2FA / TOTP",
@@ -109,21 +109,21 @@
       },
       "secureNotes": {
         "title": "Sichere Notizen",
-        "description": "VerschlÃ¼sselte Notizen fÃ¼r sensible Informationen."
+        "description": "Verschlüsselte Notizen für sensible Informationen."
       },
       "categories": {
         "title": "Kategorien & Tags",
-        "description": "Organisiere deine EintrÃ¤ge mit Ordnern und Labels."
+        "description": "Organisiere deine Einträge mit Ordnern und Labels."
       },
       "crossPlatform": {
-        "title": "PlattformÃ¼bergreifend",
-        "description": "Funktioniert auf allen GerÃ¤ten - Desktop, Tablet und Handy."
+        "title": "Plattformübergreifend",
+        "description": "Funktioniert auf allen Geräten - Desktop, Tablet und Handy."
       }
     },
     "openSource": {
       "title": "Transparent & Open Source",
       "subtitle": "Vertrauen durch Transparenz",
-      "description": "Singra Vault ist vollstÃ¤ndig Open Source. Jede Zeile Code kann von der Community Ã¼berprÃ¼ft werden. Keine versteckten HintertÃ¼ren, keine Geheimnisse.",
+      "description": "Singra Vault ist vollständig Open Source. Jede Zeile Code kann von der Community überprüft werden. Keine versteckten Hintertüren, keine Geheimnisse.",
       "cta": "Code auf GitHub ansehen",
       "community": "Teil der Community werden"
     },
@@ -369,18 +369,18 @@
     "lastUpdated": "Zuletzt aktualisiert: {{date}}"
   },
   "privacy": {
-    "title": "DatenschutzerklÃ¤rung",
-    "subtitle": "Transparenz und Sicherheit stehen bei uns an erster Stelle. Hier erfÃ¤hrst du, wie wir deine Daten schÃ¼tzen.",
+    "title": "Datenschutzerklärung",
+    "subtitle": "Transparenz und Sicherheit stehen bei uns an erster Stelle. Hier erfährst du, wie wir deine Daten schützen.",
     "lastUpdated": "Zuletzt aktualisiert: {{date}}",
     "contact": "Bei Fragen wende dich bitte an kontakt@mauntingstudios.de",
     "zeroKnowledge": {
       "title": "Zero-Knowledge Architektur",
-      "description": "Deine Daten gehÃ¶ren nur dir.",
+      "description": "Deine Daten gehören nur dir.",
       "details": "Singra Vault basiert auf einem Zero-Knowledge-Prinzip. Das bedeutet, dass deine Passwörter und sensiblen Daten ausschließlich auf deinem Gerät verschlüsselt werden, bevor sie jemals gespeichert oder übertragen werden. Wir als Betreiber haben technisch keine Möglichkeit, deine entschlüsselten Daten einzusehen. Dein Master-Passwort verlässt niemals dein Gerät.\n\nTransparenz-Hinweis: In der aktuellen Web-Architektur ist eine absolut 100%ige Zero-Knowledge-Umsetzung nicht vollständig möglich, weil einige technische Metadaten serverseitig verarbeitbar bleiben müssen (z.B. IDs, Zeitstempel, Besitz-Zuordnungen sowie Session-/Authentifizierungsstatus). Wir minimieren diese Metadaten, verschlüsseln alle sensiblen Tresorinhalte und zentrale Tresor-Metadaten und reduzieren Klartext kontinuierlich, soweit es technisch sinnvoll möglich ist."
     },
     "general": {
       "title": "Allgemeines",
-      "content": "Diese DatenschutzerklÃ¤rung klÃ¤rt dich Ã¼ber die Art, den Umfang und Zweck der Verarbeitung von personenbezogenen Daten innerhalb unseres Online-Angebotes auf."
+      "content": "Diese Datenschutzerklärung klärt dich über die Art, den Umfang und Zweck der Verarbeitung von personenbezogenen Daten innerhalb unseres Online-Angebotes auf."
     },
     "collection": {
       "title": "Datenerfassung",
@@ -392,7 +392,7 @@
     },
     "storage": {
       "title": "Datenspeicherung",
-      "content": "Deine verschlÃ¼sselten Daten werden sicher in unserer Cloud-Datenbank (Supabase) gespeichert. Backups werden regelmÃ¤ÃŸig erstellt und sind ebenfalls verschlÃ¼sselt."
+      "content": "Deine verschlüsselten Daten werden sicher in unserer Cloud-Datenbank (Supabase) gespeichert. Backups werden regelmäßig erstellt und sind ebenfalls verschlüsselt."
     },
     "cookies": {
       "title": "Cookies & Lokale Daten",
@@ -400,25 +400,25 @@
     },
     "rights": {
       "title": "Deine Rechte",
-      "content": "Du hast jederzeit das Recht auf:\n\nâ€¢ Auskunft Ã¼ber deine gespeicherten Daten\nâ€¢ Berichtigung unrichtiger Daten\nâ€¢ LÃ¶schung deines Kontos und aller Daten\nâ€¢ Export deiner Daten in einem maschinenlesbaren Format"
+      "content": "Du hast jederzeit das Recht auf:\n\n• Auskunft über deine gespeicherten Daten\n• Berichtigung unrichtiger Daten\n• Löschung deines Kontos und aller Daten\n• Export deiner Daten in einem maschinenlesbaren Format"
     }
   },
   "cookies": {
     "banner": {
-      "title": "Wir respektieren deine PrivatsphÃ¤re",
-      "description": "Wir nutzen Cookies, um dir die bestmÃ¶gliche Erfahrung zu bieten. Einige sind essenziell, andere helfen uns, das Nutzererlebnis zu verbessern.",
+      "title": "Wir respektieren deine Privatsphäre",
+      "description": "Wir nutzen Cookies, um dir die bestmögliche Erfahrung zu bieten. Einige sind essenziell, andere helfen uns, das Nutzererlebnis zu verbessern.",
       "acceptAll": "Alle akzeptieren",
       "manage": "Einstellungen"
     },
     "settings": {
       "title": "Cookie-Einstellungen",
-      "description": "Hier kannst du entscheiden, welche Cookies du zulassen mÃ¶chtest.",
+      "description": "Hier kannst du entscheiden, welche Cookies du zulassen möchtest.",
       "save": "Einstellungen speichern"
     },
     "categories": {
       "necessary": {
         "title": "Notwendig",
-        "description": "Diese Cookies sind fÃ¼r das Funktionieren der Website essenziell (z.B. Login-Status). Sie kÃ¶nnen nicht deaktiviert werden."
+        "description": "Diese Cookies sind für das Funktionieren der Website essenziell (z.B. Login-Status). Sie können nicht deaktiviert werden."
       },
       "optional": {
         "title": "Optional (Einstellungen)",
@@ -428,7 +428,7 @@
   },
   "auth": {
     "login": {
-      "title": "Willkommen zurÃ¼ck",
+      "title": "Willkommen zurück",
       "subtitle": "Melde dich an, um auf deinen Tresor zuzugreifen",
       "email": "E-Mail",
       "password": "Passwort",
@@ -443,19 +443,19 @@
       "subtitle": "Erstelle dein sicheres Konto in wenigen Schritten",
       "email": "E-Mail",
       "password": "Passwort",
-      "confirmPassword": "Passwort bestÃ¤tigen",
+      "confirmPassword": "Passwort bestätigen",
       "submit": "Registrieren",
       "hasAccount": "Bereits ein Konto?",
       "loginLink": "Jetzt anmelden",
       "orContinueWith": "Oder weiter mit",
-      "passwordRequirements": "Mindestens 12 Zeichen mit GroÃŸ-/Kleinbuchstaben, Zahlen und Sonderzeichen"
+      "passwordRequirements": "Mindestens 12 Zeichen mit Groß-/Kleinbuchstaben, Zahlen und Sonderzeichen"
     },
     "masterPassword": {
       "title": "Master-Passwort erstellen",
-      "subtitle": "Dieses Passwort verschlÃ¼sselt alle deine Daten. Es wird niemals an unsere Server gesendet.",
-      "warning": "Wenn du dein Master-Passwort vergisst, kÃ¶nnen wir deine Daten nicht wiederherstellen!",
+      "subtitle": "Dieses Passwort verschlüsselt alle deine Daten. Es wird niemals an unsere Server gesendet.",
+      "warning": "Wenn du dein Master-Passwort vergisst, können wir deine Daten nicht wiederherstellen!",
       "password": "Master-Passwort",
-      "confirmPassword": "Master-Passwort bestÃ¤tigen",
+      "confirmPassword": "Master-Passwort bestätigen",
       "submit": "Tresor einrichten",
       "strength": {
         "weak": "Schwach",
@@ -479,14 +479,14 @@
       "github": "GitHub"
     },
     "errors": {
-      "invalidCredentials": "UngÃ¼ltige E-Mail oder Passwort",
+      "invalidCredentials": "Ungültige E-Mail oder Passwort",
       "emailInUse": "Diese E-Mail wird bereits verwendet",
       "weakPassword": "Das Passwort ist zu schwach",
-      "passwordMismatch": "Die PasswÃ¶rter stimmen nicht Ã¼berein",
-      "invalidEmail": "Bitte gib eine gÃ¼ltige E-Mail-Adresse ein",
+      "passwordMismatch": "Die Passwörter stimmen nicht überein",
+      "invalidEmail": "Bitte gib eine gültige E-Mail-Adresse ein",
       "generic": "Ein Fehler ist aufgetreten. Bitte versuche es erneut.",
       "passwordTooShort": "Das Passwort muss mindestens 8 Zeichen haben",
-      "passwordNoUppercase": "Mindestens ein GroÃŸbuchstabe erforderlich",
+      "passwordNoUppercase": "Mindestens ein Großbuchstabe erforderlich",
       "passwordNoLowercase": "Mindestens ein Kleinbuchstabe erforderlich",
       "passwordNoDigit": "Mindestens eine Ziffer erforderlich",
       "passwordNoSymbol": "Mindestens ein Sonderzeichen erforderlich"
@@ -508,8 +508,8 @@
     "loadError": "Tresor-Einträge konnten nicht geladen werden.",
     "empty": {
       "title": "Dein Tresor ist leer",
-      "description": "FÃ¼ge deinen ersten Eintrag hinzu, um loszulegen.",
-      "action": "Ersten Eintrag hinzufÃ¼gen"
+      "description": "Füge deinen ersten Eintrag hinzu, um loszulegen.",
+      "action": "Ersten Eintrag hinzufügen"
     },
     "search": {
       "placeholder": "Suche nach Name, URL oder Tags...",
@@ -518,26 +518,26 @@
     },
     "filters": {
       "all": "Alle",
-      "passwords": "PasswÃ¶rter",
+      "passwords": "Passwörter",
       "notes": "Notizen",
       "totp": "2FA Codes",
       "favorites": "Favoriten"
     },
     "categories": {
       "title": "Kategorien",
-      "all": "Alle Eintraege",
+      "all": "Alle Einträge",
       "uncategorized": "Ohne Kategorie",
-      "addCategory": "Kategorie hinzufuegen"
+      "addCategory": "Kategorie hinzufügen"
     },
     "sidebar": {
       "title": "Tresor",
-      "allItems": "Alle EintrÃ¤ge",
+      "allItems": "Alle Einträge",
       "categories": "Kategorien",
       "settings": "Einstellungen",
       "lock": "Sperren"
     },
     "items": {
-      "decrypting": "EntschlÃ¼ssele EintrÃ¤ge..."
+      "decrypting": "Entschlüssele Einträge..."
     },
     "actions": {
       "add": "Neuer Eintrag",
@@ -554,7 +554,7 @@
     "editItem": "Eintrag bearbeiten",
     "itemCreated": "Eintrag erstellt",
     "itemUpdated": "Eintrag aktualisiert",
-    "itemDeleted": "Eintrag gelÃ¶scht",
+    "itemDeleted": "Eintrag gelöscht",
     "itemTypes": {
       "password": "Passwort",
       "note": "Notiz",
@@ -568,7 +568,7 @@
       "usernamePlaceholder": "max@example.com",
       "password": "Passwort",
       "notes": "Notizen",
-      "notesPlaceholder": "ZusÃ¤tzliche Informationen...",
+      "notesPlaceholder": "Zusätzliche Informationen...",
       "totpSecret": "TOTP Secret",
       "favorite": "Favorit"
     },
@@ -576,7 +576,7 @@
       "title": "Titel",
       "titlePlaceholder": "z.B. Netflix, Google, Bank...",
       "description": "Beschreibung (optional)",
-      "descriptionPlaceholder": "WofÃ¼r ist dieser Dienst?",
+      "descriptionPlaceholder": "Wofür ist dieser Dienst?",
       "url": "Website-URL",
       "urlPlaceholder": "https://example.com",
       "username": "Benutzername / E-Mail",
@@ -585,17 +585,17 @@
       "passwordPlaceholder": "Dein sicheres Passwort",
       "generatePassword": "Generieren",
       "notes": "Notizen",
-      "notesPlaceholder": "ZusÃ¤tzliche Informationen...",
+      "notesPlaceholder": "Zusätzliche Informationen...",
       "category": "Kategorie",
-      "selectCategory": "Kategorie auswÃ¤hlen",
+      "selectCategory": "Kategorie auswählen",
       "tags": "Tags",
-      "addTag": "Tag hinzufÃ¼gen",
+      "addTag": "Tag hinzufügen",
       "favorite": "Als Favorit markieren",
       "totp": {
         "title": "2FA / TOTP",
         "secret": "TOTP Secret",
         "secretPlaceholder": "JBSWY3DPEHPK3PXP",
-        "addTotp": "2FA hinzufÃ¼gen",
+        "addTotp": "2FA hinzufügen",
         "currentCode": "Aktueller Code"
       }
     }
@@ -605,16 +605,16 @@
     "placeholder": "Klicke auf Generieren...",
     "generate": "Generieren",
     "use": "Verwenden",
-    "length": "LÃ¤nge",
-    "wordCount": "WÃ¶rter",
-    "capitalize": "GroÃŸschreiben",
-    "includeNumber": "Zahl hinzufÃ¼gen",
+    "length": "Länge",
+    "wordCount": "Wörter",
+    "capitalize": "Großschreiben",
+    "includeNumber": "Zahl hinzufügen",
     "mode": {
       "password": "Passwort",
       "passphrase": "Passphrase"
     },
     "strength": {
-      "label": "StÃ¤rke",
+      "label": "Stärke",
       "weak": "Schwach",
       "fair": "Ausreichend",
       "good": "Gut",
@@ -630,33 +630,33 @@
     "vaultPage": {
       "title": "Tresor-Einstellungen"
     },
-    "footer": "Deine Daten werden lokal verschlÃ¼sselt und sicher gespeichert.",
+    "footer": "Deine Daten werden lokal verschlüsselt und sicher gespeichert.",
     "searchPlaceholder": "Einstellungen durchsuchen...",
     "searchResults": "{{count}} Ergebnisse gefunden",
     "noResults": "Keine Einstellungen gefunden",
     "vaultLockedNotice": {
       "title": "Tresor ist aktuell gesperrt",
-      "description": "Konto- und Abo-Einstellungen bleiben verfuegbar. Tresorbezogene Einstellungen erfordern das Entsperren."
+      "description": "Konto- und Abo-Einstellungen bleiben verfügbar. Tresorbezogene Einstellungen erfordern das Entsperren."
     },
     "account": {
       "title": "Konto",
       "description": "Verwalte dein Konto und deine Anmeldedaten.",
       "email": "E-Mail-Adresse",
       "logout": "Abmelden",
-      "deleteAccount": "Konto lÃ¶schen",
-      "deleteConfirmTitle": "Konto unwiderruflich lÃ¶schen?",
-      "deleteConfirmDesc": "Diese Aktion kann nicht rÃ¼ckgÃ¤ngig gemacht werden. Alle deine Daten, PasswÃ¶rter und Einstellungen werden permanent gelÃ¶scht.",
-      "deleteConfirmInput": "Tippe DELETE zur BestÃ¤tigung:",
-      "deleteConfirm": "Konto endgÃ¼ltig lÃ¶schen",
-      "deleteSuccess": "Konto gelÃ¶scht",
-      "deleteSuccessDesc": "Dein Konto und alle Daten wurden gelÃ¶scht.",
-      "deleteFailed": "Konto konnte nicht gelÃ¶scht werden."
+      "deleteAccount": "Konto löschen",
+      "deleteConfirmTitle": "Konto unwiderruflich löschen?",
+      "deleteConfirmDesc": "Diese Aktion kann nicht rückgängig gemacht werden. Alle deine Daten, Passwörter und Einstellungen werden permanent gelöscht.",
+      "deleteConfirmInput": "Tippe DELETE zur Bestätigung:",
+      "deleteConfirm": "Konto endgültig löschen",
+      "deleteSuccess": "Konto gelöscht",
+      "deleteSuccessDesc": "Dein Konto und alle Daten wurden gelöscht.",
+      "deleteFailed": "Konto konnte nicht gelöscht werden."
     },
     "password": {
-      "title": "Passwort Ã¤ndern",
+      "title": "Passwort ändern",
       "description": "Aktualisiere dein Konto-Passwort.",
       "newPassword": "Neues Passwort",
-      "confirmPassword": "Passwort bestÃ¤tigen",
+      "confirmPassword": "Passwort bestätigen",
       "placeholder": "Starkes Passwort eingeben",
       "confirmPlaceholder": "Passwort wiederholen",
       "generateButton": "Sicheres Passwort generieren",
@@ -665,13 +665,13 @@
       "updateSuccess": "Passwort erfolgreich aktualisiert.",
       "updateFailed": "Passwort konnte nicht aktualisiert werden.",
       "minLength": "Passwort muss mindestens 12 Zeichen lang sein.",
-      "weakPassword": "Bitte waehle ein staerkeres Passwort."
+      "weakPassword": "Bitte wähle ein stärkeres Passwort."
     },
     "accountDataExport": {
       "title": "DSGVO-Datenexport",
       "description": "Exportiere deine Kontodaten in einem maschinenlesbaren JSON-Format.",
       "export": "Konto-Datenexport",
-      "exportDesc": "Enthaelt Profildaten, Sicherheitsmetadaten, Passkey-Metadaten und Abo-Informationen.",
+      "exportDesc": "Enthält Profildaten, Sicherheitsmetadaten, Passkey-Metadaten und Abo-Informationen.",
       "exportButton": "DSGVO-Export herunterladen",
       "exportSuccess": "Konto-Datenexport erfolgreich erstellt.",
       "exportFailed": "Konto-Datenexport konnte nicht erstellt werden."
@@ -687,44 +687,44 @@
       "lockNow": "Tresor jetzt sperren",
       "vaultLocked": "Tresor gesperrt",
       "vaultLockedDesc": "Dein Tresor wurde erfolgreich gesperrt.",
-      "changeMasterPassword": "Master-Passwort Ã¤ndern",
+      "changeMasterPassword": "Master-Passwort ändern",
       "enable2fa": "Zwei-Faktor-Authentifizierung aktivieren",
       "sessions": "Aktive Sitzungen",
       "twoFactor": {
         "title": "Zwei-Faktor-Authentifizierung",
-        "description": "FÃ¼ge eine zusÃ¤tzliche Sicherheitsebene mit einer Authenticator-App hinzu.",
+        "description": "Füge eine zusätzliche Sicherheitsebene mit einer Authenticator-App hinzu.",
         "enabled": "2FA aktiviert",
         "disabled": "2FA deaktiviert",
-        "disabledDesc": "Dein Konto ist nicht durch Zwei-Faktor-Authentifizierung geschÃ¼tzt.",
+        "disabledDesc": "Dein Konto ist nicht durch Zwei-Faktor-Authentifizierung geschützt.",
         "enable": "2FA aktivieren",
         "disable": "2FA deaktivieren",
         "regenerateCodes": "Backup-Codes neu generieren",
         "backupCodesRemaining": "{{count}} Backup-Codes verbleibend",
         "setup": {
           "step1Title": "QR-Code scannen",
-          "step1Desc": "Ã–ffne deine Authenticator-App (Google Authenticator, Authy, etc.) und scanne diesen QR-Code.",
+          "step1Desc": "Öffne deine Authenticator-App (Google Authenticator, Authy, etc.) und scanne diesen QR-Code.",
           "step2Title": "Code verifizieren",
-          "step2Desc": "Gib den 6-stelligen Code aus deiner Authenticator-App ein, um die Einrichtung zu bestÃ¤tigen.",
+          "step2Desc": "Gib den 6-stelligen Code aus deiner Authenticator-App ein, um die Einrichtung zu bestätigen.",
           "step3Title": "Backup-Codes speichern",
           "step3Desc": "Speichere diese Backup-Codes an einem sicheren Ort. Du kannst sie verwenden, wenn du keinen Zugriff auf deine Authenticator-App hast.",
           "cantScan": "QR-Code kann nicht gescannt werden?",
-          "manualEntry": "Manueller SchlÃ¼ssel",
+          "manualEntry": "Manueller Schlüssel",
           "downloadCodes": "Backup-Codes herunterladen",
           "codesWarning": "Jeder Code kann nur einmal verwendet werden. Bewahre sie sicher auf und teile sie nicht."
         },
         "verify": {
           "title": "Verifizierungscode eingeben",
-          "invalid": "UngÃ¼ltiger Code. Bitte versuche es erneut."
+          "invalid": "Ungültiger Code. Bitte versuche es erneut."
         },
         "disableDialog": {
           "title": "Zwei-Faktor-Authentifizierung deaktivieren",
           "description": "Gib den aktuellen Code aus deiner Authenticator-App ein, um 2FA zu deaktivieren.",
-          "backupCodeNotAllowed": "Backup-Codes kÃ¶nnen nicht zum Deaktivieren von 2FA verwendet werden. Bitte nutze deine Authenticator-App.",
+          "backupCodeNotAllowed": "Backup-Codes können nicht zum Deaktivieren von 2FA verwendet werden. Bitte nutze deine Authenticator-App.",
           "success": "Zwei-Faktor-Authentifizierung wurde deaktiviert."
         },
         "vault": {
-          "title": "2FA fÃ¼r Tresor erforderlich",
-          "description": "Authenticator-Code zusÃ¤tzlich zum Master-Passwort beim Entsperren des Tresors verlangen.",
+          "title": "2FA für Tresor erforderlich",
+          "description": "Authenticator-Code zusätzlich zum Master-Passwort beim Entsperren des Tresors verlangen.",
           "enabled": "Tresor-2FA-Schutz aktiviert.",
           "disabled": "Tresor-2FA-Schutz deaktiviert."
         }
@@ -737,9 +737,9 @@
       "themeLight": "Hell",
       "themeDark": "Dunkel",
       "themeSystem": "System",
-      "themeUpdated": "Design wurde geÃ¤ndert.",
+      "themeUpdated": "Design wurde geändert.",
       "language": "Sprache",
-      "languageUpdated": "Sprache wurde geÃ¤ndert.",
+      "languageUpdated": "Sprache wurde geändert.",
       "themes": {
         "light": "Hell",
         "dark": "Dunkel",
@@ -754,17 +754,17 @@
       "title": "Daten",
       "description": "Exportiere oder importiere deine Tresor-Daten.",
       "export": "Daten exportieren",
-      "exportDesc": "Exportiere alle deine PasswÃ¶rter und EintrÃ¤ge als JSON-Datei.",
+      "exportDesc": "Exportiere alle deine Passwörter und Einträge als JSON-Datei.",
       "exportButton": "Als JSON exportieren",
-      "exportSuccess": "{{count}} EintrÃ¤ge erfolgreich exportiert.",
+      "exportSuccess": "{{count}} Einträge erfolgreich exportiert.",
       "exportFailed": "Export fehlgeschlagen.",
       "import": "Daten importieren",
-      "importDesc": "Importiere EintrÃ¤ge aus einer JSON-Export-Datei.",
+      "importDesc": "Importiere Einträge aus einer JSON-Export-Datei.",
       "importButton": "Importieren",
       "importConfirmTitle": "Daten importieren?",
-      "importConfirmDesc": "Die EintrÃ¤ge werden zu deinem bestehenden Tresor hinzugefÃ¼gt.",
-      "importSuccess": "{{count}} EintrÃ¤ge erfolgreich importiert.",
-      "importFailed": "Import fehlgeschlagen. Stelle sicher, dass die Datei gÃ¼ltig ist.",
+      "importConfirmDesc": "Die Einträge werden zu deinem bestehenden Tresor hinzugefügt.",
+      "importSuccess": "{{count}} Einträge erfolgreich importiert.",
+      "importFailed": "Import fehlgeschlagen. Stelle sicher, dass die Datei gültig ist.",
       "unlockRequired": "Bitte entsperre zuerst deinen Tresor."
     },
     "support": {
@@ -772,7 +772,7 @@
       "description": "Erstelle Support-Tickets und verfolge Antwortzeiten.",
       "currentSla": "Aktuelles Antwortziel",
       "slaDisclaimer": "Antwortzeiten sind Zielwerte (in der Regel), keine garantierten Fristen.",
-      "securityHint": "Sende niemals dein Master-Passwort, Recovery-Codes, private Schluessel oder Tresor-Inhalte ueber den Support.",
+      "securityHint": "Sende niemals dein Master-Passwort, Recovery-Codes, private Schlüssel oder Tresor-Inhalte über den Support.",
       "subject": "Betreff",
       "subjectPlaceholder": "Kurze Zusammenfassung deines Problems",
       "category": "Kategorie",
@@ -787,7 +787,7 @@
         "other": "Sonstiges"
       },
       "message": "Nachricht",
-      "messagePlaceholder": "Beschreibe dein Problem moeglichst genau (Schritte, Fehler, Erwartung).",
+      "messagePlaceholder": "Beschreibe dein Problem möglichst genau (Schritte, Fehler, Erwartung).",
       "validation": "Bitte mindestens 3 Zeichen im Betreff und 10 Zeichen in der Nachricht eingeben.",
       "submit": "Ticket erstellen",
       "submitting": "Wird erstellt...",
@@ -805,12 +805,12 @@
       "status": {
         "open": "Offen",
         "in_progress": "In Bearbeitung",
-        "waiting_user": "Warten auf deine Rueckmeldung",
-        "resolved": "Geloest",
+        "waiting_user": "Warten auf deine Rückmeldung",
+        "resolved": "Gelöst",
         "closed": "Geschlossen"
       },
       "sla": {
-        "priority24h": "Prioritaets-Support - in der Regel 24h",
+        "priority24h": "Prioritäts-Support - in der Regel 24h",
         "standard72h": "Standard-Support - in der Regel 72h"
       },
       "realtime": {
@@ -825,7 +825,7 @@
         "loadError": "Chat konnte nicht geladen werden.",
         "sendError": "Nachricht konnte nicht gesendet werden.",
         "ticketClosed": "Dieses Ticket ist geschlossen.",
-        "closeTicket": "Ticket schliessen",
+        "closeTicket": "Ticket schließen",
         "closeError": "Ticket konnte nicht geschlossen werden.",
         "closeSuccess": "Ticket wurde geschlossen.",
         "newReplyNotification": "Neue Support-Antwort",
@@ -839,14 +839,14 @@
       "avatar": "Profilbild"
     },
     "linkedAccounts": {
-      "title": "VerknÃ¼pfte Konten",
+      "title": "Verknüpfte Konten",
       "connect": "Verbinden",
       "disconnect": "Trennen"
     },
     "danger": {
       "title": "Gefahrenzone",
-      "deleteAccount": "Konto lÃ¶schen",
-      "deleteWarning": "Diese Aktion kann nicht rÃ¼ckgÃ¤ngig gemacht werden. Alle deine Daten werden unwiderruflich gelÃ¶scht."
+      "deleteAccount": "Konto löschen",
+      "deleteWarning": "Diese Aktion kann nicht rückgängig gemacht werden. Alle deine Daten werden unwiderruflich gelöscht."
     },
     "family": {
       "title": "Familien-Organisation",
@@ -870,10 +870,10 @@
       "title": "Geteilte Sammlungen",
       "description": "Erstelle Sammlungen, um Tresor-Einträge mit Familienmitgliedern zu teilen.",
       "namePlaceholder": "Name der Sammlung",
-      "masterPasswordTitle": "Master-Passwort bestaetigen",
-      "masterPasswordDescription": "Fuer die erste geteilte Sammlung wird hybrides Schluesselmaterial fuer dein Konto eingerichtet.",
+      "masterPasswordTitle": "Master-Passwort bestätigen",
+      "masterPasswordDescription": "Für die erste geteilte Sammlung wird hybrides Schlüsselmaterial für dein Konto eingerichtet.",
       "masterPasswordPlaceholder": "Master-Passwort eingeben",
-      "masterPasswordRequired": "Master-Passwort ist erforderlich, um Schluesselmaterial einzurichten.",
+      "masterPasswordRequired": "Master-Passwort ist erforderlich, um Schlüsselmaterial einzurichten.",
       "empty": "Noch keine geteilten Sammlungen vorhanden.",
       "noDescription": "Keine Beschreibung",
       "created": "Sammlung erstellt.",
@@ -1137,24 +1137,24 @@
     "storageLimitReached": "Speicherlimit erreicht. Belegt: {{used}} / {{limit}}"
   },
   "categories": {
-    "add": "Kategorie hinzufÃ¼gen",
+    "add": "Kategorie hinzufügen",
     "edit": "Kategorie bearbeiten",
-    "description": "Organisiere deine EintrÃ¤ge mit benutzerdefinierten Kategorien.",
+    "description": "Organisiere deine Einträge mit benutzerdefinierten Kategorien.",
     "name": "Name",
     "namePlaceholder": "z.B. Soziale Medien",
     "icon": "Symbol",
-    "emojiPlaceholder": "Emoji eingeben oder auswÃ¤hlen",
-    "svgHint": "FÃ¼ge einen SVG-Code ein (max. 24x24px empfohlen)",
-    "svgDisabled": "SVG-Icons sind aus Sicherheitsgruenden deaktiviert.",
+    "emojiPlaceholder": "Emoji eingeben oder auswählen",
+    "svgHint": "Füge einen SVG-Code ein (max. 24x24px empfohlen)",
+    "svgDisabled": "SVG-Icons sind aus Sicherheitsgründen deaktiviert.",
     "color": "Farbe",
     "preview": "Vorschau",
     "created": "Kategorie erstellt",
     "updated": "Kategorie aktualisiert",
-    "deleted": "Kategorie gelÃ¶scht",
+    "deleted": "Kategorie gelöscht",
     "saveFailed": "Kategorie konnte nicht gespeichert werden",
-    "deleteFailed": "Kategorie konnte nicht gelÃ¶scht werden",
-    "deleteConfirmTitle": "Kategorie lÃ¶schen?",
-    "deleteConfirmDesc": "Die Kategorie wird gelÃ¶scht. EintrÃ¤ge in dieser Kategorie werden nicht gelÃ¶scht, aber haben keine Kategorie mehr.",
+    "deleteFailed": "Kategorie konnte nicht gelöscht werden",
+    "deleteConfirmTitle": "Kategorie löschen?",
+    "deleteConfirmDesc": "Die Kategorie wird gelöscht. Einträge in dieser Kategorie werden nicht gelöscht, aber haben keine Kategorie mehr.",
     "empty": "Keine Kategorien vorhanden",
     "addFirst": "Erste Kategorie erstellen"
   },
@@ -1297,8 +1297,8 @@
     },
     "support": {
       "free_sla": "Standard-Support - in der Regel 72h",
-      "premium_sla": "Prioritaets-Support - in der Regel 24h",
-      "families_sla": "Prioritaets-Support - in der Regel 24h (Owner + alle aktiven Familienmitglieder)",
+      "premium_sla": "Prioritäts-Support - in der Regel 24h",
+      "families_sla": "Prioritäts-Support - in der Regel 24h (Owner + alle aktiven Familienmitglieder)",
       "sla_note": "Support-Antwortzeiten sind Zielwerte in der Regel."
     },
     "free_security_note": "AES-256-GCM + Argon2id für alle Nutzer inklusive",
@@ -1390,8 +1390,8 @@
   },
   "postQuantum": {
     "title": "Post-Quantum-Verschlüsselung",
-    "description": "Security Standard v1 erzwingt hybriden Post-Quantum-Schluesselschutz (ML-KEM-768 + RSA-4096) fuer Sharing- und Notfall-Schluesselaustausch.",
-    "infoText": "Security Standard v1 kombiniert ML-KEM-768 und RSA-4096 in einem hybriden Schluesselpfad, um 'Harvest now, decrypt later' Risiken zu senken.",
+    "description": "Security Standard v1 erzwingt hybriden Post-Quantum-Schlüsselschutz (ML-KEM-768 + RSA-4096) für Sharing- und Notfall-Schlüsselaustausch.",
+    "infoText": "Security Standard v1 kombiniert ML-KEM-768 und RSA-4096 in einem hybriden Schlüsselpfad, um 'Harvest now, decrypt later' Risiken zu senken.",
     "status": "Status",
     "enabled": "Aktiviert",
     "disabled": "Nicht aktiviert",
@@ -1402,7 +1402,7 @@
     "legacyDisabledAt": "Legacy deaktiviert am",
     "notSet": "Nicht gesetzt",
     "enableTitle": "Post-Quantum aktivieren",
-    "enableDescription": "Hybrides Schluesselmaterial wird automatisch eingerichtet, sobald Sharing- oder Notfallzugriff es benoetigt.",
+    "enableDescription": "Hybrides Schlüsselmaterial wird automatisch eingerichtet, sobald Sharing- oder Notfallzugriff es benötigt.",
     "enableButton": "Post-Quantum aktivieren",
     "enabling": "Aktiviere...",
     "enableSuccess": "Post-Quantum-Verschlüsselung wurde erfolgreich aktiviert!",
