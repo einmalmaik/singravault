@@ -126,6 +126,8 @@ export function VaultSidebar({
                 && isAppOnline();
             const counts: Record<string, number> = {};
             let integrityBaselineDirty = false;
+            const trustedItemIds = new Set<string>();
+            const trustedCategoryIds = new Set<string>();
 
             await Promise.all(
                 snapshot.items.map(async (item) => {
@@ -196,6 +198,7 @@ export function VaultSidebar({
                                 updated_at: new Date().toISOString(),
                             }, snapshot.vaultId);
                             integrityBaselineDirty = true;
+                            trustedItemIds.add(item.id);
                         }
 
                         if (resolvedCategoryId) {
@@ -313,6 +316,7 @@ export function VaultSidebar({
                             updated_at: new Date().toISOString(),
                         });
                         integrityBaselineDirty = true;
+                        trustedCategoryIds.add(cat.id);
                     }
 
                     return {
@@ -326,7 +330,10 @@ export function VaultSidebar({
             );
 
             if (integrityBaselineDirty && canPersistMigrations) {
-                await refreshIntegrityBaseline();
+                await refreshIntegrityBaseline({
+                    itemIds: trustedItemIds,
+                    categoryIds: trustedCategoryIds,
+                });
             }
 
             setCategories(resolvedCategories);

@@ -195,6 +195,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 && source === 'remote'
                 && isAppOnline();
             let integrityBaselineDirty = false;
+            const trustedCategoryIds = new Set<string>();
             const resolvedCategories = await Promise.all(
                 snapshot.categories.map(async (cat) => {
                     let resolvedName = cat.name;
@@ -275,6 +276,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                             color: migratedColor,
                             updated_at: new Date().toISOString(),
                         });
+                        trustedCategoryIds.add(cat.id);
                     }
 
                     return {
@@ -287,7 +289,9 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             );
 
             if (integrityBaselineDirty && canPersistMigrations) {
-                await refreshIntegrityBaseline();
+                await refreshIntegrityBaseline({
+                    categoryIds: trustedCategoryIds,
+                });
             }
 
             setCategories(resolvedCategories);
@@ -483,7 +487,9 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     }),
             });
 
-            await refreshIntegrityBaseline();
+            await refreshIntegrityBaseline({
+                itemIds: [targetItemId],
+            });
 
             onOpenChange(false);
             // Trigger data refresh without page reload
@@ -539,7 +545,9 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                         defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
                     }),
             });
-            await refreshIntegrityBaseline();
+            await refreshIntegrityBaseline({
+                itemIds: [normalizedItemId],
+            });
             onOpenChange(false);
             onSave?.();
         } catch (err) {

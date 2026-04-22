@@ -193,7 +193,9 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                     }),
             });
 
-            await refreshIntegrityBaseline();
+            await refreshIntegrityBaseline({
+                categoryIds: [categoryId],
+            });
 
             onOpenChange(false);
             onSave?.();
@@ -219,6 +221,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             const items = vaultId
                 ? snapshot.items.filter((item) => item.vault_id === vaultId)
                 : snapshot.items;
+            const trustedItemIds: string[] = [];
 
             for (const item of items) {
                 try {
@@ -280,6 +283,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                             payload: itemPayload,
                         });
                     }
+
+                    trustedItemIds.push(item.id);
                 } catch (err) {
                     console.error('Failed to unlink encrypted category reference:', item.id, err);
                 }
@@ -332,7 +337,10 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                     }),
             });
 
-            await refreshIntegrityBaseline();
+            await refreshIntegrityBaseline({
+                itemIds: trustedItemIds,
+                categoryIds: [category.id],
+            });
 
             setShowDeleteConfirm(false);
             onOpenChange(false);

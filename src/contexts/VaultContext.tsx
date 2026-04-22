@@ -68,14 +68,16 @@ import {
     resetUnlockAttempts,
 } from '@/services/rateLimiterService';
 import {
+    inspectVaultSnapshotIntegrity,
     persistIntegrityBaseline,
+    toVaultIntegrityVerificationResult,
     VaultIntegrityBaselineError,
+    type VaultIntegrityBaselineInspection,
     type QuarantinedVaultItem,
     type VaultIntegrityBlockedReason,
     type VaultIntegrityMode,
     type VaultIntegritySnapshot,
     type VaultIntegrityVerificationResult,
-    verifyVaultSnapshotIntegrity,
 } from '@/services/vaultIntegrityService';
 import { resetUserVaultState } from '@/services/vaultRecoveryService';
 
@@ -157,6 +159,61 @@ const SESSION_KEY = 'singra_session';
 const SESSION_TIMESTAMP_KEY = 'singra_session_ts';
 const SESSION_PASSWORD_HINT_KEY = 'singra_session_hint';
 
+interface TrustedVaultMutation {
+    itemIds?: Iterable<string>;
+    categoryIds?: Iterable<string>;
+}
+
+interface NormalizedTrustedVaultMutation {
+    itemIds: Set<string>;
+    categoryIds: Set<string>;
+}
+
+interface VaultIntegrityAssessment {
+    inspection: VaultIntegrityBaselineInspection;
+    unreadableCategoryReason: VaultIntegrityBlockedReason | null;
+    unreadableItems: QuarantinedVaultItem[];
+    result: VaultIntegrityVerificationResult;
+}
+
+function normalizeTrustedVaultMutation(
+    mutation?: TrustedVaultMutation,
+): NormalizedTrustedVaultMutation {
+    return {
+        itemIds: new Set(mutation?.itemIds ?? []),
+        categoryIds: new Set(mutation?.categoryIds ?? []),
+    };
+}
+
+function canRebaselineTrustedMutation(
+    assessment: VaultIntegrityAssessment,
+    trustedMutation: NormalizedTrustedVaultMutation,
+): boolean {
+    if (assessment.unreadableCategoryReason || assessment.unreadableItems.length > 0) {
+        return false;
+    }
+
+    if (
+        assessment.inspection.snapshotValidationError
+        || assessment.inspection.legacyBaselineMismatch
+    ) {
+        return false;
+    }
+
+    if (
+        assessment.inspection.categoryDriftIds.some((categoryId) => !trustedMutation.categoryIds.has(categoryId))
+        || assessment.inspection.itemDrifts.some((item) => !trustedMutation.itemIds.has(item.id))
+    ) {
+        return false;
+    }
+
+    return (
+        assessment.inspection.baselineKind === 'missing'
+        || assessment.inspection.categoryDriftIds.length > 0
+        || assessment.inspection.itemDrifts.length > 0
+    );
+}
+
 interface VaultContextType {
     // State
     isLocked: boolean;
@@ -214,7 +271,7 @@ interface VaultContextType {
     /**
      * Recomputes and persists the current local integrity baseline after a trusted mutation.
      */
-    refreshIntegrityBaseline: () => Promise<void>;
+    refreshIntegrityBaseline: (trustedMutation?: TrustedVaultMutation) => Promise<void>;
     /**
      * Whether integrity verification has been performed since unlock
      */
@@ -325,6 +382,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
     const clearActiveVaultSession = useCallback(() => {
         setEncryptionKey(null);
+        setCurrentDeviceKey((existingKey) => {
+            existingKey?.fill(0);
+            return null;
+        });
         setIsLocked(true);
         setIsDuressMode(false);
         setIntegrityVerified(false);
@@ -397,6 +458,48 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setHasPasskeyUnlock(false);
         }
     }, [user, webAuthnAvailable, authReady]); // authReady required â€” stale closure fix
+
+    const getResolvedDeviceKey = useCallback(async (): Promise<Uint8Array | null> => {
+        if (currentDeviceKey) {
+            return currentDeviceKey;
+        }
+
+        if (!user) {
+            return null;
+        }
+
+        try {
+            const storedDeviceKey = await loadDeviceKey(user.id);
+            if (storedDeviceKey) {
+                setCurrentDeviceKey(storedDeviceKey);
+                setDeviceKeyActive(true);
+            }
+            return storedDeviceKey;
+        } catch (error) {
+            console.warn('Failed to load device key from local secret storage:', error);
+            return null;
+        }
+    }, [currentDeviceKey, user]);
+
+    const getRequiredDeviceKey = useCallback(async (): Promise<{
+        deviceKey: Uint8Array | null;
+        error: Error | null;
+    }> => {
+        const deviceKey = await getResolvedDeviceKey();
+        if (deviceKeyActive && !deviceKey) {
+            return {
+                deviceKey: null,
+                error: new Error(
+                    'Device key is unavailable on this device. Restore the device key or use a recovery method.',
+                ),
+            };
+        }
+
+        return {
+            deviceKey,
+            error: null,
+        };
+    }, [deviceKeyActive, getResolvedDeviceKey]);
 
     const buildIntegritySnapshot = useCallback((
         snapshot: {
@@ -506,54 +609,133 @@ export function VaultProvider({ children }: VaultProviderProps) {
         });
     }, []);
 
+    const mergeQuarantinedItems = useCallback((
+        ...groups: QuarantinedVaultItem[][]
+    ): QuarantinedVaultItem[] => {
+        const merged = new Map<string, QuarantinedVaultItem>();
+
+        for (const group of groups) {
+            for (const item of group) {
+                const existing = merged.get(item.id);
+                if (!existing || (item.updatedAt ?? '') > (existing.updatedAt ?? '')) {
+                    merged.set(item.id, item);
+                }
+            }
+        }
+
+        return [...merged.values()].sort((left, right) => {
+            const leftDate = left.updatedAt ?? '';
+            const rightDate = right.updatedAt ?? '';
+            return rightDate.localeCompare(leftDate) || left.id.localeCompare(right.id);
+        });
+    }, []);
+
     const assessVaultIntegrity = useCallback(async (
         snapshot: OfflineVaultSnapshot,
         activeKey: CryptoKey,
-    ): Promise<VaultIntegrityVerificationResult> => {
+    ): Promise<VaultIntegrityAssessment> => {
         if (!user) {
             throw new Error('No active user session');
         }
 
-        const baseResult = await verifyVaultSnapshotIntegrity(
+        const inspection = await inspectVaultSnapshotIntegrity(
             user.id,
             buildIntegritySnapshot(snapshot),
             activeKey,
         );
+        const baseResult = toVaultIntegrityVerificationResult(inspection);
 
         if (baseResult.mode === 'blocked') {
-            return baseResult;
+            return {
+                inspection,
+                unreadableCategoryReason: null,
+                unreadableItems: [],
+                result: baseResult,
+            };
         }
 
         const categoryIssue = await detectUnreadableCategories(snapshot, activeKey);
         if (categoryIssue) {
             return {
-                ...baseResult,
-                valid: false,
-                mode: 'blocked',
-                blockedReason: categoryIssue,
-                quarantinedItems: [],
+                inspection,
+                unreadableCategoryReason: categoryIssue,
+                unreadableItems: [],
+                result: {
+                    ...baseResult,
+                    valid: false,
+                    mode: 'blocked',
+                    blockedReason: categoryIssue,
+                    quarantinedItems: [],
+                },
             };
         }
 
-        const quarantinedItems = await detectQuarantinedItems(snapshot, activeKey);
+        const unreadableItems = await detectQuarantinedItems(snapshot, activeKey);
+        const quarantinedItems = mergeQuarantinedItems(
+            baseResult.quarantinedItems,
+            unreadableItems,
+        );
         if (quarantinedItems.length > 0) {
             return {
-                ...baseResult,
-                valid: true,
-                mode: 'quarantine',
-                blockedReason: undefined,
-                quarantinedItems,
+                inspection,
+                unreadableCategoryReason: null,
+                unreadableItems,
+                result: {
+                    ...baseResult,
+                    valid: true,
+                    mode: 'quarantine',
+                    blockedReason: undefined,
+                    quarantinedItems,
+                },
             };
         }
 
         return {
-            ...baseResult,
-            valid: true,
-            mode: 'healthy',
-            blockedReason: undefined,
-            quarantinedItems: [],
+            inspection,
+            unreadableCategoryReason: null,
+            unreadableItems,
+            result: {
+                ...baseResult,
+                valid: true,
+                mode: 'healthy',
+                blockedReason: undefined,
+                quarantinedItems: [],
+            },
         };
-    }, [buildIntegritySnapshot, detectQuarantinedItems, detectUnreadableCategories, user]);
+    }, [
+        buildIntegritySnapshot,
+        detectQuarantinedItems,
+        detectUnreadableCategories,
+        mergeQuarantinedItems,
+        user,
+    ]);
+
+    const applyIntegrityResultState = useCallback((result: VaultIntegrityVerificationResult): void => {
+        setIntegrityVerified(true);
+        setLastIntegrityResult(result);
+        setIntegrityMode(result.mode);
+        setQuarantinedItems(result.quarantinedItems);
+        setIntegrityBlockedReason(result.blockedReason ?? null);
+    }, []);
+
+    const persistMissingOrLegacyBaseline = useCallback(async (
+        integritySnapshot: VaultIntegritySnapshot,
+        activeKey: CryptoKey,
+        inspection: VaultIntegrityBaselineInspection,
+    ): Promise<void> => {
+        if (!user || inspection.snapshotValidationError || inspection.legacyBaselineMismatch) {
+            return;
+        }
+
+        if (inspection.baselineKind === 'missing' || inspection.baselineKind === 'v1') {
+            await persistIntegrityBaseline(
+                user.id,
+                integritySnapshot,
+                activeKey,
+                inspection.digest,
+            );
+        }
+    }, [user]);
 
     const setBlockedIntegrityState = useCallback(async (
         activeKey: CryptoKey,
@@ -591,12 +773,9 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return { error: new Error('Vault snapshot unavailable') };
             }
 
-            const integrityResult = await assessVaultIntegrity(snapshotBundle.rawSnapshot, activeKey);
-            setIntegrityVerified(true);
-            setLastIntegrityResult(integrityResult);
-            setIntegrityMode(integrityResult.mode);
-            setQuarantinedItems(integrityResult.quarantinedItems);
-            setIntegrityBlockedReason(integrityResult.blockedReason ?? null);
+            const integrityAssessment = await assessVaultIntegrity(snapshotBundle.rawSnapshot, activeKey);
+            const integrityResult = integrityAssessment.result;
+            applyIntegrityResultState(integrityResult);
 
             if (integrityResult.mode === 'blocked') {
                 await setBlockedIntegrityState(
@@ -612,6 +791,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }
 
             if (integrityResult.mode === 'healthy') {
+                await persistMissingOrLegacyBaseline(
+                    snapshotBundle.integritySnapshot,
+                    activeKey,
+                    integrityAssessment.inspection,
+                );
                 await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
             } else {
                 setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
@@ -642,9 +826,19 @@ export function VaultProvider({ children }: VaultProviderProps) {
         setPendingSessionRestore(false);
 
         return { error: null };
-    }, [assessVaultIntegrity, loadCurrentIntegritySnapshot, persistTrustedIntegritySnapshot, setBlockedIntegrityState, user]);
+    }, [
+        applyIntegrityResultState,
+        assessVaultIntegrity,
+        loadCurrentIntegritySnapshot,
+        persistMissingOrLegacyBaseline,
+        persistTrustedIntegritySnapshot,
+        setBlockedIntegrityState,
+        user,
+    ]);
 
-    const refreshIntegrityBaseline = useCallback(async (): Promise<void> => {
+    const refreshIntegrityBaseline = useCallback(async (
+        trustedMutation?: TrustedVaultMutation,
+    ): Promise<void> => {
         if (!user || !encryptionKey) {
             return;
         }
@@ -654,8 +848,15 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return;
         }
 
-        const integrityResult = await assessVaultIntegrity(snapshotBundle.rawSnapshot, encryptionKey);
-        if (integrityResult.mode === 'blocked') {
+        const normalizedTrustedMutation = normalizeTrustedVaultMutation(trustedMutation);
+        const integrityAssessment = await assessVaultIntegrity(snapshotBundle.rawSnapshot, encryptionKey);
+        const integrityResult = integrityAssessment.result;
+        const trustedRebaselineAllowed = canRebaselineTrustedMutation(
+            integrityAssessment,
+            normalizedTrustedMutation,
+        );
+
+        if (integrityResult.mode === 'blocked' && !trustedRebaselineAllowed) {
             await setBlockedIntegrityState(
                 encryptionKey,
                 integrityResult.blockedReason ?? 'snapshot_malformed',
@@ -664,23 +865,20 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return;
         }
 
-        if (integrityResult.mode === 'quarantine') {
-            setIntegrityVerified(true);
-            setIntegrityMode('quarantine');
-            setLastIntegrityResult(integrityResult);
-            setQuarantinedItems(integrityResult.quarantinedItems);
-            setIntegrityBlockedReason(null);
+        if (integrityResult.mode === 'quarantine' && !trustedRebaselineAllowed) {
+            applyIntegrityResultState(integrityResult);
             setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
             return;
         }
 
-        const digest = await persistIntegrityBaseline(user.id, snapshotBundle.integritySnapshot, encryptionKey);
+        const digest = await persistIntegrityBaseline(
+            user.id,
+            snapshotBundle.integritySnapshot,
+            encryptionKey,
+            integrityAssessment.inspection.digest,
+        );
         await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
-        setIntegrityVerified(true);
-        setIntegrityMode('healthy');
-        setQuarantinedItems([]);
-        setIntegrityBlockedReason(null);
-        setLastIntegrityResult({
+        applyIntegrityResultState({
             valid: true,
             isFirstCheck: false,
             computedRoot: digest,
@@ -690,7 +888,15 @@ export function VaultProvider({ children }: VaultProviderProps) {
             mode: 'healthy',
             quarantinedItems: [],
         });
-    }, [assessVaultIntegrity, encryptionKey, loadCurrentIntegritySnapshot, persistTrustedIntegritySnapshot, setBlockedIntegrityState, user]);
+    }, [
+        applyIntegrityResultState,
+        assessVaultIntegrity,
+        encryptionKey,
+        loadCurrentIntegritySnapshot,
+        persistTrustedIntegritySnapshot,
+        setBlockedIntegrityState,
+        user,
+    ]);
 
     const backfillVerificationHash = useCallback(async (
         activeKey: CryptoKey,
@@ -747,12 +953,18 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
         const category = probeCategories?.[0];
         if (!category) {
-            return false;
+            // Legacy vaults without any encrypted payload cannot be distinguished
+            // cryptographically. Allow migration so they can re-establish a verifier.
+            return true;
         }
 
         const encryptedFields = [category.name, category.icon, category.color]
             .filter((value): value is string => typeof value === 'string' && value.startsWith('enc:cat:v1:'))
             .map((value) => value.slice('enc:cat:v1:'.length));
+
+        if (encryptedFields.length === 0) {
+            return true;
+        }
 
         for (const encryptedField of encryptedFields) {
             try {
@@ -1371,7 +1583,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return { error: null };
             }
 
-            const kdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
+            const { deviceKey, error: deviceKeyError } = await getRequiredDeviceKey();
+            if (deviceKeyError) {
+                return { error: deviceKeyError };
+            }
+            const kdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, deviceKey || undefined);
             let activeKey: CryptoKey;
             let shouldBackfillVerifier = !verificationHash;
 
@@ -1390,7 +1606,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     activeKey = userKey;
 
                     try {
-                        const upgrade = await attemptKdfUpgrade(masterPassword, salt, kdfVersion, currentDeviceKey || undefined, encryptedUserKey, kdfOutputBytes);
+                        const upgrade = await attemptKdfUpgrade(masterPassword, salt, kdfVersion, deviceKey || undefined, encryptedUserKey, kdfOutputBytes);
                         if (upgrade.upgraded && upgrade.newEncryptedUserKey && upgrade.newVerifier) {
                             const { error: upgradeError } = await supabase
                                 .from('profiles')
@@ -1605,10 +1821,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
         verificationHash,
         kdfVersion,
         duressConfig,
-        currentDeviceKey,
         encryptedUserKey,
         finalizeVaultUnlock,
         backfillVerificationHash,
+        getRequiredDeviceKey,
         recoverLegacyKeyWithoutVerifier,
         migrateLegacyVaultToUserKey,
     ]);
@@ -1708,7 +1924,12 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
         let kdfOutputBytes: Uint8Array | null = null;
         try {
-            kdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
+            const { deviceKey, error: deviceKeyError } = await getRequiredDeviceKey();
+            if (deviceKeyError) {
+                console.warn('Failed to derive passkey wrapping material:', deviceKeyError);
+                return null;
+            }
+            kdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, deviceKey || undefined);
 
             if (encryptedUserKey) {
                 const userKey = await unwrapUserKey(encryptedUserKey, kdfOutputBytes);
@@ -1752,7 +1973,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         isLocked,
         verificationHash,
         encryptedUserKey,
-        currentDeviceKey,
+        getRequiredDeviceKey,
         recoverLegacyKeyWithoutVerifier,
     ]);
 
@@ -1930,7 +2151,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return null;
             }
 
-            const result = await assessVaultIntegrity(rawSnapshot, encryptionKey);
+            const integrityAssessment = await assessVaultIntegrity(rawSnapshot, encryptionKey);
+            const result = integrityAssessment.result;
 
             if (result.mode === 'blocked') {
                 await setBlockedIntegrityState(
@@ -1941,13 +2163,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return result;
             }
 
-            setIntegrityVerified(true);
-            setLastIntegrityResult(result);
-            setIntegrityMode(result.mode);
-            setQuarantinedItems(result.quarantinedItems);
-            setIntegrityBlockedReason(result.blockedReason ?? null);
+            applyIntegrityResultState(result);
 
             if (result.mode === 'healthy') {
+                await persistMissingOrLegacyBaseline(
+                    buildIntegritySnapshot(rawSnapshot),
+                    encryptionKey,
+                    integrityAssessment.inspection,
+                );
                 await persistTrustedIntegritySnapshot(rawSnapshot);
             } else {
                 setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
@@ -1976,12 +2199,24 @@ export function VaultProvider({ children }: VaultProviderProps) {
             );
             return failureResult;
         }
-    }, [assessVaultIntegrity, encryptionKey, loadCurrentIntegritySnapshot, persistTrustedIntegritySnapshot, setBlockedIntegrityState, user]);
+    }, [
+        applyIntegrityResultState,
+        assessVaultIntegrity,
+        buildIntegritySnapshot,
+        encryptionKey,
+        loadCurrentIntegritySnapshot,
+        persistMissingOrLegacyBaseline,
+        persistTrustedIntegritySnapshot,
+        setBlockedIntegrityState,
+        user,
+    ]);
 
     const updateIntegrity = useCallback(async (
-        _items: VaultItemForIntegrity[]
+        items: VaultItemForIntegrity[]
     ): Promise<void> => {
-        await refreshIntegrityBaseline();
+        await refreshIntegrityBaseline({
+            itemIds: items.map((item) => item.id),
+        });
     }, [refreshIntegrityBaseline]);
 
     const enterSafeMode = useCallback(async (): Promise<{ error: Error | null }> => {

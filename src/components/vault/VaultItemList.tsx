@@ -107,6 +107,7 @@ export function VaultItemList({
 
         const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
         let integrityBaselineDirty = false;
+        const trustedItemIds = new Set<string>();
 
         setDecrypting(true);
         const decryptedItems = await Promise.all(
@@ -177,6 +178,7 @@ export function VaultItemList({
                   }, snapshot.vaultId);
 
                   integrityBaselineDirty = true;
+                  trustedItemIds.add(item.id);
                 }
 
                 return {
@@ -211,7 +213,9 @@ export function VaultItemList({
         );
 
         if (integrityBaselineDirty && canPersistMigrations) {
-          await refreshIntegrityBaseline();
+          await refreshIntegrityBaseline({
+            itemIds: trustedItemIds,
+          });
         }
 
         setItems(decryptedItems as VaultItem[]);

@@ -141,6 +141,7 @@ export function DataSettings() {
             }
 
             let imported = 0;
+            const importedItemIds: string[] = [];
 
             // Import each item
             for (const item of data.items) {
@@ -174,6 +175,7 @@ export function DataSettings() {
                         encrypted_data: encryptedData,
                     });
 
+                    importedItemIds.push(newItemId);
                     imported++;
                 } catch (err) {
                     console.error('Failed to import item:', err);
@@ -186,7 +188,9 @@ export function DataSettings() {
             });
 
             if (imported > 0) {
-                await refreshIntegrityBaseline();
+                await refreshIntegrityBaseline({
+                    itemIds: importedItemIds,
+                });
             }
         } catch (error) {
             console.error('Import failed:', error);
