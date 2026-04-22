@@ -281,19 +281,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
     const [lastIntegrityResult, setLastIntegrityResult] = useState<VaultIntegrityVerificationResult | null>(null);
     const [lastActivity, setLastActivity] = useState(Date.now());
 
-    const resetVaultState = useCallback(() => {
+    const clearActiveVaultSession = useCallback(() => {
         setEncryptionKey(null);
         setIsLocked(true);
-        setIsSetupRequired(false);
-        setSalt(null);
-        setVerificationHash(null);
-        setKdfVersion(1);
-        setHasPasskeyUnlock(false);
         setIsDuressMode(false);
-        setDuressConfig(null);
-        setDeviceKeyActive(false);
-        setCurrentDeviceKey(null);
-        setEncryptedUserKey(null);
         setIntegrityVerified(false);
         setLastIntegrityResult(null);
         setPendingSessionRestore(false);
@@ -302,6 +293,19 @@ export function VaultProvider({ children }: VaultProviderProps) {
         sessionStorage.removeItem(SESSION_TIMESTAMP_KEY);
         sessionStorage.removeItem(SESSION_PASSWORD_HINT_KEY);
     }, []);
+
+    const resetVaultState = useCallback(() => {
+        clearActiveVaultSession();
+        setIsSetupRequired(false);
+        setSalt(null);
+        setVerificationHash(null);
+        setKdfVersion(1);
+        setHasPasskeyUnlock(false);
+        setDuressConfig(null);
+        setDeviceKeyActive(false);
+        setCurrentDeviceKey(null);
+        setEncryptedUserKey(null);
+    }, [clearActiveVaultSession]);
 
     useEffect(() => {
         const currentUserId = user?.id ?? null;
@@ -1489,9 +1493,9 @@ export function VaultProvider({ children }: VaultProviderProps) {
     ]);
 
     const lock = useCallback(() => {
-        resetVaultState();
+        clearActiveVaultSession();
         setIsLoading(false);
-    }, [resetVaultState]);
+    }, [clearActiveVaultSession]);
 
     /**
      * Enables Device Key protection on this device.

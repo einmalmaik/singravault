@@ -128,6 +128,25 @@ describe("VaultUnlock", () => {
     });
   });
 
+  it("should show the actual vault unlock error instead of generic auth credentials text", async () => {
+    mockUnlock.mockResolvedValue({ error: new Error("Vault not set up") });
+    render(<VaultUnlock />);
+
+    const input = screen.getByLabelText("auth.unlock.password");
+    fireEvent.change(input, { target: { value: "MyMasterPassword!" } });
+
+    const form = input.closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Vault not set up",
+        }),
+      );
+    });
+  });
+
   it("should call signOut when logout button is clicked", async () => {
     render(<VaultUnlock />);
 

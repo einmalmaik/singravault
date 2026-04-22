@@ -74,7 +74,7 @@ export function VaultUnlock() {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
-                description: t('auth.errors.invalidCredentials'),
+                description: error.message || t('auth.unlock.invalidMasterPassword', 'Invalid master password'),
             });
             setPassword('');
             setPendingPassword('');
