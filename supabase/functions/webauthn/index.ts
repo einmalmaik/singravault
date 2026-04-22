@@ -163,6 +163,9 @@ Deno.serve(async (req: Request) => {
             case "activate-prf":
                 return await handleActivatePrf(user, rp, supabaseAdmin, body, corsHeaders);
 
+            case "upgrade-wrapped-key":
+                return await handleUpgradeWrappedKey(user, supabaseAdmin, body, corsHeaders);
+
             case "list-credentials":
                 return await handleListCredentials(user, rp, supabaseAdmin, corsHeaders);
 
@@ -666,6 +669,39 @@ async function handleActivatePrf(
         console.error("PRF activation verification error:", err);
         return jsonResponse({ error: "Verification failed" }, 400, corsHeaders);
     }
+}
+
+async function handleUpgradeWrappedKey(
+    user: { id: string },
+    supabase: ReturnType<typeof createClient>,
+    body: Record<string, unknown>,
+    corsHeaders: Record<string, string>,
+) {
+    const { credentialId, wrappedMasterKey } = body as {
+        credentialId?: string;
+        wrappedMasterKey?: string;
+    };
+
+    if (!credentialId || typeof wrappedMasterKey !== "string" || wrappedMasterKey.trim().length === 0) {
+        return jsonResponse({ error: "Missing credentialId or wrappedMasterKey" }, 400, corsHeaders);
+    }
+
+    const { error } = await supabase
+        .from("passkey_credentials")
+        .update({
+            wrapped_master_key: wrappedMasterKey,
+            prf_enabled: true,
+            last_used_at: new Date().toISOString(),
+        })
+        .eq("user_id", user.id)
+        .eq("credential_id", credentialId);
+
+    if (error) {
+        console.error("Failed to upgrade wrapped passkey key:", error);
+        return jsonResponse({ error: "Failed to update wrapped key" }, 500, corsHeaders);
+    }
+
+    return jsonResponse({ updated: true }, 200, corsHeaders);
 }
 
 // ============ Credential Management ============

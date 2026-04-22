@@ -36,7 +36,7 @@ const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 export function DataSettings() {
     const { t } = useTranslation();
     const { user } = useAuth();
-    const { decryptItem, encryptItem, isLocked } = useVault();
+    const { decryptItem, encryptItem, isLocked, refreshIntegrityBaseline } = useVault();
     const { toast } = useToast();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -218,6 +218,10 @@ export function DataSettings() {
                 title: t('common.success'),
                 description: t('settings.data.importSuccess', { count: imported }),
             });
+
+            if (imported > 0) {
+                await refreshIntegrityBaseline();
+            }
         } catch (error) {
             console.error('Import failed:', error);
             toast({

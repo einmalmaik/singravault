@@ -62,7 +62,7 @@ export function VaultItemList({
 }: VaultItemListProps) {
     const { t } = useTranslation();
     const { user } = useAuth();
-    const { decryptItem, encryptItem, isDuressMode } = useVault();
+    const { decryptItem, encryptItem, isDuressMode, refreshIntegrityBaseline } = useVault();
 
     const [items, setItems] = useState<VaultItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -84,6 +84,7 @@ export function VaultItemList({
             try {
                 const { snapshot, source } = await loadVaultSnapshot(user.id);
                 const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+                let integrityBaselineDirty = false;
 
                 // Decrypt items
                 setDecrypting(true);
@@ -152,6 +153,7 @@ export function VaultItemList({
                                         category_id: null,
                                         updated_at: new Date().toISOString(),
                                     }, snapshot.vaultId);
+                                    integrityBaselineDirty = true;
                                 }
 
                                 return {
@@ -184,6 +186,10 @@ export function VaultItemList({
                     })
                 );
 
+                if (integrityBaselineDirty) {
+                    await refreshIntegrityBaseline();
+                }
+
                 setItems(decryptedItems as VaultItem[]);
             } catch (err) {
                 console.error('Error fetching vault items:', err);
@@ -194,7 +200,7 @@ export function VaultItemList({
         }
 
         fetchItems();
-    }, [user, decryptItem, encryptItem, refreshKey, isDuressMode]); // Added refreshKey to trigger refetch
+    }, [user, decryptItem, encryptItem, refreshKey, isDuressMode, refreshIntegrityBaseline]); // Added refreshKey to trigger refetch
 
     // Filter items
     const filteredItems = useMemo(() => {

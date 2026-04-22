@@ -1326,17 +1326,35 @@ export async function unwrapUserKey(
     encryptedUserKey: string,
     kdfOutputBytes: Uint8Array,
 ): Promise<CryptoKey> {
+    const userKeyBytes = await unwrapUserKeyBytes(encryptedUserKey, kdfOutputBytes);
+    try {
+        return await importMasterKey(userKeyBytes);
+    } finally {
+        userKeyBytes.fill(0);
+    }
+}
+
+/**
+ * Decrypts the stored encryptedUserKey and returns the raw UserKey bytes.
+ * Intended for migration and passkey wrapping flows that need the vault key
+ * material before importing it as a CryptoKey.
+ *
+ * @param encryptedUserKey - Value from profiles.encrypted_user_key
+ * @param kdfOutputBytes   - Raw 32 bytes from Argon2id (caller must wipe after use)
+ * @throws If the KDF output is wrong or the data is tampered
+ */
+export async function unwrapUserKeyBytes(
+    encryptedUserKey: string,
+    kdfOutputBytes: Uint8Array,
+): Promise<Uint8Array> {
     let wrapKeyBytes: Uint8Array | null = null;
-    let userKeyBytes: Uint8Array | null = null;
     try {
         wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
         const wrapKey = await importMasterKey(wrapKeyBytes);
         const userKeyBase64 = await decrypt(encryptedUserKey, wrapKey);
-        userKeyBytes = base64ToUint8Array(userKeyBase64);
-        return await importMasterKey(userKeyBytes);
+        return base64ToUint8Array(userKeyBase64);
     } finally {
         wrapKeyBytes?.fill(0);
-        userKeyBytes?.fill(0);
     }
 }
 

@@ -11,14 +11,14 @@
  *     1. Get options from server (includes PRF salt)
  *     2. Call startRegistration() with PRF extension
  *     3. If PRF supported: derive wrapping key from PRF output via HKDF
- *     4. Encrypt the raw key bytes (from deriveRawKey) with the wrapping key
+ *     4. Encrypt the raw vault key bytes with the wrapping key
  *     5. Send credential + encrypted key to server
  *
  *   Authentication (vault locked):
  *     1. Get options from server (includes PRF salts per credential)
  *     2. Call startAuthentication() with PRF extension
  *     3. Derive wrapping key from PRF output via HKDF
- *     4. Decrypt the raw key bytes → import as non-extractable CryptoKey
+ *     4. Decrypt the wrapped key material
  *     5. Vault unlocked — no master password needed
  *
  * SECURITY:
@@ -39,7 +39,7 @@ import type {
     AuthenticationResponseJSON,
 } from '@simplewebauthn/browser';
 import { invokeAuthedFunction } from '@/services/edgeFunctionService';
-import { importMasterKey } from '@/services/cryptoService';
+import { importMasterKey, unwrapUserKeyBytes } from '@/services/cryptoService';
 import { buildAuthenticationPrfExtension } from '@/services/passkeyPrf';
 
 // ============ WebAuthn PRF Extension Types ============
@@ -116,6 +116,7 @@ const HKDF_SALT = new TextEncoder().encode('Singra Vault-HKDF-Salt-v1');
 
 /** AES-GCM IV length in bytes */
 const IV_LENGTH = 12;
+const PASSKEY_ENVELOPE_V2_PREFIX = 'sv-pk-v2:';
 
 async function invokeWebauthn<TResponse>(
     body: Record<string, unknown>,
@@ -159,6 +160,21 @@ export async function isPlatformAuthenticatorAvailable(): Promise<boolean> {
         return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
     } catch {
         return false;
+    }
+}
+
+async function upgradePasskeyWrappedKey(
+    credentialId: string,
+    wrappedMasterKey: string,
+): Promise<void> {
+    const { error } = await invokeWebauthn<{ updated: boolean }>({
+        action: 'upgrade-wrapped-key',
+        credentialId,
+        wrappedMasterKey,
+    });
+
+    if (error) {
+        throw error;
     }
 }
 
@@ -253,7 +269,7 @@ export async function getPasskeyClientSupport(): Promise<PasskeyClientSupport> {
  * @returns Result with success status and PRF support indication
  */
 export async function registerPasskey(
-    rawKeyBytes: Uint8Array,
+    rawVaultKeyBytes: Uint8Array,
     deviceName: string = 'Passkey',
 ): Promise<PasskeyRegistrationResult> {
     // 1. Get registration options from server
@@ -313,7 +329,9 @@ export async function registerPasskey(
             // Got PRF output during registration — wrap the raw key now
             const prfOutput = new Uint8Array(prfResults.first);
             try {
-                wrappedMasterKey = await encryptRawKeyBytes(rawKeyBytes, prfOutput);
+                wrappedMasterKey = formatPasskeyEnvelopeV2(
+                    await encryptRawKeyBytes(rawVaultKeyBytes, prfOutput),
+                );
             } finally {
                 prfOutput.fill(0);
             }
@@ -358,7 +376,7 @@ export async function registerPasskey(
  * @returns Success status and the credential ID that was activated
  */
 export async function activatePasskeyPrf(
-    rawKeyBytes: Uint8Array,
+    rawVaultKeyBytes: Uint8Array,
     expectedCredentialId: string,
 ): Promise<{ success: boolean; error?: string; credentialId?: string }> {
     if (!expectedCredentialId) {
@@ -418,7 +436,9 @@ export async function activatePasskeyPrf(
 
     const prfOutput = new Uint8Array(prfResults.first);
     try {
-        const wrappedKey = await encryptRawKeyBytes(rawKeyBytes, prfOutput);
+        const wrappedKey = formatPasskeyEnvelopeV2(
+            await encryptRawKeyBytes(rawVaultKeyBytes, prfOutput),
+        );
 
         // 4. Persist wrapped key server-side (credential ownership + assertion verified in Edge Function)
         const { data: activationData, error: activationError } = await invokeWebauthn<{
@@ -449,7 +469,9 @@ export async function activatePasskeyPrf(
  *
  * @returns The unwrapped encryption key on success
  */
-export async function authenticatePasskey(): Promise<PasskeyAuthenticationResult> {
+export async function authenticatePasskey(
+    authenticateOptions: { encryptedUserKey?: string | null } = {},
+): Promise<PasskeyAuthenticationResult> {
     // 1. Get authentication options from server
     const { data: serverData, error: serverError } = await invokeWebauthn<{
         options: PublicKeyCredentialRequestOptionsJSON;
@@ -462,7 +484,7 @@ export async function authenticatePasskey(): Promise<PasskeyAuthenticationResult
         return { success: false, error: serverError?.message || 'Failed to get authentication options' };
     }
 
-    const options: PublicKeyCredentialRequestOptionsJSON = serverData.options;
+    const requestOptions: PublicKeyCredentialRequestOptionsJSON = serverData.options;
     const prfSalts: Record<string, string> = serverData.prfSalts || {};
 
     // 2. Build PRF extension
@@ -472,9 +494,9 @@ export async function authenticatePasskey(): Promise<PasskeyAuthenticationResult
     let authResponse: AuthenticationResponseJSON;
     try {
         const optionsWithPrf: RequestOptionsWithPrf = {
-            ...options,
+            ...requestOptions,
             extensions: {
-                ...(options.extensions || {}),
+                ...(requestOptions.extensions || {}),
                 prf: prfExtension,
             },
         };
@@ -518,22 +540,63 @@ export async function authenticatePasskey(): Promise<PasskeyAuthenticationResult
     // 6. Derive wrapping key from PRF output and decrypt the raw key bytes
     const prfOutput = new Uint8Array(prfResults.first);
     try {
-        const rawKeyBytes = await decryptRawKeyBytes(
-            verifyData.wrappedMasterKey,
+        const parsedEnvelope = parsePasskeyEnvelope(verifyData.wrappedMasterKey);
+        const rawWrappedKeyBytes = await decryptRawKeyBytes(
+            parsedEnvelope.payload,
             prfOutput,
         );
 
-        // 7. Import the raw key bytes as a non-extractable CryptoKey
-        const encryptionKey = await importMasterKey(rawKeyBytes);
+        if (parsedEnvelope.version === 2) {
+            const encryptionKey = await importMasterKey(rawWrappedKeyBytes);
+            rawWrappedKeyBytes.fill(0);
 
-        // SECURITY: Wipe raw key bytes immediately
-        rawKeyBytes.fill(0);
+            return {
+                success: true,
+                encryptionKey,
+                prfEnabled: true,
+                credentialId: verifyData.credentialId,
+                keySource: 'vault-key',
+            };
+        }
+
+        if (authenticateOptions.encryptedUserKey) {
+            const rawVaultKeyBytes = await unwrapUserKeyBytes(authenticateOptions.encryptedUserKey, rawWrappedKeyBytes);
+
+            try {
+                const upgradedWrappedKey = formatPasskeyEnvelopeV2(
+                    await encryptRawKeyBytes(rawVaultKeyBytes, prfOutput),
+                );
+
+                await upgradePasskeyWrappedKey(verifyData.credentialId, upgradedWrappedKey);
+            } catch (error) {
+                console.warn('Failed to rotate legacy passkey envelope after successful unlock:', error);
+            }
+
+            rawWrappedKeyBytes.fill(0);
+
+            try {
+                const encryptionKey = await importMasterKey(rawVaultKeyBytes);
+                return {
+                    success: true,
+                    encryptionKey,
+                    prfEnabled: true,
+                    credentialId: verifyData.credentialId,
+                    keySource: 'vault-key',
+                };
+            } finally {
+                rawVaultKeyBytes.fill(0);
+            }
+        }
+
+        const encryptionKey = await importMasterKey(rawWrappedKeyBytes);
 
         return {
             success: true,
             encryptionKey,
             prfEnabled: true,
             credentialId: verifyData.credentialId,
+            keySource: 'legacy-kdf',
+            legacyKdfOutputBytes: rawWrappedKeyBytes,
         };
     } catch (err: unknown) {
         console.error('Failed to unwrap encryption key:', err);
@@ -681,6 +744,24 @@ async function decryptRawKeyBytes(
     return new Uint8Array(plaintext);
 }
 
+function formatPasskeyEnvelopeV2(payload: string): string {
+    return `${PASSKEY_ENVELOPE_V2_PREFIX}${payload}`;
+}
+
+function parsePasskeyEnvelope(envelope: string): { version: 1 | 2; payload: string } {
+    if (envelope.startsWith(PASSKEY_ENVELOPE_V2_PREFIX)) {
+        return {
+            version: 2,
+            payload: envelope.slice(PASSKEY_ENVELOPE_V2_PREFIX.length),
+        };
+    }
+
+    return {
+        version: 1,
+        payload: envelope,
+    };
+}
+
 // ============ Utility Functions ============
 
 /**
@@ -733,6 +814,13 @@ export interface PasskeyAuthenticationResult {
     prfEnabled?: boolean;
     /** The credential that was used */
     credentialId?: string;
+    /** Whether the passkey envelope already stored vault-key material or a legacy KDF blob */
+    keySource?: 'vault-key' | 'legacy-kdf';
+    /**
+     * Only present for legacy passkeys on pre-USK accounts.
+     * The caller must wipe this buffer after any migration/finalization work.
+     */
+    legacyKdfOutputBytes?: Uint8Array;
 }
 
 /**

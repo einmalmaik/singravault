@@ -43,7 +43,7 @@ export function PasskeySettings() {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user, authReady } = useAuth();
-    const { webAuthnAvailable, getRawKeyForPasskey, refreshPasskeyUnlockStatus, isLocked } = useVault();
+    const { webAuthnAvailable, getPasskeyWrappingMaterial, refreshPasskeyUnlockStatus, isLocked } = useVault();
 
     const [passkeys, setPasskeys] = useState<PasskeyCredential[]>([]);
     const [loading, setLoading] = useState(false);
@@ -138,7 +138,7 @@ export function PasskeySettings() {
         setRegistering(true);
 
         // 1. Derive raw key bytes from master password
-        const rawKeyBytes = await getRawKeyForPasskey(masterPassword);
+        const rawKeyBytes = await getPasskeyWrappingMaterial(masterPassword);
         if (!rawKeyBytes) {
             setRegistering(false);
             toast({

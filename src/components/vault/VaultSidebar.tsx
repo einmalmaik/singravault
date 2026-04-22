@@ -81,7 +81,7 @@ export function VaultSidebar({
     const { t } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
-    const { lock, encryptData, decryptData, decryptItem, encryptItem, isDuressMode } = useVault();
+    const { lock, encryptData, decryptData, decryptItem, encryptItem, isDuressMode, refreshIntegrityBaseline } = useVault();
     const { user } = useAuth();
     const [collapsed, setCollapsed] = useState(false);
 
@@ -108,6 +108,7 @@ export function VaultSidebar({
             const { snapshot, source } = await loadVaultSnapshot(user.id);
             const canPersistMigrations = source === 'remote' && isAppOnline();
             const counts: Record<string, number> = {};
+            let integrityBaselineDirty = false;
 
             await Promise.all(
                 snapshot.items.map(async (item) => {
@@ -177,6 +178,7 @@ export function VaultSidebar({
                                 category_id: null,
                                 updated_at: new Date().toISOString(),
                             }, snapshot.vaultId);
+                            integrityBaselineDirty = true;
                         }
 
                         if (resolvedCategoryId) {
@@ -293,6 +295,7 @@ export function VaultSidebar({
                             color: migratedColor,
                             updated_at: new Date().toISOString(),
                         });
+                        integrityBaselineDirty = true;
                     }
 
                     return {
@@ -305,13 +308,17 @@ export function VaultSidebar({
                 }),
             );
 
+            if (integrityBaselineDirty) {
+                await refreshIntegrityBaseline();
+            }
+
             setCategories(resolvedCategories);
         } catch (err) {
             console.error('Error fetching categories:', err);
         } finally {
             setLoading(false);
         }
-    }, [user, encryptData, decryptData, decryptItem, encryptItem, isDuressMode]);
+    }, [user, encryptData, decryptData, decryptItem, encryptItem, isDuressMode, refreshIntegrityBaseline]);
 
     useEffect(() => {
         if (compactMode) {

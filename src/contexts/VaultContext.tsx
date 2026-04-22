@@ -1,5 +1,5 @@
-// Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+﻿// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 â€” see LICENSE
 /**
  * @fileoverview Vault Context for Singra Vault
  * 
@@ -30,6 +30,7 @@ import {
     createEncryptedUserKey,
     migrateToUserKey,
     unwrapUserKey,
+    unwrapUserKeyBytes,
     rewrapUserKey,
     decryptPrivateKeyLegacy,
     wrapPrivateKeyWithUserKey,
@@ -44,6 +45,7 @@ import {
     isAppOnline,
     isLikelyOfflineError,
     getOfflineCredentials,
+    loadVaultSnapshot,
     saveOfflineCredentials,
 } from '@/services/offlineVaultService';
 import {
@@ -52,11 +54,7 @@ import {
     listPasskeys,
 } from '@/services/passkeyService';
 import { getServiceHooks } from '@/extensions/registry';
-import type {
-    DuressConfigHook,
-    VaultItemForIntegrity,
-    IntegrityVerificationResult,
-} from '@/extensions/types';
+import type { DuressConfigHook, VaultItemForIntegrity } from '@/extensions/types';
 import { supabase } from '@/integrations/supabase/client';
 import { hasOptionalCookieConsent } from '@/lib/cookieConsent';
 import { useAuth } from './AuthContext';
@@ -65,6 +63,13 @@ import {
     recordFailedAttempt,
     resetUnlockAttempts,
 } from '@/services/rateLimiterService';
+import {
+    clearIntegrityBaseline,
+    persistIntegrityBaseline,
+    type VaultIntegritySnapshot,
+    type VaultIntegrityVerificationResult,
+    verifyVaultSnapshotIntegrity,
+} from '@/services/vaultIntegrityService';
 
 // Auto-lock timeout in milliseconds (default 15 minutes)
 const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
@@ -75,7 +80,7 @@ const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
  * Runs once per unlock after the UserKey is established. Re-wraps keys that
  * are still in the old KDF-derived format (e.g. `kdfVersion:salt:enc`) to the
  * new `usk-v1:` sentinel format. This is a non-destructive,
- * idempotent operation — it checks the sentinel before doing any work.
+ * idempotent operation â€” it checks the sentinel before doing any work.
  */
 async function migrateLegacyPrivateKeysToUserKey(
     userId: string,
@@ -174,7 +179,7 @@ interface VaultContextType {
      * Derives raw AES-256 key bytes from the master password (for passkey registration).
      * Must be called while vault is unlocked. Returns null if vault is locked.
      */
-    getRawKeyForPasskey: (masterPassword: string) => Promise<Uint8Array | null>;
+    getPasskeyWrappingMaterial: (masterPassword: string) => Promise<Uint8Array | null>;
 
     // Encryption helpers
     encryptData: (plaintext: string) => Promise<string>;
@@ -192,12 +197,16 @@ interface VaultContextType {
      * Call this after loading vault items to detect server-side tampering.
      * @returns Verification result with valid flag and details
      */
-    verifyIntegrity: (items: VaultItemForIntegrity[]) => Promise<IntegrityVerificationResult | null>;
+    verifyIntegrity: (items: VaultItemForIntegrity[]) => Promise<VaultIntegrityVerificationResult | null>;
     /**
      * Updates the integrity root after vault modifications.
      * Call this after creating, updating, or deleting vault items.
      */
     updateIntegrity: (items: VaultItemForIntegrity[]) => Promise<void>;
+    /**
+     * Recomputes and persists the current local integrity baseline after a trusted mutation.
+     */
+    refreshIntegrityBaseline: () => Promise<void>;
     /**
      * Whether integrity verification has been performed since unlock
      */
@@ -205,7 +214,7 @@ interface VaultContextType {
     /**
      * Last integrity verification result (null if not yet verified)
      */
-    lastIntegrityResult: IntegrityVerificationResult | null;
+    lastIntegrityResult: VaultIntegrityVerificationResult | null;
 }
 
 const VaultContext = createContext<VaultContextType | undefined>(undefined);
@@ -265,18 +274,15 @@ export function VaultProvider({ children }: VaultProviderProps) {
     // Device Key state
     const [deviceKeyActive, setDeviceKeyActive] = useState(false);
     const [currentDeviceKey, setCurrentDeviceKey] = useState<Uint8Array | null>(null);
-    // USK (User Symmetric Key) — encrypted form stored in profiles.encrypted_user_key
+    // USK (User Symmetric Key) â€” encrypted form stored in profiles.encrypted_user_key
     // null = pre-USK user (will be migrated on next unlock), string = already migrated
     const [encryptedUserKey, setEncryptedUserKey] = useState<string | null>(null);
-    // Vault integrity state
-    const [integrityKey, setIntegrityKey] = useState<CryptoKey | null>(null);
     const [integrityVerified, setIntegrityVerified] = useState(false);
-    const [lastIntegrityResult, setLastIntegrityResult] = useState<IntegrityVerificationResult | null>(null);
+    const [lastIntegrityResult, setLastIntegrityResult] = useState<VaultIntegrityVerificationResult | null>(null);
     const [lastActivity, setLastActivity] = useState(Date.now());
 
     const resetVaultState = useCallback(() => {
         setEncryptionKey(null);
-        setIntegrityKey(null);
         setIsLocked(true);
         setIsSetupRequired(false);
         setSalt(null);
@@ -339,12 +345,228 @@ export function VaultProvider({ children }: VaultProviderProps) {
             // Non-fatal: passkey status check can fail silently
             setHasPasskeyUnlock(false);
         }
-    }, [user, webAuthnAvailable, authReady]); // authReady required — stale closure fix
+    }, [user, webAuthnAvailable, authReady]); // authReady required â€” stale closure fix
+
+    const buildIntegritySnapshot = useCallback((
+        snapshot: {
+            items: Array<{ id: string; encrypted_data: string }>;
+            categories: Array<{ id: string; name: string; icon: string | null; color: string | null }>;
+        },
+    ): VaultIntegritySnapshot => ({
+        items: snapshot.items.map((item) => ({
+            id: item.id,
+            encrypted_data: item.encrypted_data,
+        })),
+        categories: snapshot.categories.map((category) => ({
+            id: category.id,
+            name: category.name,
+            icon: category.icon,
+            color: category.color,
+        })),
+    }), []);
+
+    const loadCurrentIntegritySnapshot = useCallback(async (): Promise<VaultIntegritySnapshot | null> => {
+        if (!user) {
+            return null;
+        }
+
+        const { snapshot } = await loadVaultSnapshot(user.id);
+        return buildIntegritySnapshot(snapshot);
+    }, [buildIntegritySnapshot, user]);
+
+    const finalizeVaultUnlock = useCallback(async (
+        activeKey: CryptoKey,
+    ): Promise<{ error: Error | null }> => {
+        if (!user) {
+            return { error: new Error('No active user session') };
+        }
+
+        const integritySnapshot = await loadCurrentIntegritySnapshot();
+        if (!integritySnapshot) {
+            return { error: new Error('Vault snapshot unavailable') };
+        }
+
+        const integrityResult = await verifyVaultSnapshotIntegrity(user.id, integritySnapshot, activeKey);
+        setIntegrityVerified(true);
+        setLastIntegrityResult(integrityResult);
+
+        if (!integrityResult.valid && !integrityResult.isFirstCheck) {
+            return { error: new Error('Vault integrity check failed. Possible tampering detected.') };
+        }
+
+        setEncryptionKey(activeKey);
+        setIsLocked(false);
+        setIsDuressMode(false);
+        setLastActivity(Date.now());
+        sessionStorage.setItem(SESSION_KEY, 'active');
+        sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
+        setPendingSessionRestore(false);
+
+        return { error: null };
+    }, [loadCurrentIntegritySnapshot, user]);
+
+    const refreshIntegrityBaseline = useCallback(async (): Promise<void> => {
+        if (!user || !encryptionKey) {
+            return;
+        }
+
+        const integritySnapshot = await loadCurrentIntegritySnapshot();
+        if (!integritySnapshot) {
+            return;
+        }
+
+        const digest = await persistIntegrityBaseline(user.id, integritySnapshot, encryptionKey);
+        setIntegrityVerified(true);
+        setLastIntegrityResult({
+            valid: true,
+            isFirstCheck: false,
+            computedRoot: digest,
+            storedRoot: digest,
+            itemCount: integritySnapshot.items.length,
+            categoryCount: integritySnapshot.categories.length,
+        });
+    }, [encryptionKey, loadCurrentIntegritySnapshot, user]);
+
+    const backfillVerificationHash = useCallback(async (
+        activeKey: CryptoKey,
+    ): Promise<string | null> => {
+        if (!user || !salt) {
+            return null;
+        }
+
+        const newVerifier = await createVerificationHash(activeKey);
+        const { error } = await supabase
+            .from('profiles')
+            .update({ master_password_verifier: newVerifier } as Record<string, unknown>)
+            .eq('user_id', user.id);
+
+        if (error) {
+            console.warn('Failed to backfill missing verifier:', error);
+            return null;
+        }
+
+        setVerificationHash(newVerifier);
+        await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion, encryptedUserKey);
+        return newVerifier;
+    }, [encryptedUserKey, kdfVersion, salt, user]);
+
+    const recoverLegacyKeyWithoutVerifier = useCallback(async (
+        candidateKey: CryptoKey,
+    ): Promise<boolean> => {
+        if (!user) {
+            return false;
+        }
+
+        const { data: probeItems } = await supabase
+            .from('vault_items')
+            .select('id, encrypted_data')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: true })
+            .limit(1);
+
+        if (probeItems && probeItems.length > 0) {
+            try {
+                await decryptVaultItem(probeItems[0].encrypted_data, candidateKey, probeItems[0].id);
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
+        const { data: probeCategories } = await supabase
+            .from('categories')
+            .select('name, icon, color')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: true })
+            .limit(1);
+
+        const category = probeCategories?.[0];
+        if (!category) {
+            return false;
+        }
+
+        const encryptedFields = [category.name, category.icon, category.color]
+            .filter((value): value is string => typeof value === 'string' && value.startsWith('enc:cat:v1:'))
+            .map((value) => value.slice('enc:cat:v1:'.length));
+
+        for (const encryptedField of encryptedFields) {
+            try {
+                await decrypt(encryptedField, candidateKey);
+                return true;
+            } catch {
+                continue;
+            }
+        }
+
+        return false;
+    }, [user]);
+
+    const migrateLegacyVaultToUserKey = useCallback(async (
+        kdfOutputBytes: Uint8Array,
+    ): Promise<{
+        userKey: CryptoKey;
+        verifier: string;
+        encryptedUserKey: string;
+        persisted: boolean;
+    }> => {
+        if (!user || !salt) {
+            throw new Error('Vault migration requires an active user and salt');
+        }
+
+        const uskBundle = await migrateToUserKey(kdfOutputBytes);
+        const newVerifier = await createVerificationHash(uskBundle.userKey);
+
+        try {
+            const { error: uskError } = await supabase
+                .from('profiles')
+                .update({
+                    encrypted_user_key: uskBundle.encryptedUserKey,
+                    master_password_verifier: newVerifier,
+                } as Record<string, unknown>)
+                .eq('user_id', user.id);
+
+            if (uskError) {
+                console.warn('USK migration: DB write failed, will retry next unlock.', uskError);
+                return {
+                    userKey: uskBundle.userKey,
+                    verifier: newVerifier,
+                    encryptedUserKey: uskBundle.encryptedUserKey,
+                    persisted: false,
+                };
+            }
+
+            setEncryptedUserKey(uskBundle.encryptedUserKey);
+            setVerificationHash(newVerifier);
+            await saveOfflineCredentials(
+                user.id,
+                salt,
+                newVerifier,
+                kdfVersion,
+                uskBundle.encryptedUserKey,
+            );
+            console.info('USK migration complete: encrypted_user_key persisted.');
+
+            return {
+                userKey: uskBundle.userKey,
+                verifier: newVerifier,
+                encryptedUserKey: uskBundle.encryptedUserKey,
+                persisted: true,
+            };
+        } catch (uskErr) {
+            console.warn('USK migration: unexpected failure, will retry next unlock.', uskErr);
+            return {
+                userKey: uskBundle.userKey,
+                verifier: newVerifier,
+                encryptedUserKey: uskBundle.encryptedUserKey,
+                persisted: false,
+            };
+        }
+    }, [kdfVersion, salt, user]);
 
     // Check if master password is set up
     useEffect(() => {
         async function checkSetup() {
-            // Case A: No user session — definitively nothing to load.
+            // Case A: No user session â€” definitively nothing to load.
             // End loading so the UI can show the sign-in screen.
             if (!user) {
                 setHasPasskeyUnlock(false);
@@ -354,7 +576,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
             // Case B: User present but auth not yet fully synchronized
             // (INITIAL_SESSION fired before getSession() resolved).
-            // Keep isLoading=true — checkSetup() will run once authReady flips,
+            // Keep isLoading=true â€” checkSetup() will run once authReady flips,
             // thanks to authReady being in the dep array. Showing a spinner here
             // is correct; setting isLoading=false would cause a stale-defaults flash.
             if (!authReady) {
@@ -378,7 +600,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     setIsLoading(false);
                     return;
                 }
-                // No cache available while offline — cannot determine setup state
+                // No cache available while offline â€” cannot determine setup state
                 setIsSetupRequired(true);
                 setIsLocked(true);
                 setIsLoading(false);
@@ -396,7 +618,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     .maybeSingle() as { data: Record<string, unknown> | null; error: unknown };
 
                 if (error || !profile?.encryption_salt) {
-                    // No profile found — try cache fallback for any error
+                    // No profile found â€” try cache fallback for any error
                     const cached = await getOfflineCredentials(user.id);
                     if (cached) {
                         setIsSetupRequired(false);
@@ -476,7 +698,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         }
 
         checkSetup();
-    }, [user, authReady, webAuthnAvailable, refreshPasskeyUnlockStatus]); // authReady required — stale closure fix
+    }, [user, authReady, webAuthnAvailable, refreshPasskeyUnlockStatus]); // authReady required â€” stale closure fix
 
     // Auto-lock on inactivity
     useEffect(() => {
@@ -529,7 +751,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             const kdfOutputBytes = await deriveRawKey(masterPassword, newSalt, CURRENT_KDF_VERSION);
             let uskBundle: Awaited<ReturnType<typeof createEncryptedUserKey>>;
             try {
-                // ── USK: create random UserKey, wrap under HKDF-derived wrapKey ──
+                // â”€â”€ USK: create random UserKey, wrap under HKDF-derived wrapKey â”€â”€
                 uskBundle = await createEncryptedUserKey(kdfOutputBytes);
             } finally {
                 kdfOutputBytes.fill(0);
@@ -576,36 +798,15 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setEncryptedUserKey(uskBundle.encryptedUserKey);
             setKdfVersion(CURRENT_KDF_VERSION);
             setIsSetupRequired(false);
-            setIsLocked(false);
-            setLastActivity(Date.now());
-
-            // Derive integrity key for tamper detection
-            const hooks = getServiceHooks();
-            if (hooks.deriveIntegrityKey) {
-                try {
-                    const iKey = await hooks.deriveIntegrityKey(masterPassword, newSalt);
-                    setIntegrityKey(iKey);
-                } catch {
-                    console.warn('Failed to derive integrity key during setup');
-                }
-            } else {
-                setIntegrityKey(null);
-            }
-
-            // Store session indicator in sessionStorage
-            sessionStorage.setItem(SESSION_KEY, 'active');
-            sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
-            setPendingSessionRestore(false);
 
             // Cache credentials for offline use (including encryptedUserKey)
             await saveOfflineCredentials(user.id, newSalt, verifyHash, CURRENT_KDF_VERSION, uskBundle.encryptedUserKey);
-
-            return { error: null };
+            return finalizeVaultUnlock(uskBundle.userKey);
         } catch (err) {
             console.error('Error setting up master password:', err);
             return { error: err as Error };
         }
-    }, [user]);
+    }, [finalizeVaultUnlock, user]);
 
     /**
      * Unlocks the vault with the master password.
@@ -622,27 +823,20 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return { error: new Error('Vault not set up') };
         }
 
-        // Check rate-limit cooldown
         const cooldown = getUnlockCooldown();
         if (cooldown !== null) {
             const seconds = Math.ceil(cooldown / 1000);
             return { error: new Error(`Too many attempts. Try again in ${seconds}s.`) };
         }
 
-        // Primary verifier from profile, fallback to legacy localStorage.
-        const legacyHash = localStorage.getItem(`singra_verify_${user.id}`);
-        const verifier = verificationHash || legacyHash;
-
-        if (!verifier) {
-            return { error: new Error('Vault verification data missing') };
-        }
+        const verifier = verificationHash;
 
         try {
-            // ── Dual Unlock: Check both real and duress passwords ──
-            // If duress mode is enabled, we check both passwords to determine
-            // which vault to open. This is done in parallel to maintain
-            // constant timing (prevent timing attacks).
             if (duressConfig?.enabled && getServiceHooks().attemptDualUnlock) {
+                if (!verifier) {
+                    return { error: new Error('Duress unlock requires a current verifier. Please unlock online once with your master password.') };
+                }
+
                 const result = await getServiceHooks().attemptDualUnlock!(
                     masterPassword,
                     salt,
@@ -656,36 +850,28 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     return { error: new Error('Invalid master password') };
                 }
 
-                // Success — reset rate-limiter
                 resetUnlockAttempts();
 
                 if (result.mode === 'duress') {
-                    // Duress mode: user entered panic password
-                    // Note: No integrity key for duress mode (decoy vault)
                     setEncryptionKey(result.key);
                     setIsDuressMode(true);
                     setIsLocked(false);
-                    setIntegrityKey(null); // No integrity for duress
+                    setIntegrityVerified(false);
+                    setLastIntegrityResult(null);
                     setLastActivity(Date.now());
-
-                    // Store session indicator
                     sessionStorage.setItem(SESSION_KEY, 'active');
                     sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
                     setPendingSessionRestore(false);
-
                     return { error: null };
                 }
 
-                // Real mode: continue with normal flow (KDF migration, etc.)
-                // result.key is already the real key
                 let activeKey = result.key!;
+                let shouldBackfillVerifier = !verificationHash;
 
-                // KDF Auto-Migration with Re-Encryption (only for real password, not duress)
                 try {
                     const upgrade = await attemptKdfUpgrade(masterPassword, salt, kdfVersion);
                     if (upgrade.upgraded && upgrade.newKey && upgrade.newVerifier) {
                         try {
-                            // Load all vault items and categories for re-encryption
                             const { data: vaultItems } = await supabase
                                 .from('vault_items')
                                 .select('id, encrypted_data')
@@ -696,15 +882,13 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 .select('id, name, icon, color')
                                 .eq('user_id', user.id);
 
-                            // Re-encrypt everything with the new key
                             const reEncResult = await reEncryptVault(
                                 vaultItems || [],
                                 categories || [],
-                                result.key!, // old key
+                                result.key!,
                                 upgrade.newKey,
                             );
 
-                            // Persist re-encrypted items
                             for (const itemUpdate of reEncResult.itemUpdates) {
                                 const { error: itemError } = await supabase
                                     .from('vault_items')
@@ -716,7 +900,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 }
                             }
 
-                            // Persist re-encrypted categories
                             for (const catUpdate of reEncResult.categoryUpdates) {
                                 const { error: catError } = await supabase
                                     .from('categories')
@@ -728,7 +911,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 }
                             }
 
-                            // Only NOW update the profile
                             const { error: upgradeError } = await supabase
                                 .from('profiles')
                                 .update({
@@ -741,7 +923,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 activeKey = upgrade.newKey;
                                 setVerificationHash(upgrade.newVerifier);
                                 setKdfVersion(upgrade.activeVersion);
-                                await saveOfflineCredentials(user.id, salt, upgrade.newVerifier);
+                                await saveOfflineCredentials(
+                                    user.id,
+                                    salt,
+                                    upgrade.newVerifier,
+                                    upgrade.activeVersion,
+                                    encryptedUserKey,
+                                );
+                                shouldBackfillVerifier = false;
                                 console.info(
                                     `KDF upgraded from v${kdfVersion} to v${upgrade.activeVersion}. ` +
                                     `Re-encrypted ${reEncResult.itemsReEncrypted} items and ` +
@@ -756,20 +945,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     console.warn('KDF upgrade failed, continuing with current version');
                 }
 
-                // One-time migration: persist legacy verifier to profile.
-                if (!verificationHash && legacyHash) {
-                    const { error: migrateError } = await supabase
-                        .from('profiles')
-                        .update({ master_password_verifier: legacyHash })
-                        .eq('user_id', user.id);
-
-                    if (!migrateError) {
-                        setVerificationHash(legacyHash);
-                    }
-                }
-
-                // ── Fallback: Detect and repair broken KDF upgrades (duress real-mode path) ──
-                // This MUST run BEFORE setIsLocked(false) to prevent UI race conditions.
                 if (kdfVersion >= 2) {
                     try {
                         const { data: probeItems } = await supabase
@@ -786,7 +961,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                             .order('created_at', { ascending: true })
                             .limit(5);
 
-                        const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
+                        const encryptedCategoryPrefix = 'enc:cat:v1:';
                         let needsFullRepair = false;
 
                         if (probeItems) {
@@ -803,14 +978,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
                         if (!needsFullRepair && probeCategories) {
                             for (const cat of probeCategories) {
                                 try {
-                                    if (cat.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                        await decrypt(cat.name.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                    if (cat.name.startsWith(encryptedCategoryPrefix)) {
+                                        await decrypt(cat.name.slice(encryptedCategoryPrefix.length), activeKey);
                                     }
-                                    if (cat.icon && cat.icon.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                        await decrypt(cat.icon.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                    if (cat.icon && cat.icon.startsWith(encryptedCategoryPrefix)) {
+                                        await decrypt(cat.icon.slice(encryptedCategoryPrefix.length), activeKey);
                                     }
-                                    if (cat.color && cat.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                        await decrypt(cat.color.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                    if (cat.color && cat.color.startsWith(encryptedCategoryPrefix)) {
+                                        await decrypt(cat.color.slice(encryptedCategoryPrefix.length), activeKey);
                                     }
                                 } catch {
                                     needsFullRepair = true;
@@ -849,14 +1024,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 if (allCategories) {
                                     for (const cat of allCategories) {
                                         try {
-                                            if (cat.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                await decrypt(cat.name.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                            if (cat.name.startsWith(encryptedCategoryPrefix)) {
+                                                await decrypt(cat.name.slice(encryptedCategoryPrefix.length), activeKey);
                                             }
-                                            if (cat.icon && cat.icon.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                await decrypt(cat.icon.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                            if (cat.icon && cat.icon.startsWith(encryptedCategoryPrefix)) {
+                                                await decrypt(cat.icon.slice(encryptedCategoryPrefix.length), activeKey);
                                             }
-                                            if (cat.color && cat.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                await decrypt(cat.color.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                            if (cat.color && cat.color.startsWith(encryptedCategoryPrefix)) {
+                                                await decrypt(cat.color.slice(encryptedCategoryPrefix.length), activeKey);
                                             }
                                         } catch {
                                             brokenCategories.push(cat);
@@ -869,28 +1044,22 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                     for (let oldVersion = kdfVersion - 1; oldVersion >= 1; oldVersion--) {
                                         try {
                                             const oldKey = await deriveKey(masterPassword, salt, oldVersion);
-
                                             if (brokenItems.length > 0) {
                                                 await decryptVaultItem(brokenItems[0].encrypted_data, oldKey, brokenItems[0].id);
                                             } else if (brokenCategories.length > 0) {
                                                 const catToTest = brokenCategories[0];
-                                                if (catToTest.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                    await decrypt(catToTest.name.slice(ENCRYPTED_CATEGORY_PREFIX.length), oldKey);
-                                                } else if (catToTest.icon && catToTest.icon.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                    await decrypt(catToTest.icon.slice(ENCRYPTED_CATEGORY_PREFIX.length), oldKey);
-                                                } else if (catToTest.color && catToTest.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                    await decrypt(catToTest.color.slice(ENCRYPTED_CATEGORY_PREFIX.length), oldKey);
+                                                if (catToTest.name.startsWith(encryptedCategoryPrefix)) {
+                                                    await decrypt(catToTest.name.slice(encryptedCategoryPrefix.length), oldKey);
+                                                } else if (catToTest.icon && catToTest.icon.startsWith(encryptedCategoryPrefix)) {
+                                                    await decrypt(catToTest.icon.slice(encryptedCategoryPrefix.length), oldKey);
+                                                } else if (catToTest.color && catToTest.color.startsWith(encryptedCategoryPrefix)) {
+                                                    await decrypt(catToTest.color.slice(encryptedCategoryPrefix.length), oldKey);
                                                 } else {
                                                     throw new Error('No encrypted fields found on broken category to test old key against');
                                                 }
                                             }
 
-                                            const repairResult = await reEncryptVault(
-                                                brokenItems,
-                                                brokenCategories,
-                                                oldKey,
-                                                activeKey,
-                                            );
+                                            const repairResult = await reEncryptVault(brokenItems, brokenCategories, oldKey, activeKey);
 
                                             for (const itemUpdate of repairResult.itemUpdates) {
                                                 await supabase
@@ -908,9 +1077,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                                     .eq('user_id', user.id);
                                             }
 
-                                            console.info(
-                                                `KDF repair (duress path) complete: re-encrypted ${repairResult.itemsReEncrypted} items, ${repairResult.categoriesReEncrypted} categories.`
-                                            );
+                                            console.info(`KDF repair (duress path) complete: re-encrypted ${repairResult.itemsReEncrypted} items, ${repairResult.categoriesReEncrypted} categories.`);
                                             break;
                                         } catch {
                                             continue;
@@ -924,61 +1091,38 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     }
                 }
 
-                setEncryptionKey(activeKey);
-                setIsLocked(false);
-                setIsDuressMode(false);
-                setLastActivity(Date.now());
-
-                // Derive integrity key for tamper detection (real vault only)
-                const hooks = getServiceHooks();
-                if (hooks.deriveIntegrityKey) {
-                    try {
-                        const iKey = await hooks.deriveIntegrityKey(masterPassword, salt);
-                        setIntegrityKey(iKey);
-                    } catch {
-                        console.warn('Failed to derive integrity key');
-                    }
-                } else {
-                    setIntegrityKey(null);
+                const finalizeResult = await finalizeVaultUnlock(activeKey);
+                if (finalizeResult.error) {
+                    return finalizeResult;
                 }
 
-                sessionStorage.setItem(SESSION_KEY, 'active');
-                sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
-                setPendingSessionRestore(false);
+                if (shouldBackfillVerifier) {
+                    await backfillVerificationHash(activeKey);
+                }
 
                 return { error: null };
             }
 
-            // ── Standard Unlock (no duress configured) ──
-            // Derive raw KDF bytes; keep them for USK operations below, wipe when done.
             const kdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
-
             let activeKey: CryptoKey;
-            // Tracks whether the PRE-USK migration wrote a new verifier this unlock.
-            // Prevents the legacy localStorage verifier migration from overwriting it
-            // (React setState is async — the state variable hasn't updated yet).
-            let uskMigrationWroteNewVerifier = false;
+            let shouldBackfillVerifier = !verificationHash;
 
             try {
                 if (encryptedUserKey) {
-                    // ── POST-USK PATH: unwrap UserKey, verify, KDF upgrade if needed ──
                     const userKey = await unwrapUserKey(encryptedUserKey, kdfOutputBytes);
-                    const isValid = await verifyKey(verifier, userKey);
-                    if (!isValid) {
-                        recordFailedAttempt();
-                        return { error: new Error('Invalid master password') };
+                    if (verifier) {
+                        const isValid = await verifyKey(verifier, userKey);
+                        if (!isValid) {
+                            recordFailedAttempt();
+                            return { error: new Error('Invalid master password') };
+                        }
                     }
+
                     resetUnlockAttempts();
                     activeKey = userKey;
 
-                    // KDF upgrade: rewrap-only (vault items NOT re-encrypted)
                     try {
-                        const upgrade = await attemptKdfUpgrade(
-                            masterPassword, salt, kdfVersion,
-                            currentDeviceKey || undefined,
-                            encryptedUserKey,
-                            kdfOutputBytes, // avoid re-deriving already-computed bytes
-                        );
+                        const upgrade = await attemptKdfUpgrade(masterPassword, salt, kdfVersion, currentDeviceKey || undefined, encryptedUserKey, kdfOutputBytes);
                         if (upgrade.upgraded && upgrade.newEncryptedUserKey && upgrade.newVerifier) {
                             const { error: upgradeError } = await supabase
                                 .from('profiles')
@@ -992,10 +1136,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 setVerificationHash(upgrade.newVerifier);
                                 setKdfVersion(upgrade.activeVersion);
                                 setEncryptedUserKey(upgrade.newEncryptedUserKey);
-                                await saveOfflineCredentials(
-                                    user.id, salt, upgrade.newVerifier,
-                                    upgrade.activeVersion, upgrade.newEncryptedUserKey,
-                                );
+                                await saveOfflineCredentials(user.id, salt, upgrade.newVerifier, upgrade.activeVersion, upgrade.newEncryptedUserKey);
+                                shouldBackfillVerifier = false;
                                 console.info(`KDF upgraded (USK rewrap-only) from v${kdfVersion} to v${upgrade.activeVersion}. No vault re-encryption needed.`);
                             }
                         }
@@ -1003,82 +1145,22 @@ export function VaultProvider({ children }: VaultProviderProps) {
                         console.warn('KDF upgrade (USK path) failed, continuing with current version');
                     }
                 } else {
-                    // ── PRE-USK MIGRATION (first unlock for this user) ──
-                    // Verify with the legacy KDF-derived key first
                     const legacyKey = await importMasterKey(kdfOutputBytes);
-                    const isValid = await verifyKey(verifier, legacyKey);
+                    const isValid = verifier ? await verifyKey(verifier, legacyKey) : await recoverLegacyKeyWithoutVerifier(legacyKey);
                     if (!isValid) {
                         recordFailedAttempt();
                         return { error: new Error('Invalid master password') };
                     }
+
                     resetUnlockAttempts();
-
-                    // Derive deterministic UserKey (same as old vault key, no re-encryption needed)
-                    const uskBundle = await migrateToUserKey(kdfOutputBytes);
-                    const newVerifier = await createVerificationHash(uskBundle.userKey);
-
-                    // Persist the new USK wrapper to profiles (non-fatal if fails — retry next unlock)
-                    try {
-                        const { error: uskError } = await supabase
-                            .from('profiles')
-                            .update({
-                                encrypted_user_key: uskBundle.encryptedUserKey,
-                                master_password_verifier: newVerifier,
-                            } as Record<string, unknown>)
-                            .eq('user_id', user.id);
-                        if (!uskError) {
-                            uskMigrationWroteNewVerifier = true;
-                            setEncryptedUserKey(uskBundle.encryptedUserKey);
-                            setVerificationHash(newVerifier);
-                            await saveOfflineCredentials(
-                                user.id, salt, newVerifier, kdfVersion, uskBundle.encryptedUserKey,
-                            );
-                            console.info('USK migration complete: encrypted_user_key persisted.');
-                        } else {
-                            console.warn('USK migration: DB write failed, will retry next unlock.', uskError);
-                        }
-                    } catch (uskErr) {
-                        console.warn('USK migration: unexpected error, will retry next unlock.', uskErr);
-                    }
-
-                    activeKey = uskBundle.userKey;
-
-                    // KDF upgrade is intentionally NOT run here.
-                    //
-                    // The USK migration sets encrypted_user_key wrapped with the current
-                    // (v1) KDF output. Running a KDF upgrade in the same session would
-                    // update kdf_version to v2 in the DB but leave the USK blob still
-                    // wrapped with v1 bytes → permanent lockout on next unlock.
-                    //
-                    // Instead, the KDF upgrade is handled on the NEXT unlock via the
-                    // POST-USK path (encryptedUserKey is now non-null), which uses
-                    // rewrapUserKey (rewrap-only, no vault re-encryption needed).
-                    // Vault items do NOT need re-encryption: the UserKey bytes are
-                    // identical to the old kdfOutputBytes, so data remains readable.
+                    const migration = await migrateLegacyVaultToUserKey(kdfOutputBytes);
+                    activeKey = migration.userKey;
+                    shouldBackfillVerifier = false;
                 }
             } finally {
                 kdfOutputBytes.fill(0);
             }
 
-            // One-time migration: persist legacy verifier to profile.
-            // Guard: skip if USK migration already wrote a fresh verifier this unlock
-            // (React setState is async — verificationHash hasn't updated in this execution context).
-            if (!verificationHash && legacyHash && !uskMigrationWroteNewVerifier) {
-                const { error: migrateError } = await supabase
-                    .from('profiles')
-                    .update({ master_password_verifier: legacyHash })
-                    .eq('user_id', user.id);
-                if (!migrateError) {
-                    setVerificationHash(legacyHash);
-                }
-            }
-
-            // ── Fallback: Detect and repair broken KDF upgrades ──
-            // This MUST run BEFORE setIsLocked(false) so that UI components
-            // don't try to decrypt with the wrong key while repair is in progress.
-            // If a previous KDF upgrade updated the verifier + kdf_version
-            // but failed to re-encrypt vault data, existing items are still
-            // encrypted with the old key.
             if (kdfVersion >= 2) {
                 try {
                     const { data: probeItems } = await supabase
@@ -1095,38 +1177,38 @@ export function VaultProvider({ children }: VaultProviderProps) {
                         .order('created_at', { ascending: true })
                         .limit(5);
 
-                    const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
-                    let needsFullRepair = false;
+                        const encryptedCategoryPrefix = 'enc:cat:v1:';
+                        let needsFullRepair = false;
 
-                    if (probeItems) {
-                        for (const item of probeItems) {
-                            try {
-                                await decryptVaultItem(item.encrypted_data, activeKey);
-                            } catch {
-                                needsFullRepair = true;
-                                break;
+                        if (probeItems) {
+                            for (const item of probeItems) {
+                                try {
+                                    await decryptVaultItem(item.encrypted_data, activeKey, item.id);
+                                } catch {
+                                    needsFullRepair = true;
+                                    break;
+                                }
                             }
                         }
-                    }
 
-                    if (!needsFullRepair && probeCategories) {
-                        for (const cat of probeCategories) {
-                            try {
-                                if (cat.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                    await decrypt(cat.name.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                        if (!needsFullRepair && probeCategories) {
+                            for (const cat of probeCategories) {
+                                try {
+                                    if (cat.name.startsWith(encryptedCategoryPrefix)) {
+                                        await decrypt(cat.name.slice(encryptedCategoryPrefix.length), activeKey);
+                                    }
+                                    if (cat.icon && cat.icon.startsWith(encryptedCategoryPrefix)) {
+                                        await decrypt(cat.icon.slice(encryptedCategoryPrefix.length), activeKey);
+                                    }
+                                    if (cat.color && cat.color.startsWith(encryptedCategoryPrefix)) {
+                                        await decrypt(cat.color.slice(encryptedCategoryPrefix.length), activeKey);
+                                    }
+                                } catch {
+                                    needsFullRepair = true;
+                                    break;
                                 }
-                                if (cat.icon && cat.icon.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                    await decrypt(cat.icon.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
-                                }
-                                if (cat.color && cat.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                    await decrypt(cat.color.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
-                                }
-                            } catch {
-                                needsFullRepair = true;
-                                break;
                             }
                         }
-                    }
 
                     if (needsFullRepair) {
                         console.warn('Detected broken KDF upgrade in sample. Starting full vault scan and repair...');
@@ -1148,7 +1230,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                             if (allItems) {
                                 for (const item of allItems) {
                                     try {
-                                        await decryptVaultItem(item.encrypted_data, activeKey);
+                                        await decryptVaultItem(item.encrypted_data, activeKey, item.id);
                                     } catch {
                                         brokenItems.push(item);
                                     }
@@ -1158,14 +1240,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
                             if (allCategories) {
                                 for (const cat of allCategories) {
                                     try {
-                                        if (cat.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                            await decrypt(cat.name.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                        if (cat.name.startsWith(encryptedCategoryPrefix)) {
+                                            await decrypt(cat.name.slice(encryptedCategoryPrefix.length), activeKey);
                                         }
-                                        if (cat.icon && cat.icon.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                            await decrypt(cat.icon.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                        if (cat.icon && cat.icon.startsWith(encryptedCategoryPrefix)) {
+                                            await decrypt(cat.icon.slice(encryptedCategoryPrefix.length), activeKey);
                                         }
-                                        if (cat.color && cat.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                            await decrypt(cat.color.slice(ENCRYPTED_CATEGORY_PREFIX.length), activeKey);
+                                        if (cat.color && cat.color.startsWith(encryptedCategoryPrefix)) {
+                                            await decrypt(cat.color.slice(encryptedCategoryPrefix.length), activeKey);
                                         }
                                     } catch {
                                         brokenCategories.push(cat);
@@ -1179,17 +1261,16 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 for (let oldVersion = kdfVersion - 1; oldVersion >= 1; oldVersion--) {
                                     try {
                                         const oldKey = await deriveKey(masterPassword, salt, oldVersion);
-
                                         if (brokenItems.length > 0) {
-                                            await decryptVaultItem(brokenItems[0].encrypted_data, oldKey);
+                                            await decryptVaultItem(brokenItems[0].encrypted_data, oldKey, brokenItems[0].id);
                                         } else if (brokenCategories.length > 0) {
                                             const catToTest = brokenCategories[0];
-                                            if (catToTest.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                await decrypt(catToTest.name.slice(ENCRYPTED_CATEGORY_PREFIX.length), oldKey);
-                                            } else if (catToTest.icon && catToTest.icon.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                await decrypt(catToTest.icon.slice(ENCRYPTED_CATEGORY_PREFIX.length), oldKey);
-                                            } else if (catToTest.color && catToTest.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
-                                                await decrypt(catToTest.color.slice(ENCRYPTED_CATEGORY_PREFIX.length), oldKey);
+                                            if (catToTest.name.startsWith(encryptedCategoryPrefix)) {
+                                                await decrypt(catToTest.name.slice(encryptedCategoryPrefix.length), oldKey);
+                                            } else if (catToTest.icon && catToTest.icon.startsWith(encryptedCategoryPrefix)) {
+                                                await decrypt(catToTest.icon.slice(encryptedCategoryPrefix.length), oldKey);
+                                            } else if (catToTest.color && catToTest.color.startsWith(encryptedCategoryPrefix)) {
+                                                await decrypt(catToTest.color.slice(encryptedCategoryPrefix.length), oldKey);
                                             } else {
                                                 throw new Error('No encrypted fields found on broken category to test old key against');
                                             }
@@ -1197,12 +1278,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
                                         console.info(`Fallback key v${oldVersion} works. Re-encrypting broken vault data...`);
 
-                                        const repairResult = await reEncryptVault(
-                                            brokenItems,
-                                            brokenCategories,
-                                            oldKey,
-                                            activeKey,
-                                        );
+                                        const repairResult = await reEncryptVault(brokenItems, brokenCategories, oldKey, activeKey);
 
                                         for (const itemUpdate of repairResult.itemUpdates) {
                                             await supabase
@@ -1220,10 +1296,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                                 .eq('user_id', user.id);
                                         }
 
-                                        console.info(
-                                            `KDF repair complete: re-encrypted ${repairResult.itemsReEncrypted} items, ${repairResult.categoriesReEncrypted} categories from v${oldVersion} to v${kdfVersion}.`
-                                        );
-                                        break; // Repair done, stop trying older versions
+                                        console.info(`KDF repair complete: re-encrypted ${repairResult.itemsReEncrypted} items, ${repairResult.categoriesReEncrypted} categories from v${oldVersion} to v${kdfVersion}.`);
+                                        break;
                                     } catch {
                                         continue;
                                     }
@@ -1232,40 +1306,24 @@ export function VaultProvider({ children }: VaultProviderProps) {
                         }
                     }
                 } catch (repairErr) {
-                    // Non-fatal: vault still opens with whatever key works
                     console.error('KDF repair check failed:', repairErr);
                 }
             }
 
-            // ── Private Key Migration: re-wrap legacy RSA/PQ keys to USK format ──
-            // Non-fatal and idempotent — safe to call every unlock (no-op when already migrated).
             try {
                 await migrateLegacyPrivateKeysToUserKey(user.id, masterPassword, activeKey);
             } catch (pkMigrErr) {
                 console.warn('Private key USK migration failed, will retry next unlock:', pkMigrErr);
             }
 
-            setEncryptionKey(activeKey);
-            setIsLocked(false);
-            setIsDuressMode(false);
-            setLastActivity(Date.now());
-
-            // Derive integrity key for tamper detection
-            const hooks = getServiceHooks();
-            if (hooks.deriveIntegrityKey) {
-                try {
-                    const iKey = await hooks.deriveIntegrityKey(masterPassword, salt);
-                    setIntegrityKey(iKey);
-                } catch {
-                    console.warn('Failed to derive integrity key');
-                }
-            } else {
-                setIntegrityKey(null);
+            const finalizeResult = await finalizeVaultUnlock(activeKey);
+            if (finalizeResult.error) {
+                return finalizeResult;
             }
 
-            sessionStorage.setItem(SESSION_KEY, 'active');
-            sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
-            setPendingSessionRestore(false);
+            if (shouldBackfillVerifier) {
+                await backfillVerificationHash(activeKey);
+            }
 
             return { error: null };
         } catch (err) {
@@ -1273,14 +1331,21 @@ export function VaultProvider({ children }: VaultProviderProps) {
             recordFailedAttempt();
             return { error: new Error('Invalid master password') };
         }
-    }, [user, salt, verificationHash, kdfVersion, duressConfig, currentDeviceKey, encryptedUserKey]);
+    }, [
+        user,
+        salt,
+        verificationHash,
+        kdfVersion,
+        duressConfig,
+        currentDeviceKey,
+        encryptedUserKey,
+        finalizeVaultUnlock,
+        backfillVerificationHash,
+        recoverLegacyKeyWithoutVerifier,
+        migrateLegacyVaultToUserKey,
+    ]);
 
-    /**
-     * Unlocks the vault using a registered passkey with PRF.
-     * The PRF output is used to unwrap the stored encryption key.
-     */
     const unlockWithPasskey = useCallback(async (): Promise<{ error: Error | null }> => {
-        // Explicitly check for user to prevent "Authentication required" edge function errors
         if (!user) {
             console.warn('unlockWithPasskey called without active user session');
             return { error: new Error('User session not ready. Please wait a moment.') };
@@ -1292,11 +1357,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return { error: new Error(`Too many attempts. Try again in ${seconds}s.`) };
         }
 
-        const legacyHash = localStorage.getItem(`singra_verify_${user.id}`);
-        const verifier = verificationHash || legacyHash;
-
         try {
-            const result = await authenticatePasskey();
+            const result = await authenticatePasskey({ encryptedUserKey });
 
             if (!result.success) {
                 if (result.error === 'CANCELLED') {
@@ -1314,33 +1376,46 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return { error: new Error('Passkey authenticated but no encryption key derived') };
             }
 
-            // Verify the key works by checking the verification hash
-            if (verifier) {
-                const isValid = await verifyKey(verifier, result.encryptionKey);
+            let activeKey = result.encryptionKey;
+            let shouldBackfillVerifier = !verificationHash;
+
+            if (verificationHash) {
+                const isValid = await verifyKey(verificationHash, activeKey);
                 if (!isValid) {
                     recordFailedAttempt();
-                    return { error: new Error('Passkey-derived key does not match vault — key may be outdated') };
+                    return { error: new Error('Passkey-derived key does not match vault - key may be outdated') };
+                }
+            } else if (encryptedUserKey || result.keySource === 'vault-key') {
+                shouldBackfillVerifier = true;
+            } else {
+                const isValid = await recoverLegacyKeyWithoutVerifier(activeKey);
+                if (!isValid) {
+                    recordFailedAttempt();
+                    return { error: new Error('Passkey-derived key does not match vault - key may be outdated') };
                 }
             }
 
-            // Success — reset rate-limiter and unlock
+            if (!encryptedUserKey && result.keySource === 'legacy-kdf' && result.legacyKdfOutputBytes) {
+                try {
+                    const migration = await migrateLegacyVaultToUserKey(result.legacyKdfOutputBytes);
+                    activeKey = migration.userKey;
+                    shouldBackfillVerifier = false;
+                } finally {
+                    result.legacyKdfOutputBytes.fill(0);
+                }
+            } else {
+                result.legacyKdfOutputBytes?.fill(0);
+            }
+
             resetUnlockAttempts();
+            const finalizeResult = await finalizeVaultUnlock(activeKey);
+            if (finalizeResult.error) {
+                return finalizeResult;
+            }
 
-            setEncryptionKey(result.encryptionKey);
-            setIsLocked(false);
-            setIsDuressMode(false); // Passkey always unlocks real vault
-            setLastActivity(Date.now());
-
-            // Note: Cannot derive integrity key during passkey unlock because
-            // we don't have access to the master password. Integrity verification
-            // is skipped for passkey-unlocked sessions. This is an acceptable
-            // trade-off since passkey unlock is already hardware-secured.
-            setIntegrityKey(null);
-
-            // Store session indicator
-            sessionStorage.setItem(SESSION_KEY, 'active');
-            sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
-            setPendingSessionRestore(false);
+            if (shouldBackfillVerifier) {
+                await backfillVerificationHash(activeKey);
+            }
 
             return { error: null };
         } catch (err) {
@@ -1348,61 +1423,71 @@ export function VaultProvider({ children }: VaultProviderProps) {
             recordFailedAttempt();
             return { error: new Error('Passkey unlock failed') };
         }
-    }, [user, verificationHash]);
+    }, [
+        user,
+        verificationHash,
+        encryptedUserKey,
+        finalizeVaultUnlock,
+        backfillVerificationHash,
+        recoverLegacyKeyWithoutVerifier,
+        migrateLegacyVaultToUserKey,
+    ]);
 
-    /**
-     * Derives raw AES-256 key bytes for passkey registration.
-     * Requires the master password and must be called while vault is unlocked.
-     *
-     * @param masterPassword - The user's master password
-     * @returns Raw 32-byte key or null if derivation fails
-     */
-    const getRawKeyForPasskey = useCallback(async (
+    const getPasskeyWrappingMaterial = useCallback(async (
         masterPassword: string,
     ): Promise<Uint8Array | null> => {
         if (!user || !salt || isLocked) return null;
 
-        let rawKeyBytes: Uint8Array | null = null;
+        let kdfOutputBytes: Uint8Array | null = null;
         try {
-            rawKeyBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
+            kdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
 
-            const legacyHash = localStorage.getItem(`singra_verify_${user.id}`);
-            const verifier = verificationHash || legacyHash;
-            if (!verifier) {
-                return rawKeyBytes;
+            if (encryptedUserKey) {
+                const userKey = await unwrapUserKey(encryptedUserKey, kdfOutputBytes);
+                if (verificationHash) {
+                    const isValid = await verifyKey(verificationHash, userKey);
+                    if (!isValid) {
+                        return null;
+                    }
+                }
+
+                const wrappingMaterial = await unwrapUserKeyBytes(encryptedUserKey, kdfOutputBytes);
+                return wrappingMaterial;
             }
 
-            // Post-USK: verify with UserKey (not raw KDF bytes) — verifier was created with UserKey.
-            // Pre-USK / migrated accounts (UserKey = kdfOutputBytes): both paths are equivalent.
-            if (encryptedUserKey) {
-                const userKey = await unwrapUserKey(encryptedUserKey, rawKeyBytes);
-                const isValid = await verifyKey(verifier, userKey);
+            const derivedKey = await importMasterKey(kdfOutputBytes);
+            if (verificationHash) {
+                const isValid = await verifyKey(verificationHash, derivedKey);
                 if (!isValid) {
-                    rawKeyBytes.fill(0);
                     return null;
                 }
             } else {
-                const derivedKey = await importMasterKey(rawKeyBytes);
-                const isValid = await verifyKey(verifier, derivedKey);
-                if (!isValid) {
-                    rawKeyBytes.fill(0);
+                const recovered = await recoverLegacyKeyWithoutVerifier(derivedKey);
+                if (!recovered) {
                     return null;
                 }
             }
 
-            return rawKeyBytes;
+            const wrappingMaterial = kdfOutputBytes;
+            kdfOutputBytes = null;
+            return wrappingMaterial;
         } catch (err) {
-            if (rawKeyBytes) {
-                rawKeyBytes.fill(0);
-            }
-            console.error('Failed to derive raw key for passkey:', err);
+            console.error('Failed to derive passkey wrapping material:', err);
             return null;
+        } finally {
+            kdfOutputBytes?.fill(0);
         }
-    }, [user, salt, kdfVersion, isLocked, verificationHash, encryptedUserKey, currentDeviceKey]);
+    }, [
+        user,
+        salt,
+        kdfVersion,
+        isLocked,
+        verificationHash,
+        encryptedUserKey,
+        currentDeviceKey,
+        recoverLegacyKeyWithoutVerifier,
+    ]);
 
-    /**
-     * Locks the vault and clears encryption key from memory
-     */
     const lock = useCallback(() => {
         resetVaultState();
         setIsLoading(false);
@@ -1428,8 +1513,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
             const newDeviceKey = generateDeviceKey();
 
             if (encryptedUserKey) {
-                // ── USK path: rewrap UserKey under device-key-enhanced KDF ──
-                // Vault items stay encrypted under UserKey — no vault re-encryption needed.
+                // â”€â”€ USK path: rewrap UserKey under device-key-enhanced KDF â”€â”€
+                // Vault items stay encrypted under UserKey â€” no vault re-encryption needed.
                 // Only the 32-byte UserKey wrapper changes.
                 // Use currentDeviceKey so old bytes match what was used to wrap encryptedUserKey last time.
                 const oldKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
@@ -1472,8 +1557,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return { error: null };
             }
 
-            // ── Legacy path (pre-USK, encryptedUserKey = null) ──
-            // Vault items are encrypted directly with KDF-derived key — full re-encryption required.
+            // â”€â”€ Legacy path (pre-USK, encryptedUserKey = null) â”€â”€
+            // Vault items are encrypted directly with KDF-derived key â€” full re-encryption required.
             const newKey = await deriveKey(masterPassword, salt, kdfVersion, newDeviceKey);
 
             // Create new verification hash with the device-key-enhanced key
@@ -1563,50 +1648,33 @@ export function VaultProvider({ children }: VaultProviderProps) {
      * Detects server-side tampering (deleted/modified/added items).
      */
     const verifyIntegrity = useCallback(async (
-        items: VaultItemForIntegrity[]
-    ): Promise<IntegrityVerificationResult | null> => {
-        const hooks = getServiceHooks();
-        if (!user || !integrityKey || !hooks.verifyVaultIntegrity || !hooks.updateIntegrityRoot) {
+        _items: VaultItemForIntegrity[]
+    ): Promise<VaultIntegrityVerificationResult | null> => {
+        if (!user || !encryptionKey) {
             return null;
         }
 
         try {
-            const result = await hooks.verifyVaultIntegrity(items, integrityKey, user.id);
-            setIntegrityVerified(true);
-            setLastIntegrityResult(result);
-
-            if (!result.valid && !result.isFirstCheck) {
-                console.warn('Vault integrity check FAILED — possible tampering detected!');
-            } else if (result.isFirstCheck) {
-                // First check: establish baseline
-                await hooks.updateIntegrityRoot(items, integrityKey, user.id);
-                console.info('Vault integrity baseline established');
+            const integritySnapshot = await loadCurrentIntegritySnapshot();
+            if (!integritySnapshot) {
+                return null;
             }
 
+            const result = await verifyVaultSnapshotIntegrity(user.id, integritySnapshot, encryptionKey);
+            setIntegrityVerified(true);
+            setLastIntegrityResult(result);
             return result;
         } catch (err) {
             console.error('Vault integrity verification error:', err);
             return null;
         }
-    }, [user, integrityKey]);
+    }, [encryptionKey, loadCurrentIntegritySnapshot, user]);
 
-    /**
-     * Updates the integrity root after vault modifications.
-     */
     const updateIntegrity = useCallback(async (
-        items: VaultItemForIntegrity[]
+        _items: VaultItemForIntegrity[]
     ): Promise<void> => {
-        const hooks = getServiceHooks();
-        if (!user || !integrityKey || !hooks.updateIntegrityRoot) {
-            return;
-        }
-
-        try {
-            await hooks.updateIntegrityRoot(items, integrityKey, user.id);
-        } catch (err) {
-            console.error('Failed to update integrity root:', err);
-        }
-    }, [user, integrityKey]);
+        await refreshIntegrityBaseline();
+    }, [refreshIntegrityBaseline]);
 
     /**
      * Encrypts plaintext data
@@ -1664,7 +1732,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 webAuthnAvailable,
                 hasPasskeyUnlock,
                 refreshPasskeyUnlockStatus,
-                getRawKeyForPasskey,
+                getPasskeyWrappingMaterial,
                 encryptData,
                 decryptData,
                 encryptItem,
@@ -1694,4 +1762,8 @@ export function useVault() {
     }
     return context;
 }
+
+
+
+
 
