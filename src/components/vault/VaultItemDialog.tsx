@@ -1,5 +1,5 @@
 ﻿// Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 â€” see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Item Dialog Component
  * 
@@ -192,7 +192,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                             resolvedName = await decryptData(cat.name.slice(ENCRYPTED_CATEGORY_PREFIX.length));
                         } catch (err) {
                             console.error('Failed to decrypt category name:', cat.id, err);
-                            resolvedName = 'Encrypted Category';
+                            resolvedName = 'Beschädigte Kategorie';
                         }
                     } else if (canPersistMigrations) {
                         try {
@@ -339,7 +339,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         }
 
         loadItem();
-    }, [normalizedItemId, open, user, decryptItem, form, toast, t]);
+    }, [normalizedItemId, open, user, decryptItem, form, hasPremiumAuthenticator, toast, t]);
 
     // Reset form when dialog closes
     useEffect(() => {
@@ -519,7 +519,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 description: syncedOnline
                     ? t('vault.itemDeleted')
                     : t('vault.offlineDeleteQueued', {
-                        defaultValue: 'Offline gelÃ¶scht. LÃ¶schung wird bei Internet synchronisiert.',
+                        defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
                     }),
             });
             await refreshIntegrityBaseline();

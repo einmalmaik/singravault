@@ -51,13 +51,20 @@ interface VaultItemCardProps {
     };
     viewMode: ViewMode;
     onEdit: () => void;
+    readOnly?: boolean;
     /** Show the live TOTP code inline. False by default (codes live in AuthenticatorPage).
      *  Set to true only in read-only contexts like GrantorVaultPage where the Authenticator
      *  tab is not accessible but 2FA codes may be needed for account sign-in. */
     showTotpCode?: boolean;
 }
 
-export function VaultItemCard({ item, viewMode, onEdit, showTotpCode = false }: VaultItemCardProps) {
+export function VaultItemCard({
+    item,
+    viewMode,
+    onEdit,
+    readOnly = false,
+    showTotpCode = false,
+}: VaultItemCardProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const [showPassword, setShowPassword] = useState(false);
@@ -168,24 +175,26 @@ export function VaultItemCard({ item, viewMode, onEdit, showTotpCode = false }: 
                                 <ExternalLink className="w-4 h-4" />
                             </Button>
                         )}
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreVertical className="w-4 h-4" />
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={onEdit}>
-                                    <Edit className="w-4 h-4 mr-2" />
-                                    {t('common.edit')}
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem className="text-destructive">
-                                    <Trash2 className="w-4 h-4 mr-2" />
-                                    {t('common.delete')}
-                                </DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
+                        {!readOnly && (
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                                        <MoreVertical className="w-4 h-4" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={onEdit}>
+                                        <Edit className="w-4 h-4 mr-2" />
+                                        {t('common.edit')}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem className="text-destructive">
+                                        <Trash2 className="w-4 h-4 mr-2" />
+                                        {t('common.delete')}
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        )}
                     </div>
                 </CardContent>
             </Card>
@@ -194,8 +203,11 @@ export function VaultItemCard({ item, viewMode, onEdit, showTotpCode = false }: 
 
     return (
         <Card
-            className="group border-[hsl(var(--border)/0.38)] bg-[hsl(var(--card)/0.5)] hover:border-[hsl(var(--primary)/0.22)] hover:bg-[hsl(var(--el-2)/0.7)] hover:shadow-[0_8px_32px_hsl(0_0%_0%/0.3)] transition-all duration-250 cursor-pointer"
-            onClick={onEdit}
+            className={cn(
+                'group border-[hsl(var(--border)/0.38)] bg-[hsl(var(--card)/0.5)] hover:border-[hsl(var(--primary)/0.22)] hover:bg-[hsl(var(--el-2)/0.7)] hover:shadow-[0_8px_32px_hsl(0_0%_0%/0.3)] transition-all duration-250',
+                readOnly ? 'cursor-default' : 'cursor-pointer',
+            )}
+            onClick={readOnly ? undefined : onEdit}
         >
             <CardContent className="p-4">
                 {/* Header */}

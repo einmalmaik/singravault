@@ -87,12 +87,20 @@ vi.mock("@/services/cryptoService", () => ({
 const mockGetOfflineCredentials = vi.fn();
 const mockSaveOfflineCredentials = vi.fn();
 const mockLoadVaultSnapshot = vi.fn();
+const mockFetchRemoteOfflineSnapshot = vi.fn();
+const mockGetTrustedOfflineSnapshot = vi.fn();
+const mockSaveTrustedOfflineSnapshot = vi.fn();
+const mockClearOfflineVaultData = vi.fn();
 vi.mock("@/services/offlineVaultService", () => ({
   isAppOnline: vi.fn(() => true),
   isLikelyOfflineError: vi.fn(() => false),
+  fetchRemoteOfflineSnapshot: (...args: unknown[]) => mockFetchRemoteOfflineSnapshot(...args),
   getOfflineCredentials: (...args: unknown[]) => mockGetOfflineCredentials(...args),
+  getTrustedOfflineSnapshot: (...args: unknown[]) => mockGetTrustedOfflineSnapshot(...args),
   saveOfflineCredentials: (...args: unknown[]) => mockSaveOfflineCredentials(...args),
+  saveTrustedOfflineSnapshot: (...args: unknown[]) => mockSaveTrustedOfflineSnapshot(...args),
   loadVaultSnapshot: (...args: unknown[]) => mockLoadVaultSnapshot(...args),
+  clearOfflineVaultData: (...args: unknown[]) => mockClearOfflineVaultData(...args),
 }));
 
 // Mock passkey service
@@ -152,6 +160,17 @@ describe("VaultContext", () => {
     mockUseAuth.mockReturnValue({ user: mockUser, authReady: true });
     mockGetOfflineCredentials.mockResolvedValue(null);
     mockSaveOfflineCredentials.mockResolvedValue(undefined);
+    mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+      userId: mockUser.id,
+      vaultId: "vault-123",
+      items: [],
+      categories: [],
+      lastSyncedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    mockGetTrustedOfflineSnapshot.mockResolvedValue(null);
+    mockSaveTrustedOfflineSnapshot.mockResolvedValue(undefined);
+    mockClearOfflineVaultData.mockResolvedValue(undefined);
     mockLoadVaultSnapshot.mockResolvedValue({
       snapshot: {
         items: [],
@@ -208,6 +227,16 @@ describe("VaultContext", () => {
 
       expect(result.current.isLocked).toBe(true);
       expect(result.current.isDuressMode).toBe(false);
+    });
+
+    it("should expose refreshIntegrityBaseline through the provider value", async () => {
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.refreshIntegrityBaseline).toEqual(expect.any(Function));
     });
 
     it("should detect setup is required when no profile exists", async () => {

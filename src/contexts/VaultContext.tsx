@@ -44,9 +44,13 @@ import {
 import {
     isAppOnline,
     isLikelyOfflineError,
+    fetchRemoteOfflineSnapshot,
     getOfflineCredentials,
+    getTrustedOfflineSnapshot,
     loadVaultSnapshot,
+    saveTrustedOfflineSnapshot,
     saveOfflineCredentials,
+    type OfflineVaultSnapshot,
 } from '@/services/offlineVaultService';
 import {
     authenticatePasskey,
@@ -64,12 +68,16 @@ import {
     resetUnlockAttempts,
 } from '@/services/rateLimiterService';
 import {
-    clearIntegrityBaseline,
     persistIntegrityBaseline,
+    VaultIntegrityBaselineError,
+    type QuarantinedVaultItem,
+    type VaultIntegrityBlockedReason,
+    type VaultIntegrityMode,
     type VaultIntegritySnapshot,
     type VaultIntegrityVerificationResult,
     verifyVaultSnapshotIntegrity,
 } from '@/services/vaultIntegrityService';
+import { resetUserVaultState } from '@/services/vaultRecoveryService';
 
 // Auto-lock timeout in milliseconds (default 15 minutes)
 const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
@@ -215,6 +223,36 @@ interface VaultContextType {
      * Last integrity verification result (null if not yet verified)
      */
     lastIntegrityResult: VaultIntegrityVerificationResult | null;
+    /**
+     * Current integrity access mode for the active session.
+     * "safe" is a local recovery mode backed by the last trusted snapshot.
+     */
+    integrityMode: VaultIntegrityMode | 'safe';
+    /**
+     * Item ids that were quarantined during the last integrity check.
+     */
+    quarantinedItems: QuarantinedVaultItem[];
+    /**
+     * Why normal unlock was blocked, if applicable.
+     */
+    integrityBlockedReason: VaultIntegrityBlockedReason | null;
+    /**
+     * Whether a trusted local recovery snapshot is available.
+     */
+    trustedRecoveryAvailable: boolean;
+    /**
+     * Enters read-only local recovery mode backed by the last trusted snapshot.
+     */
+    enterSafeMode: () => Promise<{ error: Error | null }>;
+    /**
+     * Leaves local recovery mode and returns to the blocked state.
+     */
+    exitSafeMode: () => void;
+    /**
+     * Clears the current user's vault state locally and remotely after
+     * an integrity failure so the vault can be re-initialized safely.
+     */
+    resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
 }
 
 const VaultContext = createContext<VaultContextType | undefined>(undefined);
@@ -279,6 +317,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
     const [encryptedUserKey, setEncryptedUserKey] = useState<string | null>(null);
     const [integrityVerified, setIntegrityVerified] = useState(false);
     const [lastIntegrityResult, setLastIntegrityResult] = useState<VaultIntegrityVerificationResult | null>(null);
+    const [integrityMode, setIntegrityMode] = useState<VaultIntegrityMode | 'safe'>('healthy');
+    const [quarantinedItems, setQuarantinedItems] = useState<QuarantinedVaultItem[]>([]);
+    const [integrityBlockedReason, setIntegrityBlockedReason] = useState<VaultIntegrityBlockedReason | null>(null);
+    const [trustedRecoveryAvailable, setTrustedRecoveryAvailable] = useState(false);
     const [lastActivity, setLastActivity] = useState(Date.now());
 
     const clearActiveVaultSession = useCallback(() => {
@@ -287,6 +329,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
         setIsDuressMode(false);
         setIntegrityVerified(false);
         setLastIntegrityResult(null);
+        setIntegrityMode('healthy');
+        setQuarantinedItems([]);
+        setIntegrityBlockedReason(null);
+        setTrustedRecoveryAvailable(false);
         setPendingSessionRestore(false);
         setLastActivity(Date.now());
         sessionStorage.removeItem(SESSION_KEY);
@@ -305,6 +351,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         setDeviceKeyActive(false);
         setCurrentDeviceKey(null);
         setEncryptedUserKey(null);
+        setTrustedRecoveryAvailable(false);
     }, [clearActiveVaultSession]);
 
     useEffect(() => {
@@ -353,13 +400,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
     const buildIntegritySnapshot = useCallback((
         snapshot: {
-            items: Array<{ id: string; encrypted_data: string }>;
+            items: Array<{ id: string; encrypted_data: string; updated_at?: string | null }>;
             categories: Array<{ id: string; name: string; icon: string | null; color: string | null }>;
         },
     ): VaultIntegritySnapshot => ({
         items: snapshot.items.map((item) => ({
             id: item.id,
             encrypted_data: item.encrypted_data,
+            updated_at: item.updated_at ?? null,
         })),
         categories: snapshot.categories.map((category) => ({
             id: category.id,
@@ -369,14 +417,67 @@ export function VaultProvider({ children }: VaultProviderProps) {
         })),
     }), []);
 
-    const loadCurrentIntegritySnapshot = useCallback(async (): Promise<VaultIntegritySnapshot | null> => {
+    const loadCurrentIntegritySnapshot = useCallback(async (
+        options?: { persistRemoteSnapshot?: boolean },
+    ): Promise<{
+        rawSnapshot: OfflineVaultSnapshot;
+        integritySnapshot: VaultIntegritySnapshot;
+    } | null> => {
         if (!user) {
             return null;
         }
 
+        if (isAppOnline()) {
+            try {
+                const rawSnapshot = await fetchRemoteOfflineSnapshot(user.id, {
+                    persist: options?.persistRemoteSnapshot !== false,
+                });
+
+                return {
+                    rawSnapshot,
+                    integritySnapshot: buildIntegritySnapshot(rawSnapshot),
+                };
+            } catch (error) {
+                if (!isLikelyOfflineError(error)) {
+                    throw error;
+                }
+            }
+        }
+
         const { snapshot } = await loadVaultSnapshot(user.id);
-        return buildIntegritySnapshot(snapshot);
+        return {
+            rawSnapshot: snapshot,
+            integritySnapshot: buildIntegritySnapshot(snapshot),
+        };
     }, [buildIntegritySnapshot, user]);
+
+    const persistTrustedIntegritySnapshot = useCallback(async (
+        snapshot: OfflineVaultSnapshot,
+    ): Promise<void> => {
+        await saveTrustedOfflineSnapshot(snapshot);
+        setTrustedRecoveryAvailable(true);
+    }, []);
+
+    const setBlockedIntegrityState = useCallback(async (
+        activeKey: CryptoKey,
+        blockedReason: VaultIntegrityBlockedReason,
+        result?: VaultIntegrityVerificationResult | null,
+    ) => {
+        setEncryptionKey(activeKey);
+        setIsLocked(true);
+        setIsDuressMode(false);
+        setPendingSessionRestore(false);
+        setIntegrityVerified(true);
+        setIntegrityMode('blocked');
+        setIntegrityBlockedReason(blockedReason);
+        setQuarantinedItems(result?.quarantinedItems ?? []);
+        setLastIntegrityResult(result ?? null);
+        setLastActivity(Date.now());
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(SESSION_TIMESTAMP_KEY);
+        sessionStorage.removeItem(SESSION_PASSWORD_HINT_KEY);
+        setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user!.id)));
+    }, [user]);
 
     const finalizeVaultUnlock = useCallback(async (
         activeKey: CryptoKey,
@@ -385,51 +486,98 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return { error: new Error('No active user session') };
         }
 
-        const integritySnapshot = await loadCurrentIntegritySnapshot();
-        if (!integritySnapshot) {
-            return { error: new Error('Vault snapshot unavailable') };
-        }
+        try {
+            const snapshotBundle = await loadCurrentIntegritySnapshot({
+                persistRemoteSnapshot: false,
+            });
+            if (!snapshotBundle) {
+                return { error: new Error('Vault snapshot unavailable') };
+            }
 
-        const integrityResult = await verifyVaultSnapshotIntegrity(user.id, integritySnapshot, activeKey);
-        setIntegrityVerified(true);
-        setLastIntegrityResult(integrityResult);
+            const integrityResult = await verifyVaultSnapshotIntegrity(
+                user.id,
+                snapshotBundle.integritySnapshot,
+                activeKey,
+            );
+            setIntegrityVerified(true);
+            setLastIntegrityResult(integrityResult);
+            setIntegrityMode(integrityResult.mode);
+            setQuarantinedItems(integrityResult.quarantinedItems);
+            setIntegrityBlockedReason(integrityResult.blockedReason ?? null);
 
-        if (!integrityResult.valid && !integrityResult.isFirstCheck) {
-            return { error: new Error('Vault integrity check failed. Possible tampering detected.') };
+            if (integrityResult.mode === 'blocked') {
+                await setBlockedIntegrityState(
+                    activeKey,
+                    integrityResult.blockedReason ?? 'snapshot_malformed',
+                    integrityResult,
+                );
+                return {
+                    error: new Error(
+                        'Die Integritätsprüfung des Tresors ist fehlgeschlagen. Safe Mode oder Reset ist erforderlich.',
+                    ),
+                };
+            }
+
+            if (integrityResult.mode === 'healthy') {
+                await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
+            } else {
+                setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
+            }
+        } catch (error) {
+            if (error instanceof VaultIntegrityBaselineError) {
+                await setBlockedIntegrityState(activeKey, 'baseline_unreadable');
+                return {
+                    error: new Error(
+                        'Der lokale Integritätszustand des Tresors ist unlesbar. Safe Mode oder Reset ist erforderlich.',
+                    ),
+                };
+            }
+            return {
+                error: error instanceof Error
+                    ? error
+                    : new Error('Vault integrity verification failed.'),
+            };
         }
 
         setEncryptionKey(activeKey);
         setIsLocked(false);
         setIsDuressMode(false);
+        setIntegrityBlockedReason(null);
         setLastActivity(Date.now());
         sessionStorage.setItem(SESSION_KEY, 'active');
         sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
         setPendingSessionRestore(false);
 
         return { error: null };
-    }, [loadCurrentIntegritySnapshot, user]);
+    }, [loadCurrentIntegritySnapshot, persistTrustedIntegritySnapshot, setBlockedIntegrityState, user]);
 
     const refreshIntegrityBaseline = useCallback(async (): Promise<void> => {
         if (!user || !encryptionKey) {
             return;
         }
 
-        const integritySnapshot = await loadCurrentIntegritySnapshot();
-        if (!integritySnapshot) {
+        const snapshotBundle = await loadCurrentIntegritySnapshot();
+        if (!snapshotBundle) {
             return;
         }
 
-        const digest = await persistIntegrityBaseline(user.id, integritySnapshot, encryptionKey);
+        const digest = await persistIntegrityBaseline(user.id, snapshotBundle.integritySnapshot, encryptionKey);
+        await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
         setIntegrityVerified(true);
+        setIntegrityMode('healthy');
+        setQuarantinedItems([]);
+        setIntegrityBlockedReason(null);
         setLastIntegrityResult({
             valid: true,
             isFirstCheck: false,
             computedRoot: digest,
             storedRoot: digest,
-            itemCount: integritySnapshot.items.length,
-            categoryCount: integritySnapshot.categories.length,
+            itemCount: snapshotBundle.integritySnapshot.items.length,
+            categoryCount: snapshotBundle.integritySnapshot.categories.length,
+            mode: 'healthy',
+            quarantinedItems: [],
         });
-    }, [encryptionKey, loadCurrentIntegritySnapshot, user]);
+    }, [encryptionKey, loadCurrentIntegritySnapshot, persistTrustedIntegritySnapshot, user]);
 
     const backfillVerificationHash = useCallback(async (
         activeKey: CryptoKey,
@@ -862,6 +1010,9 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     setIsLocked(false);
                     setIntegrityVerified(false);
                     setLastIntegrityResult(null);
+                    setIntegrityMode('healthy');
+                    setQuarantinedItems([]);
+                    setIntegrityBlockedReason(null);
                     setLastActivity(Date.now());
                     sessionStorage.setItem(SESSION_KEY, 'active');
                     sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
@@ -1659,26 +1810,82 @@ export function VaultProvider({ children }: VaultProviderProps) {
         }
 
         try {
-            const integritySnapshot = await loadCurrentIntegritySnapshot();
-            if (!integritySnapshot) {
+            const snapshotBundle = await loadCurrentIntegritySnapshot({
+                persistRemoteSnapshot: false,
+            });
+            if (!snapshotBundle) {
                 return null;
             }
 
-            const result = await verifyVaultSnapshotIntegrity(user.id, integritySnapshot, encryptionKey);
+            const result = await verifyVaultSnapshotIntegrity(
+                user.id,
+                snapshotBundle.integritySnapshot,
+                encryptionKey,
+            );
             setIntegrityVerified(true);
             setLastIntegrityResult(result);
+            setIntegrityMode(result.mode);
+            setQuarantinedItems(result.quarantinedItems);
+            setIntegrityBlockedReason(result.blockedReason ?? null);
+
+            if (result.mode === 'healthy') {
+                await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
+            } else {
+                setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
+            }
+
             return result;
         } catch (err) {
             console.error('Vault integrity verification error:', err);
             return null;
         }
-    }, [encryptionKey, loadCurrentIntegritySnapshot, user]);
+    }, [encryptionKey, loadCurrentIntegritySnapshot, persistTrustedIntegritySnapshot, user]);
 
     const updateIntegrity = useCallback(async (
         _items: VaultItemForIntegrity[]
     ): Promise<void> => {
         await refreshIntegrityBaseline();
     }, [refreshIntegrityBaseline]);
+
+    const enterSafeMode = useCallback(async (): Promise<{ error: Error | null }> => {
+        if (!user || !encryptionKey) {
+            return { error: new Error('Safe Mode requires an active recovery session.') };
+        }
+
+        const trustedSnapshot = await getTrustedOfflineSnapshot(user.id);
+        if (!trustedSnapshot) {
+            return { error: new Error('No trusted local recovery snapshot is available on this device.') };
+        }
+
+        setIntegrityMode('safe');
+        setTrustedRecoveryAvailable(true);
+        setPendingSessionRestore(false);
+        return { error: null };
+    }, [encryptionKey, user]);
+
+    const exitSafeMode = useCallback(() => {
+        setIntegrityMode(integrityBlockedReason ? 'blocked' : 'healthy');
+    }, [integrityBlockedReason]);
+
+    const resetVaultAfterIntegrityFailure = useCallback(async (): Promise<{ error: Error | null }> => {
+        if (!user) {
+            return { error: new Error('No active user session') };
+        }
+
+        try {
+            await resetUserVaultState(user.id);
+            resetVaultState();
+            setIsSetupRequired(true);
+            setIsLoading(false);
+            return { error: null };
+        } catch (error) {
+            return {
+                error: error instanceof Error
+                    ? error
+                    : new Error('Vault reset failed.'),
+            };
+        }
+    }, [resetVaultState, user]);
 
     /**
      * Encrypts plaintext data
@@ -1746,8 +1953,16 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 pendingSessionRestore,
                 verifyIntegrity,
                 updateIntegrity,
+                refreshIntegrityBaseline,
                 integrityVerified,
                 lastIntegrityResult,
+                integrityMode,
+                quarantinedItems,
+                integrityBlockedReason,
+                trustedRecoveryAvailable,
+                enterSafeMode,
+                exitSafeMode,
+                resetVaultAfterIntegrityFailure,
             }}
         >
             {children}

@@ -1,5 +1,5 @@
 ﻿// Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 â€” see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Category Dialog Component
  * 
@@ -55,9 +55,9 @@ import {
 
 // Common emojis for quick selection
 const COMMON_EMOJIS = [
-    'ðŸ“±', 'ðŸ’¼', 'ðŸ’³', 'ðŸ›’', 'ðŸŽ®', 'ðŸ ', 'âœˆï¸', 'ðŸŽµ',
-    'ðŸ“š', 'ðŸ”§', 'ðŸ¦', 'ðŸ’Š', 'ðŸŽ¬', 'ðŸ“§', 'ðŸ”', 'â­',
-    'ðŸŒ', 'ðŸ’»', 'ðŸ“·', 'ðŸŽ¨', 'ðŸƒ', 'ðŸ”', 'ðŸš—', 'ðŸ“',
+    '📱', '💼', '💳', '🛒', '🎮', '🏠', '✈️', '🎵',
+    '📚', '🔧', '🏦', '💊', '🎬', '📧', '🔐', '⭐',
+    '🌐', '💻', '📷', '🎨', '🏃', '🍔', '🚗', '📝',
 ];
 
 // Preset colors
@@ -328,7 +328,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                 description: syncedCategoryDelete
                     ? t('categories.deleted')
                     : t('vault.offlineDeleteQueued', {
-                        defaultValue: 'Offline gelÃ¶scht. LÃ¶schung wird bei Internet synchronisiert.',
+                        defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
                     }),
             });
 

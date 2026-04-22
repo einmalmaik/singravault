@@ -81,7 +81,16 @@ export function VaultSidebar({
     const { t } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
-    const { lock, encryptData, decryptData, decryptItem, encryptItem, isDuressMode, refreshIntegrityBaseline } = useVault();
+    const {
+        lock,
+        encryptData,
+        decryptData,
+        decryptItem,
+        encryptItem,
+        isDuressMode,
+        refreshIntegrityBaseline,
+        verifyIntegrity,
+    } = useVault();
     const { user } = useAuth();
     const [collapsed, setCollapsed] = useState(false);
 
@@ -106,6 +115,11 @@ export function VaultSidebar({
 
         try {
             const { snapshot, source } = await loadVaultSnapshot(user.id);
+            const integrityResult = await verifyIntegrity([]);
+            if (integrityResult?.mode === 'blocked') {
+                setCategories([]);
+                return;
+            }
             const canPersistMigrations = source === 'remote' && isAppOnline();
             const counts: Record<string, number> = {};
             let integrityBaselineDirty = false;
@@ -222,7 +236,7 @@ export function VaultSidebar({
                                     : 'Failed to decrypt category name (key mismatch or corrupt):',
                                 cat.id
                             );
-                            resolvedName = 'Encrypted Category';
+                            resolvedName = 'Beschädigte Kategorie';
                         }
                     } else if (canPersistMigrations) {
                         try {
@@ -318,7 +332,7 @@ export function VaultSidebar({
         } finally {
             setLoading(false);
         }
-    }, [user, encryptData, decryptData, decryptItem, encryptItem, isDuressMode, refreshIntegrityBaseline]);
+    }, [user, encryptData, decryptData, decryptItem, encryptItem, isDuressMode, refreshIntegrityBaseline, verifyIntegrity]);
 
     useEffect(() => {
         if (compactMode) {

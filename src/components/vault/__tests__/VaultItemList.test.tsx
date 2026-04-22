@@ -4,66 +4,82 @@
  * @fileoverview Tests for VaultItemList Component
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 
-import { VaultItemList } from "../VaultItemList";
+import { VaultItemList } from '../VaultItemList';
 
-vi.mock("react-i18next", () => ({
+vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback || key,
+    t: (key: string, options?: string | { defaultValue?: string }) =>
+      typeof options === 'string' ? options : options?.defaultValue || key,
   }),
 }));
 
 const mockDecryptItem = vi.fn();
 const mockEncryptItem = vi.fn();
+const mockVerifyIntegrity = vi.fn();
+const mockRefreshIntegrityBaseline = vi.fn();
 
-vi.mock("@/contexts/VaultContext", () => ({
-  useVault: () => ({
-    decryptItem: (...args: unknown[]) => mockDecryptItem(...args),
-    encryptItem: (...args: unknown[]) => mockEncryptItem(...args),
-    isDuressMode: false,
-  }),
+const mockVaultContext = {
+  decryptItem: (...args: unknown[]) => mockDecryptItem(...args),
+  encryptItem: (...args: unknown[]) => mockEncryptItem(...args),
+  verifyIntegrity: (...args: unknown[]) => mockVerifyIntegrity(...args),
+  refreshIntegrityBaseline: (...args: unknown[]) => mockRefreshIntegrityBaseline(...args),
+  isDuressMode: false,
+  lastIntegrityResult: null as
+    | null
+    | {
+        quarantinedItems: Array<{
+          id: string;
+          reason: 'ciphertext_changed' | 'missing_on_server' | 'unknown_on_server';
+          updatedAt: string | null;
+        }>;
+      },
+};
+
+vi.mock('@/contexts/VaultContext', () => ({
+  useVault: () => mockVaultContext,
 }));
 
-vi.mock("@/contexts/AuthContext", () => ({
+vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: "user-1" },
+    user: { id: 'user-1' },
   }),
 }));
 
-vi.mock("@/services/offlineVaultService", () => ({
+vi.mock('@/services/offlineVaultService', () => ({
   loadVaultSnapshot: vi.fn().mockResolvedValue({
-    source: "offline",
+    source: 'offline',
     snapshot: {
-      vaultId: "vault-1",
+      vaultId: 'vault-1',
       categories: [],
       items: [
         {
-          id: "item-ok",
-          vault_id: "vault-1",
-          title: "Encrypted Item",
+          id: 'item-ok',
+          vault_id: 'vault-1',
+          title: 'Encrypted Item',
           website_url: null,
           icon_url: null,
-          item_type: "password",
+          item_type: 'password',
           is_favorite: false,
           category_id: null,
-          created_at: "2026-02-18T10:00:00.000Z",
-          updated_at: "2026-02-18T10:00:00.000Z",
-          encrypted_data: "cipher-ok",
+          created_at: '2026-02-18T10:00:00.000Z',
+          updated_at: '2026-02-18T10:00:00.000Z',
+          encrypted_data: 'cipher-ok',
         },
         {
-          id: "item-bad",
-          vault_id: "vault-1",
-          title: "Encrypted Item",
+          id: 'item-bad',
+          vault_id: 'vault-1',
+          title: 'Encrypted Item',
           website_url: null,
           icon_url: null,
-          item_type: "password",
+          item_type: 'password',
           is_favorite: false,
           category_id: null,
-          created_at: "2026-02-18T10:00:00.000Z",
-          updated_at: "2026-02-18T09:00:00.000Z",
-          encrypted_data: "cipher-bad",
+          created_at: '2026-02-18T10:00:00.000Z',
+          updated_at: '2026-02-18T09:00:00.000Z',
+          encrypted_data: 'cipher-bad',
         },
       ],
     },
@@ -72,38 +88,54 @@ vi.mock("@/services/offlineVaultService", () => ({
   upsertOfflineItemRow: vi.fn(),
 }));
 
-vi.mock("@/components/vault/VaultItemCard", () => ({
+vi.mock('@/components/vault/VaultItemCard', () => ({
   VaultItemCard: ({ item }: { item: { decryptedData?: { title?: string } } }) => (
-    <div>{item.decryptedData?.title || "missing-title"}</div>
+    <div>{item.decryptedData?.title || 'missing-title'}</div>
   ),
 }));
 
-describe("VaultItemList", () => {
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+vi.mock('@/components/vault/VaultQuarantinedItemCard', () => ({
+  VaultQuarantinedItemCard: ({ itemId }: { itemId: string }) => (
+    <div>Manipulierter Eintrag: {itemId}</div>
+  ),
+}));
 
+describe('VaultItemList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockEncryptItem.mockResolvedValue("encrypted");
+    mockVaultContext.lastIntegrityResult = null;
+    mockEncryptItem.mockResolvedValue('encrypted');
+    mockRefreshIntegrityBaseline.mockResolvedValue(undefined);
+    mockVerifyIntegrity.mockResolvedValue(null);
     mockDecryptItem.mockImplementation(async (cipher: string) => {
-      if (cipher === "cipher-bad") {
-        throw new Error("OperationError");
+      if (cipher === 'cipher-bad') {
+        throw new Error('OperationError');
       }
 
       return {
-        title: "Visible Item",
-        itemType: "password",
+        title: 'Visible Item',
+        itemType: 'password',
         isFavorite: false,
         categoryId: null,
       };
     });
   });
 
-  afterEach(() => {
-    consoleErrorSpy.mockRestore();
-  });
+  it('renders an inline quarantine placeholder for tampered items', async () => {
+    mockVaultContext.lastIntegrityResult = {
+      quarantinedItems: [
+        {
+          id: 'item-bad',
+          reason: 'ciphertext_changed',
+          updatedAt: '2026-02-18T09:00:00.000Z',
+        },
+      ],
+    };
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'quarantine',
+      quarantinedItems: mockVaultContext.lastIntegrityResult.quarantinedItems,
+    });
 
-  it("hides undecryptable items from the rendered list", async () => {
     render(
       <VaultItemList
         searchQuery=""
@@ -115,9 +147,11 @@ describe("VaultItemList", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Visible Item")).toBeInTheDocument();
+      expect(screen.getByText('Visible Item')).toBeInTheDocument();
+      expect(screen.getByText('Manipulierter Eintrag: item-bad')).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("missing-title")).not.toBeInTheDocument();
+    expect(screen.queryByText('missing-title')).not.toBeInTheDocument();
+    expect(mockVerifyIntegrity).toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 Maunting Studios
+﻿// Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Page - Main Dashboard
@@ -36,6 +36,7 @@ import { VaultUnlock } from '@/components/vault/VaultUnlock';
 import { VaultSidebar } from '@/components/vault/VaultSidebar';
 import { VaultItemList } from '@/components/vault/VaultItemList';
 import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
+import { VaultIntegrityRecovery } from '@/components/vault/VaultIntegrityRecovery';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { isPremiumActive } from '@/extensions/registry';
@@ -55,7 +56,7 @@ export default function VaultPage() {
     const { toast } = useToast();
     const isMobile = useIsMobile();
     const { user, isOfflineSession } = useAuth();
-    const { isLocked, isSetupRequired, isLoading: vaultLoading } = useVault();
+    const { integrityMode, isLocked, isSetupRequired, isLoading: vaultLoading } = useVault();
 
     const [searchQuery, setSearchQuery] = useState('');
     const [activeFilter, setActiveFilter] = useState<ItemFilter>('all');
@@ -134,6 +135,10 @@ export default function VaultPage() {
 
     if (isSetupRequired) {
         return <MasterPasswordSetup />;
+    }
+
+    if (integrityMode === 'blocked' || integrityMode === 'safe') {
+        return <VaultIntegrityRecovery />;
     }
 
     if (isLocked) {
@@ -328,3 +333,4 @@ export default function VaultPage() {
         </div>
     );
 }
+
