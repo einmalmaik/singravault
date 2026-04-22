@@ -47,6 +47,8 @@ notizen.md
 .env.production
 *.json
 !/src-tauri/**/*.json
+/src-tauri/singra-vault-export-*.json
+/src-tauri/singra-vault-safe-mode-export-*.json
 /src-tauri/gen/
 /src-tauri/target/
 /supabase/.temp

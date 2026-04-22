@@ -43,6 +43,10 @@ export async function isLocalSecretStoreSupported(): Promise<boolean> {
   }
 
   try {
+    if ((await getBrowserWrappingKey(false)) !== null) {
+      return true;
+    }
+
     return (await getBrowserWrappingKey(true)) !== null;
   } catch {
     return false;
@@ -89,8 +93,6 @@ export async function saveLocalSecretBytes(key: string, value: Uint8Array): Prom
   combined.set(new Uint8Array(encrypted), iv.length);
   const encodedPayload = bytesToBase64(combined);
 
-  browserSecretPayloadCache.set(key, encodedPayload);
-
   await withStore<void>(SECRETS_STORE, "readwrite", (store, _transaction, resolve, reject) => {
     const request = store.put({
       key,
@@ -101,6 +103,8 @@ export async function saveLocalSecretBytes(key: string, value: Uint8Array): Prom
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
+
+  browserSecretPayloadCache.set(key, encodedPayload);
 }
 
 export async function loadLocalSecretBytes(key: string): Promise<Uint8Array | null> {
@@ -258,8 +262,7 @@ async function getBrowserWrappingKey(createIfMissing: boolean): Promise<CryptoKe
     ["encrypt", "decrypt"],
   );
 
-  browserWrappingKeyCache = wrappingKey;
-  void withStore<void>(META_STORE, "readwrite", (store, _transaction, resolve, reject) => {
+  await withStore<void>(META_STORE, "readwrite", (store, _transaction, resolve, reject) => {
     const request = store.put({
       key: WRAPPING_KEY_ID,
       wrappingKey,
@@ -267,12 +270,25 @@ async function getBrowserWrappingKey(createIfMissing: boolean): Promise<CryptoKe
 
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
-  }).catch(() => {
-    // Some runtimes and test adapters cannot persist non-extractable CryptoKeys.
-    // The in-memory cache still secures the current session without silently
-    // downgrading the stored payload format.
   });
 
+  const persisted = await withStore<CryptoKey | null>(META_STORE, "readonly", (store, _transaction, resolve, reject) => {
+    const request = store.get(WRAPPING_KEY_ID);
+    request.onsuccess = () => {
+      const record = request.result as { key: string; wrappingKey?: CryptoKey } | undefined;
+      resolve(record?.wrappingKey ?? null);
+    };
+    request.onerror = () => reject(request.error);
+  });
+
+  if (!persisted) {
+    browserWrappingKeyCache = null;
+    throw new LocalSecretStoreUnsupportedError(
+      "Secure local secret storage is not persistently available in this browser runtime.",
+    );
+  }
+
+  browserWrappingKeyCache = persisted;
   return wrappingKey;
 }
 
