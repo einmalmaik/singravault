@@ -1,8 +1,8 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Page - Main Dashboard
- * 
+ *
  * Central hub for managing all vault items including passwords,
  * secure notes, and TOTP entries.
  */
@@ -38,11 +38,12 @@ import { VaultItemList } from '@/components/vault/VaultItemList';
 import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { isPremiumActive, getServiceHooks } from '@/extensions/registry';
+import { isPremiumActive } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
 import { getAdminEntryPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState } from '@/services/returnNavigationState';
+import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
 
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
 export type ViewMode = 'grid' | 'list';
@@ -53,10 +54,9 @@ export default function VaultPage() {
     const location = useLocation();
     const { toast } = useToast();
     const isMobile = useIsMobile();
-    const { user, authReady, isOfflineSession } = useAuth();
+    const { user, isOfflineSession } = useAuth();
     const { isLocked, isSetupRequired, isLoading: vaultLoading } = useVault();
 
-    // State
     const [searchQuery, setSearchQuery] = useState('');
     const [activeFilter, setActiveFilter] = useState<ItemFilter>('all');
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -67,9 +67,12 @@ export default function VaultPage() {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [isOnline, setIsOnline] = useState(() => navigator.onLine);
     const [isSyncing, setIsSyncing] = useState(false);
-    const [showAdminButton, setShowAdminButton] = useState(false);
+
     const showWebsiteChrome = shouldShowWebsiteChrome();
     const adminEntryPath = getAdminEntryPath();
+    const { showAdminButton } = useAdminPanelAccess({
+        enabled: isPremiumActive() && !isOfflineSession && !isLocked && !isSetupRequired,
+    });
 
     useEffect(() => {
         const goOnline = () => setIsOnline(true);
@@ -112,54 +115,12 @@ export default function VaultPage() {
             }
         };
 
-        syncQueuedChanges();
+        void syncQueuedChanges();
         return () => {
             cancelled = true;
         };
     }, [user, isLocked, isSetupRequired, isOnline, toast, t]);
 
-    useEffect(() => {
-        // Admin-Button nur laden wenn:
-        // 1. Auth-Status vollständig vom Server synchronisiert ist (authReady)
-        // 2. User ist Supabase-authentifiziert
-        // 3. Vault ist entsperrt (nicht im Setup/Lock-State)
-        // Verhindert race condition 401s beim App-Start
-        if (!isPremiumActive() || !authReady || !user || isOfflineSession || isLocked || isSetupRequired) {
-            setShowAdminButton(false);
-            return;
-        }
-
-        let cancelled = false;
-
-        const loadAdminAccess = async () => {
-            const hooks = getServiceHooks();
-            if (!hooks.getTeamAccess) {
-                setShowAdminButton(false);
-                return;
-            }
-            console.debug('[VaultPage] authReady is true, fetching admin access...');
-            const { access, error } = await hooks.getTeamAccess();
-
-            if (cancelled) {
-                return;
-            }
-
-            if (error || !access) {
-                setShowAdminButton(false);
-                return;
-            }
-
-            setShowAdminButton(access.can_access_admin);
-        };
-
-        void loadAdminAccess();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [authReady, user, isOfflineSession, isLocked, isSetupRequired]);
-
-    // Loading state
     if (vaultLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-background">
@@ -171,12 +132,10 @@ export default function VaultPage() {
         );
     }
 
-    // Master password setup required
     if (isSetupRequired) {
         return <MasterPasswordSetup />;
     }
 
-    // Vault is locked
     if (isLocked) {
         return <VaultUnlock />;
     }
@@ -192,13 +151,11 @@ export default function VaultPage() {
     };
 
     const handleItemSaved = () => {
-        // Trigger refresh of item list without full page reload
-        setRefreshKey(prev => prev + 1);
+        setRefreshKey((prev) => prev + 1);
     };
 
     return (
         <div className="min-h-screen flex overflow-hidden bg-background">
-            {/* Sidebar */}
             {!isMobile && (
                 <VaultSidebar
                     selectedCategory={selectedCategory}
@@ -219,12 +176,9 @@ export default function VaultPage() {
                 </Sheet>
             )}
 
-            {/* Main Content */}
             <div className="flex-1 flex flex-col min-w-0">
-                {/* Header */}
                 <header className="sticky top-0 z-10 border-b border-border/55 bg-background/90 backdrop-blur-xl px-4 lg:px-6 py-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:gap-4 items-start sm:items-center justify-between">
-                        {/* Search */}
                         <div className="relative w-full sm:max-w-md min-w-0">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                             <Input
@@ -235,7 +189,6 @@ export default function VaultPage() {
                             />
                         </div>
 
-                        {/* Actions */}
                         <div className="flex w-full sm:w-auto items-center gap-2 flex-wrap sm:flex-nowrap">
                             {isMobile && (
                                 <Button
@@ -265,7 +218,6 @@ export default function VaultPage() {
                                 </Button>
                             )}
 
-                            {/* View Mode Toggle */}
                             <div className="hidden sm:flex border rounded-lg p-0.5">
                                 <Button
                                     variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
@@ -285,7 +237,6 @@ export default function VaultPage() {
                                 </Button>
                             </div>
 
-                            {/* New Item Button */}
                             <Button onClick={handleOpenNewItem} className="ml-auto sm:ml-0">
                                 <Plus className="w-4 h-4 mr-2" />
                                 {t('vault.actions.add')}
@@ -293,7 +244,6 @@ export default function VaultPage() {
                         </div>
                     </div>
 
-                    {/* Filters */}
                     <Tabs value={activeFilter} onValueChange={(v) => setActiveFilter(v as ItemFilter)} className="mt-4">
                         <div className="-mx-1 overflow-x-auto px-1 pb-1">
                             <TabsList className="inline-flex w-max min-w-full sm:min-w-0">
@@ -337,7 +287,6 @@ export default function VaultPage() {
                     </div>
                 </header>
 
-                {/* Item List */}
                 <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0">
                     <VaultItemList
                         searchQuery={searchQuery}
@@ -370,7 +319,6 @@ export default function VaultPage() {
                 )}
             </div>
 
-            {/* Create/Edit Dialog */}
             <VaultItemDialog
                 open={dialogOpen}
                 onOpenChange={setDialogOpen}

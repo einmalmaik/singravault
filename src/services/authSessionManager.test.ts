@@ -175,4 +175,33 @@ describe("authSessionManager", () => {
     expect(result.mode).toBe("unauthenticated");
     expect(mockRefreshSession).not.toHaveBeenCalled();
   });
+
+  it("refreshes a desktop session from the persisted Supabase snapshot when the keychain is empty", async () => {
+    runtimeState.isTauri = true;
+    let storedRefreshToken: string | null = null;
+    runtimeState.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "load_refresh_token") {
+        return storedRefreshToken;
+      }
+
+      if (command === "save_refresh_token") {
+        storedRefreshToken = String(args?.refreshToken ?? "");
+        return null;
+      }
+
+      if (command === "clear_refresh_token") {
+        storedRefreshToken = null;
+        return null;
+      }
+
+      return null;
+    });
+    localStorage.setItem("sb-example-auth-token", JSON.stringify(mockSession));
+
+    const result = await hydrateAuthSession();
+
+    expect(mockRefreshSession).toHaveBeenCalledWith({ refresh_token: "refresh-token" });
+    expect(result.mode).toBe("online");
+    expect(result.session?.access_token).toBe("access-token");
+  });
 });

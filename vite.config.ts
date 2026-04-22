@@ -42,6 +42,10 @@ function getSecurityHeaders(mode: string) {
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
+  const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "package.json"), "utf-8")) as {
+    version?: string;
+  };
+  const appVersion = packageJson.version ?? "0.0.0";
   const securityHeaders = getSecurityHeaders(mode);
   const isDev = mode === "development";
   const tauriDevHost = process.env.TAURI_DEV_HOST;
@@ -56,10 +60,10 @@ export default defineConfig(({ mode }) => {
   const isPremiumDisabled = process.env.SINGRA_DISABLE_PREMIUM === "true";
   const hasPremiumDevRepo = fs.existsSync(premiumDevEntry);
   const hasInstalledPremiumPackage = fs.existsSync(premiumInstalledEntry);
-  const shouldUsePremiumSource =
-    !isPremiumDisabled
-    && hasPremiumDevRepo
-    && (isDev || isTauriBuild || process.env.SINGRA_PREMIUM_SOURCE === "true");
+  // Keep local development and local desktop builds on the same premium code path.
+  // When the sibling repo exists, it is the source of truth; packaged installs and CI
+  // still fall back to the installed package if no sibling checkout is present.
+  const shouldUsePremiumSource = !isPremiumDisabled && hasPremiumDevRepo;
   const premiumEntry = isPremiumDisabled
     ? premiumStubEntry
     : shouldUsePremiumSource
@@ -227,6 +231,9 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: "esnext",
+    },
+    define: {
+      __APP_VERSION__: JSON.stringify(appVersion),
     },
   };
 });

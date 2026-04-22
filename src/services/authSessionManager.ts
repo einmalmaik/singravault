@@ -9,6 +9,10 @@
 
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  clearDesktopPersistedSessionTokens,
+  readDesktopPersistedSessionTokens,
+} from "@/integrations/supabase/authStorage";
 import { hasOAuthCallbackPayload } from "@/platform/tauriOAuthCallback";
 import { isTauriRuntime } from "@/platform/runtime";
 import { getTauriInvoke } from "@/platform/tauriInvoke";
@@ -55,11 +59,16 @@ export function isInIframe(): boolean {
 export async function hydrateAuthSession(): Promise<HydratedAuthState> {
   const memorySession = await getMemorySession();
   if (memorySession?.access_token) {
+    console.info("[AuthSessionManager] hydrateAuthSession resolved from in-memory session.", {
+      mode: "online",
+      hasRefreshToken: Boolean(memorySession.refresh_token),
+    });
     await persistAuthenticatedSession(memorySession);
     return onlineState(memorySession);
   }
 
   if (isTauriRuntime()) {
+    console.info("[AuthSessionManager] hydrateAuthSession entering Tauri refresh path.");
     // Check if we have incoming deep links (a login is in progress).
     // If so, do NOT attempt to refresh the old keychain token, as its failure 
     // would trigger a SIGNED_OUT event that destroys the newly applied deep link session.
@@ -77,9 +86,11 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
 
     const tauriSession = await refreshFromTauriKeychain();
     if (tauriSession) {
+      console.info("[AuthSessionManager] hydrateAuthSession restored session from desktop keychain.");
       return onlineState(tauriSession);
     }
 
+    console.info("[AuthSessionManager] hydrateAuthSession found no desktop keychain session.");
     return unauthenticatedState();
   }
 
@@ -125,6 +136,7 @@ export async function applyAuthenticatedSession(tokens: SessionTokens): Promise<
 
 export async function persistAuthenticatedSession(session: Session | null): Promise<void> {
   if (!session?.access_token || !session.refresh_token) {
+    console.info("[AuthSessionManager] Clearing persisted auth session because tokens are incomplete.");
     clearSessionFallback();
     return;
   }
@@ -132,6 +144,12 @@ export async function persistAuthenticatedSession(session: Session | null): Prom
   if (isTauriRuntime()) {
     try {
       await saveRefreshTokenToKeychain(session.refresh_token);
+      const persistedRefreshToken = await loadRefreshTokenFromKeychain();
+      if (persistedRefreshToken) {
+        console.info("[AuthSessionManager] Persisted desktop refresh token to keychain.");
+      } else {
+        console.warn("[AuthSessionManager] Desktop refresh token could not be read back from keychain after save.");
+      }
     } catch (error) {
       console.error("[Auth] Failed to persist desktop refresh token in keychain:", error);
     }
@@ -145,6 +163,11 @@ export async function persistAuthenticatedSession(session: Session | null): Prom
 }
 
 export async function refreshCurrentSession(): Promise<Session | null> {
+  console.debug("[AuthSessionManager] refreshCurrentSession requested.", {
+    hasInflightRefresh: Boolean(refreshInFlight),
+    isTauriRuntime: isTauriRuntime(),
+  });
+
   if (!refreshInFlight) {
     refreshInFlight = refreshCurrentSessionUncached().finally(() => {
       refreshInFlight = null;
@@ -155,6 +178,7 @@ export async function refreshCurrentSession(): Promise<Session | null> {
 }
 
 export async function clearPersistentSession(): Promise<void> {
+  console.info("[AuthSessionManager] Clearing persisted auth artifacts.");
   clearSessionFallback();
   await clearRefreshTokenFromKeychain();
   await clearOfflineIdentity();
@@ -299,6 +323,7 @@ export async function clearOfflineIdentity(): Promise<void> {
 
 async function refreshCurrentSessionUncached(): Promise<Session | null> {
   if (isTauriRuntime()) {
+    console.info("[AuthSessionManager] refreshCurrentSessionUncached using desktop keychain refresh.");
     return refreshFromTauriKeychain();
   }
 
@@ -326,7 +351,14 @@ async function refreshCurrentSessionUncached(): Promise<Session | null> {
 }
 
 async function refreshFromTauriKeychain(): Promise<Session | null> {
-  const refreshToken = await loadRefreshTokenFromKeychain();
+  const keychainRefreshToken = await loadRefreshTokenFromKeychain();
+  const persistedDesktopTokens = readDesktopPersistedSessionTokens(runtimeConfig.supabaseUrl);
+  const refreshToken = keychainRefreshToken || persistedDesktopTokens?.refresh_token || null;
+  console.info("[AuthSessionManager] refreshFromTauriKeychain loaded keychain token.", {
+    hasKeychainRefreshToken: Boolean(keychainRefreshToken),
+    hasPersistedDesktopRefreshToken: Boolean(persistedDesktopTokens?.refresh_token),
+    usingPersistedDesktopSnapshot: !keychainRefreshToken && Boolean(persistedDesktopTokens?.refresh_token),
+  });
   if (!refreshToken) {
     return null;
   }
@@ -335,21 +367,29 @@ async function refreshFromTauriKeychain(): Promise<Session | null> {
   // do not attempt to refresh the old token (which would fail and emit SIGNED_OUT).
   const currentMemSession = await getMemorySession();
   if (currentMemSession?.access_token) {
+    console.info("[AuthSessionManager] refreshFromTauriKeychain found an in-memory session and skipped refresh.");
     return currentMemSession;
   }
 
   const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
   if (error || !data.session) {
+    console.warn("[AuthSessionManager] refreshFromTauriKeychain failed.", {
+      error: error?.message ?? null,
+    });
     // Check if memory session was updated concurrently by a deep link before we clear anything
     const concurrentSession = await getMemorySession();
     if (concurrentSession?.access_token) {
+      console.info("[AuthSessionManager] refreshFromTauriKeychain recovered concurrent in-memory session.");
       return concurrentSession;
     }
     await clearRefreshTokenFromKeychain();
+    clearDesktopPersistedSessionTokens(runtimeConfig.supabaseUrl);
+    console.info("[AuthSessionManager] Cleared invalid desktop refresh token after refresh failure.");
     return null;
   }
 
   await persistAuthenticatedSession(data.session);
+  console.info("[AuthSessionManager] refreshFromTauriKeychain refreshed the desktop session successfully.");
   return data.session;
 }
 

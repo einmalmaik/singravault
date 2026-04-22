@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createAuthStorage, isPkceVerifierStorageKey } from "./authStorage";
+import {
+  clearDesktopPersistedSessionTokens,
+  createAuthStorage,
+  getDesktopSessionStorageKey,
+  isPkceVerifierStorageKey,
+  readDesktopPersistedSessionTokens,
+} from "./authStorage";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const runtimeState = vi.hoisted(() => ({
@@ -114,5 +120,49 @@ describe("authStorage", () => {
   it("detects Supabase PKCE verifier keys", () => {
     expect(isPkceVerifierStorageKey("sb-project-auth-token-code-verifier")).toBe(true);
     expect(isPkceVerifierStorageKey("sb-project-auth-token")).toBe(false);
+  });
+
+  it("derives the desktop Supabase session key from the project URL", () => {
+    expect(getDesktopSessionStorageKey("https://lcrtadxlojaucwapgzmy.supabase.co"))
+      .toBe("sb-lcrtadxlojaucwapgzmy-auth-token");
+    expect(getDesktopSessionStorageKey("not-a-url")).toBeNull();
+  });
+
+  it("reads a valid desktop session snapshot from localStorage", () => {
+    runtimeState.isTauri = true;
+    const supabaseUrl = "https://lcrtadxlojaucwapgzmy.supabase.co";
+    localStorage.setItem(
+      "sb-lcrtadxlojaucwapgzmy-auth-token",
+      JSON.stringify({
+        access_token: "desktop-access-token",
+        refresh_token: "desktop-refresh-token",
+      }),
+    );
+
+    expect(readDesktopPersistedSessionTokens(supabaseUrl)).toEqual({
+      access_token: "desktop-access-token",
+      refresh_token: "desktop-refresh-token",
+    });
+  });
+
+  it("clears malformed desktop session snapshots", () => {
+    runtimeState.isTauri = true;
+    const supabaseUrl = "https://lcrtadxlojaucwapgzmy.supabase.co";
+    const sessionKey = "sb-lcrtadxlojaucwapgzmy-auth-token";
+    localStorage.setItem(sessionKey, "{\"access_token\":");
+
+    expect(readDesktopPersistedSessionTokens(supabaseUrl)).toBeNull();
+    expect(localStorage.getItem(sessionKey)).toBeNull();
+  });
+
+  it("can explicitly clear a persisted desktop session snapshot", () => {
+    runtimeState.isTauri = true;
+    const supabaseUrl = "https://lcrtadxlojaucwapgzmy.supabase.co";
+    const sessionKey = "sb-lcrtadxlojaucwapgzmy-auth-token";
+    localStorage.setItem(sessionKey, "session-json");
+
+    clearDesktopPersistedSessionTokens(supabaseUrl);
+
+    expect(localStorage.getItem(sessionKey)).toBeNull();
   });
 });

@@ -14,6 +14,12 @@ export interface AuthStorage {
 }
 
 const PKCE_VERIFIER_SUFFIX = "-code-verifier";
+const SUPABASE_HOST_SEGMENT = ".supabase.";
+
+interface DesktopPersistedSessionShape {
+  access_token?: string;
+  refresh_token?: string;
+}
 
 export function createAuthStorage(): AuthStorage {
   const memoryStore = new Map<string, string>();
@@ -73,6 +79,65 @@ export function isPkceVerifierStorageKey(key: string): boolean {
   return key.endsWith(PKCE_VERIFIER_SUFFIX);
 }
 
+export function getDesktopSessionStorageKey(supabaseUrl: string): string | null {
+  const normalizedUrl = supabaseUrl.trim();
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  try {
+    const hostname = new URL(normalizedUrl).hostname.toLowerCase();
+    const hostSeparatorIndex = hostname.indexOf(SUPABASE_HOST_SEGMENT);
+    if (hostSeparatorIndex <= 0) {
+      return null;
+    }
+
+    const projectRef = hostname.slice(0, hostSeparatorIndex);
+    return projectRef ? `sb-${projectRef}-auth-token` : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readDesktopPersistedSessionTokens(
+  supabaseUrl: string,
+): DesktopPersistedSessionShape | null {
+  const sessionKey = getDesktopSessionStorageKey(supabaseUrl);
+  if (!sessionKey) {
+    return null;
+  }
+
+  const rawValue = readDesktopSessionValue(sessionKey);
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue) as DesktopPersistedSessionShape;
+    if (!parsed.access_token || !parsed.refresh_token) {
+      clearDesktopPersistedSessionTokens(supabaseUrl);
+      return null;
+    }
+
+    return {
+      access_token: parsed.access_token,
+      refresh_token: parsed.refresh_token,
+    };
+  } catch {
+    clearDesktopPersistedSessionTokens(supabaseUrl);
+    return null;
+  }
+}
+
+export function clearDesktopPersistedSessionTokens(supabaseUrl: string): void {
+  const sessionKey = getDesktopSessionStorageKey(supabaseUrl);
+  if (!sessionKey) {
+    return;
+  }
+
+  removeDesktopSessionValue(sessionKey);
+}
+
 function readDesktopSessionValue(key: string): StorageValue {
   if (typeof window === "undefined") {
     return null;
@@ -80,7 +145,13 @@ function readDesktopSessionValue(key: string): StorageValue {
 
   try {
     return window.localStorage.getItem(key);
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      console.warn("[AuthStorage] Failed to read desktop auth snapshot from localStorage.", {
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     return null;
   }
 }
@@ -92,8 +163,13 @@ function writeDesktopSessionValue(key: string, value: string): void {
 
   try {
     window.localStorage.setItem(key, value);
-  } catch {
-    // Desktop auth still has the in-memory + keychain path if local persistence fails.
+  } catch (error) {
+    if (isTauriRuntime()) {
+      console.warn("[AuthStorage] Failed to persist desktop auth snapshot to localStorage.", {
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
 
@@ -104,7 +180,12 @@ function removeDesktopSessionValue(key: string): void {
 
   try {
     window.localStorage.removeItem(key);
-  } catch {
-    // Best-effort cleanup only.
+  } catch (error) {
+    if (isTauriRuntime()) {
+      console.warn("[AuthStorage] Failed to remove desktop auth snapshot from localStorage.", {
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

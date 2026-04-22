@@ -4,8 +4,13 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 import { isTauriRuntime } from "@/platform/runtime";
+import { installDesktopConsoleMirroring } from "@/services/desktopDiagnosticsService";
 
 import { initPremium } from '@singra/premium';
+
+if (isTauriRuntime()) {
+  installDesktopConsoleMirroring();
+}
 
 initPremium();
 
