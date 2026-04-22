@@ -4,51 +4,29 @@
  * @fileoverview Device Key Service for Singra Vault
  *
  * Manages a 256-bit client-side Device Key that strengthens the vault
- * encryption key. The Device Key is stored locally in IndexedDB and
- * NEVER sent to the server.
+ * encryption key. The Device Key never leaves the local runtime.
  *
  * Key derivation with Device Key:
  *   VaultKey = HKDF-Expand(Argon2id(MasterPW, Salt), DeviceKey)
  *
- * This provides protection even if the server is fully compromised
- * and the attacker has a weak master password — analogous to
- * 1Password's Secret Key, but stronger (256-bit vs 128-bit).
- *
  * SECURITY:
  * - Device Key is generated from crypto.getRandomValues (CSPRNG)
- * - Stored encrypted in IndexedDB (wrapped with a key derived from userId)
+ * - Stored in the shared local secret store
+ * - Browser runtimes without a secure local secret store must not enable it
  * - Never logged, never sent over the network
  * - Loss of Device Key + no backup = vault unrecoverable (by design)
  */
 
-// ============ Constants ============
+import {
+    isLocalSecretStoreSupported,
+    loadLocalSecretBytes,
+    removeLocalSecret,
+    saveLocalSecretBytes,
+} from '@/platform/localSecretStore';
 
-const DB_NAME = 'singra_device_keys';
-const DB_VERSION = 1;
-const STORE_NAME = 'keys';
 const DEVICE_KEY_LENGTH = 32; // 256 bits
 const HKDF_INFO = 'SINGRA_DEVICE_KEY_V1';
-
-// ============ IndexedDB Helpers ============
-
-/**
- * Opens (or creates) the IndexedDB database for device key storage.
- */
-function openDB(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-        request.onupgradeneeded = () => {
-            const db = request.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME, { keyPath: 'userId' });
-            }
-        };
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
+const DEVICE_KEY_SECRET_PREFIX = 'device-key:';
 
 // ============ Core Functions ============
 
@@ -62,43 +40,17 @@ export function generateDeviceKey(): Uint8Array {
 }
 
 /**
- * Stores a Device Key in IndexedDB, wrapped (encrypted) with a
- * deterministic key derived from the userId.
+ * Stores a Device Key in the shared local secret store.
  *
- * SECURITY: The wrapping key is derived from the userId via HKDF.
- * This is NOT strong protection by itself — it primarily prevents
- * casual inspection. The real security comes from the fact that
- * the Device Key never leaves the device.
- *
- * @param userId - The user's UUID (used as wrapping context)
+ * @param userId - The user's UUID
  * @param deviceKey - The 256-bit device key to store
  */
 export async function storeDeviceKey(userId: string, deviceKey: Uint8Array): Promise<void> {
-    const wrappingKey = await deriveWrappingKey(userId);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
+    if (!(await isLocalSecretStoreSupported())) {
+        throw new Error('Secure local secret storage is not available in this runtime.');
+    }
 
-    const encrypted = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        wrappingKey,
-        deviceKey as BufferSource,
-    );
-
-    const record = {
-        userId,
-        iv: Array.from(iv),
-        encrypted: Array.from(new Uint8Array(encrypted)),
-        createdAt: new Date().toISOString(),
-    };
-
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        const request = store.put(record);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-        tx.oncomplete = () => db.close();
-    });
+    await saveLocalSecretBytes(getDeviceKeySecretKey(userId), deviceKey);
 }
 
 /**
@@ -109,31 +61,8 @@ export async function storeDeviceKey(userId: string, deviceKey: Uint8Array): Pro
  */
 export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
     try {
-        const db = await openDB();
-        const record = await new Promise<any>((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const store = tx.objectStore(STORE_NAME);
-            const request = store.get(userId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-            tx.oncomplete = () => db.close();
-        });
-
-        if (!record) return null;
-
-        const wrappingKey = await deriveWrappingKey(userId);
-        const iv = new Uint8Array(record.iv);
-        const encrypted = new Uint8Array(record.encrypted);
-
-        const decrypted = await crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv },
-            wrappingKey,
-            encrypted,
-        );
-
-        return new Uint8Array(decrypted);
+        return await loadLocalSecretBytes(getDeviceKeySecretKey(userId));
     } catch {
-        // IndexedDB might be unavailable (private browsing, etc.)
         return null;
     }
 }
@@ -146,16 +75,7 @@ export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
  */
 export async function hasDeviceKey(userId: string): Promise<boolean> {
     try {
-        const db = await openDB();
-        const record = await new Promise<any>((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const store = tx.objectStore(STORE_NAME);
-            const request = store.get(userId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-            tx.oncomplete = () => db.close();
-        });
-        return !!record;
+        return (await getDeviceKey(userId)) !== null;
     } catch {
         return false;
     }
@@ -167,15 +87,7 @@ export async function hasDeviceKey(userId: string): Promise<boolean> {
  * @param userId - The user's UUID
  */
 export async function deleteDeviceKey(userId: string): Promise<void> {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        const request = store.delete(userId);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-        tx.oncomplete = () => db.close();
-    });
+    await removeLocalSecret(getDeviceKeySecretKey(userId));
 }
 
 // ============ HKDF-Expand: Combine Argon2id output with Device Key ============
@@ -301,31 +213,8 @@ export async function importDeviceKeyFromTransfer(
 
 // ============ Internal Helpers ============
 
-/**
- * Derives a wrapping key from the userId for IndexedDB storage.
- * This is defense-in-depth, not the primary security mechanism.
- */
-async function deriveWrappingKey(userId: string): Promise<CryptoKey> {
-    const keyMaterial = await crypto.subtle.importKey(
-        'raw',
-        new TextEncoder().encode(userId),
-        'HKDF',
-        false,
-        ['deriveKey'],
-    );
-
-    return crypto.subtle.deriveKey(
-        {
-            name: 'HKDF',
-            hash: 'SHA-256',
-            salt: new TextEncoder().encode('SINGRA_DEVICE_KEY_WRAP'),
-            info: new TextEncoder().encode('device-key-wrapping'),
-        },
-        keyMaterial,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt', 'decrypt'],
-    );
+function getDeviceKeySecretKey(userId: string): string {
+    return `${DEVICE_KEY_SECRET_PREFIX}${userId}`;
 }
 
 /**

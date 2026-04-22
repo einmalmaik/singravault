@@ -1,5 +1,5 @@
-// Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+﻿// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 â€” see LICENSE
 /**
  * @fileoverview Vault Item Dialog Component
  * 
@@ -138,7 +138,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
-    const { encryptItem, decryptItem, encryptData, decryptData, isDuressMode } = useVault();
+    const { encryptItem, decryptItem, encryptData, decryptData, isDuressMode, refreshIntegrityBaseline } = useVault();
     const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
     const hasPremiumAuthenticator = isPremiumActive();
 
@@ -177,6 +177,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         try {
             const { snapshot, source } = await loadVaultSnapshot(user.id);
             const canPersistMigrations = source === 'remote' && isAppOnline();
+            let integrityBaselineDirty = false;
             const resolvedCategories = await Promise.all(
                 snapshot.categories.map(async (cat) => {
                     let resolvedName = cat.name;
@@ -201,6 +202,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                 .from('categories')
                                 .update({ name: migratedName })
                                 .eq('id', cat.id);
+                            integrityBaselineDirty = true;
                         } catch (err) {
                             console.error('Failed to migrate category name:', cat.id, err);
                         }
@@ -221,6 +223,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                 .from('categories')
                                 .update({ icon: migratedIcon })
                                 .eq('id', cat.id);
+                            integrityBaselineDirty = true;
                         } catch (err) {
                             console.error('Failed to migrate category icon:', cat.id, err);
                         }
@@ -241,6 +244,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                 .from('categories')
                                 .update({ color: migratedColor })
                                 .eq('id', cat.id);
+                            integrityBaselineDirty = true;
                         } catch (err) {
                             console.error('Failed to migrate category color:', cat.id, err);
                         }
@@ -265,12 +269,16 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 }),
             );
 
+            if (integrityBaselineDirty) {
+                await refreshIntegrityBaseline();
+            }
+
             setCategories(resolvedCategories);
         } catch (err) {
             console.error('Failed to load categories:', err);
             setCategories([]);
         }
-    }, [user, open, decryptData, encryptData]);
+    }, [user, open, decryptData, encryptData, refreshIntegrityBaseline]);
 
     // Fetch categories
     useEffect(() => {
@@ -458,6 +466,8 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     }),
             });
 
+            await refreshIntegrityBaseline();
+
             onOpenChange(false);
             // Trigger data refresh without page reload
             onSave?.();
@@ -509,9 +519,10 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 description: syncedOnline
                     ? t('vault.itemDeleted')
                     : t('vault.offlineDeleteQueued', {
-                        defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
+                        defaultValue: 'Offline gelÃ¶scht. LÃ¶schung wird bei Internet synchronisiert.',
                     }),
             });
+            await refreshIntegrityBaseline();
             onOpenChange(false);
             onSave?.();
         } catch (err) {
@@ -921,3 +932,6 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         </>
     );
 }
+
+
+

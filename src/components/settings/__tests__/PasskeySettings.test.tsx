@@ -26,13 +26,13 @@ vi.mock("@/contexts/AuthContext", () => ({
   }),
 }));
 
-const mockGetRawKeyForPasskey = vi.fn();
+const mockGetPasskeyWrappingMaterial = vi.fn();
 const mockRefreshPasskeyUnlockStatus = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/contexts/VaultContext", () => ({
   useVault: () => ({
     webAuthnAvailable: true,
     isLocked: false,
-    getRawKeyForPasskey: mockGetRawKeyForPasskey,
+    getPasskeyWrappingMaterial: mockGetPasskeyWrappingMaterial,
     refreshPasskeyUnlockStatus: mockRefreshPasskeyUnlockStatus,
   }),
 }));
@@ -63,7 +63,7 @@ describe("PasskeySettings", () => {
     mockUser = { id: "user-1" };
     mockListPasskeys.mockResolvedValue([]);
     mockDeletePasskey.mockResolvedValue({ success: true });
-    mockGetRawKeyForPasskey.mockResolvedValue(new Uint8Array(32));
+    mockGetPasskeyWrappingMaterial.mockResolvedValue(new Uint8Array(32));
     mockRefreshPasskeyUnlockStatus.mockResolvedValue(undefined);
     mockGetPasskeyClientSupport.mockResolvedValue({
       webAuthnAvailable: true,

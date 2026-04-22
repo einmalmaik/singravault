@@ -47,6 +47,7 @@ const mockDecrypt = vi.fn();
 const mockEncryptVaultItem = vi.fn();
 const mockDecryptVaultItem = vi.fn();
 const mockAttemptKdfUpgrade = vi.fn();
+const mockUnwrapUserKeyBytes = vi.fn();
 
 vi.mock("@/services/cryptoService", () => ({
   deriveKey: (...args: unknown[]) => mockDeriveKey(...args),
@@ -75,6 +76,7 @@ vi.mock("@/services/cryptoService", () => ({
   unwrapUserKey: vi.fn(() => Promise.resolve(
     { type: 'secret', extractable: false, usages: ['encrypt', 'decrypt'] }
   )),
+  unwrapUserKeyBytes: (...args: unknown[]) => mockUnwrapUserKeyBytes(...args),
   rewrapUserKey: vi.fn(() => Promise.resolve('mock-rewrapped-user-key')),
   decryptPrivateKeyLegacy: vi.fn(() => Promise.resolve('mock-plain-private-key')),
   wrapPrivateKeyWithUserKey: vi.fn(() => Promise.resolve('mock-wrapped-private-key')),
@@ -82,11 +84,15 @@ vi.mock("@/services/cryptoService", () => ({
 }));
 
 // Mock offline vault service
+const mockGetOfflineCredentials = vi.fn();
+const mockSaveOfflineCredentials = vi.fn();
+const mockLoadVaultSnapshot = vi.fn();
 vi.mock("@/services/offlineVaultService", () => ({
   isAppOnline: vi.fn(() => true),
   isLikelyOfflineError: vi.fn(() => false),
-  getOfflineCredentials: vi.fn(() => Promise.resolve(null)),
-  saveOfflineCredentials: vi.fn(() => Promise.resolve()),
+  getOfflineCredentials: (...args: unknown[]) => mockGetOfflineCredentials(...args),
+  saveOfflineCredentials: (...args: unknown[]) => mockSaveOfflineCredentials(...args),
+  loadVaultSnapshot: (...args: unknown[]) => mockLoadVaultSnapshot(...args),
 }));
 
 // Mock passkey service
@@ -116,6 +122,24 @@ function createWrapper() {
   };
 }
 
+function createSelectQueryMock(
+  profileData: Record<string, unknown> | null = null,
+  limitData: unknown[] = [],
+) {
+  const query = {
+    eq: vi.fn(),
+    single: vi.fn().mockResolvedValue({ data: profileData, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: profileData, error: null }),
+    limit: vi.fn().mockResolvedValue({ data: limitData, error: null }),
+    order: vi.fn(),
+  };
+
+  query.eq.mockReturnValue(query);
+  query.order.mockReturnValue(query);
+
+  return query;
+}
+
 // ============ Test Suite ============
 
 describe("VaultContext", () => {
@@ -126,23 +150,28 @@ describe("VaultContext", () => {
 
     // Default auth mock
     mockUseAuth.mockReturnValue({ user: mockUser, authReady: true });
+    mockGetOfflineCredentials.mockResolvedValue(null);
+    mockSaveOfflineCredentials.mockResolvedValue(undefined);
+    mockLoadVaultSnapshot.mockResolvedValue({
+      snapshot: {
+        items: [],
+        categories: [],
+      },
+      source: "cache",
+    });
     mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
     mockImportMasterKey.mockResolvedValue({} as CryptoKey);
-    mockAuthenticatePasskey.mockResolvedValue({ success: true, encryptionKey: {} as CryptoKey });
+    mockAuthenticatePasskey.mockResolvedValue({
+      success: true,
+      encryptionKey: {} as CryptoKey,
+      keySource: "vault-key",
+    });
     mockListPasskeys.mockResolvedValue([]);
     mockGetUnlockCooldown.mockReturnValue(null);
+    mockUnwrapUserKeyBytes.mockResolvedValue(new Uint8Array(32));
 
     // Default Supabase profile response - no vault setup yet
-    // Support chained .eq() calls with proper mock structure
-    const mockEqChain = {
-      eq: vi.fn().mockReturnValue({
-        single: vi.fn().mockResolvedValue({ data: null, error: null }),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      }),
-      single: vi.fn().mockResolvedValue({ data: null, error: null }),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-    };
+    const mockEqChain = createSelectQueryMock(null, []);
 
     mockSupabase.from.mockReturnValue({
       select: vi.fn().mockReturnValue({
@@ -195,28 +224,11 @@ describe("VaultContext", () => {
       // Mock existing profile with vault setup
       mockSupabase.from.mockReturnValue({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "test-salt-123",
-                master_password_verifier: "test-verifier-456",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            maybeSingle: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "test-salt-123",
-                master_password_verifier: "test-verifier-456",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            limit: vi.fn().mockResolvedValue({
-              data: [],
-              error: null,
-            }),
-          }),
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "test-salt-123",
+            master_password_verifier: "test-verifier-456",
+            kdf_version: 2,
+          })),
         }),
       });
 
@@ -313,23 +325,16 @@ describe("VaultContext", () => {
 
       mockSupabase.from.mockImplementation(() => ({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn((_column: string, value: string) => ({
-            single: vi.fn().mockResolvedValue({ data: null, error: null }),
-            maybeSingle: vi.fn().mockResolvedValue(
-              value === mockUser.id
-                ? {
-                    data: {
-                      encryption_salt: "first-user-salt",
-                      master_password_verifier: "first-user-verifier",
-                      kdf_version: 2,
-                      encrypted_user_key: "first-user-usk",
-                    },
-                    error: null,
-                  }
-                : { data: null, error: null },
-            ),
-            limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-          })),
+          eq: vi.fn((_column: string, value: string) => createSelectQueryMock(
+            value === mockUser.id
+              ? {
+                  encryption_salt: "first-user-salt",
+                  master_password_verifier: "first-user-verifier",
+                  kdf_version: 2,
+                  encrypted_user_key: "first-user-usk",
+                }
+              : null,
+          )),
         }),
         insert: vi.fn().mockReturnValue({
           select: vi.fn().mockResolvedValue({ data: [{ id: "vault-123" }], error: null }),
@@ -415,28 +420,11 @@ describe("VaultContext", () => {
       // Mock existing profile
       mockSupabase.from.mockReturnValue({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "existing-salt",
-                master_password_verifier: "existing-verifier",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            maybeSingle: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "existing-salt",
-                master_password_verifier: "existing-verifier",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            limit: vi.fn().mockResolvedValue({
-              data: [],
-              error: null,
-            }),
-          }),
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+          })),
         }),
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({ data: null, error: null }),
@@ -544,7 +532,7 @@ describe("VaultContext", () => {
     });
   });
 
-  describe("getRawKeyForPasskey", () => {
+  describe("getPasskeyWrappingMaterial", () => {
     it("should reject wrong master password and wipe derived raw key bytes", async () => {
       const rawBytes = new Uint8Array(32).fill(7);
       mockDeriveRawKey.mockResolvedValue(rawBytes);
@@ -552,33 +540,16 @@ describe("VaultContext", () => {
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
       mockVerifyKey
         .mockResolvedValueOnce(true)  // unlock()
-        .mockResolvedValueOnce(false); // getRawKeyForPasskey()
+        .mockResolvedValueOnce(false); // getPasskeyWrappingMaterial()
 
       // Mock existing profile with vault setup
       mockSupabase.from.mockReturnValue({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "existing-salt",
-                master_password_verifier: "existing-verifier",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            maybeSingle: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "existing-salt",
-                master_password_verifier: "existing-verifier",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            limit: vi.fn().mockResolvedValue({
-              data: [],
-              error: null,
-            }),
-          }),
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+          })),
         }),
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({ data: null, error: null }),
@@ -597,7 +568,7 @@ describe("VaultContext", () => {
 
       let rawKey: Uint8Array | null = null;
       await act(async () => {
-        rawKey = await result.current.getRawKeyForPasskey("WrongPassword!");
+        rawKey = await result.current.getPasskeyWrappingMaterial("WrongPassword!");
       });
 
       expect(rawKey).toBeNull();

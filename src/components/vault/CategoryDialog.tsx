@@ -1,5 +1,5 @@
-// Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+﻿// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 â€” see LICENSE
 /**
  * @fileoverview Category Dialog Component
  * 
@@ -55,9 +55,9 @@ import {
 
 // Common emojis for quick selection
 const COMMON_EMOJIS = [
-    '📱', '💼', '💳', '🛒', '🎮', '🏠', '✈️', '🎵',
-    '📚', '🔧', '🏦', '💊', '🎬', '📧', '🔐', '⭐',
-    '🌐', '💻', '📷', '🎨', '🏃', '🍔', '🚗', '📝',
+    'ðŸ“±', 'ðŸ’¼', 'ðŸ’³', 'ðŸ›’', 'ðŸŽ®', 'ðŸ ', 'âœˆï¸', 'ðŸŽµ',
+    'ðŸ“š', 'ðŸ”§', 'ðŸ¦', 'ðŸ’Š', 'ðŸŽ¬', 'ðŸ“§', 'ðŸ”', 'â­',
+    'ðŸŒ', 'ðŸ’»', 'ðŸ“·', 'ðŸŽ¨', 'ðŸƒ', 'ðŸ”', 'ðŸš—', 'ðŸ“',
 ];
 
 // Preset colors
@@ -92,7 +92,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
-    const { encryptData, decryptItem, encryptItem } = useVault();
+    const { encryptData, decryptItem, encryptItem, refreshIntegrityBaseline } = useVault();
 
     const [name, setName] = useState('');
     const [icon, setIcon] = useState('');
@@ -192,6 +192,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         defaultValue: 'Offline gespeichert. Wird bei Internet automatisch synchronisiert.',
                     }),
             });
+
+            await refreshIntegrityBaseline();
 
             onOpenChange(false);
             onSave?.();
@@ -326,9 +328,11 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                 description: syncedCategoryDelete
                     ? t('categories.deleted')
                     : t('vault.offlineDeleteQueued', {
-                        defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
+                        defaultValue: 'Offline gelÃ¶scht. LÃ¶schung wird bei Internet synchronisiert.',
                     }),
             });
+
+            await refreshIntegrityBaseline();
 
             setShowDeleteConfirm(false);
             onOpenChange(false);
@@ -501,3 +505,4 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         </>
     );
 }
+
