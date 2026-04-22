@@ -30,6 +30,7 @@ import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { saveExportFile } from '@/services/exportFileService';
+import { buildVaultExportPayload } from '@/services/vaultExportService';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
@@ -79,42 +80,7 @@ export function DataSettings() {
                 throw new Error('Failed to fetch items');
             }
 
-            // Decrypt all items
-            const decryptedItems = await Promise.all(
-                items.map(async (item) => {
-                    try {
-                        const decrypted = await decryptItem(item.encrypted_data, item.id);
-                        const resolvedTitle = decrypted.title || item.title;
-                        const resolvedWebsiteUrl = decrypted.websiteUrl || item.website_url;
-                        const resolvedItemType = decrypted.itemType || item.item_type || 'password';
-                        const resolvedFavorite = typeof decrypted.isFavorite === 'boolean'
-                            ? decrypted.isFavorite
-                            : !!item.is_favorite;
-                        const resolvedCategoryId = decrypted.categoryId ?? item.category_id ?? null;
-                        return {
-                            title: resolvedTitle,
-                            website_url: resolvedWebsiteUrl,
-                            item_type: resolvedItemType,
-                            is_favorite: resolvedFavorite,
-                            category_id: resolvedCategoryId,
-                            data: decrypted,
-                        };
-                    } catch {
-                        return null;
-                    }
-                })
-            );
-
-            // Filter out failed decryptions
-            const validItems = decryptedItems.filter(Boolean);
-
-            // Create export object
-            const exportData = {
-                version: '1.0',
-                exportedAt: new Date().toISOString(),
-                itemCount: validItems.length,
-                items: validItems,
-            };
+            const exportData = await buildVaultExportPayload(items, decryptItem);
 
             const saved = await saveExportFile({
                 name: `singra-vault-export-${new Date().toISOString().split('T')[0]}.json`,
@@ -128,7 +94,7 @@ export function DataSettings() {
 
             toast({
                 title: t('common.success'),
-                description: t('settings.data.exportSuccess', { count: validItems.length }),
+                description: t('settings.data.exportSuccess', { count: exportData.itemCount }),
             });
         } catch (error) {
             console.error('Export failed:', error);

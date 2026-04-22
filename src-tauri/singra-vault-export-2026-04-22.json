@@ -1,0 +1,382 @@
+{
+  "version": "1.0",
+  "exportedAt": "2026-04-22T14:02:31.700Z",
+  "itemCount": 22,
+  "items": [
+    {
+      "title": "Brave API",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": "688520d6-80be-4493-b1f4-da44602494fa",
+      "data": {
+        "title": "Brave API",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": "688520d6-80be-4493-b1f4-da44602494fa",
+        "username": "einmalmaik@gmail.com",
+        "password": "T6qlck35l7z8h@",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Google",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": true,
+      "category_id": "688520d6-80be-4493-b1f4-da44602494fa",
+      "data": {
+        "title": "Google",
+        "itemType": "password",
+        "isFavorite": true,
+        "categoryId": "688520d6-80be-4493-b1f4-da44602494fa",
+        "username": "einmalmaik@gmail.com",
+        "password": "033x,,*]8mw2YwMz",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Google",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": true,
+      "category_id": null,
+      "data": {
+        "title": "Google",
+        "itemType": "password",
+        "isFavorite": true,
+        "categoryId": null,
+        "username": "mauntingstudios@gmail.com",
+        "password": "&lz!<lZ|INlf:821",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "GitHub",
+      "website_url": null,
+      "item_type": "totp",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "GitHub",
+        "itemType": "totp",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "",
+        "password": "",
+        "notes": "",
+        "totpSecret": "KTREKTPD2QBIJRRY"
+      }
+    },
+    {
+      "title": "Google MauntingStudios ",
+      "website_url": null,
+      "item_type": "totp",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "Google MauntingStudios ",
+        "itemType": "totp",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "",
+        "password": "",
+        "notes": "",
+        "totpSecret": "VAMF22HVWLHYVKDNFSLKTRW6ZR7Z526E"
+      }
+    },
+    {
+      "title": "PayPal",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": "688520d6-80be-4493-b1f4-da44602494fa",
+      "data": {
+        "title": "PayPal",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": "688520d6-80be-4493-b1f4-da44602494fa",
+        "username": "mauntingstudios@gmail.com",
+        "password": "^1GaGM,wBPpkYC#F",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Stripe MauntingStudios",
+      "website_url": null,
+      "item_type": "totp",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "Stripe MauntingStudios",
+        "itemType": "totp",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "einmalmaik@gmail.com",
+        "password": "T6qlck35l7z8h@",
+        "notes": "",
+        "totpSecret": "PGXBYQ5NUC2OVC6T4HNF3TXX"
+      }
+    },
+    {
+      "title": "Discord",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": true,
+      "category_id": null,
+      "data": {
+        "title": "Discord",
+        "itemType": "password",
+        "isFavorite": true,
+        "categoryId": null,
+        "username": "maikhadrich90@gmail.com",
+        "password": "b0%ph6jmLE59R<2$",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "panel.mauntingstudios",
+      "website_url": null,
+      "item_type": "totp",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "panel.mauntingstudios",
+        "itemType": "totp",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "einmalmaik",
+        "password": "}-r@&zQ(VU%AFä4eX6}?%)wx,NkS!&L=arG%@Y+>P3VÖ{6)mQ-y_d-e$ÄqG6GQgq",
+        "notes": "kSTpEHHAiS n4u1vxrecq \nrtWOegx37E O8lGFzfzP5 \nuJ8xHTmFxs 5cyGS2O9zm \nadr6qlOGou I52GVmSZpL \nYOB7mkUfmN TITgjUUxrx ",
+        "totpSecret": "6KVO6Y2NTXWRLAV4SUHIO36UXTMAFYXD"
+      }
+    },
+    {
+      "title": "handyhuelle",
+      "website_url": "https://handyhuellen.de",
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": "688520d6-80be-4493-b1f4-da44602494fa",
+      "data": {
+        "title": "handyhuelle",
+        "websiteUrl": "https://handyhuellen.de",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": "688520d6-80be-4493-b1f4-da44602494fa",
+        "username": "einmalmaik@gmail.com",
+        "password": "FRsk43(vJuw[<x^(",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Instgram",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": true,
+      "category_id": "688520d6-80be-4493-b1f4-da44602494fa",
+      "data": {
+        "title": "Instgram",
+        "itemType": "password",
+        "isFavorite": true,
+        "categoryId": "688520d6-80be-4493-b1f4-da44602494fa",
+        "username": "maikhadrich2202@gmail.com",
+        "password": "(C#Z!_Akc6k5_xW_",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Discord",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": "688520d6-80be-4493-b1f4-da44602494fa",
+      "data": {
+        "title": "Discord",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": "688520d6-80be-4493-b1f4-da44602494fa",
+        "username": "maikhadrich2202@gmail.com",
+        "password": "uE<8n!%XC{zBEnHB",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "panel.mauntingstudio",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": "d48d60d4-bce6-4941-b2b1-abbc55e98faa",
+      "data": {
+        "title": "panel.mauntingstudio",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": "d48d60d4-bce6-4941-b2b1-abbc55e98faa",
+        "username": "einmalmaik",
+        "password": "}-r@&zQ(VU%AFä4eX6}?%)wx,NkS!&L=arG%@Y+>P3VÖ{6)mQ-y_d-e$ÄqG6GQgq",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Discord einmalmaik",
+      "website_url": null,
+      "item_type": "totp",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "Discord einmalmaik",
+        "itemType": "totp",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "",
+        "password": "",
+        "notes": "",
+        "totpSecret": "NY574QJR6E2BKUBG4HGOUQSDZBEWSPWI"
+      }
+    },
+    {
+      "title": "Brave Wallet",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": "688520d6-80be-4493-b1f4-da44602494fa",
+      "data": {
+        "title": "Brave Wallet",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": "688520d6-80be-4493-b1f4-da44602494fa",
+        "username": "Unbekannt",
+        "password": "T6qlck35l7z8h",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Linux ",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "Linux ",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "maik",
+        "password": "vTpPRpTvkbCaT6iZobfS!",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Steam",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "Steam",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "einmalmaik@gmail.com",
+        "password": "5|IS<F&iDFv^0Nxx",
+        "notes": "R36203",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "OEF PANEL DayZ Server Manager",
+      "website_url": null,
+      "item_type": "totp",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "OEF PANEL DayZ Server Manager",
+        "itemType": "totp",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "",
+        "password": "",
+        "notes": "",
+        "totpSecret": "FIXE4EVZTYANOAQNTS5OP22NGVNUEICD"
+      }
+    },
+    {
+      "title": "OEF PANEL DayzS erver Manager",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": "d48d60d4-bce6-4941-b2b1-abbc55e98faa",
+      "data": {
+        "title": "OEF PANEL DayzS erver Manager",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": "d48d60d4-bce6-4941-b2b1-abbc55e98faa",
+        "username": "einmalmaik",
+        "password": "nju=GV42yGl(g{#o",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Linux Dayz user",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": false,
+      "category_id": "d48d60d4-bce6-4941-b2b1-abbc55e98faa",
+      "data": {
+        "title": "Linux Dayz user",
+        "itemType": "password",
+        "isFavorite": false,
+        "categoryId": "d48d60d4-bce6-4941-b2b1-abbc55e98faa",
+        "username": "dayz",
+        "password": "9nI?M,5_ng}Yu^se",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Google",
+      "website_url": null,
+      "item_type": "password",
+      "is_favorite": true,
+      "category_id": "688520d6-80be-4493-b1f4-da44602494fa",
+      "data": {
+        "title": "Google",
+        "itemType": "password",
+        "isFavorite": true,
+        "categoryId": "688520d6-80be-4493-b1f4-da44602494fa",
+        "username": "mauntingstudios@gmail.com",
+        "password": "t-0KWlx;-,0rtuv#",
+        "notes": "",
+        "totpSecret": ""
+      }
+    },
+    {
+      "title": "Google einmalmaik",
+      "website_url": null,
+      "item_type": "totp",
+      "is_favorite": false,
+      "category_id": null,
+      "data": {
+        "title": "Google einmalmaik",
+        "itemType": "totp",
+        "isFavorite": false,
+        "categoryId": null,
+        "username": "einmalmaik@gmail.com",
+        "password": "",
+        "notes": "",
+        "totpSecret": "6Y6ZA4RZO3QJNTJWNK2DLW2VW377VL4B"
+      }
+    }
+  ]
+}

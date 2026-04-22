@@ -16,8 +16,9 @@ type CategoryRow = Database['public']['Tables']['categories']['Row'];
 type CategoryInsert = Database['public']['Tables']['categories']['Insert'];
 
 const DB_NAME = 'singra-offline-vault';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const SNAPSHOTS_STORE = 'snapshots';
+const TRUSTED_SNAPSHOTS_STORE = 'trusted-snapshots';
 const MUTATIONS_STORE = 'mutations';
 const MUTATIONS_USER_INDEX = 'by_user';
 
@@ -102,6 +103,10 @@ function openDb(): Promise<IDBDatabase> {
 
       if (!db.objectStoreNames.contains(SNAPSHOTS_STORE)) {
         db.createObjectStore(SNAPSHOTS_STORE, { keyPath: 'userId' });
+      }
+
+      if (!db.objectStoreNames.contains(TRUSTED_SNAPSHOTS_STORE)) {
+        db.createObjectStore(TRUSTED_SNAPSHOTS_STORE, { keyPath: 'userId' });
       }
 
       if (!db.objectStoreNames.contains(MUTATIONS_STORE)) {
@@ -195,6 +200,38 @@ export async function getOfflineSnapshot(userId: string): Promise<OfflineVaultSn
 export async function saveOfflineSnapshot(snapshot: OfflineVaultSnapshot): Promise<void> {
   await withStore<void>(SNAPSHOTS_STORE, 'readwrite', (store, resolve, reject) => {
     const req = store.put(snapshot);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function removeOfflineSnapshot(userId: string): Promise<void> {
+  await withStore<void>(SNAPSHOTS_STORE, 'readwrite', (store, resolve, reject) => {
+    const req = store.delete(userId);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function getTrustedOfflineSnapshot(userId: string): Promise<OfflineVaultSnapshot | null> {
+  return withStore<OfflineVaultSnapshot | null>(TRUSTED_SNAPSHOTS_STORE, 'readonly', (store, resolve, reject) => {
+    const req = store.get(userId);
+    req.onsuccess = () => resolve((req.result as OfflineVaultSnapshot | undefined) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function saveTrustedOfflineSnapshot(snapshot: OfflineVaultSnapshot): Promise<void> {
+  await withStore<void>(TRUSTED_SNAPSHOTS_STORE, 'readwrite', (store, resolve, reject) => {
+    const req = store.put(snapshot);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function removeTrustedOfflineSnapshot(userId: string): Promise<void> {
+  await withStore<void>(TRUSTED_SNAPSHOTS_STORE, 'readwrite', (store, resolve, reject) => {
+    const req = store.delete(userId);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
@@ -342,6 +379,11 @@ export async function removeOfflineMutations(mutationIds: string[]): Promise<voi
   });
 }
 
+export async function clearOfflineMutations(userId: string): Promise<void> {
+  const mutations = await getOfflineMutations(userId);
+  await removeOfflineMutations(mutations.map((mutation) => mutation.id));
+}
+
 export async function resolveDefaultVaultId(userId: string): Promise<string | null> {
   if (isAppOnline()) {
     try {
@@ -376,7 +418,10 @@ export async function resolveDefaultVaultId(userId: string): Promise<string | nu
   return sanitizeOptionalUuid(snapshot?.vaultId ?? null);
 }
 
-export async function fetchRemoteOfflineSnapshot(userId: string): Promise<OfflineVaultSnapshot> {
+export async function fetchRemoteOfflineSnapshot(
+  userId: string,
+  options?: { persist?: boolean },
+): Promise<OfflineVaultSnapshot> {
   const { data: vault, error: vaultError } = await supabase
     .from('vaults')
     .select('id')
@@ -425,7 +470,9 @@ export async function fetchRemoteOfflineSnapshot(userId: string): Promise<Offlin
     updatedAt: now,
   };
 
-  await saveOfflineSnapshot(snapshot);
+  if (options?.persist !== false) {
+    await saveOfflineSnapshot(snapshot);
+  }
   return snapshot;
 }
 
@@ -450,6 +497,14 @@ export async function loadVaultSnapshot(userId: string): Promise<{
   }
 
   return { snapshot: createEmptySnapshot(userId), source: 'empty' };
+}
+
+export async function clearOfflineVaultData(userId: string): Promise<void> {
+  await Promise.all([
+    removeOfflineSnapshot(userId),
+    removeTrustedOfflineSnapshot(userId),
+    clearOfflineMutations(userId),
+  ]);
 }
 
 export async function syncOfflineMutations(userId: string): Promise<{
