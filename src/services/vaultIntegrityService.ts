@@ -52,6 +52,19 @@ export interface VaultIntegrityVerificationResult {
   mode: VaultIntegrityMode;
   blockedReason?: VaultIntegrityBlockedReason;
   quarantinedItems: QuarantinedVaultItem[];
+  driftedCategoryIds?: string[];
+}
+
+export interface VaultIntegrityBaselineInspection {
+  digest: string;
+  itemCount: number;
+  categoryCount: number;
+  baselineKind: 'missing' | 'v1' | 'v2';
+  storedRoot?: string;
+  snapshotValidationError?: VaultIntegrityBlockedReason;
+  legacyBaselineMismatch: boolean;
+  itemDrifts: QuarantinedVaultItem[];
+  categoryDriftIds: string[];
 }
 
 interface StoredIntegrityBaselineV1 {
@@ -99,46 +112,163 @@ export async function verifyVaultSnapshotIntegrity(
   snapshot: VaultIntegritySnapshot,
   vaultKey: CryptoKey,
 ): Promise<VaultIntegrityVerificationResult> {
+  const inspection = await inspectVaultSnapshotIntegrity(userId, snapshot, vaultKey);
+  const result = toVaultIntegrityVerificationResult(inspection);
+
+  if (inspection.baselineKind === 'missing' && !inspection.snapshotValidationError) {
+    await persistIntegrityBaseline(userId, snapshot, vaultKey, inspection.digest);
+  } else if (
+    inspection.baselineKind === 'v1'
+    && !inspection.snapshotValidationError
+    && !inspection.legacyBaselineMismatch
+  ) {
+    await persistIntegrityBaseline(userId, snapshot, vaultKey, inspection.digest);
+  }
+
+  return result;
+}
+
+export async function inspectVaultSnapshotIntegrity(
+  userId: string,
+  snapshot: VaultIntegritySnapshot,
+  vaultKey: CryptoKey,
+): Promise<VaultIntegrityBaselineInspection> {
   const digest = await computeVaultSnapshotDigest(snapshot);
   const snapshotValidationError = validateSnapshotStructure(snapshot);
   if (snapshotValidationError) {
     return {
-      valid: false,
-      isFirstCheck: false,
-      computedRoot: digest,
+      digest,
       itemCount: snapshot.items.length,
       categoryCount: snapshot.categories.length,
-      mode: 'blocked',
-      blockedReason: snapshotValidationError,
-      quarantinedItems: [],
+      baselineKind: 'missing',
+      snapshotValidationError,
+      legacyBaselineMismatch: false,
+      itemDrifts: [],
+      categoryDriftIds: [],
     };
   }
 
   const storedBaseline = await loadStoredIntegrityBaseline(userId, vaultKey);
-
   if (!storedBaseline) {
-    await persistIntegrityBaseline(userId, snapshot, vaultKey, digest);
+    return {
+      digest,
+      itemCount: snapshot.items.length,
+      categoryCount: snapshot.categories.length,
+      baselineKind: 'missing',
+      legacyBaselineMismatch: false,
+      itemDrifts: [],
+      categoryDriftIds: [],
+    };
+  }
+
+  if (storedBaseline.version === 1) {
+    return {
+      digest,
+      itemCount: snapshot.items.length,
+      categoryCount: snapshot.categories.length,
+      baselineKind: 'v1',
+      storedRoot: storedBaseline.digest,
+      legacyBaselineMismatch: storedBaseline.digest !== digest,
+      itemDrifts: [],
+      categoryDriftIds: [],
+    };
+  }
+
+  const itemDigests = buildItemDigestMap(snapshot);
+  const categoryDigests = buildCategoryDigestMap(snapshot);
+
+  return {
+    digest,
+    itemCount: snapshot.items.length,
+    categoryCount: snapshot.categories.length,
+    baselineKind: 'v2',
+    storedRoot: storedBaseline.snapshotDigest,
+    legacyBaselineMismatch: false,
+    itemDrifts: detectItemDigestDrift(snapshot, storedBaseline.itemDigests, itemDigests),
+    categoryDriftIds: detectCategoryDigestDriftIds(storedBaseline.categoryDigests, categoryDigests),
+  };
+}
+
+export function toVaultIntegrityVerificationResult(
+  inspection: VaultIntegrityBaselineInspection,
+): VaultIntegrityVerificationResult {
+  if (inspection.snapshotValidationError) {
+    return {
+      valid: false,
+      isFirstCheck: false,
+      computedRoot: inspection.digest,
+      itemCount: inspection.itemCount,
+      categoryCount: inspection.categoryCount,
+      mode: 'blocked',
+      blockedReason: inspection.snapshotValidationError,
+      quarantinedItems: [],
+    };
+  }
+
+  if (inspection.baselineKind === 'missing') {
     return {
       valid: true,
       isFirstCheck: true,
-      computedRoot: digest,
-      itemCount: snapshot.items.length,
-      categoryCount: snapshot.categories.length,
+      computedRoot: inspection.digest,
+      itemCount: inspection.itemCount,
+      categoryCount: inspection.categoryCount,
       mode: 'healthy',
       quarantinedItems: [],
     };
   }
 
-  if (storedBaseline.version === 1) {
-    await persistIntegrityBaseline(userId, snapshot, vaultKey, digest);
+  if (inspection.legacyBaselineMismatch) {
+    return {
+      valid: false,
+      isFirstCheck: false,
+      computedRoot: inspection.digest,
+      storedRoot: inspection.storedRoot,
+      itemCount: inspection.itemCount,
+      categoryCount: inspection.categoryCount,
+      mode: 'blocked',
+      blockedReason: 'legacy_baseline_mismatch',
+      quarantinedItems: [],
+    };
+  }
+
+  if (inspection.categoryDriftIds.length > 0) {
+    return {
+      valid: false,
+      isFirstCheck: false,
+      computedRoot: inspection.digest,
+      storedRoot: inspection.storedRoot,
+      itemCount: inspection.itemCount,
+      categoryCount: inspection.categoryCount,
+      mode: 'blocked',
+      blockedReason: 'category_structure_mismatch',
+      quarantinedItems: [],
+      driftedCategoryIds: inspection.categoryDriftIds,
+    };
+  }
+
+  if (inspection.itemDrifts.length > 0) {
     return {
       valid: true,
       isFirstCheck: false,
-      computedRoot: digest,
-      storedRoot: storedBaseline.digest,
-      itemCount: snapshot.items.length,
-      categoryCount: snapshot.categories.length,
-      mode: 'healthy',
+      computedRoot: inspection.digest,
+      storedRoot: inspection.storedRoot,
+      itemCount: inspection.itemCount,
+      categoryCount: inspection.categoryCount,
+      mode: 'quarantine',
+      quarantinedItems: inspection.itemDrifts,
+    };
+  }
+
+  if (inspection.baselineKind === 'v2' && inspection.storedRoot !== inspection.digest) {
+    return {
+      valid: false,
+      isFirstCheck: false,
+      computedRoot: inspection.digest,
+      storedRoot: inspection.storedRoot,
+      itemCount: inspection.itemCount,
+      categoryCount: inspection.categoryCount,
+      mode: 'blocked',
+      blockedReason: 'snapshot_malformed',
       quarantinedItems: [],
     };
   }
@@ -146,10 +276,10 @@ export async function verifyVaultSnapshotIntegrity(
   return {
     valid: true,
     isFirstCheck: false,
-    computedRoot: digest,
-    storedRoot: storedBaseline.snapshotDigest,
-    itemCount: snapshot.items.length,
-    categoryCount: snapshot.categories.length,
+    computedRoot: inspection.digest,
+    storedRoot: inspection.storedRoot,
+    itemCount: inspection.itemCount,
+    categoryCount: inspection.categoryCount,
     mode: 'healthy',
     quarantinedItems: [],
   };
@@ -359,6 +489,66 @@ function buildCategoryDigestMap(snapshot: VaultIntegritySnapshot): Record<string
   }
 
   return digests;
+}
+
+function detectItemDigestDrift(
+  snapshot: VaultIntegritySnapshot,
+  storedItemDigests: Record<string, string>,
+  currentItemDigests: Record<string, string>,
+): QuarantinedVaultItem[] {
+  const quarantinedItems = new Map<string, QuarantinedVaultItem>();
+
+  for (const item of snapshot.items) {
+    const storedDigest = storedItemDigests[item.id];
+    if (!storedDigest) {
+      quarantinedItems.set(item.id, {
+        id: item.id,
+        reason: 'unknown_on_server',
+        updatedAt: item.updated_at ?? null,
+      });
+      continue;
+    }
+
+    if (storedDigest !== currentItemDigests[item.id]) {
+      quarantinedItems.set(item.id, {
+        id: item.id,
+        reason: 'ciphertext_changed',
+        updatedAt: item.updated_at ?? null,
+      });
+    }
+  }
+
+  for (const [itemId] of Object.entries(storedItemDigests)) {
+    if (currentItemDigests[itemId]) {
+      continue;
+    }
+
+    quarantinedItems.set(itemId, {
+      id: itemId,
+      reason: 'missing_on_server',
+      updatedAt: null,
+    });
+  }
+
+  return [...quarantinedItems.values()].sort((left, right) => {
+    const leftDate = left.updatedAt ?? '';
+    const rightDate = right.updatedAt ?? '';
+    return rightDate.localeCompare(leftDate) || left.id.localeCompare(right.id);
+  });
+}
+
+function detectCategoryDigestDriftIds(
+  storedCategoryDigests: Record<string, string>,
+  currentCategoryDigests: Record<string, string>,
+): string[] {
+  const driftedIds = new Set<string>([
+    ...Object.keys(storedCategoryDigests),
+    ...Object.keys(currentCategoryDigests),
+  ]);
+
+  return [...driftedIds]
+    .filter((categoryId) => storedCategoryDigests[categoryId] !== currentCategoryDigests[categoryId])
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function validateSnapshotStructure(

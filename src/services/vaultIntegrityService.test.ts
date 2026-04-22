@@ -43,7 +43,7 @@ describe("vaultIntegrityService", () => {
     expect(result.isFirstCheck).toBe(true);
   });
 
-  it("treats ciphertext drift as healthy at the baseline-service layer", async () => {
+  it("quarantines ciphertext drift instead of treating it as healthy", async () => {
     const {
       verifyVaultSnapshotIntegrity,
     } = await import("./vaultIntegrityService");
@@ -63,8 +63,80 @@ describe("vaultIntegrityService", () => {
     expect(result.valid).toBe(true);
     expect(result.isFirstCheck).toBe(false);
     expect(result.storedRoot).toBeDefined();
-    expect(result.mode).toBe("healthy");
-    expect(result.quarantinedItems).toEqual([]);
+    expect(result.mode).toBe("quarantine");
+    expect(result.quarantinedItems).toEqual([
+      expect.objectContaining({
+        id: "item-1",
+        reason: "ciphertext_changed",
+      }),
+    ]);
+  });
+
+  it("quarantines missing and unknown items against a stored V2 baseline", async () => {
+    const {
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+
+    await verifyVaultSnapshotIntegrity("user-1", {
+      items: [
+        { id: "item-1", encrypted_data: "cipher-1" },
+        { id: "item-2", encrypted_data: "cipher-2" },
+      ],
+      categories: [],
+    }, key);
+
+    const result = await verifyVaultSnapshotIntegrity("user-1", {
+      items: [
+        { id: "item-1", encrypted_data: "cipher-1" },
+        { id: "item-3", encrypted_data: "cipher-3" },
+      ],
+      categories: [],
+    }, key);
+
+    expect(result.mode).toBe("quarantine");
+    expect(result.quarantinedItems).toEqual([
+      expect.objectContaining({
+        id: "item-2",
+        reason: "missing_on_server",
+      }),
+      expect.objectContaining({
+        id: "item-3",
+        reason: "unknown_on_server",
+      }),
+    ]);
+  });
+
+  it("inspects category drift together with item drift for trusted re-baselining decisions", async () => {
+    const {
+      inspectVaultSnapshotIntegrity,
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+
+    await verifyVaultSnapshotIntegrity("user-1", {
+      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
+      categories: [{ id: "cat-1", name: "enc-1", icon: null, color: "enc-blue" }],
+    }, key);
+
+    const inspection = await inspectVaultSnapshotIntegrity("user-1", {
+      items: [{ id: "item-2", encrypted_data: "cipher-2" }],
+      categories: [{ id: "cat-1", name: "enc-rotated", icon: null, color: "enc-blue" }],
+    }, key);
+
+    expect(inspection.categoryDriftIds).toEqual(["cat-1"]);
+    expect(inspection.itemDrifts).toEqual([
+      expect.objectContaining({
+        id: "item-1",
+        reason: "missing_on_server",
+      }),
+      expect.objectContaining({
+        id: "item-2",
+        reason: "unknown_on_server",
+      }),
+    ]);
   });
 
   it("blocks structurally malformed snapshots", async () => {
@@ -135,5 +207,40 @@ describe("vaultIntegrityService", () => {
     expect(result.mode).toBe("healthy");
     expect(secretStoreState.baselineEnvelopes.get("user-1")).toBe(migratedPayload);
     expect(secretStoreState.legacySecrets.has("vault-integrity:user-1")).toBe(false);
+  });
+
+  it("blocks a mismatched V1 baseline during migration instead of re-blessing it", async () => {
+    const {
+      computeVaultSnapshotDigest,
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+    const { encrypt } = await import("./cryptoService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+
+    const originalSnapshot = {
+      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
+      categories: [],
+    };
+    const originalDigest = await computeVaultSnapshotDigest(originalSnapshot);
+    const legacyEnvelope = await encrypt(JSON.stringify({
+      version: 1,
+      digest: originalDigest,
+      itemCount: 1,
+      categoryCount: 0,
+      recordedAt: new Date().toISOString(),
+    }), key);
+
+    secretStoreState.legacySecrets.set("vault-integrity:user-1", legacyEnvelope);
+
+    const result = await verifyVaultSnapshotIntegrity("user-1", {
+      items: [{ id: "item-1", encrypted_data: "cipher-2" }],
+      categories: [],
+    }, key);
+
+    expect(result.valid).toBe(false);
+    expect(result.mode).toBe("blocked");
+    expect(result.blockedReason).toBe("legacy_baseline_mismatch");
+    expect(secretStoreState.baselineEnvelopes.get("user-1")).toBe(legacyEnvelope);
   });
 });

@@ -18,9 +18,20 @@ export async function resetUserVaultState(userId: string): Promise<void> {
   await deleteByUserId('file_attachments');
   await deleteByUserId('vault_items');
   await deleteByUserId('categories');
-  await deleteByUserId('passkey_credentials');
   await deleteByUserId('user_keys');
   await deleteByUserId('vaults');
+
+  const { error: passkeyResetError } = await supabase
+    .from('passkey_credentials')
+    .update({
+      wrapped_master_key: null,
+      prf_enabled: false,
+    } as Record<string, unknown>)
+    .eq('user_id', userId);
+
+  if (passkeyResetError) {
+    throw passkeyResetError;
+  }
 
   const { error: profileError } = await supabase
     .from('profiles')
