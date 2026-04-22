@@ -43,7 +43,7 @@ describe("vaultIntegrityService", () => {
     expect(result.isFirstCheck).toBe(true);
   });
 
-  it("quarantines a tampered item without blocking the whole vault", async () => {
+  it("treats ciphertext drift as healthy at the baseline-service layer", async () => {
     const {
       verifyVaultSnapshotIntegrity,
     } = await import("./vaultIntegrityService");
@@ -63,35 +63,28 @@ describe("vaultIntegrityService", () => {
     expect(result.valid).toBe(true);
     expect(result.isFirstCheck).toBe(false);
     expect(result.storedRoot).toBeDefined();
-    expect(result.mode).toBe("quarantine");
-    expect(result.quarantinedItems).toEqual([
-      expect.objectContaining({
-        id: "item-1",
-        reason: "ciphertext_changed",
-      }),
-    ]);
+    expect(result.mode).toBe("healthy");
+    expect(result.quarantinedItems).toEqual([]);
   });
 
-  it("blocks unlock when category integrity no longer matches", async () => {
+  it("blocks structurally malformed snapshots", async () => {
     const {
       verifyVaultSnapshotIntegrity,
     } = await import("./vaultIntegrityService");
 
     const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 
-    await verifyVaultSnapshotIntegrity("user-1", {
-      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
-      categories: [{ id: "cat-1", name: "enc-1", icon: null, color: "enc-blue" }],
-    }, key);
-
     const result = await verifyVaultSnapshotIntegrity("user-1", {
-      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
-      categories: [{ id: "cat-1", name: "enc-2", icon: null, color: "enc-blue" }],
+      items: [
+        { id: "item-1", encrypted_data: "cipher-1" },
+        { id: "item-1", encrypted_data: "cipher-2" },
+      ],
+      categories: [],
     }, key);
 
     expect(result.valid).toBe(false);
     expect(result.mode).toBe("blocked");
-    expect(result.blockedReason).toBe("category_structure_mismatch");
+    expect(result.blockedReason).toBe("snapshot_malformed");
   });
 
   it("rejects an unreadable stored integrity baseline instead of treating it as first check", async () => {

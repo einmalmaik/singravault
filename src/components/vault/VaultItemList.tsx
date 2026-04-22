@@ -95,11 +95,15 @@ export function VaultItemList({
       setLoading(true);
       try {
         const { snapshot, source } = await loadVaultSnapshot(user.id);
-        const integrityResult = await verifyIntegrity([]);
+        const integrityResult = await verifyIntegrity(snapshot);
         if (integrityResult?.mode === 'blocked') {
           setItems([]);
           return;
         }
+        const canPersistMigrations = integrityResult?.mode === 'healthy'
+          && integrityResult.isFirstCheck
+          && source === 'remote'
+          && isAppOnline();
 
         const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
         let integrityBaselineDirty = false;
@@ -144,7 +148,7 @@ export function VaultItemList({
                     : item.category_id,
                 };
 
-                if (source === 'remote' && isAppOnline()) {
+                if (canPersistMigrations) {
                   const migratedEncryptedData = await encryptItem(resolvedDecryptedData, item.id);
 
                   await supabase
@@ -206,7 +210,7 @@ export function VaultItemList({
           }),
         );
 
-        if (integrityBaselineDirty) {
+        if (integrityBaselineDirty && canPersistMigrations) {
           await refreshIntegrityBaseline();
         }
 

@@ -83,7 +83,11 @@ class MockIDBObjectStore {
   }
 
   put(value: unknown, key?: string): MockIDBRequest {
-    const actualKey = key || (value as Record<string, unknown>).id as string || Math.random().toString();
+    const record = value as Record<string, unknown>;
+    const actualKey = key
+      || (typeof record?.id === "string" ? record.id : undefined)
+      || (typeof record?.key === "string" ? record.key : undefined)
+      || Math.random().toString();
     this.data.set(actualKey, value);
     return new MockIDBRequest(actualKey);
   }

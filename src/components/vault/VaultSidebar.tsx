@@ -1,5 +1,5 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Sidebar Component
  * 
@@ -115,12 +115,15 @@ export function VaultSidebar({
 
         try {
             const { snapshot, source } = await loadVaultSnapshot(user.id);
-            const integrityResult = await verifyIntegrity([]);
+            const integrityResult = await verifyIntegrity(snapshot);
             if (integrityResult?.mode === 'blocked') {
                 setCategories([]);
                 return;
             }
-            const canPersistMigrations = source === 'remote' && isAppOnline();
+            const canPersistMigrations = integrityResult?.mode === 'healthy'
+                && integrityResult.isFirstCheck
+                && source === 'remote'
+                && isAppOnline();
             const counts: Record<string, number> = {};
             let integrityBaselineDirty = false;
 
@@ -205,7 +208,7 @@ export function VaultSidebar({
                             loggedDecryptFailuresRef.current.add(logKey);
                             console.debug(
                                 isDuressMode
-                                    ? 'Failed to decrypt vault item for category counts (Duress Mode — expected):'
+                                    ? 'Failed to decrypt vault item for category counts (Duress Mode - expected):'
                                     : 'Failed to decrypt vault item for category counts (key mismatch or corrupt):',
                                 item.id
                             );
@@ -232,7 +235,7 @@ export function VaultSidebar({
                         } catch (err) {
                             console.debug(
                                 isDuressMode
-                                    ? 'Failed to decrypt category name (Duress Mode — expected):'
+                                    ? 'Failed to decrypt category name (Duress Mode - expected):'
                                     : 'Failed to decrypt category name (key mismatch or corrupt):',
                                 cat.id
                             );
@@ -257,7 +260,7 @@ export function VaultSidebar({
                         } catch (err) {
                             console.debug(
                                 isDuressMode
-                                    ? 'Failed to decrypt category icon (Duress Mode — expected):'
+                                    ? 'Failed to decrypt category icon (Duress Mode - expected):'
                                     : 'Failed to decrypt category icon (key mismatch or corrupt):',
                                 cat.id
                             );
@@ -282,7 +285,7 @@ export function VaultSidebar({
                         } catch (err) {
                             console.debug(
                                 isDuressMode
-                                    ? 'Failed to decrypt category color (Duress Mode — expected):'
+                                    ? 'Failed to decrypt category color (Duress Mode - expected):'
                                     : 'Failed to decrypt category color (key mismatch or corrupt):',
                                 cat.id
                             );
@@ -322,7 +325,7 @@ export function VaultSidebar({
                 }),
             );
 
-            if (integrityBaselineDirty) {
+            if (integrityBaselineDirty && canPersistMigrations) {
                 await refreshIntegrityBaseline();
             }
 

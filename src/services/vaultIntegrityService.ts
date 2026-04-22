@@ -100,6 +100,20 @@ export async function verifyVaultSnapshotIntegrity(
   vaultKey: CryptoKey,
 ): Promise<VaultIntegrityVerificationResult> {
   const digest = await computeVaultSnapshotDigest(snapshot);
+  const snapshotValidationError = validateSnapshotStructure(snapshot);
+  if (snapshotValidationError) {
+    return {
+      valid: false,
+      isFirstCheck: false,
+      computedRoot: digest,
+      itemCount: snapshot.items.length,
+      categoryCount: snapshot.categories.length,
+      mode: 'blocked',
+      blockedReason: snapshotValidationError,
+      quarantinedItems: [],
+    };
+  }
+
   const storedBaseline = await loadStoredIntegrityBaseline(userId, vaultKey);
 
   if (!storedBaseline) {
@@ -116,44 +130,28 @@ export async function verifyVaultSnapshotIntegrity(
   }
 
   if (storedBaseline.version === 1) {
-    if (storedBaseline.digest === digest) {
-      await persistIntegrityBaseline(userId, snapshot, vaultKey, digest);
-      return {
-        valid: true,
-        isFirstCheck: false,
-        computedRoot: digest,
-        storedRoot: storedBaseline.digest,
-        itemCount: snapshot.items.length,
-        categoryCount: snapshot.categories.length,
-        mode: 'healthy',
-        quarantinedItems: [],
-      };
-    }
-
+    await persistIntegrityBaseline(userId, snapshot, vaultKey, digest);
     return {
-      valid: false,
+      valid: true,
       isFirstCheck: false,
       computedRoot: digest,
       storedRoot: storedBaseline.digest,
       itemCount: snapshot.items.length,
       categoryCount: snapshot.categories.length,
-      mode: 'blocked',
-      blockedReason: 'legacy_baseline_mismatch',
+      mode: 'healthy',
       quarantinedItems: [],
     };
   }
 
-  const assessment = assessSnapshotAgainstBaseline(snapshot, storedBaseline, digest);
   return {
-    valid: assessment.mode !== 'blocked',
+    valid: true,
     isFirstCheck: false,
     computedRoot: digest,
     storedRoot: storedBaseline.snapshotDigest,
     itemCount: snapshot.items.length,
     categoryCount: snapshot.categories.length,
-    mode: assessment.mode,
-    blockedReason: assessment.blockedReason,
-    quarantinedItems: assessment.quarantinedItems,
+    mode: 'healthy',
+    quarantinedItems: [],
   };
 }
 
@@ -363,86 +361,41 @@ function buildCategoryDigestMap(snapshot: VaultIntegritySnapshot): Record<string
   return digests;
 }
 
-function assessSnapshotAgainstBaseline(
+function validateSnapshotStructure(
   snapshot: VaultIntegritySnapshot,
-  baseline: StoredIntegrityBaselineV2,
-  digest: string,
-): {
-  mode: VaultIntegrityMode;
-  blockedReason?: VaultIntegrityBlockedReason;
-  quarantinedItems: QuarantinedVaultItem[];
-} {
-  const currentItemDigests = buildItemDigestMap(snapshot);
-  const currentCategoryDigests = buildCategoryDigestMap(snapshot);
-
-  const categoryIds = new Set([
-    ...Object.keys(baseline.categoryDigests),
-    ...Object.keys(currentCategoryDigests),
-  ]);
-
-  for (const categoryId of categoryIds) {
-    if (baseline.categoryDigests[categoryId] !== currentCategoryDigests[categoryId]) {
-      return {
-        mode: 'blocked',
-        blockedReason: 'category_structure_mismatch',
-        quarantinedItems: [],
-      };
-    }
-  }
-
-  const currentItemsById = new Map(snapshot.items.map((item) => [item.id, item]));
-  const quarantinedItems: QuarantinedVaultItem[] = [];
-
-  for (const [itemId, storedDigest] of Object.entries(baseline.itemDigests)) {
-    const currentDigest = currentItemDigests[itemId];
-    if (!currentDigest) {
-      quarantinedItems.push({
-        id: itemId,
-        reason: 'missing_on_server',
-        updatedAt: null,
-      });
-      continue;
-    }
-
-    if (storedDigest !== currentDigest) {
-      quarantinedItems.push({
-        id: itemId,
-        reason: 'ciphertext_changed',
-        updatedAt: currentItemsById.get(itemId)?.updated_at ?? null,
-      });
-    }
-  }
-
+): VaultIntegrityBlockedReason | null {
+  const itemIds = new Set<string>();
   for (const item of snapshot.items) {
-    if (baseline.itemDigests[item.id]) {
-      continue;
+    if (!item?.id || typeof item.id !== 'string' || typeof item.encrypted_data !== 'string') {
+      return 'snapshot_malformed';
     }
 
-    quarantinedItems.push({
-      id: item.id,
-      reason: 'unknown_on_server',
-      updatedAt: item.updated_at ?? null,
-    });
+    if (itemIds.has(item.id)) {
+      return 'snapshot_malformed';
+    }
+
+    itemIds.add(item.id);
   }
 
-  if (quarantinedItems.length > 0) {
-    return {
-      mode: 'quarantine',
-      quarantinedItems: sortQuarantinedItems(quarantinedItems),
-    };
+  const categoryIds = new Set<string>();
+  for (const category of snapshot.categories) {
+    if (!category?.id || typeof category.id !== 'string' || typeof category.name !== 'string') {
+      return 'snapshot_malformed';
+    }
+
+    if (
+      (category.icon !== null && typeof category.icon !== 'string')
+      || (category.color !== null && typeof category.color !== 'string')
+    ) {
+      return 'snapshot_malformed';
+    }
+
+    if (categoryIds.has(category.id)) {
+      return 'snapshot_malformed';
+    }
+
+    categoryIds.add(category.id);
   }
 
-  return {
-    mode: digest === baseline.snapshotDigest ? 'healthy' : 'blocked',
-    blockedReason: digest === baseline.snapshotDigest ? undefined : 'snapshot_malformed',
-    quarantinedItems: [],
-  };
-}
-
-function sortQuarantinedItems(items: QuarantinedVaultItem[]): QuarantinedVaultItem[] {
-  return [...items].sort((left, right) => {
-    const leftDate = left.updatedAt ?? '';
-    const rightDate = right.updatedAt ?? '';
-    return rightDate.localeCompare(leftDate) || left.id.localeCompare(right.id);
-  });
+  return null;
 }

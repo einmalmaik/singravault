@@ -138,7 +138,15 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
-    const { encryptItem, decryptItem, encryptData, decryptData, isDuressMode, refreshIntegrityBaseline } = useVault();
+    const {
+        encryptItem,
+        decryptItem,
+        encryptData,
+        decryptData,
+        isDuressMode,
+        refreshIntegrityBaseline,
+        verifyIntegrity,
+    } = useVault();
     const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
     const hasPremiumAuthenticator = isPremiumActive();
 
@@ -176,7 +184,16 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         if (!user || !open) return;
         try {
             const { snapshot, source } = await loadVaultSnapshot(user.id);
-            const canPersistMigrations = source === 'remote' && isAppOnline();
+            const integrityResult = await verifyIntegrity(snapshot);
+            if (integrityResult?.mode === 'blocked') {
+                setCategories([]);
+                return;
+            }
+
+            const canPersistMigrations = integrityResult?.mode === 'healthy'
+                && integrityResult.isFirstCheck
+                && source === 'remote'
+                && isAppOnline();
             let integrityBaselineDirty = false;
             const resolvedCategories = await Promise.all(
                 snapshot.categories.map(async (cat) => {
@@ -269,7 +286,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 }),
             );
 
-            if (integrityBaselineDirty) {
+            if (integrityBaselineDirty && canPersistMigrations) {
                 await refreshIntegrityBaseline();
             }
 
@@ -278,7 +295,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             console.error('Failed to load categories:', err);
             setCategories([]);
         }
-    }, [user, open, decryptData, encryptData, refreshIntegrityBaseline]);
+    }, [user, open, decryptData, encryptData, refreshIntegrityBaseline, verifyIntegrity]);
 
     // Fetch categories
     useEffect(() => {
