@@ -604,6 +604,42 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
       expect(result.current.isDuressMode).toBe(false);
     });
+
+    it("should keep unlock metadata after manual lock so the vault can be unlocked again", async () => {
+      mockGenerateSalt.mockReturnValue("salt");
+      mockDeriveKey.mockResolvedValue({} as CryptoKey);
+      mockCreateVerificationHash.mockResolvedValue("verifier");
+      mockVerifyKey.mockResolvedValue(true);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.setupMasterPassword("CorrectPassword!");
+      });
+
+      act(() => {
+        result.current.lock();
+      });
+
+      expect(result.current.isLocked).toBe(true);
+
+      let unlockResult:
+        | {
+            error: Error | null;
+          }
+        | undefined;
+
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(false);
+    });
   });
 
   describe("Encryption helpers", () => {
