@@ -109,20 +109,23 @@ export function getCorsHeaders(req: Request): Record<string, string> {
             "Access-Control-Allow-Headers":
                 "authorization, x-client-info, apikey, content-type",
             "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
-            "Access-Control-Allow-Credentials": "true",
         };
     }
 
     // Only allow explicitly whitelisted origins
-    const allowed = isAllowedOrigin(origin) ? origin : "null";
-
-    return {
-        "Access-Control-Allow-Origin": allowed,
+    const isAllowed = isAllowedOrigin(origin);
+    const headers: Record<string, string> = {
+        "Access-Control-Allow-Origin": isAllowed ? origin : "null",
         "Access-Control-Allow-Headers":
             "authorization, x-client-info, apikey, content-type",
         "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
-        "Access-Control-Allow-Credentials": "true",
     };
+
+    if (isAllowed) {
+        headers["Access-Control-Allow-Credentials"] = "true";
+    }
+
+    return headers;
 }
 
 /** Static CORS headers (legacy — prefer getCorsHeaders for dynamic origin matching). */
