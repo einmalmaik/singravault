@@ -88,6 +88,35 @@ describe('core edge function CORS config', () => {
         expect(headers['Access-Control-Allow-Origin']).toBe('null');
     });
 
+    it('rejects multi-label hosts that only end with the hyphen suffix pattern', async () => {
+        vi.stubGlobal('Deno', {
+            env: {
+                get(key: string) {
+                    switch (key) {
+                        case 'ALLOWED_ORIGIN':
+                            return 'https://singravault.mauntingstudios.de';
+                        case 'ALLOW_PREVIEW_ORIGINS':
+                            return 'true';
+                        case 'ALLOWED_PREVIEW_ORIGIN_SUFFIXES':
+                            return 'einmalmaik-5474s-projects.vercel.app';
+                        default:
+                            return '';
+                    }
+                },
+            },
+        });
+
+        const { getCorsHeaders } = await import('./cors.ts');
+        const headers = getCorsHeaders(new Request('https://example.test', {
+            headers: {
+                Origin: 'https://foo.attacker-einmalmaik-5474s-projects.vercel.app',
+            },
+        }));
+
+        expect(headers['Access-Control-Allow-Origin']).toBe('null');
+    });
+
+
     it('allows configured Tauri desktop origins', async () => {
         vi.stubGlobal('Deno', {
             env: {
