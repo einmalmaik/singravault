@@ -59,6 +59,8 @@ interface WhitepaperSection {
     evidence: string[];
 }
 
+const SECURITY_WHITEPAPER_LAST_UPDATED = '23.04.2026';
+
 function asStringArray(value: unknown): string[] {
     if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
         return value;
@@ -204,7 +206,12 @@ export default function SecurityWhitepaper() {
                 bullets: asStringArray(
                     t('securityWhitepaper.sections.integrity.bullets', { returnObjects: true }),
                 ),
-                evidence: ['@singra/premium/src/services/vaultIntegrityService.ts', 'src/contexts/VaultContext.tsx'],
+                evidence: [
+                    'src/services/vaultIntegrityService.ts',
+                    'src/services/offlineVaultService.ts',
+                    'src/contexts/VaultContext.tsx',
+                    'src/components/vault/VaultIntegrityRecovery.tsx',
+                ],
             },
             {
                 id: 'headers',
@@ -496,7 +503,7 @@ export default function SecurityWhitepaper() {
                                 {t('securityWhitepaper.references.links.nist80063b')}
                             </a>
                             <div className="pt-2 text-xs text-muted-foreground">
-                                {t('securityWhitepaper.lastUpdated', { date: new Date().toLocaleDateString() })}
+                                {t('securityWhitepaper.lastUpdated', { date: SECURITY_WHITEPAPER_LAST_UPDATED })}
                             </div>
                         </CardContent>
                     </Card>

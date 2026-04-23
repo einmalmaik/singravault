@@ -58,7 +58,7 @@
     },
     "security": {
       "title": "Highest Security Standards",
-      "subtitle": "We go beyond industry standard encryption - with post-quantum protection, duress passwords, and tamper detection.",
+      "subtitle": "We combine strong cryptography with local integrity checks, passkey unlock, and clearly documented limits.",
       "zeroKnowledge": {
         "title": "Zero-Knowledge Architecture",
         "description": "We can never see your passwords. Decryption happens only on your device."
@@ -89,7 +89,7 @@
       },
       "vaultIntegrity": {
         "title": "Vault Integrity Verification",
-        "description": "Merkle-tree based tamper detection ensures no one has modified your vault data server-side."
+        "description": "Local digest baselines and trusted snapshots isolate tampered items. Recovery is only possible from an earlier trusted local copy."
       }
     },
     "features": {
@@ -130,7 +130,7 @@
     "comparison": {
       "badge": "Honest Comparison",
       "title": "Why Singra Vault?",
-      "subtitle": "A fact-based comparison with leading password managers. All data verified from official sources (Feb 2026).",
+      "subtitle": "A fact-based comparison with leading password managers. All data comes from official sources and was reviewed on April 23, 2026.",
       "featureLabel": "Feature",
       "features": {
         "openSource": "Open Source",
@@ -153,7 +153,8 @@
         "partial": "Partial / Premium only",
         "unavailable": "Not available"
       },
-      "disclaimer": "All information is based on publicly available documentation from the respective providers, verified in February 2026. Feature availability may change. Bitwarden: bitwarden.com/help | 1Password: 1password.com | LastPass: lastpass.com"
+      "disclaimer": "All information is based on official public documentation from the respective vendors. Pricing, feature scope, and browser support may change at any time.",
+      "verifiedAt": "Verified: {{date}}"
     },
     "pwa": {
       "badge": "Progressive Web App",
@@ -329,12 +330,13 @@
         ]
       },
       "integrity": {
-        "title": "Tamper detection (integrity root)",
-        "summary": "HMAC Merkle tree over (itemId | encrypted_data); root is stored client-side.",
+        "title": "Tamper detection & quarantine",
+        "summary": "The client stores an encrypted local integrity baseline and a trusted snapshot. Suspicious items are isolated, while category drift blocks normal access.",
         "bullets": [
-          "Protects against a compromised server that deletes/replaces/replays ciphertext.",
-          "Integrity key is derived separately from the encryption key (domain separation).",
-          "Limitations are explicitly documented (e.g., no protection against stale reads without additional mechanisms)."
+          "The current vault state is checked locally as a canonical snapshot over encrypted item and category data; the server never receives plaintext for this check.",
+          "Item drift leads to quarantine instead of silent rendering: changed ciphertext, missing items, and unknown server items are surfaced separately.",
+          "Recovery is only possible from an already trusted local copy. Without such a copy there is no cryptographic recovery path.",
+          "Tampered categories or unreadable local baselines block normal access. In that case only Safe Mode, local export, or a vault reset remain."
         ]
       },
       "headers": {
@@ -366,7 +368,7 @@
         "nist80063b": "NIST SP 800-63B (Memorized Secrets)"
       }
     },
-    "lastUpdated": "Last updated: {{date}}"
+    "lastUpdated": "Content reviewed on: {{date}}"
   },
   "privacy": {
     "title": "Privacy Policy",
@@ -573,6 +575,33 @@
         "addTotp": "Add 2FA",
         "currentCode": "Current Code"
       }
+    },
+    "integrity": {
+      "quarantineTitle": "Items in quarantine",
+      "quarantineDescription": "These items were isolated because their trust basis no longer matches. They are not decrypted as normal vault entries.",
+      "quarantineRecoveryDescription": "These items remain isolated until you restore them from a trusted local copy, delete them deliberately, or accept the deletion.",
+      "quarantineItemTitle": "Tampered item",
+      "quarantineBadge": "Quarantine",
+      "untrustedEntryLabel": "Not trustworthy",
+      "onlyQuarantinedTitle": "Only quarantined items are currently available",
+      "onlyQuarantinedDescription": "Normal entries are currently unavailable. Review the quarantine notices and resolve the affected items deliberately.",
+      "reasonCiphertextChanged": "Encrypted content was modified.",
+      "reasonMissingOnServer": "The item is missing from the current vault state.",
+      "reasonUnknownOnServer": "An unknown item was found without a trusted baseline.",
+      "reasonUnknown": "This item could no longer be confirmed as trustworthy.",
+      "restoreAction": "Restore",
+      "restoreSuccess": "The last trusted local version was restored.",
+      "deleteEntry": "Delete permanently",
+      "deleteSuccess": "The quarantined item was removed.",
+      "acceptMissingAction": "Accept deletion",
+      "acceptMissingSuccess": "The deletion was accepted and the local trust baseline was updated.",
+      "noTrustedLocalCopy": "No trusted local copy is available on this device for recovery.",
+      "confirmDeleteTitle": "Delete item permanently?",
+      "confirmDeleteDescription": "The suspicious item will be removed from the current vault state. This action cannot be undone.",
+      "confirmAcceptMissingTitle": "Accept deletion?",
+      "confirmAcceptMissingDescription": "The missing item will be removed from the trusted local baseline. Recovery will no longer be possible unless another local copy exists.",
+      "safeModeDescription": "Safe Mode works exclusively with the last trusted local snapshot. Changes are disabled.",
+      "safeModeNotice": "Safe Mode is read-only. Review and export your items if needed before resetting the vault."
     }
   },
   "generator": {

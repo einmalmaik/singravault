@@ -7,7 +7,7 @@
  * and vault stats.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
     ChevronLeft,
@@ -88,8 +88,10 @@ export function VaultSidebar({
         decryptItem,
         encryptItem,
         isDuressMode,
+        lastIntegrityResult,
         refreshIntegrityBaseline,
         verifyIntegrity,
+        vaultDataVersion,
     } = useVault();
     const { user } = useAuth();
     const [collapsed, setCollapsed] = useState(false);
@@ -108,6 +110,11 @@ export function VaultSidebar({
         failedDecryptPayloadByItemIdRef.current.clear();
         loggedDecryptFailuresRef.current.clear();
     }, [user?.id, isDuressMode]);
+
+    const quarantinedItemIds = useMemo(
+        () => new Set((lastIntegrityResult?.quarantinedItems ?? []).map((item) => item.id)),
+        [lastIntegrityResult],
+    );
 
     // Fetch categories
     const fetchCategories = useCallback(async () => {
@@ -133,6 +140,13 @@ export function VaultSidebar({
                 snapshot.items.map(async (item) => {
                     const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
                     if (cachedFailedPayload === item.encrypted_data) {
+                        if (item.category_id) {
+                            counts[item.category_id] = (counts[item.category_id] || 0) + 1;
+                        }
+                        return;
+                    }
+
+                    if (quarantinedItemIds.has(item.id)) {
                         if (item.category_id) {
                             counts[item.category_id] = (counts[item.category_id] || 0) + 1;
                         }
@@ -342,7 +356,17 @@ export function VaultSidebar({
         } finally {
             setLoading(false);
         }
-    }, [user, encryptData, decryptData, decryptItem, encryptItem, isDuressMode, refreshIntegrityBaseline, verifyIntegrity]);
+    }, [
+        user,
+        decryptData,
+        decryptItem,
+        encryptData,
+        encryptItem,
+        isDuressMode,
+        quarantinedItemIds,
+        refreshIntegrityBaseline,
+        verifyIntegrity,
+    ]);
 
     useEffect(() => {
         if (compactMode) {
@@ -352,7 +376,7 @@ export function VaultSidebar({
 
     useEffect(() => {
         fetchCategories();
-    }, [fetchCategories, t]);
+    }, [fetchCategories, t, vaultDataVersion]);
 
     const handleAddCategory = () => {
         setEditingCategory(null);
