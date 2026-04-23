@@ -133,10 +133,18 @@ export async function loadLocalSecretBytes(key: string): Promise<Uint8Array | nu
     return null;
   }
 
-  const combined = base64ToBytes(payload);
+  let combined: Uint8Array;
+  try {
+    combined = base64ToBytes(payload);
+  } catch {
+    // Preserve the stored payload. A malformed read must not destroy the only
+    // local copy of a secret; the caller can decide how to recover.
+    browserSecretPayloadCache.delete(key);
+    return null;
+  }
+
   if (combined.length <= WRAPPING_IV_LENGTH) {
     browserSecretPayloadCache.delete(key);
-    await removeLocalSecret(key);
     return null;
   }
 
@@ -152,8 +160,9 @@ export async function loadLocalSecretBytes(key: string): Promise<Uint8Array | nu
 
     return new Uint8Array(decrypted);
   } catch {
+    // Preserve the stored payload. A transient decrypt failure should surface
+    // as an unreadable secret, not permanent data loss.
     browserSecretPayloadCache.delete(key);
-    await removeLocalSecret(key);
     return null;
   }
 }
