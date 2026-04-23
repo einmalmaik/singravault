@@ -30,6 +30,7 @@ import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
+const DECRYPT_BATCH_SIZE = 25;
 
 interface VaultItem {
   id: string;
@@ -58,6 +59,27 @@ type RenderableVaultListEntry =
   | { kind: 'item'; item: VaultItem }
   | { kind: 'quarantined'; item: VaultItem; quarantine: QuarantinedVaultItem };
 
+async function mapInBatches<TInput, TOutput>(
+  items: TInput[],
+  batchSize: number,
+  mapper: (item: TInput) => Promise<TOutput>,
+): Promise<TOutput[]> {
+  const results: TOutput[] = [];
+
+  for (let start = 0; start < items.length; start += batchSize) {
+    const batch = items.slice(start, start + batchSize);
+    results.push(...await Promise.all(batch.map(mapper)));
+
+    if (start + batchSize < items.length) {
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(resolve, 0);
+      });
+    }
+  }
+
+  return results;
+}
+
 export function VaultItemList({
   searchQuery,
   filter,
@@ -73,6 +95,7 @@ export function VaultItemList({
     encryptItem,
     isDuressMode,
     lastIntegrityResult,
+    reportUnreadableItems,
     refreshIntegrityBaseline,
     verifyIntegrity,
   } = useVault();
@@ -108,10 +131,14 @@ export function VaultItemList({
         const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
         let integrityBaselineDirty = false;
         const trustedItemIds = new Set<string>();
+        const decryptableItemIds = new Set<string>();
+        const unreadableItems: QuarantinedVaultItem[] = [];
 
         setDecrypting(true);
-        const decryptedItems = await Promise.all(
-          vaultItems.map(async (item) => {
+        const decryptedItems = await mapInBatches(
+          vaultItems,
+          DECRYPT_BATCH_SIZE,
+          async (item) => {
             const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
             if (cachedFailedPayload === item.encrypted_data) {
               return { ...item, decryptedData: undefined };
@@ -119,6 +146,7 @@ export function VaultItemList({
 
             try {
               const decryptedData = await decryptItem(item.encrypted_data, item.id);
+              decryptableItemIds.add(item.id);
               failedDecryptPayloadByItemIdRef.current.delete(item.id);
 
               const hasLegacyPlaintextMeta =
@@ -196,6 +224,11 @@ export function VaultItemList({
               return { ...item, decryptedData };
             } catch {
               failedDecryptPayloadByItemIdRef.current.set(item.id, item.encrypted_data);
+              unreadableItems.push({
+                id: item.id,
+                reason: 'ciphertext_changed',
+                updatedAt: item.updated_at ?? null,
+              });
               const logKey = `${item.id}:${item.updated_at}`;
               if (!loggedDecryptFailuresRef.current.has(logKey)) {
                 loggedDecryptFailuresRef.current.add(logKey);
@@ -209,12 +242,23 @@ export function VaultItemList({
 
               return { ...item, decryptedData: undefined };
             }
-          }),
+          },
         );
 
-        if (integrityBaselineDirty && canPersistMigrations) {
+        if (unreadableItems.length > 0) {
+          reportUnreadableItems(unreadableItems);
+        }
+
+        const canPersistTrustedFirstBaseline = integrityResult?.mode === 'healthy'
+          && integrityResult.isFirstCheck
+          && source === 'remote'
+          && isAppOnline()
+          && unreadableItems.length === 0;
+
+        if ((integrityBaselineDirty && canPersistMigrations) || canPersistTrustedFirstBaseline) {
           await refreshIntegrityBaseline({
-            itemIds: trustedItemIds,
+            itemIds: new Set([...decryptableItemIds, ...trustedItemIds]),
+            categoryIds: snapshot.categories.map((category) => category.id),
           });
         }
 
@@ -234,6 +278,7 @@ export function VaultItemList({
     encryptItem,
     refreshKey,
     isDuressMode,
+    reportUnreadableItems,
     refreshIntegrityBaseline,
     verifyIntegrity,
   ]);
@@ -254,16 +299,17 @@ export function VaultItemList({
   ), [filter, categoryId, searchQuery]);
 
   const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
-    return items.flatMap((item) => {
+    return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
       const quarantine = quarantinedItemsById.get(item.id);
       if (quarantine) {
-        return canRenderInlineQuarantine()
-          ? [{ kind: 'quarantined', item, quarantine }]
-          : [];
+        if (canRenderInlineQuarantine()) {
+          entries.push({ kind: 'quarantined', item, quarantine });
+        }
+        return entries;
       }
 
       if (!item.decryptedData) {
-        return [];
+        return entries;
       }
 
       const resolvedCategoryId = item.decryptedData.categoryId ?? item.category_id;
@@ -273,7 +319,7 @@ export function VaultItemList({
         : !!item.is_favorite;
 
       if (resolvedItemType === 'totp') {
-        return [];
+        return entries;
       }
 
       const hooks = getServiceHooks();
@@ -282,24 +328,24 @@ export function VaultItemList({
         : false;
 
       if (isDuressMode && !itemIsDecoy) {
-        return [];
+        return entries;
       }
       if (!isDuressMode && itemIsDecoy) {
-        return [];
+        return entries;
       }
 
       if (categoryId && resolvedCategoryId !== categoryId) {
-        return [];
+        return entries;
       }
 
       if (filter === 'passwords' && resolvedItemType !== 'password') {
-        return [];
+        return entries;
       }
       if (filter === 'notes' && resolvedItemType !== 'note') {
-        return [];
+        return entries;
       }
       if (filter === 'favorites' && !resolvedIsFavorite) {
-        return [];
+        return entries;
       }
 
       if (searchQuery) {
@@ -310,12 +356,13 @@ export function VaultItemList({
         const matchUrl = resolvedUrl?.toLowerCase().includes(query);
         const matchUsername = item.decryptedData.username?.toLowerCase().includes(query);
         if (!matchTitle && !matchUrl && !matchUsername) {
-          return [];
+          return entries;
         }
       }
 
-      return [{ kind: 'item', item }];
-    });
+      entries.push({ kind: 'item', item });
+      return entries;
+    }, []);
   }, [
     items,
     quarantinedItemsById,

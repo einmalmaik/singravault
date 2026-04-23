@@ -164,17 +164,15 @@ export async function isPlatformAuthenticatorAvailable(): Promise<boolean> {
 }
 
 async function upgradePasskeyWrappedKey(
+    rawVaultKeyBytes: Uint8Array,
     credentialId: string,
-    wrappedMasterKey: string,
 ): Promise<void> {
-    const { error } = await invokeWebauthn<{ updated: boolean }>({
-        action: 'upgrade-wrapped-key',
-        credentialId,
-        wrappedMasterKey,
-    });
-
-    if (error) {
-        throw error;
+    // A wrapped-key rotation mutates unlock material. Reuse the PRF activation
+    // ceremony so the server only accepts the update after a fresh WebAuthn
+    // assertion scoped to the current RP ID.
+    const result = await activatePasskeyPrf(rawVaultKeyBytes, credentialId);
+    if (!result.success) {
+        throw new Error(result.error || 'Failed to rotate passkey wrapped key');
     }
 }
 
@@ -563,11 +561,7 @@ export async function authenticatePasskey(
             const rawVaultKeyBytes = await unwrapUserKeyBytes(authenticateOptions.encryptedUserKey, rawWrappedKeyBytes);
 
             try {
-                const upgradedWrappedKey = formatPasskeyEnvelopeV2(
-                    await encryptRawKeyBytes(rawVaultKeyBytes, prfOutput),
-                );
-
-                await upgradePasskeyWrappedKey(verifyData.credentialId, upgradedWrappedKey);
+                await upgradePasskeyWrappedKey(rawVaultKeyBytes, verifyData.credentialId);
             } catch (error) {
                 console.warn('Failed to rotate legacy passkey envelope after successful unlock:', error);
             }

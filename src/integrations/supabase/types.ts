@@ -1256,6 +1256,7 @@ export type Database = {
         Args: { p_collection_id: string; p_items: Json; p_new_keys: Json }
         Returns: undefined
       }
+      reset_user_vault_state: { Args: never; Returns: Json }
       rotate_totp_encryption_key: {
         Args: { p_new_key: string }
         Returns: number
