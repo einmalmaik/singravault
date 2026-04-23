@@ -601,7 +601,9 @@
       "confirmAcceptMissingTitle": "Accept deletion?",
       "confirmAcceptMissingDescription": "The missing item will be removed from the trusted local baseline. Recovery will no longer be possible unless another local copy exists.",
       "safeModeDescription": "Safe Mode works exclusively with the last trusted local snapshot. Changes are disabled.",
-      "safeModeNotice": "Safe Mode is read-only. Review and export your items if needed before resetting the vault."
+      "safeModeNotice": "Safe Mode is read-only. Review and export your items if needed before resetting the vault.",
+      "resetChallengeExpired": "The vault reset confirmation expired. Please try again.",
+      "resetFailed": "The vault could not be reset."
     }
   },
   "generator": {
@@ -1359,12 +1361,14 @@
     "failed": "Re-authentication failed. Please try again.",
     "accountDeleteContext": "Please confirm your identity before deleting your account.",
     "subscriptionCancelContext": "Please confirm your identity before canceling your subscription.",
+    "vaultResetContext": "Please confirm your identity before irreversibly resetting your vault.",
     "confirmationLabel": "Type {{keyword}}",
     "confirmationPlaceholder": "Enter {{keyword}}",
     "confirmationHint": "For social-login accounts without an account password, confirm this action with the safety keyword.",
     "confirmationMismatch": "Please enter exactly {{keyword}}.",
     "confirmationKeywordDefault": "CONFIRM",
-    "cancelKeyword": "CANCEL"
+    "cancelKeyword": "CANCEL",
+    "resetKeyword": "RESET"
   },
   "passkey": {
     "title": "Passkeys",

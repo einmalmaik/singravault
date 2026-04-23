@@ -1155,6 +1155,30 @@ export type Database = {
         }
         Relationships: []
       }
+      sensitive_action_challenges: {
+        Row: {
+          action: string
+          expires_at: string
+          id: string
+          issued_at: string
+          user_id: string
+        }
+        Insert: {
+          action: string
+          expires_at: string
+          id?: string
+          issued_at?: string
+          user_id: string
+        }
+        Update: {
+          action?: string
+          expires_at?: string
+          id?: string
+          issued_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       webauthn_challenges: {
         Row: {
           challenge: string
@@ -1188,6 +1212,7 @@ export type Database = {
     }
     Functions: {
       auto_close_stale_support_tickets: { Args: never; Returns: number }
+      begin_vault_reset_recovery: { Args: never; Returns: Json }
       check_family_size: { Args: { owner_id: string }; Returns: number }
       check_subscription_tier: { Args: { user_id: string }; Returns: string }
       cleanup_expired_opaque_login_states: { Args: never; Returns: undefined }
@@ -1256,7 +1281,10 @@ export type Database = {
         Args: { p_collection_id: string; p_items: Json; p_new_keys: Json }
         Returns: undefined
       }
-      reset_user_vault_state: { Args: never; Returns: Json }
+      reset_user_vault_state: {
+        Args: { p_recovery_challenge_id: string }
+        Returns: Json
+      }
       rotate_totp_encryption_key: {
         Args: { p_new_key: string }
         Returns: number
