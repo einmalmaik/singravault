@@ -99,6 +99,7 @@ export default function Auth() {
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [recoveryResetToken, setRecoveryResetToken] = useState<string | null>(null);
   const [manualDeepLinkOpen, setManualDeepLinkOpen] = useState(false);
   const [manualDeepLinkValue, setManualDeepLinkValue] = useState('');
   const [manualDeepLinkSubmitting, setManualDeepLinkSubmitting] = useState(false);
@@ -706,7 +707,7 @@ export default function Auth() {
         throw new Error(errorData.error || 'Ungültiger oder abgelaufener Code.');
       }
 
-      const { session } = await res.json();
+      const { session, resetToken } = await res.json();
 
       // Session setzen für das Passwort-Update
       if (session) {
@@ -715,6 +716,12 @@ export default function Auth() {
           refresh_token: session.refresh_token || '',
         });
       }
+
+      if (!resetToken) {
+        throw new Error('Reset-Token fehlt. Bitte den Wiederherstellungsprozess erneut starten.');
+      }
+
+      setRecoveryResetToken(resetToken);
 
       setMode('update_password');
       toast({
@@ -742,6 +749,9 @@ export default function Auth() {
       if (sessionError || !sessionData.session) {
         throw new Error('Keine aktive Sitzung gefunden. Bitte den Link erneut anfordern.');
       }
+      if (!recoveryResetToken) {
+        throw new Error('Wiederherstellungs-Token fehlt. Bitte Code erneut verifizieren.');
+      }
 
       const res = await fetch(`${API_URL}/auth-reset-password`, {
         method: 'POST',
@@ -750,7 +760,7 @@ export default function Auth() {
           'Authorization': `Bearer ${sessionData.session.access_token}`
         },
         credentials: usesCookieSession ? 'include' : 'omit',
-        body: JSON.stringify({ newPassword: data.password })
+        body: JSON.stringify({ newPassword: data.password, resetToken: recoveryResetToken })
       });
 
       if (!res.ok) {
@@ -759,6 +769,7 @@ export default function Auth() {
       }
 
       toast({ title: t('common.success'), description: 'Passwort erfolgreich aktualisiert.' });
+      setRecoveryResetToken(null);
       navigate('/vault');
 
     } catch (error: unknown) {

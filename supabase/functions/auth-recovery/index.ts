@@ -28,6 +28,15 @@ function generateCode(): string {
 }
 
 /**
+ * Generates a cryptographically secure reset token returned after successful code verification.
+ */
+function generateResetToken(): string {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
  * SHA-256 hash of a string, returned as hex.
  */
 async function hashCode(code: string): Promise<string> {
@@ -147,6 +156,27 @@ serve(async (req) => {
                 .delete()
                 .eq("id", tokens[0].id);
 
+            // Create a one-time reset token that must be presented to auth-reset-password.
+            const resetToken = generateResetToken();
+            const resetTokenHash = await hashCode(resetToken);
+            const resetExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
+
+            const { error: resetTokenInsertError } = await supabaseAdmin
+                .from("recovery_tokens")
+                .insert({
+                    email: email.toLowerCase().trim(),
+                    token_hash: resetTokenHash,
+                    expires_at: resetExpiresAt,
+                });
+
+            if (resetTokenInsertError) {
+                console.error("Failed to insert reset token:", resetTokenInsertError);
+                return new Response(JSON.stringify({ error: "Session creation failed" }), {
+                    status: 500,
+                    headers: { ...corsHeaders, "Content-Type": "application/json" },
+                });
+            }
+
             // Erstelle eine Session via generateLink + verifyOtp (wie beim Login)
             const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
                 type: "magiclink",
@@ -189,6 +219,7 @@ serve(async (req) => {
                     access_token: sessionData.session.access_token,
                     refresh_token: sessionData.session.refresh_token,
                 },
+                resetToken,
             }), {
                 status: 200,
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
