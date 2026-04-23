@@ -19,7 +19,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { DesktopOAuthBridgeView } from '@/components/auth/DesktopOAuthBridgeView';
-import { NebulaHeroBackground } from '@/components/NebulaHeroBackground';
 import { Separator } from '@/components/ui/separator';
 import {
   Dialog,
@@ -860,50 +859,16 @@ export default function Auth() {
       <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
 
       {/* ── Brand Panel (desktop only, left 45%) ────────────────── */}
-      <div className="hidden lg:flex relative w-[45%] flex-shrink-0 overflow-hidden auth-brand-gradient auth-brand-reveal">
-        <NebulaHeroBackground variant="panel" showText showParticles />
-
-        {/* Floating accent particles */}
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-          {([
-            { w: 6, h: 6, top: '18%', left: '22%', delay: '0s', dur: '7s' },
-            { w: 4, h: 4, top: '64%', left: '14%', delay: '1.4s', dur: '6s' },
-            { w: 8, h: 8, top: '38%', left: '72%', delay: '0.7s', dur: '8s' },
-            { w: 3, h: 3, top: '78%', left: '55%', delay: '2.1s', dur: '6.5s' },
-            { w: 5, h: 5, top: '12%', left: '68%', delay: '0.3s', dur: '7.5s' },
-          ] as const).map((p, i) => (
-            <div
-              key={i}
-              className="auth-particle"
-              style={{
-                width: p.w, height: p.h,
-                top: p.top, left: p.left,
-                animation: `auth-float ${p.dur} ease-in-out ${p.delay} infinite`,
-              }}
-            />
-          ))}
-        </div>
-
-        {/* Brand info at bottom */}
-        <div className="relative z-10 mt-auto p-12 space-y-5">
-          <div className="flex items-center gap-3">
-            <img src="/singra-icon.png" alt="Singra Vault" className="w-9 h-9 rounded-full shadow-lg shadow-primary/20 ring-1 ring-border/70" />
-            <span className="text-lg font-semibold tracking-tight text-foreground/90">Singra Vault</span>
-          </div>
-          <ul className="space-y-2.5">
-            {[
-              'AES-256-GCM · Argon2id Key Derivation',
-              'Zero-Knowledge — kein Klartext auf dem Server',
-              'Post-Quantum ready mit @noble/post-quantum',
-              'Schlüssel verlassen niemals dein Gerät',
-            ].map((item) => (
-              <li key={item} className="flex items-center gap-2.5 text-sm text-muted-foreground">
-                <span className="h-1 w-1 rounded-full bg-primary/60 flex-shrink-0" />
-                {item}
-              </li>
-            ))}
-          </ul>
-        </div>
+      <div className="hidden lg:flex relative w-[45%] flex-shrink-0 overflow-hidden auth-visual-panel auth-brand-reveal" aria-hidden="true">
+        <img
+          src="/brand/auth.png"
+          alt=""
+          width={1686}
+          height={933}
+          className="auth-visual-image"
+          loading="eager"
+          decoding="async"
+        />
       </div>
 
       {/* ── Form Panel (100% mobile / 55% desktop) ──────────────── */}
