@@ -28,8 +28,8 @@
 
 **Datei:** `src/services/cryptoService.ts`  
 **Zeile:** ca. 815–821  
-**Problem:** Der TODO-Kommentar dokumentiert, dass der Default auf `version: 2` (hybrid PQ+RSA) umgestellt werden soll. Aktuell werden neue Shared-Collection-Keys ohne Post-Quantum-Schutz generiert.  
-**Risiko:** Neue Schlüssel sind anfällig für "harvest now, decrypt later"-Angriffe durch zukünftige Quantencomputer.  
+**Problem:** Der TODO-Kommentar dokumentiert, dass der Default auf `version: 2` (hybrid PQ+RSA) umgestellt werden soll. Aktuell werden neue Shared-Collection-Keys ohne Post-Quantum-Key-Wrapping generiert.  
+**Risiko:** Neu gewrappte Sharing-Schlüssel sind anfällig für "harvest now, decrypt later"-Angriffe durch zukünftige Quantencomputer.  
 **Empfehlung:** Default auf `version: 2` umstellen, sobald die PQ-Validierung abgeschlossen ist.
 
 ### [MITTEL] RSA-4096 Key Generation mit extractable: true

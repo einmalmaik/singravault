@@ -20,6 +20,7 @@ import {
   reEncryptString,
   generateSalt,
   KDF_PARAMS,
+  VAULT_ITEM_ENVELOPE_V1_PREFIX,
 } from "@/services/cryptoService";
 
 const ENCRYPTED_CATEGORY_PREFIX = "enc:cat:v1:";
@@ -79,7 +80,7 @@ describe("KDF Re-Encryption", () => {
         itemType: "password" as const,
       };
 
-      const encryptedData = await encryptVaultItem(itemData, keyA);
+      const encryptedData = await encryptVaultItem(itemData, keyA, "item-1");
 
       const result = await reEncryptVault(
         [{ id: "item-1", encrypted_data: encryptedData }],
@@ -92,6 +93,7 @@ describe("KDF Re-Encryption", () => {
       expect(result.categoriesReEncrypted).toBe(0);
       expect(result.itemUpdates).toHaveLength(1);
       expect(result.itemUpdates[0].id).toBe("item-1");
+      expect(result.itemUpdates[0].encrypted_data.startsWith(VAULT_ITEM_ENVELOPE_V1_PREFIX)).toBe(true);
 
       // Verify the re-encrypted data is decryptable with new key + entry ID as AAD
       const decrypted = await decryptVaultItem(result.itemUpdates[0].encrypted_data, keyB, "item-1");
@@ -156,8 +158,8 @@ describe("KDF Re-Encryption", () => {
     }, 30000);
 
     it("should abort entirely if one item fails to decrypt", async () => {
-      const goodData = await encryptVaultItem({ title: "Good" }, keyA);
-      const badData = await encryptVaultItem({ title: "Bad" }, keyB); // encrypted with wrong key
+      const goodData = await encryptVaultItem({ title: "Good" }, keyA, "good-1");
+      const badData = await encryptVaultItem({ title: "Bad" }, keyB, "bad-1"); // encrypted with wrong key
 
       const items = [
         { id: "good-1", encrypted_data: goodData },
@@ -167,6 +169,25 @@ describe("KDF Re-Encryption", () => {
       await expect(
         reEncryptVault(items, [], keyA, keyB),
       ).rejects.toThrow(/Failed to re-encrypt vault item/);
+    }, 30000);
+
+    it("should migrate legacy unversioned vault items to the versioned envelope", async () => {
+      const itemData = {
+        title: "Legacy",
+        password: "old-format",
+      };
+      const legacyEncryptedData = await encrypt(JSON.stringify(itemData), keyA);
+
+      const result = await reEncryptVault(
+        [{ id: "legacy-1", encrypted_data: legacyEncryptedData }],
+        [],
+        keyA,
+        keyB,
+      );
+
+      expect(result.legacyItemsFound).toBe(1);
+      expect(result.itemUpdates[0].encrypted_data.startsWith(VAULT_ITEM_ENVELOPE_V1_PREFIX)).toBe(true);
+      await expect(decryptVaultItem(result.itemUpdates[0].encrypted_data, keyB, "legacy-1")).resolves.toEqual(itemData);
     }, 30000);
 
     it("should handle empty vault gracefully", async () => {

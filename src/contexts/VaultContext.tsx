@@ -264,8 +264,8 @@ interface VaultContextType {
     // Encryption helpers
     encryptData: (plaintext: string) => Promise<string>;
     decryptData: (encrypted: string) => Promise<string>;
-    encryptItem: (data: VaultItemData, entryId?: string) => Promise<string>;
-    decryptItem: (encryptedData: string, entryId?: string) => Promise<VaultItemData>;
+    encryptItem: (data: VaultItemData, entryId: string) => Promise<string>;
+    decryptItem: (encryptedData: string, entryId: string) => Promise<VaultItemData>;
 
     // Settings
     autoLockTimeout: number;
@@ -2539,7 +2539,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
     /**
      * Encrypts a vault item
      */
-    const encryptItem = useCallback(async (data: VaultItemData, entryId?: string): Promise<string> => {
+    const encryptItem = useCallback(async (data: VaultItemData, entryId: string): Promise<string> => {
         if (!encryptionKey) {
             throw new Error('Vault is locked');
         }
@@ -2549,7 +2549,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
     /**
      * Decrypts a vault item
      */
-    const decryptItem = useCallback(async (encryptedData: string, entryId?: string): Promise<VaultItemData> => {
+    const decryptItem = useCallback(async (encryptedData: string, entryId: string): Promise<VaultItemData> => {
         if (!encryptionKey) {
             throw new Error('Vault is locked');
         }

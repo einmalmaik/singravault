@@ -538,14 +538,14 @@ async function scenario5_passwordStrength(): Promise<AttackResult> {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// SZENARIO 6 — Post-Quantum Hybrid Encryption Integrität
+// SZENARIO 6 — Post-Quantum Hybrid Key-Wrapping Integrität
 // ════════════════════════════════════════════════════════════════════
 
 async function scenario6_pqHybridIntegrity(): Promise<AttackResult> {
     console.log('\n╔══════════════════════════════════════════════════════╗');
-    console.log('║  SZENARIO 6: Post-Quantum Hybrid Encryption Test     ║');
+    console.log('║  SZENARIO 6: Post-Quantum Hybrid Key-Wrapping Test   ║');
     console.log('╚══════════════════════════════════════════════════════╝');
-    console.log('Teste: ML-KEM-768 + RSA-4096 Hybrid-Schutz\n');
+    console.log('Teste: ML-KEM-768 + RSA-4096 Schutz für Sharing-/Notfall-Schlüssel\n');
 
     let checks = 0;
     let passed = 0;
@@ -656,9 +656,9 @@ async function scenario6_pqHybridIntegrity(): Promise<AttackResult> {
     console.log(`\n📊 Ergebnis: ${passed}/${checks} Checks bestanden`);
 
     return {
-        scenario: 'PQ Hybrid Encryption',
+        scenario: 'PQ Hybrid Key Wrapping',
         verdict: score >= 90 ? 'SICHER' : score >= 70 ? 'AKZEPTABEL' : 'SCHWACH',
-        details: `${passed}/${checks} bestanden. ML-KEM-768 (FIPS 203) + RSA-4096 + HKDF + AES-256-GCM.`,
+        details: `${passed}/${checks} bestanden. ML-KEM-768 (FIPS 203) + RSA-4096 + HKDF + AES-256-GCM für Key-Wrapping.`,
         score,
     };
 }
@@ -679,7 +679,7 @@ function calculateSecurityScore(results: AttackResult[]) {
         'Vault-Manipulation': 20,
         'Memory Dump': 15,
         'Schwaches Master-PW': 10,
-        'PQ Hybrid Encryption': 10,
+        'PQ Hybrid Key Wrapping': 10,
     };
 
     let totalWeightedScore = 0;
@@ -725,7 +725,7 @@ function calculateSecurityScore(results: AttackResult[]) {
     console.log(`  ✅ Encryption:       AES-256-GCM (Authenticated Encryption)`);
     console.log(`  ✅ IV-Generierung:   crypto.getRandomValues() (CSPRNG)`);
     console.log(`  ✅ Key-Derivation:   Non-extractable CryptoKey`);
-    console.log(`  ✅ Post-Quantum:     ML-KEM-768 (FIPS 203) Hybrid`);
+    console.log(`  ✅ Post-Quantum:     ML-KEM-768 (FIPS 203) Key-Wrapping für Sharing/Notfall`);
     console.log(`  ✅ Zero-Knowledge:   Master-Passwort verlässt nie den Client`);
 
     return { finalScore, grade };

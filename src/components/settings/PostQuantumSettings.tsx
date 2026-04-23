@@ -1,10 +1,11 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 /**
- * @fileoverview Post-Quantum Encryption Settings Component
+ * @fileoverview Post-Quantum Sharing-Key Protection Settings Component
  * 
- * Displays post-quantum protection status and security details
- * for Emergency Access and Shared Collections.
+ * Displays post-quantum key-wrapping status and security details
+ * for Emergency Access and Shared Collections. Vault item payloads
+ * remain AES-256-GCM encrypted outside this PQ key-exchange path.
  */
 
 import { useState, useEffect } from 'react';

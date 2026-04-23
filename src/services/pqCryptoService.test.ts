@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 /**
- * @fileoverview Tests for Post-Quantum Cryptography Service
+ * @fileoverview Tests for Post-Quantum key-wrapping service
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -73,7 +73,7 @@ describe('pqCryptoService', () => {
         });
 
         it('should encrypt and decrypt short text', async () => {
-            const plaintext = 'Hello, Post-Quantum World!';
+            const plaintext = 'Serialized sharing key material';
             
             const ciphertext = await hybridEncrypt(
                 plaintext,
@@ -355,7 +355,7 @@ describe('pqCryptoService', () => {
     });
 
     describe('isHybridEncrypted', () => {
-        it('should return true for current v4 hybrid encrypted data', async () => {
+        it('should return true for current v4 hybrid wrapped key material', async () => {
             const hybridKeys = await generateHybridKeyPair();
             
             const ciphertext = await hybridEncrypt(

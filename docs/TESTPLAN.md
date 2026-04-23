@@ -259,9 +259,9 @@ Testet alle 9 DB-abhängigen Funktionen mit gemocktem Supabase.
 | 12 | `rejectAccess()` | Setzt Status auf rejected |
 | 13 | `approveAccess()` | Setzt Status auf approved |
 | 14–15 | `acceptInviteWithPQ()` | Akzeptiert mit RSA + PQ Public Keys; Speichert pq_public_key |
-| 16–17 | `setHybridEncryptedMasterKey()` | Verschlüsselt Master-Key hybrid; Speichert pq_encrypted + rsa_encrypted |
-| 18 | `decryptHybridMasterKey()` | Entschlüsselt hybrid verschlüsselten Key |
-| 19 | `hasPQEncryption()` | `true` wenn pq_encrypted_master_key vorhanden; `false` sonst |
+| 16–17 | `setHybridEncryptedMasterKey()` | Wrappt Notfallzugriffs-Key hybrid; Speichert pq_encrypted + rsa_encrypted |
+| 18 | `decryptHybridMasterKey()` | Entwrappt hybrid gewrappten Notfallzugriffs-Key |
+| 19 | `hasPQEncryption()` | `true` wenn PQ-gewrappter Notfallzugriffs-Key vorhanden; `false` sonst |
 
 ---
 

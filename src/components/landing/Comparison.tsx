@@ -56,7 +56,7 @@ const competitors: Competitor[] = [
         },
         details: {
             kdf: 'Argon2id 128 MiB',
-            postQuantum: 'Security Standard v1 (ML-KEM-768 + RSA-4096 hybrid for sharing/emergency)',
+            postQuantum: 'ML-KEM-768 + RSA-4096 for sharing/emergency key wrapping',
             clipboardClear: '30s',
             pricing: '€0 / €1,65 pro Monat',
             loginProtocol: 'OPAQUE (IETF PAKE)',

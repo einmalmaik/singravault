@@ -3,7 +3,7 @@
 ## Scope
 
 - Emergency Access entitlement enforcement
-- Post-Quantum key protection availability by tier
+- Post-Quantum protection for sharing keys availability by tier
 - Pricing page feature claims
 - File attachment security and quota controls (1 GB target)
 - Vault item creation failure path in `VaultItemDialog.tsx`
@@ -11,8 +11,8 @@
 ## Findings
 
 1. Emergency Access was enforced mainly client-side.
-2. Post-Quantum feature matrix marked `post_quantum_encryption` as paid-only.
-3. Pricing page explicitly listed Post-Quantum as a Premium card bullet.
+2. Post-Quantum sharing-key protection feature matrix marked `post_quantum_encryption` as paid-only.
+3. Pricing page explicitly listed Post-Quantum sharing-key protection as a Premium card bullet.
 4. File attachment limits were primarily client-enforced; DB had no hard 1 GB aggregate guard.
 5. `resolveDefaultVaultId()` used `maybeSingle()`, which is brittle for multi-row defaults and can fail noisy in edge states.
 
@@ -30,13 +30,13 @@
   - `supabase/migrations/20260219143000_enforce_paid_emergency_and_attachment_limits.sql`
   - Replaced insert policy with paid-tier check.
 
-### 2) Post-Quantum key protection available to all users (including free)
+### 2) Post-Quantum sharing-key protection available to all users (including free)
 
 - Updated feature matrix:
   - `src/config/planConfig.ts`
   - `post_quantum_encryption: { free: true, premium: true, families: true }`.
 
-### 3) Remove Post-Quantum mention from Pricing page
+### 3) Remove Post-Quantum sharing-key mention from Pricing page
 
 - Removed `subscription.features.post_quantum` from Premium feature list:
   - `src/pages/PricingPage.tsx`
@@ -76,7 +76,7 @@
 - `src/hooks/__tests__/useFeatureGate.test.tsx`
 - `src/test/unit-pure-functions.test.ts`
 
-Adjusted for Post-Quantum now being a free feature.
+Adjusted for Post-Quantum sharing-key protection now being a free feature.
 
 ## Security Notes
 
