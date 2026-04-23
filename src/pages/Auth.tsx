@@ -103,6 +103,7 @@ export default function Auth() {
   );
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [passwordResetToken, setPasswordResetToken] = useState<string | null>(null);
   const [manualDeepLinkOpen, setManualDeepLinkOpen] = useState(false);
   const [manualDeepLinkValue, setManualDeepLinkValue] = useState('');
   const [manualDeepLinkSubmitting, setManualDeepLinkSubmitting] = useState(false);
@@ -430,6 +431,8 @@ export default function Auth() {
           userIdentifier: data.email,
           finishLoginRequest,
           loginId,
+          totpCode,
+          isBackupCode,
           skipCookie: !usesCookieSession,
         }),
       });
@@ -661,6 +664,7 @@ export default function Auth() {
 
   const handleRecover = async (data: RecoverFormData) => {
     setLoading(true);
+    setPasswordResetToken(null);
     try {
       await fetch(`${API_URL}/auth-recovery`, {
         method: 'POST',
@@ -710,16 +714,13 @@ export default function Auth() {
         throw new Error(errorData.error || 'Ungültiger oder abgelaufener Code.');
       }
 
-      const { session } = await res.json();
+      const { resetToken } = await res.json();
 
-      // Session setzen für das Passwort-Update
-      if (session) {
-        await applyAuthenticatedSession({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token || '',
-        });
+      if (typeof resetToken !== 'string' || !resetToken) {
+        throw new Error('Reset-Berechtigung fehlt. Bitte fordere einen neuen Code an.');
       }
 
+      setPasswordResetToken(resetToken);
       setMode('update_password');
       toast({
         title: t('common.success'),
@@ -739,22 +740,18 @@ export default function Auth() {
   const handleUpdatePassword = async (data: UpdatePasswordFormData) => {
     setLoading(true);
     try {
-      // WICHTIG: GoTrue (Supabase) liest den Hash (#access_token=...) und erzeugt daraus eine
-      // valide Session. Wir nutzen diese, um unser Backend zu autorisieren!
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
-      if (sessionError || !sessionData.session) {
-        throw new Error('Keine aktive Sitzung gefunden. Bitte den Link erneut anfordern.');
+      if (!passwordResetToken) {
+        throw new Error('Keine gültige Reset-Berechtigung gefunden. Bitte fordere einen neuen Code an.');
       }
 
       const res = await fetch(`${API_URL}/auth-reset-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionData.session.access_token}`
+          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`
         },
         credentials: usesCookieSession ? 'include' : 'omit',
-        body: JSON.stringify({ newPassword: data.password })
+        body: JSON.stringify({ newPassword: data.password, resetToken: passwordResetToken })
       });
 
       if (!res.ok) {
@@ -763,7 +760,10 @@ export default function Auth() {
       }
 
       toast({ title: t('common.success'), description: 'Passwort erfolgreich aktualisiert.' });
-      navigate('/vault');
+      setPasswordResetToken(null);
+      updatePasswordForm.reset();
+      setMode('login');
+      navigate('/auth', { replace: true });
 
     } catch (error: unknown) {
       toast({ variant: 'destructive', title: t('common.error'), description: error instanceof Error ? error.message : 'Fehler beim Aktualisieren des Passworts.' });

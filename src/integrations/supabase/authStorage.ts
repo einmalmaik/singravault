@@ -15,18 +15,13 @@ export interface AuthStorage {
 
 const PKCE_VERIFIER_SUFFIX = "-code-verifier";
 const SUPABASE_HOST_SEGMENT = ".supabase.";
-
-interface DesktopPersistedSessionShape {
-  access_token?: string;
-  refresh_token?: string;
-}
+const SUPABASE_AUTH_TOKEN_KEY_PATTERN = /^sb-[a-z0-9]+-auth-token$/i;
 
 export function createAuthStorage(): AuthStorage {
   const memoryStore = new Map<string, string>();
-  // Desktop builds need a restart-safe Supabase session snapshot because the
-  // WebView process is fully torn down between launches. Web/PWA keep using
-  // the stricter BFF/keychain lifecycle outside this adapter.
-  const shouldPersistDesktopSession = isTauriRuntime();
+  if (isTauriRuntime()) {
+    purgeLegacyDesktopAuthTokens();
+  }
 
   return {
     getItem: async (key) => {
@@ -40,14 +35,6 @@ export function createAuthStorage(): AuthStorage {
         return verifier;
       }
 
-      if (shouldPersistDesktopSession) {
-        const desktopSessionValue = readDesktopSessionValue(key);
-        if (desktopSessionValue !== null) {
-          memoryStore.set(key, desktopSessionValue);
-          return desktopSessionValue;
-        }
-      }
-
       return null;
     },
     setItem: async (key, value) => {
@@ -57,9 +44,6 @@ export function createAuthStorage(): AuthStorage {
         return;
       }
 
-      if (shouldPersistDesktopSession) {
-        writeDesktopSessionValue(key, value);
-      }
     },
     removeItem: async (key) => {
       memoryStore.delete(key);
@@ -68,9 +52,6 @@ export function createAuthStorage(): AuthStorage {
         return;
       }
 
-      if (shouldPersistDesktopSession) {
-        removeDesktopSessionValue(key);
-      }
     },
   };
 }
@@ -99,93 +80,58 @@ export function getDesktopSessionStorageKey(supabaseUrl: string): string | null 
   }
 }
 
+export function purgeLegacyDesktopAuthTokens(supabaseUrl?: string): number {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  let removed = 0;
+  const exactSessionKey = supabaseUrl ? getDesktopSessionStorageKey(supabaseUrl) : null;
+
+  try {
+    const keysToRemove = new Set<string>();
+    if (exactSessionKey) {
+      keysToRemove.add(exactSessionKey);
+    }
+
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (key && isSupabaseAuthTokenStorageKey(key)) {
+        keysToRemove.add(key);
+      }
+    }
+
+    keysToRemove.forEach((key) => {
+      window.localStorage.removeItem(key);
+      removed += 1;
+    });
+  } catch (error) {
+    console.warn("[AuthStorage] Failed to purge legacy desktop auth tokens from localStorage.", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return removed;
+}
+
 export function readDesktopPersistedSessionTokens(
   supabaseUrl: string,
-): DesktopPersistedSessionShape | null {
+): null {
   const sessionKey = getDesktopSessionStorageKey(supabaseUrl);
   if (!sessionKey) {
     return null;
   }
 
-  const rawValue = readDesktopSessionValue(sessionKey);
-  if (!rawValue) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue) as DesktopPersistedSessionShape;
-    if (!parsed.access_token || !parsed.refresh_token) {
-      clearDesktopPersistedSessionTokens(supabaseUrl);
-      return null;
-    }
-
-    return {
-      access_token: parsed.access_token,
-      refresh_token: parsed.refresh_token,
-    };
-  } catch {
-    clearDesktopPersistedSessionTokens(supabaseUrl);
-    return null;
-  }
+  // Legacy versions stored full Supabase sessions in localStorage. Never use
+  // those tokens for recovery; delete them and force keychain-backed refresh.
+  clearDesktopPersistedSessionTokens(supabaseUrl);
+  return null;
 }
 
 export function clearDesktopPersistedSessionTokens(supabaseUrl: string): void {
-  const sessionKey = getDesktopSessionStorageKey(supabaseUrl);
-  if (!sessionKey) {
-    return;
-  }
-
-  removeDesktopSessionValue(sessionKey);
+  purgeLegacyDesktopAuthTokens(supabaseUrl);
 }
 
-function readDesktopSessionValue(key: string): StorageValue {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    return window.localStorage.getItem(key);
-  } catch (error) {
-    if (isTauriRuntime()) {
-      console.warn("[AuthStorage] Failed to read desktop auth snapshot from localStorage.", {
-        key,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    return null;
-  }
-}
-
-function writeDesktopSessionValue(key: string, value: string): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(key, value);
-  } catch (error) {
-    if (isTauriRuntime()) {
-      console.warn("[AuthStorage] Failed to persist desktop auth snapshot to localStorage.", {
-        key,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-}
-
-function removeDesktopSessionValue(key: string): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.removeItem(key);
-  } catch (error) {
-    if (isTauriRuntime()) {
-      console.warn("[AuthStorage] Failed to remove desktop auth snapshot from localStorage.", {
-        key,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+function isSupabaseAuthTokenStorageKey(key: string): boolean {
+  return SUPABASE_AUTH_TOKEN_KEY_PATTERN.test(key);
 }

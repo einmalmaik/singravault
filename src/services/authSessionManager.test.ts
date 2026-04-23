@@ -176,7 +176,7 @@ describe("authSessionManager", () => {
     expect(mockRefreshSession).not.toHaveBeenCalled();
   });
 
-  it("refreshes a desktop session from the persisted Supabase snapshot when the keychain is empty", async () => {
+  it("does not refresh a desktop session from legacy localStorage tokens when the keychain is empty", async () => {
     runtimeState.isTauri = true;
     let storedRefreshToken: string | null = null;
     runtimeState.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
@@ -200,7 +200,35 @@ describe("authSessionManager", () => {
 
     const result = await hydrateAuthSession();
 
-    expect(mockRefreshSession).toHaveBeenCalledWith({ refresh_token: "refresh-token" });
+    expect(mockRefreshSession).not.toHaveBeenCalled();
+    expect(result.mode).toBe("unauthenticated");
+    expect(localStorage.getItem("sb-example-auth-token")).toBeNull();
+  });
+
+  it("refreshes a desktop session only from the native keychain", async () => {
+    runtimeState.isTauri = true;
+    let storedRefreshToken: string | null = "keychain-refresh-token";
+    runtimeState.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "load_refresh_token") {
+        return storedRefreshToken;
+      }
+
+      if (command === "save_refresh_token") {
+        storedRefreshToken = String(args?.refreshToken ?? "");
+        return null;
+      }
+
+      if (command === "clear_refresh_token") {
+        storedRefreshToken = null;
+        return null;
+      }
+
+      return null;
+    });
+
+    const result = await hydrateAuthSession();
+
+    expect(mockRefreshSession).toHaveBeenCalledWith({ refresh_token: "keychain-refresh-token" });
     expect(result.mode).toBe("online");
     expect(result.session?.access_token).toBe("access-token");
   });
