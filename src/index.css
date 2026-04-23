@@ -523,23 +523,16 @@
 }
 
 .auth-visual-image {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 0;
-  width: min(92%, 54rem);
-  height: auto;
-  max-height: min(72vh, 44rem);
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   object-position: center center;
   user-select: none;
   -webkit-user-select: none;
   filter: drop-shadow(0 24px 70px hsl(216 46% 28% / 0.24));
-}
-
-@media (max-width: 1280px) {
-  .auth-visual-image {
-    width: min(104%, 48rem);
-    max-height: 66vh;
-  }
 }
 
 

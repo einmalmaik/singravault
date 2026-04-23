@@ -861,10 +861,10 @@ export default function Auth() {
       {/* ── Brand Panel (desktop only, left 45%) ────────────────── */}
       <div className="hidden lg:flex relative w-[45%] flex-shrink-0 overflow-hidden auth-visual-panel auth-brand-reveal" aria-hidden="true">
         <img
-          src="/brand/auth.png"
+          src="/brand/auth-panel.png"
           alt=""
-          width={1686}
-          height={933}
+          width={1728}
+          height={2160}
           className="auth-visual-image"
           loading="eager"
           decoding="async"
