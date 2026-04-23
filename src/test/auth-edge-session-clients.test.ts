@@ -15,15 +15,18 @@ describe("auth edge functions use anon auth clients for user sessions", () => {
         expect(source).toContain("authClient.auth.verifyOtp");
     });
 
-    it("keeps other session-issuing auth flows on anon auth clients", () => {
+    it("keeps OPAQUE session issuance on anon clients and recovery reset-scoped", () => {
         const opaqueSource = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
         const recoverySource = readFileSync("supabase/functions/auth-recovery/index.ts", "utf-8");
 
         expect(opaqueSource).toContain('const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!');
         expect(opaqueSource).toContain("authClient.auth.verifyOtp");
 
-        expect(recoverySource).toContain('const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!');
-        expect(recoverySource).toContain("authClient.auth.verifyOtp");
+        expect(recoverySource).not.toContain("authClient.auth.verifyOtp");
+        expect(recoverySource).not.toContain("access_token");
+        expect(recoverySource).not.toContain("refresh_token");
+        expect(recoverySource).toContain("password_reset_challenges");
+        expect(recoverySource).toContain("resetToken");
     });
 
     it("keeps webauthn focused on passkey verification without issuing auth sessions", () => {

@@ -3,6 +3,14 @@ import { getCookies, setCookie } from "https://deno.land/std@0.168.0/http/cookie
 import { argon2Verify } from "npm:hash-wasm";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import {
+    authRateLimitResponse,
+    checkAuthRateLimit,
+    recordAuthRateLimitFailure,
+    resetAuthRateLimit,
+    type AuthRateLimitFailureResult,
+    type AuthRateLimitState,
+} from "../_shared/authRateLimit.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -156,18 +164,25 @@ Deno.serve(async (req) => {
         }
 
         // künstliches Delay gegen Timing Attacks (simuliert Argon2id Zeit)
+        const normalizedEmail = String(email).toLowerCase().trim();
+        const passwordRateLimit = await checkAuthRateLimit({
+            supabaseAdmin,
+            req,
+            action: "password_login",
+            account: { kind: "email", value: normalizedEmail },
+        });
+        if (!passwordRateLimit.allowed) {
+            return authRateLimitResponse(passwordRateLimit, jsonHeaders());
+        }
+
         const startTime = Date.now();
 
         // 1. Hole den User anhand der Email über sicheren RPC (P2 Fix)
-        const { data: users, error: userError } = await supabaseAdmin.rpc('get_user_id_by_email', { p_email: email });
+        const { data: users, error: userError } = await supabaseAdmin.rpc('get_user_id_by_email', { p_email: normalizedEmail });
 
         if (userError || !users || users.length === 0) {
             // Konstante Zeitverzögerung (Timing Attack Guard)
-            await new Promise(r => setTimeout(r, 500 - (Date.now() - startTime)));
-            return new Response(JSON.stringify({ error: "Invalid credentials" }), {
-                status: 401,
-                headers: jsonHeaders()
-            });
+            return await invalidAttemptResponse(passwordRateLimit, startTime, jsonHeaders(), "Invalid credentials");
         }
 
         const user = users[0];
@@ -185,16 +200,12 @@ Deno.serve(async (req) => {
             // Legacy GoTrue Fallback (Bug 15)
             const authClient = createSupabaseAuthClient();
             const { data: fallbackAuth, error: fallbackError } = await authClient.auth.signInWithPassword({
-                email,
+                email: normalizedEmail,
                 password
             });
 
             if (fallbackError || !fallbackAuth.user) {
-                await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - startTime))));
-                return new Response(JSON.stringify({ error: "Invalid credentials" }), {
-                    status: 401,
-                    headers: jsonHeaders()
-                });
+                return await invalidAttemptResponse(passwordRateLimit, startTime, jsonHeaders(), "Invalid credentials");
             }
             credentialsValid = true;
         } else {
@@ -203,12 +214,10 @@ Deno.serve(async (req) => {
         }
 
         if (!credentialsValid) {
-            await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - startTime))));
-            return new Response(JSON.stringify({ error: "Invalid credentials" }), {
-                status: 401,
-                headers: jsonHeaders()
-            });
+            return await invalidAttemptResponse(passwordRateLimit, startTime, jsonHeaders(), "Invalid credentials");
         }
+
+        await resetAuthRateLimit(passwordRateLimit);
 
         // 3.2. Email Confirm Guard (Bug 16)
         const { data: adminUser, error: adminUserError } = await supabaseAdmin.auth.admin.getUserById(user.id);
@@ -239,6 +248,17 @@ Deno.serve(async (req) => {
             }
 
             if (!isBackupCode) {
+                const totpRateLimit = await checkAuthRateLimit({
+                    supabaseAdmin,
+                    req,
+                    action: "totp_verify",
+                    account: { kind: "user", value: user.id },
+                });
+                if (!totpRateLimit.allowed) {
+                    return authRateLimitResponse(totpRateLimit, jsonHeaders());
+                }
+                const twoFactorStartTime = Date.now();
+
                 // Fetch TOTP secret via secure RPC (decrypts server-side, never reads plaintext column)
                 const { data: totpSecret, error: totpSecretError } = await supabaseAdmin.rpc('get_user_2fa_secret', {
                     p_user_id: user.id,
@@ -263,15 +283,23 @@ Deno.serve(async (req) => {
 
                 const delta = totp.validate({ token: totpCode.replace(/\s/g, ''), window: 1 });
                 if (delta === null) {
-                    await new Promise(r => setTimeout(r, 500));
-                    return new Response(JSON.stringify({ error: "Invalid 2FA code" }), {
-                        status: 401,
-                        headers: jsonHeaders()
-                    });
+                    return await invalidAttemptResponse(totpRateLimit, twoFactorStartTime, jsonHeaders(), "Invalid 2FA code");
                 }
 
+                await resetAuthRateLimit(totpRateLimit);
                 await supabaseAdmin.from('user_2fa').update({ last_verified_at: new Date().toISOString() }).eq('user_id', user.id);
             } else if (isBackupCode && totpCode) {
+                const backupCodeRateLimit = await checkAuthRateLimit({
+                    supabaseAdmin,
+                    req,
+                    action: "backup_code_verify",
+                    account: { kind: "user", value: user.id },
+                });
+                if (!backupCodeRateLimit.allowed) {
+                    return authRateLimitResponse(backupCodeRateLimit, jsonHeaders());
+                }
+                const twoFactorStartTime = Date.now();
+
                 // Backup Code Verification Path
                 const { data: backupCodes } = await supabaseAdmin
                     .from('backup_codes')
@@ -292,11 +320,7 @@ Deno.serve(async (req) => {
                 }
 
                 if (!validCodeId) {
-                    await new Promise(r => setTimeout(r, 500));
-                    return new Response(JSON.stringify({ error: "Invalid backup code" }), {
-                        status: 401,
-                        headers: jsonHeaders()
-                    });
+                    return await invalidAttemptResponse(backupCodeRateLimit, twoFactorStartTime, jsonHeaders(), "Invalid backup code");
                 }
 
                 // Mark the specific backup code as used (atomic one-time consume).
@@ -313,13 +337,10 @@ Deno.serve(async (req) => {
                     .maybeSingle();
 
                 if (consumeError || !consumedBackupCode) {
-                    await new Promise(r => setTimeout(r, 500));
-                    return new Response(JSON.stringify({ error: "Invalid backup code" }), {
-                        status: 401,
-                        headers: jsonHeaders()
-                    });
+                    return await invalidAttemptResponse(backupCodeRateLimit, twoFactorStartTime, jsonHeaders(), "Invalid backup code");
                 }
 
+                await resetAuthRateLimit(backupCodeRateLimit);
                 await supabaseAdmin.from('user_2fa').update({ last_verified_at: new Date().toISOString() }).eq('user_id', user.id);
             } else {
                 return new Response(JSON.stringify({ error: "Invalid request payload" }), {
@@ -334,7 +355,7 @@ Deno.serve(async (req) => {
         // Session für das Frontend auszustellen!
         const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
             type: 'magiclink',
-            email: email,
+            email: normalizedEmail,
         });
 
         if (linkError || !linkData.properties?.action_link) {
@@ -424,5 +445,41 @@ function parseBearerToken(authHeader: string | null): string | null {
 
     const token = authHeader.trim();
     return token || null;
+}
+
+async function delayUntilMinimum(startTime: number, minimumMs: number): Promise<void> {
+    const remaining = minimumMs - (Date.now() - startTime);
+    if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+    }
+}
+
+async function invalidAttemptResponse(
+    rateLimitState: AuthRateLimitState,
+    startTime: number,
+    headers: Headers,
+    message: string,
+    status = 401,
+): Promise<Response> {
+    const failure = await recordAuthRateLimitFailure(rateLimitState);
+    await delayUntilMinimum(startTime, 500);
+    if (failure.lockedUntil) {
+        return authRateLimitResponse(toLockedState(failure), headers);
+    }
+
+    return new Response(JSON.stringify({ error: message }), {
+        status,
+        headers,
+    });
+}
+
+function toLockedState(failure: AuthRateLimitFailureResult) {
+    return {
+        status: 429 as const,
+        error: "Too many attempts",
+        attemptsRemaining: failure.attemptsRemaining,
+        lockedUntil: failure.lockedUntil,
+        retryAfterSeconds: failure.retryAfterSeconds,
+    };
 }
 

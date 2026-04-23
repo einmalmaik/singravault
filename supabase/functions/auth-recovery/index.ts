@@ -1,21 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import {
+    authRateLimitResponse,
+    checkAuthRateLimit,
+    getTrustedClientIp,
+    recordAuthRateLimitFailure,
+    resetAuthRateLimit,
+    type AuthRateLimitState,
+} from "../_shared/authRateLimit.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 const resendApiKey = Deno.env.get("RESEND_API_KEY")!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
-function createSupabaseAuthClient() {
-    return createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-        },
-    });
-}
 
 /**
  * Generates a cryptographically secure 8-digit numeric code.
@@ -25,6 +23,16 @@ function generateCode(): string {
     crypto.getRandomValues(bytes);
     const num = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0;
     return String(num % 100_000_000).padStart(8, "0");
+}
+
+function generateResetToken(): string {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    let binary = "";
+    bytes.forEach((byte) => {
+        binary += String.fromCharCode(byte);
+    });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 /**
@@ -121,74 +129,93 @@ serve(async (req) => {
                 });
             }
 
+            const normalizedEmail = String(email).toLowerCase().trim();
+            const recoveryRateLimit = await checkAuthRateLimit({
+                supabaseAdmin,
+                req,
+                action: "recovery_verify",
+                account: { kind: "email", value: normalizedEmail },
+            });
+            if (!recoveryRateLimit.allowed) {
+                return authRateLimitResponse(
+                    recoveryRateLimit,
+                    new Headers({ ...corsHeaders, "Content-Type": "application/json" }),
+                );
+            }
+            const startTime = Date.now();
             const codeHash = await hashCode(verifyCode);
 
             // Prüfe Token in DB
             const { data: tokens, error: tokenError } = await supabaseAdmin
                 .from("recovery_tokens")
-                .select("*")
-                .eq("email", email.toLowerCase().trim())
+                .select("id")
+                .eq("email", normalizedEmail)
                 .eq("token_hash", codeHash)
                 .gt("expires_at", new Date().toISOString())
                 .limit(1);
 
             if (tokenError || !tokens || tokens.length === 0) {
-                // Konstante Antwortzeit
-                await new Promise(r => setTimeout(r, 300));
-                return new Response(JSON.stringify({ error: "Invalid or expired code" }), {
-                    status: 400,
+                return await invalidRecoveryAttemptResponse(
+                    recoveryRateLimit,
+                    startTime,
+                    corsHeaders,
+                    "Invalid or expired code",
+                );
+            }
+
+            // Valid recovery codes mint only a reset-scoped challenge, never an app session.
+            const { data: users, error: userError } = await supabaseAdmin.rpc("get_user_id_by_email", {
+                p_email: normalizedEmail,
+            });
+            if (userError || !users || users.length === 0) {
+                return await invalidRecoveryAttemptResponse(
+                    recoveryRateLimit,
+                    startTime,
+                    corsHeaders,
+                    "Invalid or expired code",
+                );
+            }
+
+            const userId = users[0].id;
+            const resetToken = generateResetToken();
+            const resetTokenHash = await hashCode(resetToken);
+            const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+            await supabaseAdmin
+                .from("password_reset_challenges")
+                .delete()
+                .eq("user_id", userId);
+
+            const { error: challengeError } = await supabaseAdmin
+                .from("password_reset_challenges")
+                .insert({
+                    user_id: userId,
+                    email: normalizedEmail,
+                    token_hash: resetTokenHash,
+                    expires_at: expiresAt,
+                    ip_address: getTrustedClientIp(req),
+                    user_agent: req.headers.get("user-agent") || "unknown",
+                });
+
+            if (challengeError) {
+                console.error("Failed to create password reset challenge:", challengeError);
+                return new Response(JSON.stringify({ error: "Reset challenge creation failed" }), {
+                    status: 500,
                     headers: { ...corsHeaders, "Content-Type": "application/json" },
                 });
             }
 
-            // Token ist gültig → lösche ihn (single use)
             await supabaseAdmin
                 .from("recovery_tokens")
                 .delete()
                 .eq("id", tokens[0].id);
 
-            // Erstelle eine Session via generateLink + verifyOtp (wie beim Login)
-            const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-                type: "magiclink",
-                email: email.toLowerCase().trim(),
-            });
-
-            if (linkError || !linkData) {
-                console.error("generateLink failed:", linkError);
-                return new Response(JSON.stringify({ error: "Session creation failed" }), {
-                    status: 500,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
-
-            const tokenHash = linkData.properties?.hashed_token;
-            if (!tokenHash) {
-                return new Response(JSON.stringify({ error: "No hashed_token" }), {
-                    status: 500,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
-
-            const authClient = createSupabaseAuthClient();
-            const { data: sessionData, error: verifyError } = await authClient.auth.verifyOtp({
-                token_hash: tokenHash,
-                type: "magiclink",
-            });
-
-            if (verifyError || !sessionData?.session) {
-                console.error("verifyOtp failed:", verifyError);
-                return new Response(JSON.stringify({ error: "Session verification failed" }), {
-                    status: 500,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
+            await resetAuthRateLimit(recoveryRateLimit);
 
             return new Response(JSON.stringify({
                 success: true,
-                session: {
-                    access_token: sessionData.session.access_token,
-                    refresh_token: sessionData.session.refresh_token,
-                },
+                resetToken,
+                expiresAt,
             }), {
                 status: 200,
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -283,7 +310,7 @@ serve(async (req) => {
             status: 200,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("Auth Recovery Error:", err);
         return new Response(JSON.stringify({ error: "Internal Server Error" }), {
             status: 500,
@@ -291,3 +318,37 @@ serve(async (req) => {
         });
     }
 });
+
+async function delayUntilMinimum(startTime: number, minimumMs: number): Promise<void> {
+    const remaining = minimumMs - (Date.now() - startTime);
+    if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+    }
+}
+
+async function invalidRecoveryAttemptResponse(
+    rateLimitState: AuthRateLimitState,
+    startTime: number,
+    corsHeaders: Record<string, string>,
+    message: string,
+): Promise<Response> {
+    const failure = await recordAuthRateLimitFailure(rateLimitState);
+    await delayUntilMinimum(startTime, 300);
+    if (failure.lockedUntil) {
+        return authRateLimitResponse(
+            {
+                status: 429,
+                error: "Too many attempts",
+                attemptsRemaining: failure.attemptsRemaining,
+                lockedUntil: failure.lockedUntil,
+                retryAfterSeconds: failure.retryAfterSeconds,
+            },
+            new Headers({ ...corsHeaders, "Content-Type": "application/json" }),
+        );
+    }
+
+    return new Response(JSON.stringify({ error: message }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+}

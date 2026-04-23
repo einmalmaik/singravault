@@ -22,8 +22,17 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import * as opaque from "npm:@serenity-kit/opaque";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { argon2Verify } from "npm:hash-wasm";
 import { setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import {
+    authRateLimitResponse,
+    checkAuthRateLimit,
+    recordAuthRateLimitFailure,
+    resetAuthRateLimit,
+    type AuthRateLimitFailureResult,
+    type AuthRateLimitState,
+} from "../_shared/authRateLimit.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -71,9 +80,9 @@ Deno.serve(async (req) => {
             case "register-finish":
                 return await handleRegisterFinish(body, headers, req);
             case "login-start":
-                return await handleLoginStart(body, headers);
+                return await handleLoginStart(body, headers, req);
             case "login-finish":
-                return await handleLoginFinish(body, headers);
+                return await handleLoginFinish(body, headers, req);
             default:
                 return new Response(JSON.stringify({ error: "Unknown action" }), { status: 400, headers });
         }
@@ -185,6 +194,7 @@ async function handleRegisterFinish(
 async function handleLoginStart(
     body: { userIdentifier: string; startLoginRequest: string },
     headers: Headers,
+    req: Request,
 ): Promise<Response> {
     const { userIdentifier, startLoginRequest } = body;
 
@@ -192,12 +202,22 @@ async function handleLoginStart(
         return new Response(JSON.stringify({ error: "Missing fields" }), { status: 400, headers });
     }
 
+    const normalizedIdentifier = String(userIdentifier).toLowerCase().trim();
+    const opaqueRateLimit = await checkAuthRateLimit({
+        supabaseAdmin,
+        req,
+        action: "opaque_login",
+        account: { kind: "email", value: normalizedIdentifier },
+    });
+    if (!opaqueRateLimit.allowed) {
+        return authRateLimitResponse(opaqueRateLimit, headers);
+    }
+    const startTime = Date.now();
+
     // Look up user
-    const { data: users, error: userError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: userIdentifier });
+    const { data: users, error: userError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: normalizedIdentifier });
     if (userError || !users || users.length === 0) {
-        // Timing-safe: generate fake response to prevent user enumeration
-        await new Promise((r) => setTimeout(r, 300));
-        return new Response(JSON.stringify({ error: "Invalid credentials" }), { status: 401, headers });
+        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
     }
 
     const userId = users[0].id;
@@ -216,7 +236,7 @@ async function handleLoginStart(
 
     const { serverLoginState, loginResponse } = opaque.server.startLogin({
         serverSetup: OPAQUE_SERVER_SETUP,
-        userIdentifier,
+        userIdentifier: normalizedIdentifier,
         registrationRecord: opaqueData.registration_record,
         startLoginRequest,
     });
@@ -252,15 +272,30 @@ async function handleLoginFinish(
         userIdentifier: string;
         finishLoginRequest: string;
         loginId: string;
+        totpCode?: string;
+        isBackupCode?: boolean;
         skipCookie?: boolean;
     },
     headers: Headers,
+    req: Request,
 ): Promise<Response> {
-    const { userIdentifier, finishLoginRequest, loginId, skipCookie } = body;
+    const { userIdentifier, finishLoginRequest, loginId, totpCode, isBackupCode, skipCookie } = body;
 
     if (!userIdentifier || !finishLoginRequest || !loginId) {
         return new Response(JSON.stringify({ error: "Missing fields" }), { status: 400, headers });
     }
+
+    const normalizedIdentifier = String(userIdentifier).toLowerCase().trim();
+    const opaqueRateLimit = await checkAuthRateLimit({
+        supabaseAdmin,
+        req,
+        action: "opaque_login",
+        account: { kind: "email", value: normalizedIdentifier },
+    });
+    if (!opaqueRateLimit.allowed) {
+        return authRateLimitResponse(opaqueRateLimit, headers);
+    }
+    const startTime = Date.now();
 
     // Retrieve server login state from DB
     const { data: loginState, error: stateError } = await supabaseAdmin
@@ -273,12 +308,12 @@ async function handleLoginFinish(
     await supabaseAdmin.from("opaque_login_states").delete().eq("id", loginId);
 
     if (stateError || !loginState) {
-        return new Response(JSON.stringify({ error: "Invalid or expired login session" }), { status: 401, headers });
+        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid or expired login session");
     }
 
     // Check expiry
     if (new Date(loginState.expires_at) < new Date()) {
-        return new Response(JSON.stringify({ error: "Login session expired" }), { status: 401, headers });
+        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Login session expired");
     }
 
     // Verify the login
@@ -288,17 +323,19 @@ async function handleLoginFinish(
     });
 
     if (!sessionKey) {
-        return new Response(JSON.stringify({ error: "Invalid credentials" }), { status: 401, headers });
+        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
     }
 
     // OPAQUE verification succeeded! Password was proven without ever being sent.
     const userId = loginState.user_id;
 
     // Verify userIdentifier matches
-    const { data: users } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: userIdentifier });
+    const { data: users } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: normalizedIdentifier });
     if (!users || users.length === 0 || users[0].id !== userId) {
-        return new Response(JSON.stringify({ error: "Invalid credentials" }), { status: 401, headers });
+        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
     }
+
+    await resetAuthRateLimit(opaqueRateLimit);
 
     // Check email confirmation
     const { data: adminUser, error: adminUserError } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -314,15 +351,48 @@ async function handleLoginFinish(
         .single();
 
     if (user2fa?.is_enabled) {
-        // Return 2FA challenge — the client must call auth-session with the TOTP code
-        return new Response(JSON.stringify({
-            requires2FA: true,
-            opaqueVerified: true,
-        }), { status: 200, headers });
+        // Return a challenge until the client submits a TOTP or backup code.
+        if (!totpCode && !isBackupCode) {
+            return new Response(JSON.stringify({
+                requires2FA: true,
+                opaqueVerified: true,
+            }), { status: 200, headers });
+        }
+
+        if (!totpCode) {
+            return new Response(JSON.stringify({ error: "Invalid request payload" }), { status: 400, headers });
+        }
+
+        const secondFactorRateLimit = await checkAuthRateLimit({
+            supabaseAdmin,
+            req,
+            action: isBackupCode ? "backup_code_verify" : "totp_verify",
+            account: { kind: "user", value: userId },
+        });
+        if (!secondFactorRateLimit.allowed) {
+            return authRateLimitResponse(secondFactorRateLimit, headers);
+        }
+
+        const secondFactorStartTime = Date.now();
+        const secondFactorValid = isBackupCode
+            ? await verifyAndConsumeBackupCode(userId, totpCode)
+            : await verifyTotpCode(userId, totpCode);
+
+        if (!secondFactorValid) {
+            return await invalidOpaqueAttemptResponse(
+                secondFactorRateLimit,
+                secondFactorStartTime,
+                headers,
+                isBackupCode ? "Invalid backup code" : "Invalid 2FA code",
+            );
+        }
+
+        await resetAuthRateLimit(secondFactorRateLimit);
+        await supabaseAdmin.from("user_2fa").update({ last_verified_at: new Date().toISOString() }).eq("user_id", userId);
     }
 
     // Generate session
-    const session = await issueSession(userIdentifier, headers, skipCookie);
+    const session = await issueSession(normalizedIdentifier, headers, skipCookie);
     if (!session) {
         return new Response(JSON.stringify({ error: "Session generation failed" }), { status: 500, headers });
     }
@@ -331,6 +401,69 @@ async function handleLoginFinish(
 }
 
 // ============ Helpers ============
+
+async function verifyTotpCode(userId: string, code: string): Promise<boolean> {
+    const { data: totpSecret, error: totpSecretError } = await supabaseAdmin.rpc("get_user_2fa_secret", {
+        p_user_id: userId,
+        p_require_enabled: true,
+    });
+
+    if (totpSecretError || !totpSecret) {
+        console.error("Failed to load TOTP secret for OPAQUE login:", totpSecretError);
+        return false;
+    }
+
+    const OTPAuth = await import("npm:otpauth");
+    const totp = new OTPAuth.TOTP({
+        issuer: "Singra Vault",
+        algorithm: "SHA1",
+        digits: 6,
+        period: 30,
+        secret: OTPAuth.Secret.fromBase32(String(totpSecret).replace(/\s/g, "")),
+    });
+
+    return totp.validate({ token: code.replace(/\s/g, ""), window: 1 }) !== null;
+}
+
+async function verifyAndConsumeBackupCode(userId: string, code: string): Promise<boolean> {
+    const { data: backupCodes } = await supabaseAdmin
+        .from("backup_codes")
+        .select("id, code_hash")
+        .eq("user_id", userId)
+        .eq("is_used", false);
+
+    let validCodeId: string | null = null;
+    if (backupCodes && backupCodes.length > 0) {
+        for (const backupCode of backupCodes) {
+            const isMatch = await argon2Verify({
+                password: code.replace(/\s/g, ""),
+                hash: backupCode.code_hash,
+            });
+            if (isMatch) {
+                validCodeId = backupCode.id;
+                break;
+            }
+        }
+    }
+
+    if (!validCodeId) {
+        return false;
+    }
+
+    const { data: consumedBackupCode, error: consumeError } = await supabaseAdmin
+        .from("backup_codes")
+        .update({
+            is_used: true,
+            used_at: new Date().toISOString(),
+        })
+        .eq("id", validCodeId)
+        .eq("user_id", userId)
+        .eq("is_used", false)
+        .select("id")
+        .maybeSingle();
+
+    return !consumeError && Boolean(consumedBackupCode);
+}
 
 async function issueSession(
     email: string,
@@ -388,4 +521,36 @@ function appendPartitionedCookieAttribute(headers: Headers): void {
     }
 
     headers.set("set-cookie", `${currentCookie}; Partitioned`);
+}
+
+async function delayUntilMinimum(startTime: number, minimumMs: number): Promise<void> {
+    const remaining = minimumMs - (Date.now() - startTime);
+    if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+    }
+}
+
+async function invalidOpaqueAttemptResponse(
+    rateLimitState: AuthRateLimitState,
+    startTime: number,
+    headers: Headers,
+    message: string,
+): Promise<Response> {
+    const failure = await recordAuthRateLimitFailure(rateLimitState);
+    await delayUntilMinimum(startTime, 300);
+    if (failure.lockedUntil) {
+        return authRateLimitResponse(toLockedState(failure), headers);
+    }
+
+    return new Response(JSON.stringify({ error: message }), { status: 401, headers });
+}
+
+function toLockedState(failure: AuthRateLimitFailureResult) {
+    return {
+        status: 429 as const,
+        error: "Too many attempts",
+        attemptsRemaining: failure.attemptsRemaining,
+        lockedUntil: failure.lockedUntil,
+        retryAfterSeconds: failure.retryAfterSeconds,
+    };
 }

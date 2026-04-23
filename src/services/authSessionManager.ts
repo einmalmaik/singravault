@@ -11,7 +11,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import {
   clearDesktopPersistedSessionTokens,
-  readDesktopPersistedSessionTokens,
+  purgeLegacyDesktopAuthTokens,
 } from "@/integrations/supabase/authStorage";
 import { hasOAuthCallbackPayload } from "@/platform/tauriOAuthCallback";
 import { isTauriRuntime } from "@/platform/runtime";
@@ -69,6 +69,11 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
 
   if (isTauriRuntime()) {
     console.info("[AuthSessionManager] hydrateAuthSession entering Tauri refresh path.");
+    const purgedLegacySessions = purgeLegacyDesktopAuthTokens(runtimeConfig.supabaseUrl);
+    if (purgedLegacySessions > 0) {
+      console.warn("[AuthSessionManager] Removed legacy desktop localStorage auth tokens; keychain refresh is required.");
+    }
+
     // Check if we have incoming deep links (a login is in progress).
     // If so, do NOT attempt to refresh the old keychain token, as its failure 
     // would trigger a SIGNED_OUT event that destroys the newly applied deep link session.
@@ -352,12 +357,10 @@ async function refreshCurrentSessionUncached(): Promise<Session | null> {
 
 async function refreshFromTauriKeychain(): Promise<Session | null> {
   const keychainRefreshToken = await loadRefreshTokenFromKeychain();
-  const persistedDesktopTokens = readDesktopPersistedSessionTokens(runtimeConfig.supabaseUrl);
-  const refreshToken = keychainRefreshToken || persistedDesktopTokens?.refresh_token || null;
+  clearDesktopPersistedSessionTokens(runtimeConfig.supabaseUrl);
+  const refreshToken = keychainRefreshToken || null;
   console.info("[AuthSessionManager] refreshFromTauriKeychain loaded keychain token.", {
     hasKeychainRefreshToken: Boolean(keychainRefreshToken),
-    hasPersistedDesktopRefreshToken: Boolean(persistedDesktopTokens?.refresh_token),
-    usingPersistedDesktopSnapshot: !keychainRefreshToken && Boolean(persistedDesktopTokens?.refresh_token),
   });
   if (!refreshToken) {
     return null;

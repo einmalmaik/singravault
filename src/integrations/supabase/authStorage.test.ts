@@ -4,6 +4,7 @@ import {
   createAuthStorage,
   getDesktopSessionStorageKey,
   isPkceVerifierStorageKey,
+  purgeLegacyDesktopAuthTokens,
   readDesktopPersistedSessionTokens,
 } from "./authStorage";
 
@@ -48,14 +49,14 @@ describe("authStorage", () => {
     await expect(storage.getItem(sessionKey)).resolves.toBe("");
   });
 
-  it("persists desktop auth session data across storage instances in localStorage", async () => {
+  it("keeps desktop auth session data in memory only and not in localStorage", async () => {
     runtimeState.isTauri = true;
     const sessionKey = "sb-project-auth-token";
 
     await createAuthStorage().setItem(sessionKey, "session-json");
 
-    expect(window.localStorage.getItem(sessionKey)).toBe("session-json");
-    await expect(createAuthStorage().getItem(sessionKey)).resolves.toBe("session-json");
+    expect(window.localStorage.getItem(sessionKey)).toBeNull();
+    await expect(createAuthStorage().getItem(sessionKey)).resolves.toBeNull();
   });
 
   it("persists only the PKCE verifier across storage instances", async () => {
@@ -128,31 +129,33 @@ describe("authStorage", () => {
     expect(getDesktopSessionStorageKey("not-a-url")).toBeNull();
   });
 
-  it("reads a valid desktop session snapshot from localStorage", () => {
+  it("deletes and ignores legacy desktop session snapshots from localStorage", () => {
     runtimeState.isTauri = true;
     const supabaseUrl = "https://lcrtadxlojaucwapgzmy.supabase.co";
+    const sessionKey = "sb-lcrtadxlojaucwapgzmy-auth-token";
     localStorage.setItem(
-      "sb-lcrtadxlojaucwapgzmy-auth-token",
+      sessionKey,
       JSON.stringify({
         access_token: "desktop-access-token",
         refresh_token: "desktop-refresh-token",
       }),
     );
 
-    expect(readDesktopPersistedSessionTokens(supabaseUrl)).toEqual({
-      access_token: "desktop-access-token",
-      refresh_token: "desktop-refresh-token",
-    });
-  });
-
-  it("clears malformed desktop session snapshots", () => {
-    runtimeState.isTauri = true;
-    const supabaseUrl = "https://lcrtadxlojaucwapgzmy.supabase.co";
-    const sessionKey = "sb-lcrtadxlojaucwapgzmy-auth-token";
-    localStorage.setItem(sessionKey, "{\"access_token\":");
-
     expect(readDesktopPersistedSessionTokens(supabaseUrl)).toBeNull();
     expect(localStorage.getItem(sessionKey)).toBeNull();
+  });
+
+  it("purges all legacy Supabase auth-token keys without touching PKCE verifier keys", () => {
+    runtimeState.isTauri = true;
+    localStorage.setItem("sb-lcrtadxlojaucwapgzmy-auth-token", "session-json");
+    localStorage.setItem("sb-otherproject-auth-token", "session-json");
+    localStorage.setItem("sb-lcrtadxlojaucwapgzmy-auth-token-code-verifier", "verifier");
+
+    expect(purgeLegacyDesktopAuthTokens()).toBe(2);
+
+    expect(localStorage.getItem("sb-lcrtadxlojaucwapgzmy-auth-token")).toBeNull();
+    expect(localStorage.getItem("sb-otherproject-auth-token")).toBeNull();
+    expect(localStorage.getItem("sb-lcrtadxlojaucwapgzmy-auth-token-code-verifier")).toBe("verifier");
   });
 
   it("can explicitly clear a persisted desktop session snapshot", () => {
