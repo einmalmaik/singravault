@@ -18,6 +18,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { BrandMedia } from '@/components/BrandMedia';
 import { DesktopOAuthBridgeView } from '@/components/auth/DesktopOAuthBridgeView';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -81,6 +82,10 @@ type UpdatePasswordFormData = z.infer<typeof updatePasswordSchema>;
 type ParsedOAuthCallbackPayload = NonNullable<ReturnType<typeof parseOAuthCallbackPayload>>;
 
 const processedCallbackKeys = new Set<string>();
+const AUTH_PANEL_VIDEO_SOURCES = [
+  { src: '/brand/auth-panel.webm', type: 'video/webm' },
+  { src: '/brand/auth-panel.mp4', type: 'video/mp4' },
+];
 
 export default function Auth() {
   const { t } = useTranslation();
@@ -860,14 +865,15 @@ export default function Auth() {
 
       {/* ── Brand Panel (desktop only, left 45%) ────────────────── */}
       <div className="hidden lg:flex relative w-[45%] flex-shrink-0 overflow-hidden auth-visual-panel auth-brand-reveal" aria-hidden="true">
-        <img
-          src="/brand/auth-panel.png"
+        <BrandMedia
           alt=""
-          width={1728}
-          height={2160}
-          className="auth-visual-image"
-          loading="eager"
-          decoding="async"
+          fallbackImageSrc="/brand/auth-panel.png"
+          animatedImageSrc="/brand/auth-panel.gif"
+          videoSources={AUTH_PANEL_VIDEO_SOURCES}
+          width={1122}
+          height={1402}
+          frameClassName="auth-visual-frame"
+          mediaClassName="auth-visual-image"
         />
       </div>
 

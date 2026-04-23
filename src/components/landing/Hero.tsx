@@ -10,7 +10,13 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { Shield, Lock, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BrandMedia } from '@/components/BrandMedia';
 import { SingraVaultLogo } from '@/components/SingraVaultLogo';
+
+const LANDING_HERO_VIDEO_SOURCES = [
+  { src: '/brand/landingpage.webm', type: 'video/webm' },
+  { src: '/brand/landingpage.mp4', type: 'video/mp4' },
+];
 
 export function Hero() {
   const { t } = useTranslation();
@@ -19,17 +25,16 @@ export function Hero() {
     <section className="relative overflow-hidden">
       <div className="absolute inset-0 bg-[hsl(228_26%_3%)]" />
 
-      <div aria-hidden="true" className="singra-hero-artwork">
-        <img
-          src="/brand/landingpage.png"
-          alt=""
-          width={1800}
-          height={874}
-          className="singra-hero-artwork-image"
-          loading="eager"
-          decoding="async"
-        />
-      </div>
+      <BrandMedia
+        alt=""
+        fallbackImageSrc="/brand/landingpage.png"
+        animatedImageSrc="/brand/landingpage.gif"
+        videoSources={LANDING_HERO_VIDEO_SOURCES}
+        width={1800}
+        height={874}
+        frameClassName="singra-hero-artwork"
+        mediaClassName="singra-hero-artwork-image"
+      />
 
       {/* Gradient overlay for text readability */}
       <div className="absolute inset-0 bg-[linear-gradient(90deg,hsl(228_26%_3%_/_0.96)_0%,hsl(228_26%_3%_/_0.88)_20%,hsl(228_26%_3%_/_0.48)_43%,transparent_72%),linear-gradient(180deg,hsl(228_26%_3%_/_0.08)_0%,transparent_34%,hsl(228_26%_3%_/_0.24)_70%,hsl(228_26%_3%_/_0.92)_100%)]" />
