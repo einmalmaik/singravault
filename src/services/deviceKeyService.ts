@@ -190,22 +190,32 @@ export async function exportDeviceKeyForTransfer(
     const deviceKey = await getDeviceKey(userId);
     if (!deviceKey) return null;
 
-    // Derive a wrapping key from the PIN
-    const pinKey = await derivePinKey(pin);
     const iv = crypto.getRandomValues(new Uint8Array(12));
+    let encryptedBytes: Uint8Array | null = null;
+    let combined: Uint8Array | null = null;
+    try {
+        // Derive a wrapping key from the PIN
+        const pinKey = await derivePinKey(pin);
 
-    const encrypted = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        pinKey,
-        deviceKey as BufferSource,
-    );
+        const encrypted = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv },
+            pinKey,
+            deviceKey as BufferSource,
+        );
 
-    // Format: base64(iv + encrypted)
-    const combined = new Uint8Array(iv.length + encrypted.byteLength);
-    combined.set(iv, 0);
-    combined.set(new Uint8Array(encrypted), iv.length);
+        encryptedBytes = new Uint8Array(encrypted);
+        // Format: base64(iv + encrypted)
+        combined = new Uint8Array(iv.length + encryptedBytes.byteLength);
+        combined.set(iv, 0);
+        combined.set(encryptedBytes, iv.length);
 
-    return uint8ArrayToBase64(combined);
+        return uint8ArrayToBase64(combined);
+    } finally {
+        deviceKey.fill(0);
+        iv.fill(0);
+        encryptedBytes?.fill(0);
+        combined?.fill(0);
+    }
 }
 
 /**
@@ -237,10 +247,14 @@ export async function importDeviceKeyFromTransfer(
         );
 
         const deviceKey = new Uint8Array(decrypted);
-        if (deviceKey.length !== DEVICE_KEY_LENGTH) return false;
+        try {
+            if (deviceKey.length !== DEVICE_KEY_LENGTH) return false;
 
-        await storeDeviceKey(userId, deviceKey);
-        return true;
+            await storeDeviceKey(userId, deviceKey);
+            return true;
+        } finally {
+            deviceKey.fill(0);
+        }
     } catch {
         // Decryption failed — wrong PIN or corrupted data
         return false;

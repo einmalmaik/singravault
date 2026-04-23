@@ -14,6 +14,7 @@ interface AccountIdentifierInput {
 
 interface RateLimitAttempt {
   success: boolean;
+  attempted_at: string;
   locked_until: string | null;
 }
 
@@ -93,13 +94,20 @@ export async function checkAuthRateLimit(input: AuthRateLimitCheckInput): Promis
   const identifier = await buildAccountIdentifier(input.account);
   const ipAddress = getTrustedClientIp(input.req);
   const now = new Date();
-  const windowStart = new Date(now.getTime() - limits.windowMs).toISOString();
+  const windowStart = new Date(now.getTime() - limits.windowMs);
+  // Lockouts can intentionally outlive the counting window (for example
+  // recovery_verify: 15 minute window, 60 minute lockout). Query far enough
+  // back to keep active lockouts enforceable, but count failures only inside
+  // the configured window below.
+  const queryStart = new Date(
+    now.getTime() - Math.max(limits.windowMs, limits.lockoutMs * 8),
+  ).toISOString();
 
   const [accountAttempts, ipAttempts] = await Promise.all([
-    queryAttemptsByIdentifier(input.supabaseAdmin, identifier, input.action, windowStart),
+    queryAttemptsByIdentifier(input.supabaseAdmin, identifier, input.action, queryStart),
     ipAddress === "unknown"
       ? Promise.resolve<SupabaseQueryResult<RateLimitAttempt>>({ data: [], error: null })
-      : queryAttemptsByIp(input.supabaseAdmin, ipAddress, input.action, windowStart),
+      : queryAttemptsByIp(input.supabaseAdmin, ipAddress, input.action, queryStart),
   ]);
 
   if (accountAttempts.error || ipAttempts.error) {
@@ -123,8 +131,8 @@ export async function checkAuthRateLimit(input: AuthRateLimitCheckInput): Promis
   const accountData = accountAttempts.data ?? [];
   const ipData = ipAttempts.data ?? [];
   const lockedUntil = getActiveLockout([...accountData, ...ipData], now);
-  const accountFailures = countFailures(accountData);
-  const ipFailures = countFailures(ipData);
+  const accountFailures = countFailures(accountData, windowStart);
+  const ipFailures = countFailures(ipData, windowStart);
   const failureCount = Math.max(accountFailures, ipFailures);
   const retryAfterSeconds = lockedUntil ? secondsUntil(lockedUntil, now) : null;
 
@@ -257,7 +265,7 @@ async function queryAttemptsByIdentifier(
   return await chainAttemptQuery(
     (supabaseAdmin.from("rate_limit_attempts") as {
       select: (columns: string) => unknown;
-    }).select("success, locked_until"),
+    }).select("success, attempted_at, locked_until"),
     [
       ["identifier", identifier],
       ["action", action],
@@ -275,7 +283,7 @@ async function queryAttemptsByIp(
   return await chainAttemptQuery(
     (supabaseAdmin.from("rate_limit_attempts") as {
       select: (columns: string) => unknown;
-    }).select("success, locked_until"),
+    }).select("success, attempted_at, locked_until"),
     [
       ["ip_address", ipAddress],
       ["action", action],
@@ -319,8 +327,12 @@ function getActiveLockout(attempts: RateLimitAttempt[], now: Date): string | nul
   return activeLockouts.at(-1) ?? null;
 }
 
-function countFailures(attempts: RateLimitAttempt[]): number {
-  return attempts.filter((attempt) => !attempt.success).length;
+function countFailures(attempts: RateLimitAttempt[], windowStart: Date): number {
+  const windowStartMs = windowStart.getTime();
+  return attempts.filter((attempt) => (
+    !attempt.success
+    && new Date(attempt.attempted_at).getTime() >= windowStartMs
+  )).length;
 }
 
 function getEffectiveLockoutMs(limits: AuthRateLimitConfig, failedAttempts: number): number {

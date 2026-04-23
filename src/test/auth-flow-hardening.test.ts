@@ -3,6 +3,13 @@
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { checkAuthRateLimit } from "../../supabase/functions/_shared/authRateLimit";
+
+interface MockAttempt {
+  success: boolean;
+  attempted_at: string;
+  locked_until: string | null;
+}
 
 describe("auth flow hardening", () => {
   it("keeps recovery verification reset-scoped instead of issuing app sessions", () => {
@@ -25,7 +32,10 @@ describe("auth flow hardening", () => {
     expect(resetSource).toContain("resetToken");
     expect(resetSource).toContain("used_at");
     expect(resetSource).toContain("revoke_user_auth_sessions");
+    expect(resetSource).toContain('throw new Error("Failed to revoke existing sessions after password reset")');
     expect(resetSource).toContain("sendPasswordResetNotification");
+    expect(migrationSourceForSessions()).not.toContain("WHERE user_id = p_user_id::TEXT");
+    expect(migrationSourceForSessions()).toContain("information_schema.columns");
   });
 
   it("enforces auth-specific server-side throttling in critical auth paths", () => {
@@ -34,6 +44,11 @@ describe("auth flow hardening", () => {
     const opaqueSource = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
     const recoverySource = readFileSync("supabase/functions/auth-recovery/index.ts", "utf-8");
     const migrationSource = readFileSync("supabase/migrations/20260423210000_auth_flow_hardening.sql", "utf-8");
+    const opaqueStartSection = extractSection(
+      opaqueSource,
+      "async function handleLoginStart",
+      "async function handleLoginFinish",
+    );
 
     for (const action of [
       "password_login",
@@ -51,10 +66,37 @@ describe("auth flow hardening", () => {
     expect(sessionSource).toContain('action: "backup_code_verify"');
     expect(opaqueSource).toContain('action: "opaque_login"');
     expect(opaqueSource).toContain('action: isBackupCode ? "backup_code_verify" : "totp_verify"');
+    expect(opaqueSource).toContain("opaqueUnavailableResponse");
+    expect(opaqueStartSection).not.toContain('invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials")');
     expect(recoverySource).toContain('action: "recovery_verify"');
     expect(sessionSource).toContain("recordAuthRateLimitFailure");
     expect(opaqueSource).toContain("recordAuthRateLimitFailure");
     expect(recoverySource).toContain("recordAuthRateLimitFailure");
+  });
+
+  it("keeps long lockouts active after the short attempt window has elapsed", async () => {
+    const now = Date.now();
+    const activeLockoutOutsideRecoveryWindow: MockAttempt = {
+      success: false,
+      attempted_at: new Date(now - 20 * 60 * 1000).toISOString(),
+      locked_until: new Date(now + 40 * 60 * 1000).toISOString(),
+    };
+
+    const state = await checkAuthRateLimit({
+      supabaseAdmin: createRateLimitSupabaseMock({
+        accountAttempts: [activeLockoutOutsideRecoveryWindow],
+        ipAttempts: [],
+      }),
+      req: new Request("https://example.test/auth", {
+        headers: { "CF-Connecting-IP": "203.0.113.20" },
+      }),
+      action: "recovery_verify",
+      account: { kind: "email", value: "person@example.test" },
+    });
+
+    expect(state.allowed).toBe(false);
+    expect(state.status).toBe(429);
+    expect(state.retryAfterSeconds).toBeGreaterThan(0);
   });
 });
 
@@ -64,4 +106,49 @@ function extractSection(source: string, startNeedle: string, endNeedle: string):
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
   return source.slice(start, end);
+}
+
+function migrationSourceForSessions(): string {
+  return readFileSync("supabase/migrations/20260423210000_auth_flow_hardening.sql", "utf-8");
+}
+
+function createRateLimitSupabaseMock({
+  accountAttempts,
+  ipAttempts,
+}: {
+  accountAttempts: MockAttempt[];
+  ipAttempts: MockAttempt[];
+}) {
+  return {
+    from: (_table: string) => ({
+      select: () => createRateLimitQuery(accountAttempts, ipAttempts),
+    }),
+  };
+}
+
+function createRateLimitQuery(accountAttempts: MockAttempt[], ipAttempts: MockAttempt[]) {
+  const filters: Record<string, string> = {};
+  let windowStart: string | null = null;
+
+  const query = {
+    eq(column: string, value: string) {
+      filters[column] = value;
+      return query;
+    },
+    gte(_column: string, value: string) {
+      windowStart = value;
+      return query;
+    },
+    async order() {
+      const source = filters.identifier ? accountAttempts : ipAttempts;
+      return {
+        data: source.filter((attempt) => (
+          !windowStart || attempt.attempted_at >= windowStart
+        )),
+        error: null,
+      };
+    },
+  };
+
+  return query;
 }

@@ -60,17 +60,33 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, auth
 AS $$
+DECLARE
+    _refresh_tokens_user_id_type TEXT;
 BEGIN
     IF p_user_id IS NULL THEN
         RAISE EXCEPTION 'Invalid user id';
     END IF;
 
-    UPDATE auth.refresh_tokens
-    SET
-        revoked = TRUE,
-        updated_at = NOW()
-    WHERE user_id = p_user_id::TEXT
-      AND revoked = FALSE;
+    SELECT udt_name
+    INTO _refresh_tokens_user_id_type
+    FROM information_schema.columns
+    WHERE table_schema = 'auth'
+      AND table_name = 'refresh_tokens'
+      AND column_name = 'user_id';
+
+    IF _refresh_tokens_user_id_type = 'uuid' THEN
+        EXECUTE
+            'UPDATE auth.refresh_tokens
+             SET revoked = TRUE, updated_at = NOW()
+             WHERE user_id = $1 AND revoked = FALSE'
+        USING p_user_id;
+    ELSE
+        EXECUTE
+            'UPDATE auth.refresh_tokens
+             SET revoked = TRUE, updated_at = NOW()
+             WHERE user_id = $1::TEXT AND revoked = FALSE'
+        USING p_user_id;
+    END IF;
 
     DELETE FROM auth.sessions
     WHERE user_id = p_user_id;
