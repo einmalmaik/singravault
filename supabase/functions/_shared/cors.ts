@@ -162,11 +162,25 @@ function matchesAllowedPreviewOriginSuffix(origin: string): boolean {
             return false;
         }
 
-        return configuredPreviewOriginSuffixes.some((suffix) =>
-            parsed.hostname === suffix
-            || parsed.hostname.endsWith(`.${suffix}`)
-            || parsed.hostname.endsWith(`-${suffix}`)
-        );
+        return configuredPreviewOriginSuffixes.some((suffix) => {
+            if (parsed.hostname === suffix || parsed.hostname.endsWith(`.${suffix}`)) {
+                return true;
+            }
+
+            // Vercel preview deployments commonly use `<deployment>-<team>.vercel.app`.
+            // Accept only a single host-label prefix to avoid matching arbitrary multi-label hosts.
+            if (!suffix.endsWith('.vercel.app')) {
+                return false;
+            }
+
+            const hyphenPattern = `-${suffix}`;
+            if (!parsed.hostname.endsWith(hyphenPattern)) {
+                return false;
+            }
+
+            const deploymentLabel = parsed.hostname.slice(0, -hyphenPattern.length);
+            return deploymentLabel.length > 0 && !deploymentLabel.includes('.');
+        });
     } catch {
         return false;
     }
