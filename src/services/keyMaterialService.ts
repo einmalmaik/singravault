@@ -1,10 +1,10 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 /**
- * @fileoverview Key material provisioning service for hybrid (PQ + RSA) flows.
+ * @fileoverview Key material provisioning service for hybrid (PQ + RSA) key-wrapping flows.
  *
- * Ensures that user-scoped key material exists before writing encrypted
- * collection/emergency keys:
+ * Ensures that user-scoped key material exists before wrapping shared
+ * collection and emergency-access keys:
  * - RSA-4096 public/private key pair in `user_keys`
  * - ML-KEM-768 key pair in `profiles` (`pq_*` columns)
  *
@@ -115,7 +115,7 @@ export async function ensureUserRsaKeyMaterial(
 }
 
 /**
- * Ensures a user has post-quantum key material in `profiles`.
+ * Ensures a user has post-quantum key material for sharing/emergency key wrapping in `profiles`.
  *
  * @param params - Provisioning parameters
  * @param params.userId - Auth user ID
@@ -185,7 +185,7 @@ export async function ensureUserPqKeyMaterial(
     if (!masterPassword) {
         throw createKeyMaterialError(
             KEY_MATERIAL_ERROR_MASTER_PASSWORD_REQUIRED,
-            'Master password is required to provision post-quantum key material.',
+            'Master password is required to provision post-quantum sharing-key material.',
         );
     }
 
@@ -286,7 +286,7 @@ export async function ensureUserPqKeyMaterial(
             };
         }
 
-        throw new Error('Failed to provision post-quantum key material due to concurrent writes.');
+        throw new Error('Failed to provision post-quantum sharing-key material due to concurrent writes.');
     }
 
     const { error: insertError } = await supabase

@@ -1,15 +1,16 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 /**
- * @fileoverview Post-Quantum Cryptography Service for Singra Vault.
+ * @fileoverview Post-Quantum key-wrapping service for Singra Vault sharing flows.
  *
- * Implements hybrid encryption combining:
+ * Implements hybrid key wrapping combining:
  * - ML-KEM-768 (FIPS 203) for post-quantum key encapsulation
  * - RSA-4096-OAEP for classical encryption
  *
- * This protects against "harvest now, decrypt later" attacks where
- * adversaries collect encrypted data today to decrypt with future
- * quantum computers.
+ * In the product threat model this protects sharing and emergency-access
+ * keys against "harvest now, decrypt later" attacks. It is not the
+ * encryption layer for vault item payloads, which remain AES-256-GCM
+ * encrypted with user-derived symmetric keys.
  *
  * SECURITY STANDARD V1:
  * - New ciphertexts are written with version byte 0x04 (HKDF-v2).
@@ -112,19 +113,19 @@ export async function generateHybridKeyPair(): Promise<HybridKeyPair> {
     };
 }
 
-// ============ Hybrid Encryption ============
+// ============ Hybrid Key Wrapping ============
 
 /**
- * Encrypts data using hybrid ML-KEM-768 + RSA-4096-OAEP encryption.
+ * Encrypts key material using hybrid ML-KEM-768 + RSA-4096-OAEP encryption.
  * 
- * The plaintext is encrypted with a randomly generated AES-256 key.
+ * The supplied key material is encrypted with a randomly generated AES-256 key.
  * This AES key is then encapsulated/encrypted with both:
- * 1. ML-KEM-768 (post-quantum secure)
+ * 1. ML-KEM-768 (post-quantum KEM)
  * 2. RSA-4096-OAEP (classically secure)
  * 
  * Format: version(1) || pq_ciphertext(1088) || rsa_ciphertext(512) || iv(12) || aes_ciphertext(variable)
  * 
- * @param plaintext - Data to encrypt
+ * @param plaintext - Serialized key material to wrap
  * @param pqPublicKey - Base64-encoded ML-KEM-768 public key
  * @param rsaPublicKey - JWK string of RSA-4096 public key
  * @param aad - Optional additional authenticated data for AES-GCM context binding
@@ -217,7 +218,7 @@ export async function hybridEncrypt(
 }
 
 /**
- * Decrypts hybrid ML-KEM-768 + RSA-4096-OAEP encrypted data.
+ * Decrypts hybrid ML-KEM-768 + RSA-4096-OAEP wrapped key material.
  * 
  * @param ciphertextBase64 - Base64-encoded hybrid ciphertext
  * @param pqSecretKey - Base64-encoded ML-KEM-768 secret key
@@ -237,7 +238,7 @@ export async function hybridDecrypt(
 
 /**
  * Legacy RSA-only decryption for backward compatibility.
- * Used when decrypting data encrypted before PQ upgrade.
+ * Used when decrypting key material wrapped before the PQ upgrade.
  */
 async function legacyRsaDecrypt(
     ciphertext: Uint8Array,
@@ -303,11 +304,11 @@ export async function hybridUnwrapKey(
 // ============ Migration Helpers ============
 
 /**
- * Checks if a ciphertext uses any hybrid (post-quantum) encryption version.
+ * Checks if wrapped key material uses any hybrid (post-quantum) encryption version.
  * Recognizes legacy hybrid (0x02), standard v1 (0x03), and standard v2 (0x04).
  * 
  * @param ciphertextBase64 - Base64-encoded ciphertext
- * @returns true if any hybrid encryption version, false if legacy RSA-only or unknown
+ * @returns true if any hybrid wrapped-key version, false if legacy RSA-only or unknown
  */
 export function isHybridEncrypted(ciphertextBase64: string): boolean {
     try {
@@ -338,8 +339,8 @@ export function isCurrentStandardEncrypted(ciphertextBase64: string): boolean {
 }
 
 /**
- * Re-encrypts legacy RSA-only or older hybrid data with current hybrid encryption (v2).
- * Used during migration to post-quantum security.
+ * Re-wraps legacy RSA-only or older hybrid key material with current hybrid key wrapping (v2).
+ * Used during migration to post-quantum protection for sharing and emergency keys.
  * 
  * - Version 0x04: already current, returned unchanged.
  * - Version 0x03: decrypted with legacy HKDF-v1, re-encrypted with HKDF-v2.

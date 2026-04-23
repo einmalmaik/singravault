@@ -198,14 +198,14 @@ Argon2id Hash-Zeit:  476ms / Versuch
 
 
 ╔══════════════════════════════════════════════════════╗
-║  SZENARIO 6: Post-Quantum Hybrid Encryption Test     ║
+║  SZENARIO 6: Post-Quantum Hybrid Key-Wrapping Test   ║
 ╚══════════════════════════════════════════════════════╝
-Teste: ML-KEM-768 + RSA-4096 Hybrid-Schutz
+Teste: ML-KEM-768 + RSA-4096 Schutz für Sharing-/Notfall-Schlüssel
 
 🔑 Generiere hybrides Schlüsselpaar...
    ✅ Generiert in 387ms
 
-📌 Test 1: Hybrid Encrypt → Decrypt Roundtrip
+📌 Test 1: Hybrid Wrap → Unwrap Roundtrip
    Encrypt: 8ms | Decrypt: 14ms
    ✅ Roundtrip erfolgreich
 
@@ -258,10 +258,10 @@ Teste: ML-KEM-768 + RSA-4096 Hybrid-Schutz
    Verdict: SICHER
    Detail:  Argon2id 476ms schützt selbst mittlere Passwörter. Schwache (< 20 Bit) bleiben knackbar.
 
-🟢 PQ Hybrid Encryption
+🟢 PQ Hybrid Key Wrapping
    Score:   100/100  (Gewichtung: 10%)
    Verdict: SICHER
-   Detail:  7/7 bestanden. ML-KEM-768 (FIPS 203) + RSA-4096 + HKDF + AES-256-GCM.
+   Detail:  7/7 bestanden. ML-KEM-768 (FIPS 203) + RSA-4096 + HKDF + AES-256-GCM für Key-Wrapping.
 
 ══════════════════════════════════════════════════════════
   GESAMT-SCORE:  96/100   |   NOTE:  A+
@@ -281,7 +281,7 @@ Teste: ML-KEM-768 + RSA-4096 Hybrid-Schutz
   ✅ Encryption:       AES-256-GCM (Authenticated Encryption)
   ✅ IV-Generierung:   crypto.getRandomValues() (CSPRNG)
   ✅ Key-Derivation:   Non-extractable CryptoKey
-  ✅ Post-Quantum:     ML-KEM-768 (FIPS 203) Hybrid
+  ✅ Post-Quantum:     ML-KEM-768 (FIPS 203) Key-Wrapping für Sharing/Notfall
   ✅ Zero-Knowledge:   Master-Passwort verlässt nie den Client
 
 

@@ -89,6 +89,7 @@ import {
   decryptWithSharedKey,
   CURRENT_KDF_VERSION,
   KDF_PARAMS,
+  VAULT_ITEM_ENVELOPE_V1_PREFIX,
 } from "@/services/cryptoService";
 import type { VaultItemData } from "@/services/cryptoService";
 
@@ -263,17 +264,49 @@ describe("Integration: Core Cryptographic Pipeline", () => {
         customFields: { "API Key": "ghp_abc123" },
       };
 
-      const encrypted = await encryptVaultItem(item, key);
+      const encrypted = await encryptVaultItem(item, key, "item-full");
       expect(typeof encrypted).toBe("string");
+      expect(encrypted.startsWith(VAULT_ITEM_ENVELOPE_V1_PREFIX)).toBe(true);
 
-      const decrypted = await decryptVaultItem(encrypted, key);
+      const decrypted = await decryptVaultItem(encrypted, key, "item-full");
       expect(decrypted).toEqual(item);
+    });
+
+    it("should bind versioned vault item envelopes to the entry ID", async () => {
+      const item: VaultItemData = { title: "Bound", password: "secret" };
+      const encrypted = await encryptVaultItem(item, key, "item-1");
+
+      await expect(decryptVaultItem(encrypted, key, "item-2")).rejects.toThrow();
+      await expect(decryptVaultItem(encrypted, key, "item-1")).resolves.toEqual(item);
+    });
+
+    it("should still read legacy unversioned vault item payloads with AAD", async () => {
+      const item: VaultItemData = { title: "Legacy AAD", password: "secret" };
+      const legacyPayload = await encrypt(JSON.stringify(item), key, "item-legacy");
+
+      await expect(decryptVaultItem(legacyPayload, key, "item-legacy")).resolves.toEqual(item);
+    });
+
+    it("should still read legacy unversioned vault item payloads without AAD", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const item: VaultItemData = { title: "Legacy no AAD", password: "secret" };
+      const legacyPayload = await encrypt(JSON.stringify(item), key);
+
+      await expect(decryptVaultItem(legacyPayload, key, "item-legacy")).resolves.toEqual(item);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Legacy entry without AAD detected"));
+      warnSpy.mockRestore();
+    });
+
+    it("should reject unsupported vault item envelope versions", async () => {
+      await expect(decryptVaultItem("sv-vault-v99:abc", key, "item-1")).rejects.toThrow(
+        /Unsupported vault item encryption envelope version/,
+      );
     });
 
     it("should round-trip a minimal vault item", async () => {
       const item: VaultItemData = { title: "Note", itemType: "note" };
-      const encrypted = await encryptVaultItem(item, key);
-      const decrypted = await decryptVaultItem(encrypted, key);
+      const encrypted = await encryptVaultItem(item, key, "item-minimal");
+      const decrypted = await decryptVaultItem(encrypted, key, "item-minimal");
       expect(decrypted).toEqual(item);
     });
 
@@ -283,8 +316,8 @@ describe("Integration: Core Cryptographic Pipeline", () => {
         itemType: "totp",
         totpSecret: "JBSWY3DPEHPK3PXP",
       };
-      const encrypted = await encryptVaultItem(item, key);
-      const decrypted = await decryptVaultItem(encrypted, key);
+      const encrypted = await encryptVaultItem(item, key, "item-totp");
+      const decrypted = await decryptVaultItem(encrypted, key, "item-totp");
       expect(decrypted).toEqual(item);
     });
 
@@ -293,8 +326,8 @@ describe("Integration: Core Cryptographic Pipeline", () => {
         title: "Test",
         categoryId: null,
       };
-      const encrypted = await encryptVaultItem(item, key);
-      const decrypted = await decryptVaultItem(encrypted, key);
+      const encrypted = await encryptVaultItem(item, key, "item-null-category");
+      const decrypted = await decryptVaultItem(encrypted, key, "item-null-category");
       expect(decrypted.categoryId).toBeNull();
     });
   });

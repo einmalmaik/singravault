@@ -76,8 +76,8 @@
         "description": "Alle Daten werden VOR dem Senden an den Server verschlüsselt."
       },
       "postQuantum": {
-        "title": "Post-Quantum-Verschlüsselung",
-        "description": "Security Standard v1 erzwingt ML-KEM-768 + RSA-4096 Hybrid-Schlüsselaustausch für Notfallzugriff und geteilte Sammlungen (NIST FIPS 203)."
+        "title": "Post-Quantum-Schutz für Sharing-Schlüssel",
+        "description": "Security Standard v1 nutzt ML-KEM-768 + RSA-4096 für das Wrapping von Sharing- und Notfallzugriffs-Schlüsseln. Tresor-Inhalte bleiben AES-256-GCM-verschlüsselt."
       },
       "passkeyUnlock": {
         "title": "Passkey Tresor-Entsperrung",
@@ -138,7 +138,7 @@
         "zeroKnowledge": "Zero-Knowledge",
         "free": "Kostenloser Plan verfügbar",
         "kdf": "Schlüsselableitung (KDF)",
-        "postQuantum": "Post-Quantum-Schlüsselschutz (Sharing/Notfall)",
+        "postQuantum": "Post-Quantum-Schutz für Sharing-Schlüssel",
         "passkeyUnlock": "Passkey Tresor-Entsperrung",
         "duressPassword": "Panik-/Zwangspasswort",
         "vaultIntegrity": "Tresor-Integritätsprüfung",
@@ -317,7 +317,7 @@
         "bullets": [
           "Shared Collections haben owner/member + permission (view/edit) in shared_collection_members.",
           "Emergency Access steuert Trustee-Zugriff über Status und grantor/trustee Zuordnungen.",
-          "Asymmetrische Kryptografie (RSA-OAEP 4096) wird für Sharing-/Notfallflüsse im Crypto-Service bereitgestellt."
+          "Sharing-/Notfall-Schlüssel werden clientseitig asymmetrisch gewrappt; aktuelle Pfade nutzen ML-KEM-768 + RSA-OAEP 4096 für das Key-Wrapping."
         ]
       },
       "offline": {
@@ -1313,7 +1313,7 @@
       "core_features": "Alle Grundfunktionen",
       "argon2id_encryption": "Argon2id 128 MiB Verschlüsselung",
       "clipboard_auto_clear": "Zwischenablage Auto-Löschen (30s)",
-      "post_quantum": "Post-Quantum-Schlüsselschutz (ML-KEM-768, Sharing/Notfall)",
+      "post_quantum": "Post-Quantum-Schutz für Sharing-Schlüssel (ML-KEM-768)",
       "duress_password": "Panik-/Zwangspasswort",
       "file_attachments": "1 GB Datei-Anhänge",
       "builtin_authenticator": "Integrierter Authenticator",
@@ -1422,9 +1422,9 @@
     "unlockFailed": "Passkey-Entsperrung fehlgeschlagen. Bitte verwende dein Master-Passwort."
   },
   "postQuantum": {
-    "title": "Post-Quantum-Verschlüsselung",
-    "description": "Security Standard v1 erzwingt hybriden Post-Quantum-Schlüsselschutz (ML-KEM-768 + RSA-4096) für Sharing- und Notfall-Schlüsselaustausch.",
-    "infoText": "Security Standard v1 kombiniert ML-KEM-768 und RSA-4096 in einem hybriden Schlüsselpfad, um 'Harvest now, decrypt later' Risiken zu senken.",
+    "title": "Post-Quantum-Schutz für Sharing-Schlüssel",
+    "description": "Security Standard v1 schützt Sharing- und Notfallzugriffs-Schlüssel mit ML-KEM-768 + RSA-4096. Er ändert nicht die AES-256-GCM-Verschlüsselung deiner Tresor-Einträge.",
+    "infoText": "Der Post-Quantum-Pfad gilt für Key-Wrapping und Key-Exchange in geteilten Sammlungen und Notfallzugriff. Vault-Payloads bleiben klassisch symmetrisch mit AES-256-GCM geschützt.",
     "status": "Status",
     "enabled": "Aktiviert",
     "disabled": "Nicht aktiviert",
@@ -1434,20 +1434,20 @@
     "enforcedAt": "Erzwungen am",
     "legacyDisabledAt": "Legacy deaktiviert am",
     "notSet": "Nicht gesetzt",
-    "enableTitle": "Post-Quantum aktivieren",
-    "enableDescription": "Hybrides Schlüsselmaterial wird automatisch eingerichtet, sobald Sharing- oder Notfallzugriff es benötigt.",
-    "enableButton": "Post-Quantum aktivieren",
+    "enableTitle": "Post-Quantum-Sharing-Schlüssel aktivieren",
+    "enableDescription": "Hybrides Schlüsselmaterial wird automatisch eingerichtet, sobald ein Sharing- oder Notfallzugriffs-Schlüssel gewrappt werden muss.",
+    "enableButton": "Sharing-Schlüsselschutz aktivieren",
     "enabling": "Aktiviere...",
-    "enableSuccess": "Post-Quantum-Verschlüsselung wurde erfolgreich aktiviert!",
+    "enableSuccess": "Post-Quantum-Schutz für Sharing-Schlüssel wurde erfolgreich aktiviert!",
     "enableFailed": "Aktivierung fehlgeschlagen. Bitte versuche es erneut.",
     "keyVersion": "Schlüsselversion",
     "algorithm": "Algorithmus",
-    "algorithmValue": "ML-KEM-768 + RSA-4096 Hybrid",
+    "algorithmValue": "ML-KEM-768 + RSA-4096 für Key-Wrapping",
     "nistStandard": "NIST FIPS 203 (August 2024)",
     "securityLevel": "Sicherheitsstufe",
     "securityLevelValue": "Kategorie 3 (~AES-192)",
-    "quantumSafe": "Quantensicher",
-    "premiumRequired": "Post-Quantum-Verschlüsselung erfordert ein Premium- oder Familien-Abonnement.",
+    "quantumSafe": "Post-Quantum-Key-Wrapping",
+    "premiumRequired": "Post-Quantum-Schutz für Sharing-Schlüssel erfordert ein Premium- oder Familien-Abonnement.",
     "learnMore": "Mehr erfahren",
     "upgradeNow": "Jetzt upgraden"
   },

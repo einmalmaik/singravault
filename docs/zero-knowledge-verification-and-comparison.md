@@ -39,7 +39,7 @@ Geprüfte Edge Functions:
 #### ✅ Entschlüsselung ausschließlich im Browser
 
 - `cryptoService.ts` → `decryptData()` läuft nur im Browser (Web Crypto API)
-- `pqCryptoService.ts` → Hybrid-Entschlüsselung nur im Browser
+- `pqCryptoService.ts` → Hybrid-Entschlüsselung von Sharing-/Notfall-Schlüsseln nur im Browser
 - `VaultContext.tsx` → CryptoKey wird nur im Memory gehalten, nie persistiert
 - `collectionService.ts` → Shared-Collection-Entschlüsselung client-seitig
 
@@ -75,10 +75,10 @@ Die TOTP-Secrets für 2FA sind server-seitig verschlüsselt (PGP-AES-256 via `pg
 | **KDF** | Argon2id (64 MiB, 3 iter) | Argon2id (64 MiB, 3 iter) oder PBKDF2 (600k iter) | Argon2id | bcrypt + HKDF |
 | **Zero-Knowledge** | ✅ | ✅ | ✅ | ✅ |
 | **Open Source** | ✅ Client + Server | ✅ Client + Server | ❌ Server proprietär | ✅ Client + Server |
-| **Post-Quantum** | ✅ ML-KEM-768 Hybrid | ❌ Nicht verfügbar | ❌ Nicht verfügbar | ❌ Nicht verfügbar |
+| **Post-Quantum für Sharing-Keys** | ✅ ML-KEM-768 + RSA-4096 Key-Wrapping | ❌ Nicht verfügbar | ❌ Nicht verfügbar | ❌ Nicht verfügbar |
 | **AAD (Authenticated Associated Data)** | ✅ Item-ID gebunden | ❌ | ✅ | Unklar |
 | **Duress/Panik-Modus** | ✅ Fake-Vault bei Zwang | ❌ | ❌ | ❌ |
-| **Emergency Access** | ✅ Mit Cooldown + PQ-Verschlüsselung | ✅ (einfacher) | ❌ | ❌ |
+| **Emergency Access** | ✅ Mit Cooldown + PQ-Key-Wrapping | ✅ (einfacher) | ❌ | ❌ |
 | **Vault-Integrität (Merkle)** | ✅ Client-seitig | ❌ | ❌ | ❌ |
 
 ### KDF-Parameter im Detail
@@ -95,7 +95,7 @@ Die TOTP-Secrets für 2FA sind server-seitig verschlüsselt (PGP-AES-256 via `pg
 
 ### Wo Singra Vault **stärker** ist
 
-1. **Post-Quantum Kryptographie (PQ):** Singra bietet als einziger Passwortmanager hybride ML-KEM-768 + RSA-4096 Verschlüsselung. Bitwarden, 1Password und Proton Pass bieten Stand 2026 keine PQ-Unterstützung.
+1. **Post-Quantum-Key-Wrapping (PQ):** Singra nutzt hybride ML-KEM-768 + RSA-4096 Kryptografie für Sharing- und Notfallzugriffs-Schlüssel. Das ist kein Claim, dass jeder Vault-Item-Ciphertext post-quantum verschlüsselt ist; Vault Items bleiben AES-256-GCM-verschlüsselt.
 
 2. **AES-256-GCM statt CBC:** Bitwarden nutzt AES-CBC (Cipher Block Chaining), was anfälliger für Padding-Oracle-Angriffe ist. Singra nutzt AES-GCM (Galois/Counter Mode) mit integrierter Authentifizierung.
 
@@ -146,9 +146,9 @@ Die TOTP-Secrets für 2FA sind server-seitig verschlüsselt (PGP-AES-256 via `pg
 
 ## Fazit
 
-**Singra Vault ist kryptographisch mindestens auf dem Niveau von Bitwarden und in mehreren Bereichen darüber hinaus** (PQ-Krypto, AES-GCM, AAD, Duress-Modus, Vault-Integrität). Die Zero-Knowledge-Architektur ist sauber implementiert — weder Admins noch der Server können Vault-Daten entschlüsseln.
+**Singra Vault ist kryptographisch mindestens auf dem Niveau von Bitwarden und in mehreren Bereichen darüber hinaus** (PQ-Key-Wrapping für Sharing/Notfallzugriff, AES-GCM, AAD, Duress-Modus, Vault-Integrität). Die Zero-Knowledge-Architektur ist sauber implementiert — weder Admins noch der Server können Vault-Daten entschlüsseln.
 
-Die größte Lücke gegenüber 1Password ist das Fehlen eines Secret Keys und SRP. Gegenüber Bitwarden ist Singra in der reinen Kryptographie stärker (GCM > CBC, PQ-Support, stärkere KDF), aber Bitwarden hat den Vorteil jahrelanger externer Audits.
+Die größte Lücke gegenüber 1Password ist das Fehlen eines Secret Keys und SRP. Gegenüber Bitwarden ist Singra in mehreren Kryptografie-Bausteinen stärker (GCM > CBC, PQ-Key-Wrapping für Sharing/Notfallzugriff, stärkere KDF), aber Bitwarden hat den Vorteil jahrelanger externer Audits.
 
 **Quellen:**
 - [Bitwarden KDF Algorithms](https://bitwarden.com/help/kdf-algorithms/)

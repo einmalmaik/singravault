@@ -30,7 +30,9 @@ export const CURRENT_KDF_VERSION = 2;
  * KDF parameter sets indexed by version number.
  *
  *   v1: Original (64 MiB) - ~300 ms on modern devices
- *   v2: Enhanced (128 MiB) - ~500-600 ms on modern devices, OWASP 2025 recommended
+ *   v2: Enhanced (128 MiB) - ~500-600 ms on modern devices.
+ *       This exceeds OWASP's current Argon2id minimum baseline and stays well
+ *       below RFC 9106's high-memory 2 GiB profile for practical client unlocks.
  *
  * IMPORTANT: Once a version is released, its parameters MUST NEVER be changed.
  * Only add new versions.
@@ -46,6 +48,23 @@ const TAG_LENGTH = 128; // 128 bits authentication tag
 
 /** Constant used in v3 verification hashes (no plaintext stored in DB) */
 const VERIFICATION_CONSTANT_V3 = 'SINGRA_VAULT_VERIFY_V3';
+
+/**
+ * Versioned envelope for vault item payloads stored in vault_items.encrypted_data.
+ *
+ * v1 payload format: `sv-vault-v1:<base64(IV || ciphertext || authTag)>`
+ * Algorithm: AES-256-GCM with a 96-bit random IV and a 128-bit tag.
+ *
+ * Keep this prefix stable forever. If the vault item algorithm changes later,
+ * add a new prefix/parser branch instead of changing the v1 behavior.
+ */
+export const VAULT_ITEM_ENVELOPE_V1_PREFIX = 'sv-vault-v1:';
+const VAULT_ITEM_ENVELOPE_PREFIX = 'sv-vault-';
+const VAULT_ITEM_ENVELOPE_SPEC = {
+    currentPrefix: VAULT_ITEM_ENVELOPE_V1_PREFIX,
+    familyPrefix: VAULT_ITEM_ENVELOPE_PREFIX,
+    subject: 'vault item',
+} satisfies VersionedCipherEnvelopeSpec;
 
 /** New encrypted_user_key envelopes store raw key bytes, not a wipe-resistant JS string. */
 const USER_KEY_ENVELOPE_V2_PREFIX = 'usk-wrap-v2:';
@@ -353,25 +372,25 @@ async function decryptBytes(
  * @param data - Object containing sensitive vault item fields
  * @param key - CryptoKey derived from master password
  * @param entryId - Vault item UUID. Used as AAD to bind ciphertext to entry.
- * @returns Base64-encoded encrypted JSON
+ * @returns Versioned encrypted JSON envelope
  */
 export async function encryptVaultItem(
     data: VaultItemData,
     key: CryptoKey,
-    entryId?: string
+    entryId: string
 ): Promise<string> {
     const json = JSON.stringify(data);
-    return encrypt(json, key, entryId);
+    return formatVaultItemEnvelopeV1(await encrypt(json, key, entryId));
 }
 
 /**
  * Decrypts a vault item's sensitive data.
  *
- * SECURITY: When entryId is provided, tries decryption with AAD first.
- * Falls back to decryption without AAD for backward compatibility with
- * entries encrypted before the AAD fix was introduced.
+ * SECURITY: Versioned envelopes dispatch explicitly by prefix. Unknown
+ * sv-vault-* versions fail closed so future formats cannot be misread as
+ * legacy base64. Unversioned payloads are treated as legacy AES-GCM.
  * 
- * @param encryptedData - Base64-encoded encrypted JSON from database
+ * @param encryptedData - Versioned envelope or legacy base64 encrypted JSON
  * @param key - CryptoKey derived from master password
  * @param entryId - Vault item UUID. Must match the AAD used during encryption.
  * @returns Decrypted vault item data object
@@ -380,26 +399,74 @@ export async function encryptVaultItem(
 export async function decryptVaultItem(
     encryptedData: string,
     key: CryptoKey,
-    entryId?: string
+    entryId: string
 ): Promise<VaultItemData> {
     let json: string;
-    let isLegacy = false;
-    if (entryId) {
+    const envelope = parseVaultItemEnvelope(encryptedData);
+
+    if (envelope.version === 1) {
+        json = await decrypt(envelope.payload, key, entryId);
+    } else if (entryId) {
         try {
-            // Try with AAD first (new format, swap-protected)
-            json = await decrypt(encryptedData, key, entryId);
+            // Legacy payloads written after the AAD rollout have no explicit
+            // version marker but are still bound to the entry ID.
+            json = await decrypt(envelope.payload, key, entryId);
         } catch {
-            // Backward compat: entry was encrypted without AAD (legacy format)
-            // WARNING: Legacy entries are vulnerable to ciphertext-swap attacks
+            // Older legacy payloads predate AAD and can be swapped between
+            // rows by a server-side attacker. Keep read compatibility and
+            // rewrite them through encryptVaultItem on the next migration path.
             console.warn(`Legacy entry without AAD detected: ${entryId}`);
             _legacyDecryptCount++;
-            isLegacy = true;
-            json = await decrypt(encryptedData, key);
+            json = await decrypt(envelope.payload, key);
         }
     } else {
-        json = await decrypt(encryptedData, key);
+        json = await decrypt(envelope.payload, key);
     }
     return JSON.parse(json) as VaultItemData;
+}
+
+type VersionedCipherEnvelope =
+    | { version: 1; payload: string }
+    | { version: 'legacy'; payload: string };
+
+interface VersionedCipherEnvelopeSpec {
+    currentPrefix: string;
+    familyPrefix: string;
+    subject: string;
+}
+
+function formatVaultItemEnvelopeV1(encryptedBase64: string): string {
+    return formatVersionedCipherEnvelope(VAULT_ITEM_ENVELOPE_SPEC, encryptedBase64);
+}
+
+function parseVaultItemEnvelope(encryptedData: string): VersionedCipherEnvelope {
+    return parseVersionedCipherEnvelope(VAULT_ITEM_ENVELOPE_SPEC, encryptedData);
+}
+
+function formatVersionedCipherEnvelope(
+    spec: VersionedCipherEnvelopeSpec,
+    encryptedBase64: string,
+): string {
+    return `${spec.currentPrefix}${encryptedBase64}`;
+}
+
+function parseVersionedCipherEnvelope(
+    spec: VersionedCipherEnvelopeSpec,
+    encryptedData: string,
+): VersionedCipherEnvelope {
+    if (encryptedData.startsWith(spec.currentPrefix)) {
+        const payload = encryptedData.slice(spec.currentPrefix.length);
+        if (!payload) {
+            throw new Error(`Invalid ${spec.subject} encryption envelope`);
+        }
+        return { version: 1, payload };
+    }
+
+    if (encryptedData.startsWith(spec.familyPrefix)) {
+        throw new Error(`Unsupported ${spec.subject} encryption envelope version`);
+    }
+
+    return { version: 'legacy', payload: encryptedData };
 }
 
 /**
@@ -661,9 +728,10 @@ export async function reEncryptVault(
     const itemUpdates: Array<{ id: string; encrypted_data: string }> = [];
     for (const item of items) {
         try {
-            // SECURITY: Pass item.id as AAD to bind ciphertext to entry ID.
-            // reEncryptString handles legacy (no-AAD) → new (with-AAD) migration.
-            const newEncrypted = await reEncryptString(item.encrypted_data, oldKey, newKey, item.id);
+            // decryptVaultItem accepts unversioned legacy rows; encryptVaultItem
+            // always writes the current versioned, AAD-bound vault-item envelope.
+            const plaintext = await decryptVaultItem(item.encrypted_data, oldKey, item.id);
+            const newEncrypted = await encryptVaultItem(plaintext, newKey, item.id);
             itemUpdates.push({ id: item.id, encrypted_data: newEncrypted });
         } catch (err) {
             // If a single item fails, abort the entire operation.
@@ -909,17 +977,17 @@ export async function decryptRSA(
 // ==========================================
 
 /**
- * Generates a user's hybrid key pair for shared collections
- * Supports both RSA-4096 (legacy) and hybrid PQ+RSA (v2) modes
+ * Generates a user's asymmetric key material for shared collections.
+ * Supports both RSA-4096 (legacy) and hybrid PQ+RSA (v2) key-wrapping modes.
  * Private keys are encrypted with the master password
  *
  * @param masterPassword - User's master password
- * @param version - Key pair version: 1 (RSA-only) or 2 (hybrid PQ+RSA)
+ * @param version - Key pair version: 1 (RSA-only wrapping) or 2 (hybrid PQ+RSA wrapping)
  * @returns Object with public key (JWK) and encrypted private key
  *          Format v1: `kdfVersion:salt:encryptedData`
  *          Format v2: `pq-v2:kdfVersion:salt:encryptedRsaKey:encryptedPqKey`
  */
-// TODO(security): Set default to 2 (hybrid PQ+RSA) once pqCryptoService
+// TODO(security): Set default to 2 (hybrid PQ+RSA key wrapping) once pqCryptoService
 // is validated in production. Track: SINGRA-PQ-DEFAULT
 // Current: version 1 (RSA-only) for stability during rollout.
 export async function generateUserKeyPair(
@@ -959,7 +1027,7 @@ export async function generateUserKeyPair(
         return { publicKey, encryptedPrivateKey: encryptedPrivateKeyWithSalt };
     }
 
-    // Version 2: Hybrid PQ+RSA mode (NIST-approved post-quantum)
+    // Version 2: Hybrid PQ+RSA key-wrapping mode for sharing/emergency keys (NIST-approved post-quantum KEM)
     // Import PQ crypto service for ML-KEM-768
     const { generatePQKeyPair } = await import('./pqCryptoService');
 
@@ -1006,7 +1074,7 @@ export async function generateUserKeyPair(
 }
 
 /**
- * Migrates an existing RSA-only key pair to hybrid PQ+RSA
+ * Migrates existing RSA-only wrapping key material to hybrid PQ+RSA wrapping key material.
  *
  * @param encryptedPrivateKey - Existing encrypted RSA private key
  * @param masterPassword - User's master password

@@ -211,7 +211,7 @@ describe("useFeatureGate", () => {
       });
     });
 
-    it("should expose post-quantum encryption as a free feature", () => {
+    it("should expose post-quantum sharing-key protection as a free feature", () => {
       mockUseSubscription.mockReturnValue({
         tier: "free",
         hasFeature: (feature: string) => {

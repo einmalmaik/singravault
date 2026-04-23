@@ -4,7 +4,7 @@
  * @fileoverview Security Features Section
  *
  * Displays the core security features of Singra Vault,
- * including new post-quantum, passkey, duress, and vault integrity capabilities.
+ * including post-quantum sharing-key protection, passkey, duress, and vault integrity capabilities.
  */
 
 import { useTranslation } from 'react-i18next';

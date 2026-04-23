@@ -76,8 +76,8 @@
         "description": "All data is encrypted BEFORE being sent to the server."
       },
       "postQuantum": {
-        "title": "Post-Quantum Encryption",
-        "description": "Security Standard v1 enforces ML-KEM-768 + RSA-4096 hybrid key exchange for Emergency Access and Shared Collections (NIST FIPS 203)."
+        "title": "Post-Quantum Protection for Sharing Keys",
+        "description": "Security Standard v1 uses ML-KEM-768 + RSA-4096 to wrap sharing and emergency-access keys. Vault contents remain encrypted with AES-256-GCM."
       },
       "passkeyUnlock": {
         "title": "Passkey Vault Unlock",
@@ -138,7 +138,7 @@
         "zeroKnowledge": "Zero-Knowledge",
         "free": "Free Tier Available",
         "kdf": "Key Derivation (KDF)",
-        "postQuantum": "Post-Quantum Key Protection (Sharing/Emergency)",
+        "postQuantum": "Post-Quantum Protection for Sharing Keys",
         "passkeyUnlock": "Passkey Vault Unlock",
         "duressPassword": "Panic / Duress Password",
         "vaultIntegrity": "Vault Integrity Check",
@@ -317,7 +317,7 @@
         "bullets": [
           "Shared collections use owner/member + permission (view/edit) in shared_collection_members.",
           "Emergency access controls trustee access via status and grantor/trustee linkage.",
-          "Asymmetric crypto (RSA-OAEP 4096) is provided in the crypto service for sharing/emergency flows."
+          "Sharing/emergency keys are wrapped client-side with asymmetric cryptography; current paths use ML-KEM-768 + RSA-OAEP 4096 for key wrapping."
         ]
       },
       "offline": {
@@ -1292,7 +1292,7 @@
       "core_features": "All Core Features",
       "argon2id_encryption": "Argon2id 128 MiB Encryption",
       "clipboard_auto_clear": "Clipboard Auto-Clear (30s)",
-      "post_quantum": "Post-Quantum Key Protection (ML-KEM-768, sharing/emergency)",
+      "post_quantum": "Post-Quantum Protection for Sharing Keys (ML-KEM-768)",
       "duress_password": "Panic / Duress Password",
       "file_attachments": "1 GB File Attachments",
       "builtin_authenticator": "Built-in Authenticator",
@@ -1401,9 +1401,9 @@
     "unlockFailed": "Passkey unlock failed. Please try your master password."
   },
   "postQuantum": {
-    "title": "Post-Quantum Encryption",
-    "description": "Security Standard v1 enforces hybrid post-quantum key protection (ML-KEM-768 + RSA-4096) for shared and emergency key exchange.",
-    "infoText": "Security Standard v1 combines ML-KEM-768 and RSA-4096 in one hybrid key path to reduce 'harvest now, decrypt later' risk while keeping compatibility for vault payload encryption.",
+    "title": "Post-Quantum Protection for Sharing Keys",
+    "description": "Security Standard v1 protects sharing and emergency-access keys with ML-KEM-768 + RSA-4096. It does not change AES-256-GCM encryption for your vault items.",
+    "infoText": "The post-quantum path applies to key wrapping and key exchange for Shared Collections and Emergency Access. Vault payloads remain protected with conventional symmetric AES-256-GCM.",
     "status": "Status",
     "enabled": "Enabled",
     "disabled": "Not enabled",
@@ -1413,20 +1413,20 @@
     "enforcedAt": "Enforced at",
     "legacyDisabledAt": "Legacy disabled at",
     "notSet": "Not set",
-    "enableTitle": "Enable Post-Quantum",
-    "enableDescription": "Hybrid key material is provisioned automatically when sharing or emergency access requires it.",
-    "enableButton": "Enable Post-Quantum",
+    "enableTitle": "Enable Post-Quantum Sharing Keys",
+    "enableDescription": "Hybrid key material is provisioned automatically when a sharing or emergency-access key needs to be wrapped.",
+    "enableButton": "Enable Sharing Key Protection",
     "enabling": "Enabling...",
-    "enableSuccess": "Post-quantum encryption has been enabled successfully!",
+    "enableSuccess": "Post-quantum protection for sharing keys has been enabled successfully!",
     "enableFailed": "Activation failed. Please try again.",
     "keyVersion": "Key version",
     "algorithm": "Algorithm",
-    "algorithmValue": "ML-KEM-768 + RSA-4096 Hybrid",
+    "algorithmValue": "ML-KEM-768 + RSA-4096 for key wrapping",
     "nistStandard": "NIST FIPS 203 (August 2024)",
     "securityLevel": "Security level",
     "securityLevelValue": "Category 3 (~AES-192)",
-    "quantumSafe": "Quantum-safe",
-    "premiumRequired": "Post-quantum encryption requires a Premium or Families subscription.",
+    "quantumSafe": "Post-quantum key wrapping",
+    "premiumRequired": "Post-quantum protection for sharing keys requires a Premium or Families subscription.",
     "learnMore": "Learn more",
     "upgradeNow": "Upgrade now"
   },

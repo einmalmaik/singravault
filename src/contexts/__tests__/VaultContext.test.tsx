@@ -1122,11 +1122,11 @@ describe("VaultContext", () => {
 
       let encrypted: string | undefined;
       await act(async () => {
-        encrypted = await result.current.encryptItem(itemData);
+        encrypted = await result.current.encryptItem(itemData, "item-1");
       });
 
       expect(encrypted).toBe("encrypted-item-json");
-      expect(mockEncryptVaultItem).toHaveBeenCalledWith(itemData, expect.anything(), undefined);
+      expect(mockEncryptVaultItem).toHaveBeenCalledWith(itemData, expect.anything(), "item-1");
     });
 
     it("should decrypt vault item when unlocked", async () => {
@@ -1150,11 +1150,11 @@ describe("VaultContext", () => {
 
       let decrypted: unknown;
       await act(async () => {
-        decrypted = await result.current.decryptItem("encrypted-item-data");
+        decrypted = await result.current.decryptItem("encrypted-item-data", "item-1");
       });
 
       expect(decrypted).toEqual(decryptedItem);
-      expect(mockDecryptVaultItem).toHaveBeenCalledWith("encrypted-item-data", expect.anything(), undefined);
+      expect(mockDecryptVaultItem).toHaveBeenCalledWith("encrypted-item-data", expect.anything(), "item-1");
     });
   });
 
