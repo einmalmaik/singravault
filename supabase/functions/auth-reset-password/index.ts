@@ -14,9 +14,9 @@ serve(async (req) => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
     try {
-        const { newPassword } = await req.json();
+        const { newPassword, resetToken } = await req.json();
 
-        if (!newPassword || newPassword.length < 12) {
+        if (!newPassword || newPassword.length < 12 || !resetToken) {
             return new Response(JSON.stringify({ error: "Invalid data" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
@@ -31,8 +31,28 @@ serve(async (req) => {
             return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        // HIBP K-Anonymity Check
         const encoder = new TextEncoder();
+        const resetTokenHashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(resetToken));
+        const resetTokenHash = encodeHex(resetTokenHashBuffer);
+
+        // Require a valid one-time recovery reset token for this user.
+        const { data: validResetToken, error: resetTokenError } = await supabaseAdmin
+            .from("recovery_tokens")
+            .select("id")
+            .eq("email", user.email?.toLowerCase() ?? "")
+            .eq("token_hash", resetTokenHash)
+            .gt("expires_at", new Date().toISOString())
+            .limit(1)
+            .maybeSingle();
+
+        if (resetTokenError || !validResetToken) {
+            return new Response(JSON.stringify({ error: "Invalid or expired reset token" }), {
+                status: 403,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+
+        // HIBP K-Anonymity Check
         const hexHashBuffer = await crypto.subtle.digest("SHA-1", encoder.encode(newPassword));
         const hexHash = encodeHex(hexHashBuffer).toUpperCase();
         const prefix = hexHash.substring(0, 5);
@@ -75,6 +95,12 @@ serve(async (req) => {
         if (updateError) {
             throw new Error(`Failed to update GoTrue password: ${updateError.message}`);
         }
+
+        // Single-use: consume reset token only after successful password update.
+        await supabaseAdmin
+            .from("recovery_tokens")
+            .delete()
+            .eq("id", validResetToken.id);
 
         return new Response(JSON.stringify({ success: true }), {
             status: 200,
