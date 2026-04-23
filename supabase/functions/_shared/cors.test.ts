@@ -32,7 +32,7 @@ describe('core edge function CORS config', () => {
         expect(headers['Access-Control-Allow-Origin']).toBe('https://preview.example.test');
     });
 
-    it('allows owned vercel preview hosts by suffix', async () => {
+    it('allows preview subdomains by configured hostname suffix', async () => {
         vi.stubGlobal('Deno', {
             env: {
                 get(key: string) {
@@ -53,12 +53,12 @@ describe('core edge function CORS config', () => {
         const { getCorsHeaders } = await import('./cors.ts');
         const headers = getCorsHeaders(new Request('https://example.test', {
             headers: {
-                Origin: 'https://singravault-fbr8-git-codex-aut-20d874-einmalmaik-5474s-projects.vercel.app',
+                Origin: 'https://preview.einmalmaik-5474s-projects.vercel.app',
             },
         }));
 
         expect(headers['Access-Control-Allow-Origin']).toBe(
-            'https://singravault-fbr8-git-codex-aut-20d874-einmalmaik-5474s-projects.vercel.app',
+            'https://preview.einmalmaik-5474s-projects.vercel.app',
         );
     });
 
@@ -83,6 +83,34 @@ describe('core edge function CORS config', () => {
         const { getCorsHeaders } = await import('./cors.ts');
         const headers = getCorsHeaders(new Request('https://example.test', {
             headers: { Origin: 'https://attacker-preview.vercel.app' },
+        }));
+
+        expect(headers['Access-Control-Allow-Origin']).toBe('null');
+    });
+
+    it('rejects hostname labels that only end with hyphen plus suffix', async () => {
+        vi.stubGlobal('Deno', {
+            env: {
+                get(key: string) {
+                    switch (key) {
+                        case 'ALLOWED_ORIGIN':
+                            return 'https://singravault.mauntingstudios.de';
+                        case 'ALLOW_PREVIEW_ORIGINS':
+                            return 'true';
+                        case 'ALLOWED_PREVIEW_ORIGIN_SUFFIXES':
+                            return 'einmalmaik-5474s-projects.vercel.app';
+                        default:
+                            return '';
+                    }
+                },
+            },
+        });
+
+        const { getCorsHeaders } = await import('./cors.ts');
+        const headers = getCorsHeaders(new Request('https://example.test', {
+            headers: {
+                Origin: 'https://attacker-einmalmaik-5474s-projects.vercel.app',
+            },
         }));
 
         expect(headers['Access-Control-Allow-Origin']).toBe('null');

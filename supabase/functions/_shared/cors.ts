@@ -165,7 +165,6 @@ function matchesAllowedPreviewOriginSuffix(origin: string): boolean {
         return configuredPreviewOriginSuffixes.some((suffix) =>
             parsed.hostname === suffix
             || parsed.hostname.endsWith(`.${suffix}`)
-            || parsed.hostname.endsWith(`-${suffix}`)
         );
     } catch {
         return false;
