@@ -502,21 +502,44 @@
    AUTH PAGE ANIMATIONS & STYLES
 ================================================================ */
 
-.auth-particle {
-  position: absolute;
-  border-radius: 50%;
-  background: hsl(194 44% 68% / 0.12);
-  pointer-events: none;
+.auth-visual-panel {
+  align-items: center;
+  justify-content: center;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 55% 42%, hsl(216 40% 16% / 0.26) 0%, transparent 46%),
+    linear-gradient(180deg, hsl(228 26% 3%) 0%, hsl(220 24% 4%) 100%);
 }
 
+.auth-visual-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 0%, transparent 74%, hsl(var(--background) / 0.5) 100%),
+    radial-gradient(circle at 50% 50%, transparent 0%, hsl(228 26% 3% / 0.24) 72%, hsl(228 26% 3% / 0.78) 100%);
+}
 
-.auth-brand-gradient {
-  background: linear-gradient(
-    160deg,
-    hsl(200 38% 12%) 0%,
-    hsl(203 42% 8%) 40%,
-    hsl(198 33% 5%) 100%
-  );
+.auth-visual-image {
+  position: relative;
+  z-index: 0;
+  width: min(92%, 54rem);
+  height: auto;
+  max-height: min(72vh, 44rem);
+  object-fit: contain;
+  object-position: center center;
+  user-select: none;
+  -webkit-user-select: none;
+  filter: drop-shadow(0 24px 70px hsl(216 46% 28% / 0.24));
+}
+
+@media (max-width: 1280px) {
+  .auth-visual-image {
+    width: min(104%, 48rem);
+    max-height: 66vh;
+  }
 }
 
 
@@ -632,532 +655,64 @@
   animation: singra-pill-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-@keyframes singra-wordmark-breathe {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.86; }
-  50% { transform: translate3d(0.7%, -0.3%, 0) scale(1.012); opacity: 1; }
-}
-
-@keyframes singra-fog-drift {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(-3%, 2%, 0) scale(1.06); }
-}
-
-@keyframes singra-fog-shear {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1.02) rotate(-2deg); opacity: 0.84; }
-  45% { transform: translate3d(3%, -2%, 0) scale(1.08) rotate(1.5deg); opacity: 1; }
-  75% { transform: translate3d(-2%, 2%, 0) scale(1.04) rotate(-0.5deg); opacity: 0.92; }
-}
-
-@keyframes singra-fog-undercurrent {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  35% { transform: translate3d(-4%, 3%, 0) scale(1.07); }
-  70% { transform: translate3d(3%, -2%, 0) scale(1.04); }
-}
-
-.singra-hero-atmosphere {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.singra-hero-atmosphere::before,
-.singra-hero-atmosphere::after {
-  content: "";
-  position: absolute;
-  border-radius: 9999px;
-  pointer-events: none;
-}
-
-.singra-hero-atmosphere::before {
-  inset: 18% 20% 18% 42%;
-  background:
-    radial-gradient(ellipse at 72% 48%, hsl(var(--foreground) / 0.18) 0%, hsl(var(--foreground) / 0.08) 22%, transparent 62%),
-    radial-gradient(ellipse at 38% 56%, hsl(var(--foreground) / 0.08) 0%, transparent 58%),
-    linear-gradient(120deg, transparent 12%, hsl(var(--foreground) / 0.05) 48%, transparent 82%);
-  filter: blur(96px);
-  mix-blend-mode: screen;
-  opacity: 0.78;
-  animation: singra-fog-shear 30s ease-in-out infinite;
-}
-
-.singra-hero-atmosphere::after {
-  inset: 8% 44% 12% -8%;
-  background:
-    radial-gradient(circle at 78% 44%, hsl(var(--background) / 0.74) 0%, hsl(var(--background) / 0.32) 30%, transparent 72%),
-    radial-gradient(circle at 42% 58%, hsl(var(--background) / 0.12) 0%, transparent 54%);
-  filter: blur(102px);
-  opacity: 0.56;
-  animation: singra-fog-undercurrent 34s ease-in-out infinite;
-}
-
-.singra-hero-light-beam {
-  position: absolute;
-  inset: -8% -12% -14% 32%;
-  background:
-    radial-gradient(circle at 94% 46%, hsl(var(--foreground) / 0.38) 0%, hsl(var(--foreground) / 0.18) 14%, hsl(var(--foreground) / 0.05) 34%, transparent 58%),
-    linear-gradient(90deg, transparent 0%, hsl(var(--foreground) / 0.02) 42%, hsl(var(--foreground) / 0.095) 76%, transparent 100%);
-  filter: blur(48px);
-  opacity: 0.96;
-}
-
-.singra-hero-wordmark-stage {
+.singra-hero-artwork {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-}
-
-.singra-hero-wordmark-stack {
-  position: relative;
-  transform: translateX(10%) translateY(10%);
-}
-
-.singra-hero-wordmark {
-  display: block;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(4.8rem, 12.4vw, 12rem);
-  font-weight: 700;
-  line-height: 0.8;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  user-select: none;
-  -webkit-user-select: none;
-  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.97) 4%, #000 7%, #000 100%);
-  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.97) 4%, #000 7%, #000 100%);
-}
-
-.singra-hero-wordmark-glow,
-.singra-hero-wordmark-core,
-.singra-hero-wordmark-veil {
-  position: absolute;
-  inset: 0;
-  color: transparent;
-  -webkit-background-clip: text;
-  background-clip: text;
-}
-
-.singra-hero-wordmark-glow {
-  background-image: linear-gradient(90deg, hsl(var(--foreground) / 0.026) 0%, hsl(var(--foreground) / 0.05) 6%, hsl(var(--foreground) / 0.11) 12%, hsl(var(--foreground) / 0.22) 20%, hsl(var(--foreground) / 0.38) 42%, hsl(var(--foreground) / 0.9) 100%);
-  filter: blur(12px);
-  opacity: 0.8;
-  mix-blend-mode: screen;
-}
-
-.singra-hero-wordmark-core {
-  position: relative;
-  background-image: linear-gradient(90deg, hsl(var(--foreground) / 0.11) 0%, hsl(var(--foreground) / 0.18) 5%, hsl(var(--foreground) / 0.3) 9%, hsl(var(--foreground) / 0.48) 13%, hsl(var(--foreground) / 0.68) 20%, hsl(var(--foreground) / 0.84) 38%, hsl(var(--foreground) / 0.99) 100%);
-  filter: blur(0.08px) drop-shadow(0 0 26px hsl(var(--foreground) / 0.12));
-  animation: singra-wordmark-breathe 16s ease-in-out infinite;
-}
-
-.singra-hero-wordmark-veil {
-  background-image: linear-gradient(90deg, hsl(var(--background) / 0.48) 0%, hsl(var(--background) / 0.24) 6%, hsl(var(--background) / 0.08) 12%, transparent 18%);
-  filter: blur(3px);
-  opacity: 0.34;
-}
-
-.singra-hero-vapor-sheet {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(44px);
-  mix-blend-mode: screen;
-  animation: singra-fog-shear 24s ease-in-out infinite;
-}
-
-.singra-hero-vapor-sheet-one {
-  top: 24%;
-  right: 12%;
-  width: min(38rem, 38vw);
-  height: min(14rem, 18vh);
-  background:
-    radial-gradient(ellipse at 18% 54%, hsl(var(--foreground) / 0.18) 0%, hsl(var(--foreground) / 0.08) 18%, transparent 58%),
-    radial-gradient(ellipse at 52% 44%, hsl(var(--foreground) / 0.07) 0%, transparent 56%),
-    linear-gradient(100deg, hsl(var(--foreground) / 0.04) 0%, transparent 100%);
-  opacity: 0.54;
-}
-
-.singra-hero-vapor-sheet-two {
-  top: 42%;
-  right: 16%;
-  width: min(28rem, 28vw);
-  height: min(10rem, 12vh);
-  background:
-    radial-gradient(ellipse at 26% 54%, hsl(var(--foreground) / 0.13) 0%, hsl(var(--foreground) / 0.05) 24%, transparent 64%),
-    radial-gradient(ellipse at 72% 38%, hsl(var(--foreground) / 0.05) 0%, transparent 60%);
-  opacity: 0.38;
-  animation-duration: 24s;
-  animation-delay: -8s;
-}
-
-.singra-hero-vapor-sheet-three {
-  top: 58%;
-  right: 6%;
-  width: min(34rem, 36vw);
-  height: min(11rem, 14vh);
-  background:
-    radial-gradient(ellipse at 28% 50%, hsl(var(--foreground) / 0.12) 0%, hsl(var(--foreground) / 0.045) 22%, transparent 58%),
-    radial-gradient(ellipse at 74% 44%, hsl(var(--primary) / 0.035) 0%, transparent 60%),
-    linear-gradient(96deg, hsl(var(--foreground) / 0.028) 0%, transparent 100%);
-  opacity: 0.28;
-  animation-duration: 28s;
-  animation-delay: -14s;
-}
-
-.singra-hero-fog {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(56px);
-  animation: singra-fog-undercurrent 22s ease-in-out infinite;
-}
-
-.singra-hero-fog-one {
-  top: 16%;
-  right: -6%;
-  width: min(42rem, 48vw);
-  height: min(18rem, 26vh);
-  background:
-    radial-gradient(ellipse at 16% 52%, hsl(var(--foreground) / 0.14) 0%, hsl(var(--foreground) / 0.065) 18%, transparent 58%),
-    radial-gradient(ellipse at 54% 42%, hsl(var(--primary) / 0.05) 0%, transparent 56%),
-    linear-gradient(100deg, hsl(var(--foreground) / 0.022) 0%, transparent 100%);
-  mix-blend-mode: screen;
-  opacity: 0.5;
-}
-
-.singra-hero-fog-two {
-  top: 39%;
-  right: 14%;
-  width: min(32rem, 34vw);
-  height: min(13rem, 18vh);
-  background:
-    radial-gradient(ellipse at 36% 50%, hsl(var(--foreground) / 0.092) 0%, hsl(var(--foreground) / 0.04) 22%, transparent 64%),
-    radial-gradient(ellipse at 74% 42%, hsl(var(--foreground) / 0.03) 0%, transparent 66%),
-    radial-gradient(ellipse at 56% 56%, hsl(var(--primary) / 0.028) 0%, transparent 54%);
-  mix-blend-mode: screen;
-  opacity: 0.34;
-  animation-duration: 24s;
-  animation-delay: -6s;
-}
-
-.singra-hero-fog-three {
-  top: 16%;
-  left: -2%;
-  width: min(38rem, 44vw);
-  height: min(28rem, 44vh);
-  background:
-    radial-gradient(circle at 80% 40%, hsl(var(--background) / 0.88) 0%, hsl(var(--background) / 0.46) 30%, transparent 76%),
-    radial-gradient(circle at 42% 58%, hsl(var(--background) / 0.2) 0%, transparent 58%);
-  opacity: 0.76;
-  filter: blur(82px);
-  animation-duration: 26s;
-  animation-delay: -4s;
-}
-
-.singra-hero-fog-four {
-  top: 30%;
-  right: 4%;
-  width: min(44rem, 46vw);
-  height: min(20rem, 24vh);
-  background:
-    radial-gradient(ellipse at 20% 48%, hsl(var(--foreground) / 0.08) 0%, hsl(var(--foreground) / 0.026) 20%, transparent 54%),
-    radial-gradient(ellipse at 62% 46%, hsl(var(--foreground) / 0.04) 0%, transparent 60%),
-    linear-gradient(90deg, hsl(var(--foreground) / 0.018) 0%, transparent 100%);
-  mix-blend-mode: screen;
-  opacity: 0.3;
-  filter: blur(62px);
-  animation-duration: 26s;
-  animation-delay: -11s;
-}
-
-.singra-hero-fog-five {
-  top: 56%;
-  right: 18%;
-  width: min(30rem, 32vw);
-  height: min(14rem, 18vh);
-  background:
-    radial-gradient(ellipse at 28% 54%, hsl(var(--foreground) / 0.08) 0%, hsl(var(--foreground) / 0.028) 18%, transparent 58%),
-    radial-gradient(ellipse at 68% 42%, hsl(var(--foreground) / 0.04) 0%, transparent 62%);
-  mix-blend-mode: screen;
-  opacity: 0.22;
-  filter: blur(58px);
-  animation-duration: 30s;
-  animation-delay: -9s;
-}
-
-.singra-hero-fog-six {
-  top: 12%;
-  right: 22%;
-  width: min(22rem, 24vw);
-  height: min(24rem, 28vh);
-  background:
-    radial-gradient(circle at 54% 46%, hsl(var(--foreground) / 0.05) 0%, hsl(var(--foreground) / 0.02) 26%, transparent 72%),
-    radial-gradient(circle at 42% 64%, hsl(var(--primary) / 0.02) 0%, transparent 56%);
-  mix-blend-mode: screen;
-  opacity: 0.18;
-  filter: blur(72px);
-  animation-duration: 32s;
-  animation-delay: -16s;
-}
-
-.auth-brand-atmosphere {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
+  justify-content: flex-end;
   pointer-events: none;
+  overflow: hidden;
 }
 
-.auth-brand-atmosphere::before,
-.auth-brand-atmosphere::after {
+.singra-hero-artwork::before {
   content: "";
   position: absolute;
-  border-radius: 9999px;
-  pointer-events: none;
+  inset: -16% -10% -12% 36%;
+  background: radial-gradient(circle at 62% 42%, hsl(216 44% 54% / 0.16) 0%, transparent 58%);
+  filter: blur(54px);
 }
 
-.auth-brand-atmosphere::before {
-  inset: 22% 10% 18% 46%;
-  background:
-    radial-gradient(ellipse at 72% 48%, hsl(var(--foreground) / 0.12) 0%, hsl(var(--foreground) / 0.05) 22%, transparent 60%),
-    linear-gradient(110deg, transparent 8%, hsl(var(--foreground) / 0.03) 48%, transparent 84%);
-  filter: blur(76px);
-  mix-blend-mode: screen;
-  opacity: 0.72;
-  animation: singra-fog-shear 28s ease-in-out infinite;
-}
-
-.auth-brand-atmosphere::after {
-  inset: 14% 42% 18% -10%;
-  background:
-    radial-gradient(circle at 80% 44%, hsl(var(--background) / 0.72) 0%, hsl(var(--background) / 0.28) 30%, transparent 72%),
-    radial-gradient(circle at 40% 60%, hsl(var(--background) / 0.1) 0%, transparent 56%);
-  filter: blur(80px);
-  opacity: 0.52;
-  animation: singra-fog-undercurrent 32s ease-in-out infinite;
-}
-
-.auth-brand-light-beam {
-  position: absolute;
-  inset: -12% -18% -16% 34%;
-  background:
-    radial-gradient(circle at 96% 46%, hsl(var(--foreground) / 0.28) 0%, hsl(var(--foreground) / 0.12) 14%, hsl(var(--foreground) / 0.03) 30%, transparent 54%),
-    linear-gradient(90deg, transparent 0%, hsl(var(--foreground) / 0.012) 46%, hsl(var(--foreground) / 0.06) 76%, transparent 100%);
-  filter: blur(40px);
-  opacity: 0.8;
-}
-
-.auth-brand-wordmark-stage {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.auth-brand-wordmark-stack {
+.singra-hero-artwork-image {
   position: relative;
-  transform: translateX(24%) translateY(15%);
-}
-
-.auth-brand-wordmark {
-  display: block;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(4rem, 9.2vw, 7.5rem);
-  font-weight: 700;
-  line-height: 0.84;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  white-space: nowrap;
+  width: min(76vw, 82rem);
+  height: auto;
+  max-height: min(74vh, 46rem);
+  object-fit: contain;
+  object-position: center center;
   user-select: none;
   -webkit-user-select: none;
-  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.96) 4%, #000 7%, #000 100%);
-  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.96) 4%, #000 7%, #000 100%);
-}
-
-.auth-brand-wordmark-glow,
-.auth-brand-wordmark-core,
-.auth-brand-wordmark-veil {
-  position: absolute;
-  inset: 0;
-  color: transparent;
-  -webkit-background-clip: text;
-  background-clip: text;
-}
-
-.auth-brand-wordmark-glow {
-  background-image: linear-gradient(90deg, hsl(var(--foreground) / 0.022) 0%, hsl(var(--foreground) / 0.04) 6%, hsl(var(--foreground) / 0.08) 12%, hsl(var(--foreground) / 0.15) 20%, hsl(var(--foreground) / 0.28) 42%, hsl(var(--foreground) / 0.54) 100%);
-  filter: blur(10px);
-  opacity: 0.7;
-  mix-blend-mode: screen;
-}
-
-.auth-brand-wordmark-core {
-  position: relative;
-  background-image: linear-gradient(90deg, hsl(var(--foreground) / 0.09) 0%, hsl(var(--foreground) / 0.14) 5%, hsl(var(--foreground) / 0.22) 9%, hsl(var(--foreground) / 0.36) 13%, hsl(var(--foreground) / 0.48) 20%, hsl(var(--foreground) / 0.68) 40%, hsl(var(--foreground) / 0.9) 100%);
-  filter: blur(0.08px) drop-shadow(0 0 18px hsl(var(--foreground) / 0.08));
-  animation: singra-wordmark-breathe 18s ease-in-out infinite;
-}
-
-.auth-brand-wordmark-veil {
-  background-image: linear-gradient(90deg, hsl(var(--background) / 0.42) 0%, hsl(var(--background) / 0.22) 6%, hsl(var(--background) / 0.08) 12%, transparent 18%);
-  filter: blur(3px);
-  opacity: 0.32;
-}
-
-.auth-brand-vapor-sheet {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(32px);
-  mix-blend-mode: screen;
-  animation: singra-fog-shear 24s ease-in-out infinite;
-}
-
-.auth-brand-vapor-sheet-one {
-  top: 24%;
-  right: 8%;
-  width: min(22rem, 24vw);
-  height: min(8rem, 10vh);
-  background:
-    radial-gradient(ellipse at 20% 50%, hsl(var(--foreground) / 0.11) 0%, hsl(var(--foreground) / 0.045) 18%, transparent 58%),
-    radial-gradient(ellipse at 66% 46%, hsl(var(--foreground) / 0.038) 0%, transparent 58%);
-  opacity: 0.4;
-}
-
-.auth-brand-vapor-sheet-two {
-  top: 46%;
-  right: 14%;
-  width: min(16rem, 18vw);
-  height: min(6rem, 7vh);
-  background:
-    radial-gradient(ellipse at 28% 52%, hsl(var(--foreground) / 0.085) 0%, hsl(var(--foreground) / 0.03) 20%, transparent 60%);
-  opacity: 0.28;
-  animation-duration: 26s;
-  animation-delay: -9s;
-}
-
-.auth-brand-vapor-sheet-three {
-  top: 62%;
-  right: 6%;
-  width: min(18rem, 20vw);
-  height: min(7rem, 8vh);
-  background:
-    radial-gradient(ellipse at 30% 54%, hsl(var(--foreground) / 0.068) 0%, hsl(var(--foreground)/ 0.024) 22%, transparent 60%),
-    radial-gradient(ellipse at 72% 42%, hsl(var(--primary) / 0.028) 0%, transparent 58%);
-  opacity: 0.2;
-  animation-duration: 28s;
-  animation-delay: -14s;
-}
-
-.auth-brand-fog {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(48px);
-  animation: singra-fog-undercurrent 22s ease-in-out infinite;
-}
-
-.auth-brand-fog-one {
-  top: 14%;
-  right: -12%;
-  width: min(30rem, 38vw);
-  height: min(14rem, 20vh);
-  background:
-    radial-gradient(ellipse at 20% 50%, hsl(var(--foreground) / 0.1) 0%, hsl(var(--foreground) / 0.045) 18%, transparent 58%),
-    radial-gradient(ellipse at 58% 42%, hsl(var(--primary) / 0.032) 0%, transparent 58%);
-  mix-blend-mode: screen;
-  opacity: 0.36;
-}
-
-.auth-brand-fog-two {
-  top: 42%;
-  right: 4%;
-  width: min(22rem, 26vw);
-  height: min(11rem, 15vh);
-  background:
-    radial-gradient(ellipse at 34% 52%, hsl(var(--foreground) / 0.06) 0%, hsl(var(--foreground) / 0.022) 18%, transparent 62%);
-  mix-blend-mode: screen;
-  opacity: 0.26;
-  animation-duration: 24s;
-  animation-delay: -7s;
-}
-
-.auth-brand-fog-three {
-  top: 28%;
-  right: -4%;
-  width: min(26rem, 32vw);
-  height: min(18rem, 22vh);
-  background:
-    radial-gradient(ellipse at 22% 48%, hsl(var(--foreground) / 0.042) 0%, transparent 58%),
-    radial-gradient(ellipse at 70% 50%, hsl(var(--foreground) / 0.022) 0%, transparent 64%);
-  mix-blend-mode: screen;
-  opacity: 0.18;
-  filter: blur(48px);
-  animation-duration: 28s;
-  animation-delay: -12s;
-}
-
-.auth-brand-fog-four {
-  top: 56%;
-  right: 16%;
-  width: min(20rem, 22vw);
-  height: min(10rem, 12vh);
-  background:
-    radial-gradient(ellipse at 30% 54%, hsl(var(--foreground) / 0.05) 0%, hsl(var(--foreground) / 0.02) 20%, transparent 60%),
-    radial-gradient(ellipse at 72% 40%, hsl(var(--foreground) / 0.024) 0%, transparent 62%);
-  mix-blend-mode: screen;
-  opacity: 0.16;
-  filter: blur(44px);
-  animation-duration: 30s;
-  animation-delay: -10s;
-}
-
-.auth-brand-fog-five {
-  top: 18%;
-  right: 22%;
-  width: min(16rem, 18vw);
-  height: min(18rem, 22vh);
-  background:
-    radial-gradient(circle at 52% 44%, hsl(var(--foreground) / 0.032) 0%, hsl(var(--foreground) / 0.012) 28%, transparent 70%);
-  mix-blend-mode: screen;
-  opacity: 0.12;
-  filter: blur(58px);
-  animation-duration: 34s;
-  animation-delay: -18s;
+  filter: drop-shadow(0 28px 90px hsl(216 46% 34% / 0.24));
+  transform: translateX(5%);
 }
 
 @media (max-width: 1024px) {
-  .singra-hero-wordmark-stage {
+  .singra-hero-artwork {
+    align-items: flex-start;
     justify-content: center;
+    opacity: 0.72;
   }
 
-  .singra-hero-wordmark-stack {
-    transform: translateX(8%) translateY(13%);
+  .singra-hero-artwork::before {
+    inset: -12% -20% 22% -20%;
   }
 
-  .singra-hero-wordmark {
-    font-size: clamp(4.4rem, 22vw, 9rem);
-    letter-spacing: 0.1em;
+  .singra-hero-artwork-image {
+    width: min(132vw, 54rem);
+    max-height: 52vh;
+    transform: translateY(-4%);
+  }
+}
+
+@media (max-width: 640px) {
+  .singra-hero-artwork {
+    opacity: 0.55;
   }
 
-  .singra-hero-light-beam {
-    inset: -12% -25% 8% 24%;
-    opacity: 0.68;
-  }
-
-  .singra-hero-fog-one,
-  .singra-hero-fog-two,
-  .singra-hero-fog-four {
-    width: 78vw;
-  }
-
-  .singra-hero-fog-three {
-    width: 72vw;
-    left: -8%;
-  }
-
-  .singra-hero-fog-five,
-  .singra-hero-fog-six {
-    width: 66vw;
+  .singra-hero-artwork-image {
+    width: min(150vw, 38rem);
+    max-height: 42vh;
+    transform: translateY(0);
   }
 }
 
@@ -1167,50 +722,11 @@
   .singra-hero-subtitle,
   .singra-hero-desc,
   .singra-hero-cta,
-  .singra-hero-pill,
-  .singra-hero-wordmark-core,
-  .singra-hero-vapor-sheet,
-  .singra-hero-fog,
-  .auth-brand-wordmark-core,
-  .auth-brand-vapor-sheet,
-  .auth-brand-fog {
+  .singra-hero-pill {
     opacity: 1;
     animation: none;
     transform: none;
   }
-}
-
-/* ================================================================
-   VAULT EMBLEM (Hero background element)
-================================================================ */
-
-.singra-vault-emblem-stack {
-  position: relative;
-  width: clamp(14rem, 30vw, 36rem);
-  height: clamp(17rem, 36vw, 43rem);
-  transform: translateX(16%) translateY(12%);
-}
-
-.singra-vault-emblem {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.singra-vault-emblem-glow {
-  color: hsl(var(--foreground) / 0.22);
-  filter: blur(14px);
-  opacity: 0.6;
-  mix-blend-mode: screen;
-}
-
-.singra-vault-emblem-core {
-  color: hsl(var(--foreground) / 0.72);
-  filter: blur(0.5px) drop-shadow(0 0 22px hsl(var(--foreground) / 0.1));
-  animation: singra-wordmark-breathe 18s ease-in-out infinite;
 }
 
 /* ── Typography: serif headline utility ─────────────────────── */
@@ -1227,13 +743,6 @@
 @keyframes auth-form-reveal {
   0% { opacity: 0; transform: translateX(20px); }
   100% { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes auth-float {
-  0%, 100% { transform: translateY(0) translateX(0); }
-  25% { transform: translateY(-18px) translateX(9px); }
-  50% { transform: translateY(-9px) translateX(-5px); }
-  75% { transform: translateY(-22px) translateX(7px); }
 }
 
 .auth-brand-reveal {

@@ -1,9 +1,9 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Hero Section for Landing Page
- * 
- * Main call-to-action section with singra-core-ai style wordmark and animations.
+ *
+ * Main call-to-action section with responsive brand artwork.
  */
 
 import { useTranslation } from 'react-i18next';
@@ -11,68 +11,28 @@ import { Link } from 'react-router-dom';
 import { Shield, Lock, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SingraVaultLogo } from '@/components/SingraVaultLogo';
-import { NebulaHeroBackground } from '@/components/NebulaHeroBackground';
 
 export function Hero() {
   const { t } = useTranslation();
 
   return (
     <section className="relative overflow-hidden">
-      {/* Canvas nebula background */}
-      <NebulaHeroBackground variant="landing" showText={false} showParticles={false} />
+      <div className="absolute inset-0 bg-[hsl(228_26%_3%)]" />
 
-      {/* Animated atmosphere overlay */}
-      <div aria-hidden="true" className="singra-hero-atmosphere">
-        <div className="singra-hero-light-beam" />
-        <div className="singra-hero-vapor-sheet singra-hero-vapor-sheet-one" />
-        <div className="singra-hero-vapor-sheet singra-hero-vapor-sheet-two" />
-        <div className="singra-hero-vapor-sheet singra-hero-vapor-sheet-three" />
-        <div className="singra-hero-fog singra-hero-fog-one" />
-        <div className="singra-hero-fog singra-hero-fog-two" />
-        <div className="singra-hero-fog singra-hero-fog-three" />
-        <div className="singra-hero-fog singra-hero-fog-four" />
-        <div className="singra-hero-fog singra-hero-fog-five" />
-        <div className="singra-hero-fog singra-hero-fog-six" />
-
-        {/* Vault emblem — abstract geometric shield/key, replaces text wordmark */}
-        <div className="singra-hero-wordmark-stage" aria-hidden="true">
-          <div className="singra-vault-emblem-stack">
-            <svg
-              className="singra-vault-emblem singra-vault-emblem-glow"
-              viewBox="0 0 200 240"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d="M100 8 L188 44 L188 120 C188 168 148 204 100 224 C52 204 12 168 12 120 L12 44 Z" stroke="currentColor" strokeWidth="2" fill="none" />
-              <circle cx="100" cy="110" r="32" stroke="currentColor" strokeWidth="2" fill="none" />
-              <circle cx="100" cy="110" r="18" stroke="currentColor" strokeWidth="1.5" fill="none" />
-              <line x1="100" y1="92" x2="100" y2="72" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <line x1="100" y1="128" x2="100" y2="148" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <line x1="68" y1="110" x2="48" y2="110" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <line x1="132" y1="110" x2="152" y2="110" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <circle cx="100" cy="110" r="5" fill="currentColor" />
-            </svg>
-            <svg
-              className="singra-vault-emblem singra-vault-emblem-core"
-              viewBox="0 0 200 240"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d="M100 8 L188 44 L188 120 C188 168 148 204 100 224 C52 204 12 168 12 120 L12 44 Z" stroke="currentColor" strokeWidth="2" fill="none" />
-              <circle cx="100" cy="110" r="32" stroke="currentColor" strokeWidth="2" fill="none" />
-              <circle cx="100" cy="110" r="18" stroke="currentColor" strokeWidth="1.5" fill="none" />
-              <line x1="100" y1="92" x2="100" y2="72" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <line x1="100" y1="128" x2="100" y2="148" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <line x1="68" y1="110" x2="48" y2="110" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <line x1="132" y1="110" x2="152" y2="110" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <circle cx="100" cy="110" r="5" fill="currentColor" />
-            </svg>
-          </div>
-        </div>
+      <div aria-hidden="true" className="singra-hero-artwork">
+        <img
+          src="/brand/landingpage.png"
+          alt=""
+          width={1800}
+          height={874}
+          className="singra-hero-artwork-image"
+          loading="eager"
+          decoding="async"
+        />
       </div>
 
       {/* Gradient overlay for text readability */}
-      <div className="absolute inset-0 bg-[linear-gradient(90deg,hsl(228_26%_3%_/_0.96)_0%,hsl(228_26%_3%_/_0.84)_18%,hsl(228_26%_3%_/_0.38)_38%,transparent_62%),linear-gradient(180deg,transparent_0%,hsl(228_26%_3%_/_0.14)_66%,hsl(228_26%_3%_/_0.88)_100%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,hsl(228_26%_3%_/_0.96)_0%,hsl(228_26%_3%_/_0.88)_20%,hsl(228_26%_3%_/_0.48)_43%,transparent_72%),linear-gradient(180deg,hsl(228_26%_3%_/_0.08)_0%,transparent_34%,hsl(228_26%_3%_/_0.24)_70%,hsl(228_26%_3%_/_0.92)_100%)]" />
       <div className="absolute inset-y-0 right-0 hidden w-[62vw] bg-[radial-gradient(circle_at_84%_46%,hsl(var(--foreground)/0.1)_0%,transparent_46%)] blur-3xl lg:block" />
 
       <div className="container relative z-10 mx-auto px-4 pb-16 pt-28">
@@ -84,7 +44,7 @@ export function Hero() {
               AES-256 + Argon2id Encryption
             </div>
 
-            {/* Main heading with singra-core-ai style */}
+            {/* Main heading */}
             <div className="space-y-5">
               <h1 className="singra-hero-title singra-headline-serif text-balance text-5xl font-bold tracking-[-0.055em] text-foreground [text-shadow:0_0_42px_hsl(228_26%_3%_/_0.96),0_0_110px_hsl(228_26%_3%_/_0.82)] md:text-7xl lg:text-[5.75rem] lg:leading-[0.92]">
                 {t('landing.hero.title')}
@@ -101,12 +61,12 @@ export function Hero() {
               {t('landing.hero.description')}
             </p>
 
-            {/* CTA Buttons with singra-core-ai style */}
+            {/* CTA Buttons */}
             <div className="singra-hero-cta flex flex-col gap-5">
               <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center lg:justify-start">
                 <Link to="/auth">
-                  <Button 
-                    size="lg" 
+                  <Button
+                    size="lg"
                     className="min-h-[56px] min-w-[220px] rounded-full px-8 text-base shadow-[0_18px_60px_hsl(var(--primary)/0.18)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_22px_72px_hsl(var(--primary)/0.24)]"
                   >
                     {t('landing.hero.cta')}
