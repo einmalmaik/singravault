@@ -502,7 +502,7 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(false);
     });
 
-    it("keeps the vault unlocked but quarantines unreadable items", async () => {
+    it("keeps unlock digest-based and accepts deferred unreadable item quarantine", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
@@ -544,6 +544,19 @@ describe("VaultContext", () => {
 
       expect(unlockResult?.error).toBeNull();
       expect(result.current.isLocked).toBe(false);
+      expect(mockDecryptVaultItem).not.toHaveBeenCalled();
+      expect(result.current.integrityMode).toBe("healthy");
+
+      act(() => {
+        result.current.reportUnreadableItems([
+          {
+            id: "item-bad",
+            reason: "ciphertext_changed",
+            updatedAt: "2026-04-22T10:00:00.000Z",
+          },
+        ]);
+      });
+
       expect(result.current.integrityMode).toBe("quarantine");
       expect(result.current.quarantinedItems).toEqual([
         expect.objectContaining({

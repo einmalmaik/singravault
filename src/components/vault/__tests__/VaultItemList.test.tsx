@@ -20,12 +20,14 @@ const mockDecryptItem = vi.fn();
 const mockEncryptItem = vi.fn();
 const mockVerifyIntegrity = vi.fn();
 const mockRefreshIntegrityBaseline = vi.fn();
+const mockReportUnreadableItems = vi.fn();
 
 const mockVaultContext = {
   decryptItem: (...args: unknown[]) => mockDecryptItem(...args),
   encryptItem: (...args: unknown[]) => mockEncryptItem(...args),
   verifyIntegrity: (...args: unknown[]) => mockVerifyIntegrity(...args),
   refreshIntegrityBaseline: (...args: unknown[]) => mockRefreshIntegrityBaseline(...args),
+  reportUnreadableItems: (...args: unknown[]) => mockReportUnreadableItems(...args),
   isDuressMode: false,
   lastIntegrityResult: null as
     | null
@@ -107,6 +109,7 @@ describe('VaultItemList', () => {
     mockEncryptItem.mockResolvedValue('encrypted');
     mockRefreshIntegrityBaseline.mockResolvedValue(undefined);
     mockVerifyIntegrity.mockResolvedValue(null);
+    mockReportUnreadableItems.mockClear();
     mockDecryptItem.mockImplementation(async (cipher: string) => {
       if (cipher === 'cipher-bad') {
         throw new Error('OperationError');
@@ -153,5 +156,11 @@ describe('VaultItemList', () => {
 
     expect(screen.queryByText('missing-title')).not.toBeInTheDocument();
     expect(mockVerifyIntegrity).toHaveBeenCalled();
+    expect(mockReportUnreadableItems).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'item-bad',
+        reason: 'ciphertext_changed',
+      }),
+    ]);
   });
 });

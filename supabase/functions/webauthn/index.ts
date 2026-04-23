@@ -7,6 +7,7 @@
  * - generate-authentication-options: Creates a challenge for passkey authentication
  * - verify-authentication: Verifies the authentication response
  * - activate-prf: Verifies authentication and stores wrapped master key for PRF unlock
+ * - upgrade-wrapped-key: Verifies authentication and rotates legacy wrapped key material
  * - list-credentials: Lists all registered passkeys for a user
  * - delete-credential: Removes a registered passkey
  *
@@ -164,7 +165,7 @@ Deno.serve(async (req: Request) => {
                 return await handleActivatePrf(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "upgrade-wrapped-key":
-                return await handleUpgradeWrappedKey(user, supabaseAdmin, body, corsHeaders);
+                return await handleUpgradeWrappedKey(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "list-credentials":
                 return await handleListCredentials(user, rp, supabaseAdmin, corsHeaders);
@@ -673,35 +674,120 @@ async function handleActivatePrf(
 
 async function handleUpgradeWrappedKey(
     user: { id: string },
+    rp: { rpID: string; expectedOrigins: string[]; expectedRPIDs: string[] },
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
 ) {
-    const { credentialId, wrappedMasterKey } = body as {
+    const { credential, expectedCredentialId, credentialId, wrappedMasterKey } = body as {
+        credential: unknown;
+        expectedCredentialId?: string;
         credentialId?: string;
         wrappedMasterKey?: string;
     };
+    const targetCredentialId = expectedCredentialId || credentialId;
 
-    if (!credentialId || typeof wrappedMasterKey !== "string" || wrappedMasterKey.trim().length === 0) {
-        return jsonResponse({ error: "Missing credentialId or wrappedMasterKey" }, 400, corsHeaders);
+    if (!credential) {
+        return jsonResponse({ error: "Missing credential response" }, 400, corsHeaders);
     }
 
-    const { error } = await supabase
-        .from("passkey_credentials")
-        .update({
-            wrapped_master_key: wrappedMasterKey,
-            prf_enabled: true,
-            last_used_at: new Date().toISOString(),
-        })
+    if (!targetCredentialId) {
+        return jsonResponse({ error: "Missing expectedCredentialId" }, 400, corsHeaders);
+    }
+
+    if (typeof wrappedMasterKey !== "string" || wrappedMasterKey.trim().length === 0) {
+        return jsonResponse({ error: "Missing wrappedMasterKey" }, 400, corsHeaders);
+    }
+
+    const credentialResponse = credential as { id?: string };
+    if (credentialResponse.id !== targetCredentialId) {
+        return jsonResponse({ error: "Unexpected passkey credential used" }, 400, corsHeaders);
+    }
+
+    const { data: challenges } = await supabase
+        .from("webauthn_challenges")
+        .select("*")
         .eq("user_id", user.id)
-        .eq("credential_id", credentialId);
+        .eq("type", "authentication")
+        .order("created_at", { ascending: false })
+        .limit(1);
 
-    if (error) {
-        console.error("Failed to upgrade wrapped passkey key:", error);
-        return jsonResponse({ error: "Failed to update wrapped key" }, 500, corsHeaders);
+    if (!challenges || challenges.length === 0) {
+        return jsonResponse({ error: "No pending authentication challenge" }, 400, corsHeaders);
     }
 
-    return jsonResponse({ updated: true }, 200, corsHeaders);
+    const storedChallenge = challenges[0];
+
+    if (new Date(storedChallenge.expires_at) < new Date()) {
+        await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+        return jsonResponse({ error: "Challenge expired" }, 400, corsHeaders);
+    }
+
+    await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+
+    const { data: dbCredentials } = await supabase
+        .from("passkey_credentials")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("credential_id", targetCredentialId);
+
+    if (!dbCredentials || dbCredentials.length === 0) {
+        return jsonResponse({ error: "Credential not found" }, 400, corsHeaders);
+    }
+
+    const dbCredential = dbCredentials[0] as {
+        id: string;
+        credential_id: string;
+        rp_id?: string | null;
+        public_key: string;
+        counter: number;
+        transports?: string[];
+    };
+
+    if (!isCredentialAvailableForRp(dbCredential.rp_id, rp.rpID)) {
+        return jsonResponse({ error: "Credential not available for this app surface" }, 400, corsHeaders);
+    }
+
+    try {
+        const verification = await verifyAuthenticationResponse({
+            response: credential as AuthenticationResponseJSON,
+            expectedChallenge: storedChallenge.challenge,
+            expectedOrigin: rp.expectedOrigins,
+            expectedRPID: rp.expectedRPIDs,
+            credential: {
+                id: dbCredential.credential_id,
+                publicKey: isoBase64URL.toBuffer(dbCredential.public_key),
+                counter: dbCredential.counter,
+                transports: dbCredential.transports || undefined,
+            },
+        });
+
+        if (!verification.verified) {
+            return jsonResponse({ error: "Authentication verification failed" }, 400, corsHeaders);
+        }
+
+        const { error } = await supabase
+            .from("passkey_credentials")
+            .update({
+                counter: verification.authenticationInfo.newCounter,
+                wrapped_master_key: wrappedMasterKey,
+                prf_enabled: true,
+                last_used_at: new Date().toISOString(),
+            })
+            .eq("id", dbCredential.id)
+            .eq("user_id", user.id)
+            .eq("credential_id", dbCredential.credential_id);
+
+        if (error) {
+            console.error("Failed to upgrade wrapped passkey key:", error);
+            return jsonResponse({ error: "Failed to update wrapped key" }, 500, corsHeaders);
+        }
+
+        return jsonResponse({ updated: true, credentialId: dbCredential.credential_id }, 200, corsHeaders);
+    } catch (err) {
+        console.error("Wrapped-key upgrade verification error:", err);
+        return jsonResponse({ error: "Verification failed" }, 400, corsHeaders);
+    }
 }
 
 // ============ Credential Management ============

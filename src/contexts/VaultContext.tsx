@@ -172,7 +172,6 @@ interface NormalizedTrustedVaultMutation {
 interface VaultIntegrityAssessment {
     inspection: VaultIntegrityBaselineInspection;
     unreadableCategoryReason: VaultIntegrityBlockedReason | null;
-    unreadableItems: QuarantinedVaultItem[];
     result: VaultIntegrityVerificationResult;
 }
 
@@ -189,7 +188,7 @@ function canRebaselineTrustedMutation(
     assessment: VaultIntegrityAssessment,
     trustedMutation: NormalizedTrustedVaultMutation,
 ): boolean {
-    if (assessment.unreadableCategoryReason || assessment.unreadableItems.length > 0) {
+    if (assessment.unreadableCategoryReason) {
         return false;
     }
 
@@ -208,10 +207,17 @@ function canRebaselineTrustedMutation(
     }
 
     return (
-        assessment.inspection.baselineKind === 'missing'
-        || assessment.inspection.categoryDriftIds.length > 0
+        assessment.inspection.categoryDriftIds.length > 0
         || assessment.inspection.itemDrifts.length > 0
     );
+}
+
+function canPersistIntegrityBaselineImmediately(
+    assessment: VaultIntegrityAssessment,
+    snapshot: OfflineVaultSnapshot,
+): boolean {
+    return assessment.inspection.baselineKind !== 'missing'
+        || (snapshot.items.length === 0 && snapshot.categories.length === 0);
 }
 
 interface VaultContextType {
@@ -272,6 +278,11 @@ interface VaultContextType {
      * Recomputes and persists the current local integrity baseline after a trusted mutation.
      */
     refreshIntegrityBaseline: (trustedMutation?: TrustedVaultMutation) => Promise<void>;
+    /**
+     * Records item decryptability failures discovered while rendering. This keeps
+     * unlock digest-based and avoids decrypting the full vault twice.
+     */
+    reportUnreadableItems: (items: QuarantinedVaultItem[]) => void;
     /**
      * Whether integrity verification has been performed since unlock
      */
@@ -584,31 +595,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
         return null;
     }, []);
 
-    const detectQuarantinedItems = useCallback(async (
-        snapshot: OfflineVaultSnapshot,
-        activeKey: CryptoKey,
-    ): Promise<QuarantinedVaultItem[]> => {
-        const quarantinedItems: QuarantinedVaultItem[] = [];
-
-        for (const item of snapshot.items) {
-            try {
-                await decryptVaultItem(item.encrypted_data, activeKey, item.id);
-            } catch {
-                quarantinedItems.push({
-                    id: item.id,
-                    reason: 'ciphertext_changed',
-                    updatedAt: item.updated_at ?? null,
-                });
-            }
-        }
-
-        return quarantinedItems.sort((left, right) => {
-            const leftDate = left.updatedAt ?? '';
-            const rightDate = right.updatedAt ?? '';
-            return rightDate.localeCompare(leftDate) || left.id.localeCompare(right.id);
-        });
-    }, []);
-
     const mergeQuarantinedItems = useCallback((
         ...groups: QuarantinedVaultItem[][]
     ): QuarantinedVaultItem[] => {
@@ -649,7 +635,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return {
                 inspection,
                 unreadableCategoryReason: null,
-                unreadableItems: [],
                 result: baseResult,
             };
         }
@@ -659,7 +644,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return {
                 inspection,
                 unreadableCategoryReason: categoryIssue,
-                unreadableItems: [],
                 result: {
                     ...baseResult,
                     valid: false,
@@ -670,16 +654,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
             };
         }
 
-        const unreadableItems = await detectQuarantinedItems(snapshot, activeKey);
-        const quarantinedItems = mergeQuarantinedItems(
-            baseResult.quarantinedItems,
-            unreadableItems,
-        );
+        const quarantinedItems = baseResult.quarantinedItems;
         if (quarantinedItems.length > 0) {
             return {
                 inspection,
                 unreadableCategoryReason: null,
-                unreadableItems,
                 result: {
                     ...baseResult,
                     valid: true,
@@ -693,7 +672,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
         return {
             inspection,
             unreadableCategoryReason: null,
-            unreadableItems,
             result: {
                 ...baseResult,
                 valid: true,
@@ -704,9 +682,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         };
     }, [
         buildIntegritySnapshot,
-        detectQuarantinedItems,
         detectUnreadableCategories,
-        mergeQuarantinedItems,
         user,
     ]);
 
@@ -717,6 +693,46 @@ export function VaultProvider({ children }: VaultProviderProps) {
         setQuarantinedItems(result.quarantinedItems);
         setIntegrityBlockedReason(result.blockedReason ?? null);
     }, []);
+
+    const reportUnreadableItems = useCallback((items: QuarantinedVaultItem[]): void => {
+        if (items.length === 0) {
+            return;
+        }
+
+        setIntegrityVerified(true);
+        setIntegrityMode((currentMode) => currentMode === 'blocked' ? currentMode : 'quarantine');
+        setQuarantinedItems((currentItems) => mergeQuarantinedItems(currentItems, items));
+        setLastIntegrityResult((currentResult) => {
+            const mergedItems = mergeQuarantinedItems(currentResult?.quarantinedItems ?? [], items);
+
+            if (!currentResult) {
+                return {
+                    valid: true,
+                    isFirstCheck: false,
+                    computedRoot: '',
+                    itemCount: mergedItems.length,
+                    categoryCount: 0,
+                    mode: 'quarantine',
+                    quarantinedItems: mergedItems,
+                };
+            }
+
+            if (currentResult.mode === 'blocked') {
+                return {
+                    ...currentResult,
+                    quarantinedItems: mergedItems,
+                };
+            }
+
+            return {
+                ...currentResult,
+                valid: true,
+                mode: 'quarantine',
+                blockedReason: undefined,
+                quarantinedItems: mergedItems,
+            };
+        });
+    }, [mergeQuarantinedItems]);
 
     const persistMissingOrLegacyBaseline = useCallback(async (
         integritySnapshot: VaultIntegritySnapshot,
@@ -791,12 +807,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }
 
             if (integrityResult.mode === 'healthy') {
-                await persistMissingOrLegacyBaseline(
-                    snapshotBundle.integritySnapshot,
-                    activeKey,
-                    integrityAssessment.inspection,
-                );
-                await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
+                if (canPersistIntegrityBaselineImmediately(integrityAssessment, snapshotBundle.rawSnapshot)) {
+                    await persistMissingOrLegacyBaseline(
+                        snapshotBundle.integritySnapshot,
+                        activeKey,
+                        integrityAssessment.inspection,
+                    );
+                    await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
+                }
             } else {
                 setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
             }
@@ -855,8 +873,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
             integrityAssessment,
             normalizedTrustedMutation,
         );
+        const trustedFirstBaselineAllowed = integrityAssessment.inspection.baselineKind === 'missing'
+            && snapshotBundle.rawSnapshot.items.every((item) => normalizedTrustedMutation.itemIds.has(item.id))
+            && snapshotBundle.rawSnapshot.categories.every((category) => normalizedTrustedMutation.categoryIds.has(category.id));
 
-        if (integrityResult.mode === 'blocked' && !trustedRebaselineAllowed) {
+        if (integrityResult.mode === 'blocked' && !trustedRebaselineAllowed && !trustedFirstBaselineAllowed) {
             await setBlockedIntegrityState(
                 encryptionKey,
                 integrityResult.blockedReason ?? 'snapshot_malformed',
@@ -865,9 +886,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return;
         }
 
-        if (integrityResult.mode === 'quarantine' && !trustedRebaselineAllowed) {
+        if (integrityResult.mode === 'quarantine' && !trustedRebaselineAllowed && !trustedFirstBaselineAllowed) {
             applyIntegrityResultState(integrityResult);
             setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
+            return;
+        }
+
+        if (integrityAssessment.inspection.baselineKind === 'missing' && !trustedFirstBaselineAllowed) {
+            applyIntegrityResultState(integrityResult);
             return;
         }
 
@@ -2166,12 +2192,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
             applyIntegrityResultState(result);
 
             if (result.mode === 'healthy') {
-                await persistMissingOrLegacyBaseline(
-                    buildIntegritySnapshot(rawSnapshot),
-                    encryptionKey,
-                    integrityAssessment.inspection,
-                );
-                await persistTrustedIntegritySnapshot(rawSnapshot);
+                if (canPersistIntegrityBaselineImmediately(integrityAssessment, rawSnapshot)) {
+                    await persistMissingOrLegacyBaseline(
+                        buildIntegritySnapshot(rawSnapshot),
+                        encryptionKey,
+                        integrityAssessment.inspection,
+                    );
+                    await persistTrustedIntegritySnapshot(rawSnapshot);
+                }
             } else {
                 setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
             }
@@ -2326,6 +2354,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 verifyIntegrity,
                 updateIntegrity,
                 refreshIntegrityBaseline,
+                reportUnreadableItems,
                 integrityVerified,
                 lastIntegrityResult,
                 integrityMode,
