@@ -3,7 +3,7 @@
 /**
  * @fileoverview Hero Section for Landing Page
  *
- * Main call-to-action section with responsive brand artwork.
+ * Main call-to-action section with full-section brand artwork.
  */
 
 import { useTranslation } from 'react-i18next';

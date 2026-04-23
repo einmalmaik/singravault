@@ -651,62 +651,19 @@
 .singra-hero-artwork {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
   pointer-events: none;
   overflow: hidden;
 }
 
-.singra-hero-artwork::before {
-  content: "";
-  position: absolute;
-  inset: -16% -10% -12% 36%;
-  background: radial-gradient(circle at 62% 42%, hsl(216 44% 54% / 0.16) 0%, transparent 58%);
-  filter: blur(54px);
-}
-
 .singra-hero-artwork-image {
-  position: relative;
-  width: min(76vw, 82rem);
-  height: auto;
-  max-height: min(74vh, 46rem);
-  object-fit: contain;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   object-position: center center;
   user-select: none;
   -webkit-user-select: none;
-  filter: drop-shadow(0 28px 90px hsl(216 46% 34% / 0.24));
-  transform: translateX(5%);
-}
-
-@media (max-width: 1024px) {
-  .singra-hero-artwork {
-    align-items: flex-start;
-    justify-content: center;
-    opacity: 0.72;
-  }
-
-  .singra-hero-artwork::before {
-    inset: -12% -20% 22% -20%;
-  }
-
-  .singra-hero-artwork-image {
-    width: min(132vw, 54rem);
-    max-height: 52vh;
-    transform: translateY(-4%);
-  }
-}
-
-@media (max-width: 640px) {
-  .singra-hero-artwork {
-    opacity: 0.55;
-  }
-
-  .singra-hero-artwork-image {
-    width: min(150vw, 38rem);
-    max-height: 42vh;
-    transform: translateY(0);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
