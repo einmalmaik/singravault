@@ -23,12 +23,7 @@ function createSupabaseAuthClient() {
 Deno.serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
 
-    // Credentials explizit für Cookies erlauben, aber Origin NICHT reflektieren!
-    // getCorsHeaders liefert den strikten CORS-Header bereits sicher zurück.
-    const headers = new Headers({
-        ...corsHeaders,
-        "Access-Control-Allow-Credentials": "true",
-    });
+    const headers = new Headers(corsHeaders);
     const jsonHeaders = (): Headers => {
         const responseHeaders = new Headers(headers);
         responseHeaders.set("Content-Type", "application/json");
@@ -425,4 +420,3 @@ function parseBearerToken(authHeader: string | null): string | null {
     const token = authHeader.trim();
     return token || null;
 }
-
