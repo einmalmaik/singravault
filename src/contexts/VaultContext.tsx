@@ -10,7 +10,7 @@
  * - Vault item encryption/decryption helpers
  */
 
-import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef, ReactNode } from 'react';
 import {
     deriveKey,
     deriveRawKey,
@@ -80,6 +80,15 @@ import {
     type VaultIntegrityVerificationResult,
 } from '@/services/vaultIntegrityService';
 import { resetUserVaultState } from '@/services/vaultRecoveryService';
+import {
+    buildQuarantineResolutionMap,
+    deleteQuarantinedItemFromVault,
+    indexTrustedSnapshotItems,
+    restoreQuarantinedItemFromTrustedSnapshot,
+    type QuarantineResolutionRuntimeState,
+    type QuarantineResolutionState,
+    type TrustedSnapshotItemsById,
+} from '@/services/vaultQuarantineRecoveryService';
 
 // Auto-lock timeout in milliseconds (default 15 minutes)
 const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
@@ -300,6 +309,8 @@ interface VaultContextType {
      * Item ids that were quarantined during the last integrity check.
      */
     quarantinedItems: QuarantinedVaultItem[];
+    quarantineResolutionById: Record<string, QuarantineResolutionState>;
+    vaultDataVersion: number;
     /**
      * Why normal unlock was blocked, if applicable.
      */
@@ -312,6 +323,9 @@ interface VaultContextType {
      * Enters read-only local recovery mode backed by the last trusted snapshot.
      */
     enterSafeMode: () => Promise<{ error: Error | null }>;
+    restoreQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
+    deleteQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
+    acceptMissingQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
     /**
      * Leaves local recovery mode and returns to the blocked state.
      */
@@ -384,11 +398,18 @@ export function VaultProvider({ children }: VaultProviderProps) {
     // null = pre-USK user (will be migrated on next unlock), string = already migrated
     const [encryptedUserKey, setEncryptedUserKey] = useState<string | null>(null);
     const [integrityVerified, setIntegrityVerified] = useState(false);
+    const baseIntegrityResultRef = useRef<VaultIntegrityVerificationResult | null>(null);
     const [lastIntegrityResult, setLastIntegrityResult] = useState<VaultIntegrityVerificationResult | null>(null);
     const [integrityMode, setIntegrityMode] = useState<VaultIntegrityMode | 'safe'>('healthy');
     const [quarantinedItems, setQuarantinedItems] = useState<QuarantinedVaultItem[]>([]);
+    const runtimeUnreadableItemsRef = useRef<QuarantinedVaultItem[]>([]);
+    const [vaultDataVersion, setVaultDataVersion] = useState(0);
+    const [quarantineActionStateById, setQuarantineActionStateById] = useState<
+        Record<string, QuarantineResolutionRuntimeState>
+    >({});
     const [integrityBlockedReason, setIntegrityBlockedReason] = useState<VaultIntegrityBlockedReason | null>(null);
     const [trustedRecoveryAvailable, setTrustedRecoveryAvailable] = useState(false);
+    const [trustedSnapshotItemsById, setTrustedSnapshotItemsById] = useState<TrustedSnapshotItemsById>({});
     const [lastActivity, setLastActivity] = useState(Date.now());
 
     const clearActiveVaultSession = useCallback(() => {
@@ -400,11 +421,16 @@ export function VaultProvider({ children }: VaultProviderProps) {
         setIsLocked(true);
         setIsDuressMode(false);
         setIntegrityVerified(false);
+        baseIntegrityResultRef.current = null;
         setLastIntegrityResult(null);
         setIntegrityMode('healthy');
         setQuarantinedItems([]);
+        runtimeUnreadableItemsRef.current = [];
+        setVaultDataVersion(0);
+        setQuarantineActionStateById({});
         setIntegrityBlockedReason(null);
         setTrustedRecoveryAvailable(false);
+        setTrustedSnapshotItemsById({});
         setPendingSessionRestore(false);
         setLastActivity(Date.now());
         sessionStorage.removeItem(SESSION_KEY);
@@ -424,6 +450,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
         setCurrentDeviceKey(null);
         setEncryptedUserKey(null);
         setTrustedRecoveryAvailable(false);
+        setTrustedSnapshotItemsById({});
+        setQuarantineActionStateById({});
     }, [clearActiveVaultSession]);
 
     useEffect(() => {
@@ -565,12 +593,31 @@ export function VaultProvider({ children }: VaultProviderProps) {
         };
     }, [buildIntegritySnapshot, user]);
 
+    const syncTrustedRecoverySnapshotState = useCallback(async (
+        userId: string,
+    ): Promise<OfflineVaultSnapshot | null> => {
+        const trustedSnapshot = await getTrustedOfflineSnapshot(userId);
+        setTrustedRecoveryAvailable(Boolean(trustedSnapshot));
+        setTrustedSnapshotItemsById(indexTrustedSnapshotItems(trustedSnapshot));
+        return trustedSnapshot;
+    }, []);
+
     const persistTrustedIntegritySnapshot = useCallback(async (
         snapshot: OfflineVaultSnapshot,
     ): Promise<void> => {
         await saveTrustedOfflineSnapshot(snapshot);
         setTrustedRecoveryAvailable(true);
+        setTrustedSnapshotItemsById(indexTrustedSnapshotItems(snapshot));
     }, []);
+
+    const quarantineResolutionById = useMemo(
+        () => buildQuarantineResolutionMap(
+            quarantinedItems,
+            trustedSnapshotItemsById,
+            quarantineActionStateById,
+        ),
+        [quarantinedItems, quarantineActionStateById, trustedSnapshotItemsById],
+    );
 
     const detectUnreadableCategories = useCallback(async (
         snapshot: OfflineVaultSnapshot,
@@ -686,53 +733,88 @@ export function VaultProvider({ children }: VaultProviderProps) {
         user,
     ]);
 
-    const applyIntegrityResultState = useCallback((result: VaultIntegrityVerificationResult): void => {
-        setIntegrityVerified(true);
-        setLastIntegrityResult(result);
-        setIntegrityMode(result.mode);
-        setQuarantinedItems(result.quarantinedItems);
-        setIntegrityBlockedReason(result.blockedReason ?? null);
-    }, []);
-
-    const reportUnreadableItems = useCallback((items: QuarantinedVaultItem[]): void => {
-        if (items.length === 0) {
-            return;
-        }
-
-        setIntegrityVerified(true);
-        setIntegrityMode((currentMode) => currentMode === 'blocked' ? currentMode : 'quarantine');
-        setQuarantinedItems((currentItems) => mergeQuarantinedItems(currentItems, items));
-        setLastIntegrityResult((currentResult) => {
-            const mergedItems = mergeQuarantinedItems(currentResult?.quarantinedItems ?? [], items);
-
-            if (!currentResult) {
-                return {
-                    valid: true,
-                    isFirstCheck: false,
-                    computedRoot: '',
-                    itemCount: mergedItems.length,
-                    categoryCount: 0,
-                    mode: 'quarantine',
-                    quarantinedItems: mergedItems,
-                };
-            }
-
-            if (currentResult.mode === 'blocked') {
-                return {
-                    ...currentResult,
-                    quarantinedItems: mergedItems,
-                };
+    const buildDisplayedIntegrityResult = useCallback((
+        result: VaultIntegrityVerificationResult | null,
+        runtimeUnreadableItems: QuarantinedVaultItem[] = runtimeUnreadableItemsRef.current,
+    ): VaultIntegrityVerificationResult | null => {
+        if (!result) {
+            if (runtimeUnreadableItems.length === 0) {
+                return null;
             }
 
             return {
-                ...currentResult,
                 valid: true,
+                isFirstCheck: false,
+                computedRoot: '',
+                itemCount: runtimeUnreadableItems.length,
+                categoryCount: 0,
                 mode: 'quarantine',
-                blockedReason: undefined,
+                quarantinedItems: runtimeUnreadableItems,
+            };
+        }
+
+        const mergedItems = mergeQuarantinedItems(result.quarantinedItems, runtimeUnreadableItems);
+        if (mergedItems.length === 0) {
+            return {
+                ...result,
+                quarantinedItems: [],
+            };
+        }
+
+        if (result.mode === 'blocked') {
+            return {
+                ...result,
                 quarantinedItems: mergedItems,
             };
-        });
+        }
+
+        return {
+            ...result,
+            valid: true,
+            mode: 'quarantine',
+            blockedReason: undefined,
+            quarantinedItems: mergedItems,
+        };
     }, [mergeQuarantinedItems]);
+
+    const applyDisplayedIntegrityState = useCallback((
+        result: VaultIntegrityVerificationResult | null,
+        runtimeUnreadableItems: QuarantinedVaultItem[] = runtimeUnreadableItemsRef.current,
+    ): void => {
+        const displayedResult = buildDisplayedIntegrityResult(result, runtimeUnreadableItems);
+        setIntegrityVerified(displayedResult !== null);
+        setLastIntegrityResult(displayedResult);
+        setIntegrityMode(displayedResult?.mode ?? 'healthy');
+        setQuarantinedItems(displayedResult?.quarantinedItems ?? []);
+        setIntegrityBlockedReason(
+            displayedResult?.mode === 'blocked'
+                ? displayedResult.blockedReason ?? null
+                : null,
+        );
+    }, [buildDisplayedIntegrityResult]);
+
+    const applyIntegrityResultState = useCallback((result: VaultIntegrityVerificationResult): void => {
+        baseIntegrityResultRef.current = result;
+        applyDisplayedIntegrityState(result);
+    }, [applyDisplayedIntegrityState]);
+
+    useEffect(() => {
+        setQuarantineActionStateById((currentState) => {
+            const activeItemIds = new Set(quarantinedItems.map((item) => item.id));
+            const nextState = Object.fromEntries(
+                Object.entries(currentState).filter(([itemId]) => activeItemIds.has(itemId)),
+            );
+
+            return Object.keys(nextState).length === Object.keys(currentState).length
+                ? currentState
+                : nextState;
+        });
+    }, [quarantinedItems]);
+
+    const reportUnreadableItems = useCallback((items: QuarantinedVaultItem[]): void => {
+        runtimeUnreadableItemsRef.current = items;
+        applyDisplayedIntegrityState(baseIntegrityResultRef.current, items);
+    }, [applyDisplayedIntegrityState]);
 
     const persistMissingOrLegacyBaseline = useCallback(async (
         integritySnapshot: VaultIntegritySnapshot,
@@ -753,26 +835,70 @@ export function VaultProvider({ children }: VaultProviderProps) {
         }
     }, [user]);
 
+    const runQuarantineAction = useCallback(async (
+        itemId: string,
+        action: () => Promise<void>,
+    ): Promise<{ error: Error | null }> => {
+        setQuarantineActionStateById((currentState) => ({
+            ...currentState,
+            [itemId]: {
+                isBusy: true,
+                lastError: null,
+            },
+        }));
+
+        try {
+            await action();
+            setQuarantineActionStateById((currentState) => ({
+                ...currentState,
+                [itemId]: {
+                    isBusy: false,
+                    lastError: null,
+                },
+            }));
+            return { error: null };
+        } catch (error) {
+            const resolvedError = error instanceof Error
+                ? error
+                : new Error('Quarantäne-Aktion fehlgeschlagen.');
+
+            setQuarantineActionStateById((currentState) => ({
+                ...currentState,
+                [itemId]: {
+                    isBusy: false,
+                    lastError: resolvedError.message,
+                },
+            }));
+            return { error: resolvedError };
+        }
+    }, []);
+
+    const bumpVaultDataVersion = useCallback(() => {
+        setVaultDataVersion((currentVersion) => currentVersion + 1);
+    }, []);
+
     const setBlockedIntegrityState = useCallback(async (
         activeKey: CryptoKey,
         blockedReason: VaultIntegrityBlockedReason,
         result?: VaultIntegrityVerificationResult | null,
     ) => {
+        const displayedResult = buildDisplayedIntegrityResult(result ?? null);
         setEncryptionKey(activeKey);
         setIsLocked(true);
         setIsDuressMode(false);
         setPendingSessionRestore(false);
         setIntegrityVerified(true);
+        baseIntegrityResultRef.current = result ?? null;
         setIntegrityMode('blocked');
         setIntegrityBlockedReason(blockedReason);
-        setQuarantinedItems(result?.quarantinedItems ?? []);
-        setLastIntegrityResult(result ?? null);
+        setQuarantinedItems(displayedResult?.quarantinedItems ?? []);
+        setLastIntegrityResult(displayedResult);
         setLastActivity(Date.now());
         sessionStorage.removeItem(SESSION_KEY);
         sessionStorage.removeItem(SESSION_TIMESTAMP_KEY);
         sessionStorage.removeItem(SESSION_PASSWORD_HINT_KEY);
-        setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user!.id)));
-    }, [user]);
+        await syncTrustedRecoverySnapshotState(user!.id);
+    }, [buildDisplayedIntegrityResult, syncTrustedRecoverySnapshotState, user]);
 
     const finalizeVaultUnlock = useCallback(async (
         activeKey: CryptoKey,
@@ -816,7 +942,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
                 }
             } else {
-                setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
+                await syncTrustedRecoverySnapshotState(user.id);
             }
         } catch (error) {
             if (error instanceof VaultIntegrityBaselineError) {
@@ -851,6 +977,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         persistMissingOrLegacyBaseline,
         persistTrustedIntegritySnapshot,
         setBlockedIntegrityState,
+        syncTrustedRecoverySnapshotState,
         user,
     ]);
 
@@ -888,7 +1015,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
         if (integrityResult.mode === 'quarantine' && !trustedRebaselineAllowed && !trustedFirstBaselineAllowed) {
             applyIntegrityResultState(integrityResult);
-            setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
+            await syncTrustedRecoverySnapshotState(user.id);
             return;
         }
 
@@ -921,6 +1048,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         loadCurrentIntegritySnapshot,
         persistTrustedIntegritySnapshot,
         setBlockedIntegrityState,
+        syncTrustedRecoverySnapshotState,
         user,
     ]);
 
@@ -1360,9 +1488,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     setIsDuressMode(true);
                     setIsLocked(false);
                     setIntegrityVerified(false);
+                    baseIntegrityResultRef.current = null;
                     setLastIntegrityResult(null);
                     setIntegrityMode('healthy');
                     setQuarantinedItems([]);
+                    runtimeUnreadableItemsRef.current = [];
                     setIntegrityBlockedReason(null);
                     setLastActivity(Date.now());
                     sessionStorage.setItem(SESSION_KEY, 'active');
@@ -2201,7 +2331,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     await persistTrustedIntegritySnapshot(rawSnapshot);
                 }
             } else {
-                setTrustedRecoveryAvailable(Boolean(await getTrustedOfflineSnapshot(user.id)));
+                await syncTrustedRecoverySnapshotState(user.id);
             }
 
             return result;
@@ -2236,6 +2366,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         persistMissingOrLegacyBaseline,
         persistTrustedIntegritySnapshot,
         setBlockedIntegrityState,
+        syncTrustedRecoverySnapshotState,
         user,
     ]);
 
@@ -2247,21 +2378,119 @@ export function VaultProvider({ children }: VaultProviderProps) {
         });
     }, [refreshIntegrityBaseline]);
 
+    const restoreQuarantinedItem = useCallback(async (
+        itemId: string,
+    ): Promise<{ error: Error | null }> => {
+        if (!user || !encryptionKey) {
+            return { error: new Error('No active user session') };
+        }
+
+        const resolution = quarantineResolutionById[itemId];
+        const trustedSnapshotItem = trustedSnapshotItemsById[itemId];
+        if (!resolution?.canRestore || !trustedSnapshotItem) {
+            return { error: new Error('Für diesen Eintrag ist keine vertrauenswürdige lokale Kopie verfügbar.') };
+        }
+
+        return runQuarantineAction(itemId, async () => {
+            try {
+                await decryptVaultItem(trustedSnapshotItem.encrypted_data, encryptionKey, itemId);
+            } catch {
+                throw new Error('Die lokale Wiederherstellungskopie für diesen Eintrag ist nicht mehr entschlüsselbar.');
+            }
+
+            const { syncedOnline } = await restoreQuarantinedItemFromTrustedSnapshot(user.id, trustedSnapshotItem);
+            if (isAppOnline() && !syncedOnline) {
+                throw new Error('Die Wiederherstellung konnte nicht mit dem Server synchronisiert werden.');
+            }
+            const integrityResult = await verifyIntegrity();
+            if (integrityResult?.quarantinedItems.some((quarantinedItem) => quarantinedItem.id === itemId)) {
+                throw new Error('Die Wiederherstellung konnte nicht bestätigt werden. Der Eintrag bleibt in Quarantäne.');
+            }
+
+            bumpVaultDataVersion();
+        });
+    }, [
+        bumpVaultDataVersion,
+        encryptionKey,
+        quarantineResolutionById,
+        runQuarantineAction,
+        trustedSnapshotItemsById,
+        user,
+        verifyIntegrity,
+    ]);
+
+    const deleteQuarantinedItem = useCallback(async (
+        itemId: string,
+    ): Promise<{ error: Error | null }> => {
+        if (!user) {
+            return { error: new Error('No active user session') };
+        }
+
+        const resolution = quarantineResolutionById[itemId];
+        if (!resolution?.canDelete) {
+            return { error: new Error('Dieser Quarantäne-Eintrag kann nicht gelöscht werden.') };
+        }
+
+        return runQuarantineAction(itemId, async () => {
+            const { syncedOnline } = await deleteQuarantinedItemFromVault(user.id, itemId);
+            if (isAppOnline() && !syncedOnline) {
+                throw new Error('Der Quarantäne-Eintrag konnte nicht mit dem Server synchronisiert gelöscht werden.');
+            }
+            if (resolution.reason === 'ciphertext_changed') {
+                await refreshIntegrityBaseline({ itemIds: [itemId] });
+            } else {
+                await verifyIntegrity();
+            }
+
+            bumpVaultDataVersion();
+        });
+    }, [
+        bumpVaultDataVersion,
+        quarantineResolutionById,
+        refreshIntegrityBaseline,
+        runQuarantineAction,
+        user,
+        verifyIntegrity,
+    ]);
+
+    const acceptMissingQuarantinedItem = useCallback(async (
+        itemId: string,
+    ): Promise<{ error: Error | null }> => {
+        if (!user) {
+            return { error: new Error('No active user session') };
+        }
+
+        const resolution = quarantineResolutionById[itemId];
+        if (!resolution?.canAcceptMissing) {
+            return { error: new Error('Dieser Quarantäne-Eintrag kann nicht bestätigt werden.') };
+        }
+
+        return runQuarantineAction(itemId, async () => {
+            await refreshIntegrityBaseline({ itemIds: [itemId] });
+            bumpVaultDataVersion();
+        });
+    }, [
+        bumpVaultDataVersion,
+        quarantineResolutionById,
+        refreshIntegrityBaseline,
+        runQuarantineAction,
+        user,
+    ]);
+
     const enterSafeMode = useCallback(async (): Promise<{ error: Error | null }> => {
         if (!user || !encryptionKey) {
             return { error: new Error('Safe Mode requires an active recovery session.') };
         }
 
-        const trustedSnapshot = await getTrustedOfflineSnapshot(user.id);
+        const trustedSnapshot = await syncTrustedRecoverySnapshotState(user.id);
         if (!trustedSnapshot) {
             return { error: new Error('No trusted local recovery snapshot is available on this device.') };
         }
 
         setIntegrityMode('safe');
-        setTrustedRecoveryAvailable(true);
         setPendingSessionRestore(false);
         return { error: null };
-    }, [encryptionKey, user]);
+    }, [encryptionKey, syncTrustedRecoverySnapshotState, user]);
 
     const exitSafeMode = useCallback(() => {
         setIntegrityMode(integrityBlockedReason ? 'blocked' : 'healthy');
@@ -2359,9 +2588,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 lastIntegrityResult,
                 integrityMode,
                 quarantinedItems,
+                quarantineResolutionById,
+                vaultDataVersion,
                 integrityBlockedReason,
                 trustedRecoveryAvailable,
                 enterSafeMode,
+                restoreQuarantinedItem,
+                deleteQuarantinedItem,
+                acceptMissingQuarantinedItem,
                 exitSafeMode,
                 resetVaultAfterIntegrityFailure,
             }}

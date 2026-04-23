@@ -4,6 +4,7 @@ import { ShieldAlert, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
+import { VaultQuarantineActions } from './VaultQuarantineActions';
 import { getQuarantineReasonLabel } from './vaultQuarantineLabels';
 
 interface VaultQuarantinePanelProps {
@@ -34,7 +35,7 @@ export function VaultQuarantinePanel({
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           {description || t('vault.integrity.quarantineDescription', {
-            defaultValue: 'Diese Einträge wurden nicht entschlüsselt, weil ihre Vertrauensbasis nicht mehr stimmt.',
+            defaultValue: 'Diese Einträge wurden nicht entschlüsselt oder nicht vertraut, weil ihre Integritätsbasis nicht mehr stimmt.',
           })}
         </p>
       </CardHeader>
@@ -70,6 +71,9 @@ export function VaultQuarantinePanel({
             <p className="mt-2 text-sm text-muted-foreground">
               {getQuarantineReasonLabel(item.reason, t)}
             </p>
+            <div className="mt-3">
+              <VaultQuarantineActions item={item} compact />
+            </div>
           </div>
         ))}
       </CardContent>

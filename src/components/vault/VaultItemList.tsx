@@ -98,6 +98,7 @@ export function VaultItemList({
     reportUnreadableItems,
     refreshIntegrityBaseline,
     verifyIntegrity,
+    vaultDataVersion,
   } = useVault();
 
   const [items, setItems] = useState<VaultItem[]>([]);
@@ -280,6 +281,7 @@ export function VaultItemList({
     isDuressMode,
     reportUnreadableItems,
     refreshIntegrityBaseline,
+    vaultDataVersion,
     verifyIntegrity,
   ]);
 

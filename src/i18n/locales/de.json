@@ -58,7 +58,7 @@
     },
     "security": {
       "title": "Höchste Sicherheitsstandards",
-      "subtitle": "Wir gehen über den Industriestandard hinaus - mit Post-Quantum-Schutz, Panik-Passwort und Manipulationserkennung.",
+      "subtitle": "Wir kombinieren starke Kryptografie mit lokaler Integrit?tspr?fung, Passkey-Entsperrung und transparent dokumentierten Grenzen.",
       "zeroKnowledge": {
         "title": "Zero-Knowledge Architektur",
         "description": "Wir können deine Passwörter niemals sehen. Die Entschlüsselung findet nur auf deinem Gerät statt."
@@ -89,7 +89,7 @@
       },
       "vaultIntegrity": {
         "title": "Tresor-Integritätsprüfung",
-        "description": "Merkle-Tree basierte Manipulationserkennung stellt sicher, dass niemand deine Tresor-Daten serverseitig verändert hat."
+        "description": "Lokale Digest-Baselines und vertrauenswürdige Snapshots isolieren manipulierte Einträge. Wiederherstellung ist nur aus einer früheren lokalen Vertrauenskopie möglich."
       }
     },
     "features": {
@@ -130,7 +130,7 @@
     "comparison": {
       "badge": "Ehrlicher Vergleich",
       "title": "Warum Singra Vault?",
-      "subtitle": "Ein faktenbasierter Vergleich mit führenden Passwortmanagern. Alle Daten aus offiziellen Quellen verifiziert (Feb. 2026).",
+      "subtitle": "Ein faktenbasierter Vergleich mit f?hrenden Passwortmanagern. Alle Daten stammen aus offiziellen Quellen und wurden am 23. April 2026 gepr?ft.",
       "featureLabel": "Funktion",
       "features": {
         "openSource": "Open Source",
@@ -153,7 +153,8 @@
         "partial": "Teilweise / nur Premium",
         "unavailable": "Nicht verfügbar"
       },
-      "disclaimer": "Alle Informationen basieren auf öffentlich zugänglicher Dokumentation der jeweiligen Anbieter, verifiziert im Februar 2026. Verfügbarkeit kann sich ändern. Bitwarden: bitwarden.com/help | 1Password: 1password.com | LastPass: lastpass.com"
+      "disclaimer": "Alle Informationen basieren auf offizieller ?ffentlicher Dokumentation der jeweiligen Anbieter. Preise, Funktionsumfang und Browser-Unterst?tzung k?nnen sich jederzeit ?ndern.",
+      "verifiedAt": "Stand: {{date}}"
     },
     "pwa": {
       "badge": "Progressive Web App",
@@ -329,12 +330,13 @@
         ]
       },
       "integrity": {
-        "title": "Manipulationserkennung (Integrity Root)",
-        "summary": "HMAC-Merkle-Tree über (itemId | encrypted_data); Root wird clientseitig gespeichert.",
+        "title": "Manipulationserkennung & Quarantäne",
+        "summary": "Der Client speichert eine verschlüsselte lokale Integritäts-Baseline und einen vertrauenswürdigen Snapshot. Verdächtige Einträge werden isoliert, Kategorien blockieren den normalen Zugriff.",
         "bullets": [
-          "Schützt gegen kompromittierten Server, der Items löscht/ersetzt/replayed.",
-          "IntegrityKey ist vom EncryptionKey getrennt abgeleitet (Domain Separation).",
-          "Limitierungen sind explizit dokumentiert (z.B. kein Schutz gegen stale reads ohne zusätzliche Mechanismen)."
+          "Der aktuelle Tresorstand wird lokal als kanonischer Snapshot aus verschlüsselten Item- und Kategorie-Daten geprüft; der Server erhält dabei keinen Klartext.",
+          "Item-Drift führt zu Quarantäne statt stiller Anzeige: veränderte Inhalte, fehlende Einträge und unbekannte Server-Einträge werden getrennt ausgewiesen.",
+          "Wiederherstellung ist nur aus einer bereits vorhandenen vertrauenswürdigen lokalen Kopie möglich. Ohne solche Kopie gibt es keinen kryptografischen Wiederherstellungspfad.",
+          "Manipulierte Kategorien oder unlesbare lokale Baselines blockieren den normalen Zugriff. Dann bleiben nur Safe Mode, lokaler Export oder ein Tresor-Reset."
         ]
       },
       "headers": {
@@ -366,7 +368,7 @@
         "nist80063b": "NIST SP 800-63B (Memorized Secrets)"
       }
     },
-    "lastUpdated": "Zuletzt aktualisiert: {{date}}"
+    "lastUpdated": "Inhaltlich gepr?ft am: {{date}}"
   },
   "privacy": {
     "title": "Datenschutzerklärung",
@@ -598,6 +600,33 @@
         "addTotp": "2FA hinzufügen",
         "currentCode": "Aktueller Code"
       }
+    },
+    "integrity": {
+      "quarantineTitle": "Einträge in Quarantäne",
+      "quarantineDescription": "Diese Einträge wurden isoliert, weil ihre Vertrauensbasis nicht mehr stimmt. Sie werden nicht normal entschlüsselt.",
+      "quarantineRecoveryDescription": "Diese Einträge bleiben isoliert, bis du sie aus einer vertrauenswürdigen lokalen Kopie wiederherstellst, bewusst löschst oder die Löschung akzeptierst.",
+      "quarantineItemTitle": "Manipulierter Eintrag",
+      "quarantineBadge": "Quarantäne",
+      "untrustedEntryLabel": "Nicht vertrauenswürdig",
+      "onlyQuarantinedTitle": "Derzeit sind nur Einträge in Quarantäne vorhanden",
+      "onlyQuarantinedDescription": "Normale Einträge sind aktuell nicht verfügbar. Prüfe die Quarantäne-Hinweise und löse die betroffenen Einträge gezielt auf.",
+      "reasonCiphertextChanged": "Verschlüsselter Inhalt wurde verändert.",
+      "reasonMissingOnServer": "Der Eintrag fehlt im aktuellen Tresorstand.",
+      "reasonUnknownOnServer": "Ein unbekannter Eintrag wurde ohne vertrauenswürdige Baseline gefunden.",
+      "reasonUnknown": "Der Eintrag konnte nicht mehr als vertrauenswürdig bestätigt werden.",
+      "restoreAction": "Wiederherstellen",
+      "restoreSuccess": "Die letzte vertrauenswürdige lokale Version wurde wiederhergestellt.",
+      "deleteEntry": "Endgültig löschen",
+      "deleteSuccess": "Der Quarantäne-Eintrag wurde entfernt.",
+      "acceptMissingAction": "Löschung akzeptieren",
+      "acceptMissingSuccess": "Die Löschung wurde akzeptiert und die lokale Vertrauensbasis aktualisiert.",
+      "noTrustedLocalCopy": "Auf diesem Gerät ist keine vertrauenswürdige lokale Kopie für eine Wiederherstellung verfügbar.",
+      "confirmDeleteTitle": "Eintrag endgültig löschen?",
+      "confirmDeleteDescription": "Der verdächtige Eintrag wird aus dem aktuellen Tresorstand entfernt. Diese Aktion kann nicht rückgängig gemacht werden.",
+      "confirmAcceptMissingTitle": "Löschung akzeptieren?",
+      "confirmAcceptMissingDescription": "Der fehlende Eintrag wird aus der vertrauenswürdigen lokalen Baseline entfernt. Danach ist keine Wiederherstellung mehr möglich, solange keine andere lokale Kopie existiert.",
+      "safeModeDescription": "Safe Mode arbeitet ausschließlich mit dem letzten vertrauenswürdigen lokalen Snapshot. Änderungen sind deaktiviert.",
+      "safeModeNotice": "Safe Mode ist schreibgeschützt. Prüfe deine Einträge und exportiere sie bei Bedarf, bevor du den Tresor zurücksetzt."
     }
   },
   "generator": {

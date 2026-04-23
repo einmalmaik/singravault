@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { ViewMode } from '@/pages/VaultPage';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
+import { VaultQuarantineActions } from './VaultQuarantineActions';
 import { getQuarantineReasonLabel } from './vaultQuarantineLabels';
 
 interface VaultQuarantinedItemCardProps {
@@ -31,34 +32,36 @@ export function VaultQuarantinedItemCard({
   if (viewMode === 'list') {
     return (
       <Card className="border-amber-500/35 bg-amber-500/6">
-        <CardContent className="flex items-start gap-3 p-3">
-          <div className="flex-shrink-0 rounded-lg border border-amber-500/35 bg-amber-500/10 p-2 text-amber-700 dark:text-amber-300">
-            <ShieldAlert className="h-5 w-5" />
-          </div>
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="font-medium">{title}</p>
-              <Badge
-                variant="outline"
-                className="border-amber-500/45 text-amber-700 dark:text-amber-300"
-              >
-                {badgeLabel}
-              </Badge>
+        <CardContent className="space-y-3 p-3">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 rounded-lg border border-amber-500/35 bg-amber-500/10 p-2 text-amber-700 dark:text-amber-300">
+              <ShieldAlert className="h-5 w-5" />
             </div>
-            <p className="text-sm text-muted-foreground">{reasonLabel}</p>
-            <p className="break-all text-xs text-muted-foreground/80">{itemId}</p>
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-medium">{title}</p>
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/45 text-amber-700 dark:text-amber-300"
+                >
+                  {badgeLabel}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">{reasonLabel}</p>
+              <p className="break-all text-xs text-muted-foreground/80">{itemId}</p>
+            </div>
           </div>
+          <VaultQuarantineActions
+            item={{ id: itemId, reason, updatedAt: null }}
+            compact
+          />
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <Card
-      className={cn(
-        'border-amber-500/35 bg-amber-500/6 transition-colors',
-      )}
-    >
+    <Card className={cn('border-amber-500/35 bg-amber-500/6 transition-colors')}>
       <CardContent className="space-y-3 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -84,6 +87,7 @@ export function VaultQuarantinedItemCard({
 
         <p className="text-sm text-muted-foreground">{reasonLabel}</p>
         <p className="break-all text-xs text-muted-foreground/80">{itemId}</p>
+        <VaultQuarantineActions item={{ id: itemId, reason, updatedAt: null }} />
       </CardContent>
     </Card>
   );
