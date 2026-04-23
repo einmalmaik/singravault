@@ -27,6 +27,18 @@ import {
 const DEVICE_KEY_LENGTH = 32; // 256 bits
 const HKDF_INFO = 'SINGRA_DEVICE_KEY_V1';
 const DEVICE_KEY_SECRET_PREFIX = 'device-key:';
+const LEGACY_DEVICE_KEY_DB_NAME = 'singra_device_keys';
+const LEGACY_DEVICE_KEY_DB_VERSION = 1;
+const LEGACY_DEVICE_KEY_STORE = 'keys';
+const LEGACY_WRAP_SALT = 'SINGRA_DEVICE_KEY_WRAP';
+const LEGACY_WRAP_INFO = 'device-key-wrapping';
+
+interface LegacyDeviceKeyRecord {
+    userId: string;
+    iv: number[];
+    encrypted: number[];
+    createdAt?: string;
+}
 
 // ============ Core Functions ============
 
@@ -54,14 +66,32 @@ export async function storeDeviceKey(userId: string, deviceKey: Uint8Array): Pro
 }
 
 /**
- * Retrieves the Device Key from IndexedDB for a given user.
+ * Retrieves the Device Key from local secret storage for a given user.
+ * Legacy browser/webview IndexedDB records are migrated on read when possible.
  *
  * @param userId - The user's UUID
  * @returns The 256-bit device key, or null if not found
  */
 export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
+    const secretKey = getDeviceKeySecretKey(userId);
+
     try {
-        return await loadLocalSecretBytes(getDeviceKeySecretKey(userId));
+        const currentDeviceKey = await loadLocalSecretBytes(secretKey);
+        if (currentDeviceKey) {
+            return currentDeviceKey;
+        }
+    } catch {
+        // Fall through to the legacy IndexedDB migration path.
+    }
+
+    try {
+        const legacyDeviceKey = await loadLegacyIndexedDbDeviceKey(userId);
+        if (!legacyDeviceKey) {
+            return null;
+        }
+
+        await migrateLegacyDeviceKeyToLocalSecretStore(userId, legacyDeviceKey);
+        return legacyDeviceKey;
     } catch {
         return null;
     }
@@ -82,12 +112,18 @@ export async function hasDeviceKey(userId: string): Promise<boolean> {
 }
 
 /**
- * Deletes the Device Key from IndexedDB for a given user.
+ * Deletes the Device Key from current storage and the legacy IndexedDB store.
  *
  * @param userId - The user's UUID
  */
 export async function deleteDeviceKey(userId: string): Promise<void> {
     await removeLocalSecret(getDeviceKeySecretKey(userId));
+
+    try {
+        await deleteLegacyIndexedDbDeviceKey(userId);
+    } catch (error) {
+        console.warn('Failed to remove legacy device key record:', error);
+    }
 }
 
 // ============ HKDF-Expand: Combine Argon2id output with Device Key ============
@@ -215,6 +251,142 @@ export async function importDeviceKeyFromTransfer(
 
 function getDeviceKeySecretKey(userId: string): string {
     return `${DEVICE_KEY_SECRET_PREFIX}${userId}`;
+}
+
+async function migrateLegacyDeviceKeyToLocalSecretStore(
+    userId: string,
+    deviceKey: Uint8Array,
+): Promise<void> {
+    if (!(await isLocalSecretStoreSupported())) {
+        return;
+    }
+
+    try {
+        await saveLocalSecretBytes(getDeviceKeySecretKey(userId), deviceKey);
+        await deleteLegacyIndexedDbDeviceKey(userId);
+    } catch (error) {
+        console.warn('Failed to migrate legacy device key into the local secret store:', error);
+    }
+}
+
+async function loadLegacyIndexedDbDeviceKey(userId: string): Promise<Uint8Array | null> {
+    if (!isLegacyDeviceKeyStoreAvailable()) {
+        return null;
+    }
+
+    try {
+        const record = await withLegacyDeviceKeyStore<LegacyDeviceKeyRecord | null>(
+            'readonly',
+            (store, resolve, reject) => {
+                const request = store.get(userId);
+                request.onsuccess = () => resolve((request.result as LegacyDeviceKeyRecord | undefined) ?? null);
+                request.onerror = () => reject(request.error);
+            },
+        );
+
+        if (!record) {
+            return null;
+        }
+
+        return decryptLegacyDeviceKeyRecord(userId, record);
+    } catch (error) {
+        console.warn('Failed to load legacy device key from IndexedDB:', error);
+        return null;
+    }
+}
+
+async function deleteLegacyIndexedDbDeviceKey(userId: string): Promise<void> {
+    if (!isLegacyDeviceKeyStoreAvailable()) {
+        return;
+    }
+
+    await withLegacyDeviceKeyStore<void>('readwrite', (store, resolve, reject) => {
+        const request = store.delete(userId);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+
+function isLegacyDeviceKeyStoreAvailable(): boolean {
+    return typeof indexedDB !== 'undefined'
+        && typeof crypto !== 'undefined'
+        && typeof crypto.subtle !== 'undefined';
+}
+
+function openLegacyDeviceKeyDb(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(LEGACY_DEVICE_KEY_DB_NAME, LEGACY_DEVICE_KEY_DB_VERSION);
+
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(LEGACY_DEVICE_KEY_STORE)) {
+                db.createObjectStore(LEGACY_DEVICE_KEY_STORE, { keyPath: 'userId' });
+            }
+        };
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+function withLegacyDeviceKeyStore<T>(
+    mode: IDBTransactionMode,
+    handler: (
+        store: IDBObjectStore,
+        resolve: (value: T) => void,
+        reject: (reason?: unknown) => void,
+    ) => void,
+): Promise<T> {
+    return new Promise((resolve, reject) => {
+        openLegacyDeviceKeyDb()
+            .then((db) => {
+                const transaction = db.transaction(LEGACY_DEVICE_KEY_STORE, mode);
+                const store = transaction.objectStore(LEGACY_DEVICE_KEY_STORE);
+                handler(store, resolve, reject);
+            })
+            .catch(reject);
+    });
+}
+
+async function decryptLegacyDeviceKeyRecord(
+    userId: string,
+    record: LegacyDeviceKeyRecord,
+): Promise<Uint8Array | null> {
+    if (!Array.isArray(record.iv) || !Array.isArray(record.encrypted)) {
+        return null;
+    }
+
+    const wrappingKey = await deriveLegacyWrappingKey(userId);
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: new Uint8Array(record.iv) },
+        wrappingKey,
+        new Uint8Array(record.encrypted),
+    );
+
+    return new Uint8Array(decrypted);
+}
+
+async function deriveLegacyWrappingKey(userId: string): Promise<CryptoKey> {
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(userId),
+        'HKDF',
+        false,
+        ['deriveKey'],
+    );
+
+    return crypto.subtle.deriveKey(
+        {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt: new TextEncoder().encode(LEGACY_WRAP_SALT),
+            info: new TextEncoder().encode(LEGACY_WRAP_INFO),
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['decrypt'],
+    );
 }
 
 /**

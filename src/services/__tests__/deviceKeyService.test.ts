@@ -29,6 +29,82 @@ import {
   storeDeviceKey,
 } from "@/services/deviceKeyService";
 
+const LEGACY_DB_NAME = "singra_device_keys";
+const LEGACY_DB_VERSION = 1;
+const LEGACY_STORE_NAME = "keys";
+
+function requestToPromise<T>(request: IDBRequest): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result as T);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function openLegacyDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(LEGACY_DB_NAME, LEGACY_DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(LEGACY_STORE_NAME)) {
+        db.createObjectStore(LEGACY_STORE_NAME, { keyPath: "userId" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function writeLegacyDeviceKeyRecord(userId: string, deviceKey: Uint8Array): Promise<void> {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(userId),
+    "HKDF",
+    false,
+    ["deriveKey"],
+  );
+  const wrappingKey = await crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new TextEncoder().encode("SINGRA_DEVICE_KEY_WRAP"),
+      info: new TextEncoder().encode("device-key-wrapping"),
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"],
+  );
+
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    wrappingKey,
+    deviceKey,
+  );
+
+  const db = await openLegacyDb();
+  const transaction = db.transaction(LEGACY_STORE_NAME, "readwrite");
+  const store = transaction.objectStore(LEGACY_STORE_NAME);
+  await requestToPromise(store.put(
+    {
+      userId,
+      iv: Array.from(iv),
+      encrypted: Array.from(new Uint8Array(encrypted)),
+      createdAt: new Date().toISOString(),
+    },
+    userId,
+  ));
+}
+
+async function readLegacyDeviceKeyRecord(userId: string): Promise<unknown> {
+  const db = await openLegacyDb();
+  const transaction = db.transaction(LEGACY_STORE_NAME, "readonly");
+  const store = transaction.objectStore(LEGACY_STORE_NAME);
+  return requestToPromise(store.get(userId));
+}
+
 describe("deviceKeyService", () => {
   beforeEach(() => {
     localSecretState.supported = true;
@@ -59,6 +135,33 @@ describe("deviceKeyService", () => {
 
     await expect(getDeviceKey("user-1")).resolves.toBeNull();
     await expect(hasDeviceKey("user-1")).resolves.toBe(false);
+  });
+
+  it("migrates legacy IndexedDB device keys into the local secret store", async () => {
+    const legacyDeviceKey = new Uint8Array(32);
+    for (let index = 0; index < legacyDeviceKey.length; index += 1) {
+      legacyDeviceKey[index] = index + 11;
+    }
+
+    await writeLegacyDeviceKeyRecord("legacy-user", legacyDeviceKey);
+
+    await expect(getDeviceKey("legacy-user")).resolves.toEqual(legacyDeviceKey);
+    await expect(hasDeviceKey("legacy-user")).resolves.toBe(true);
+    expect(localSecretState.store.get("device-key:legacy-user")).toEqual(legacyDeviceKey);
+    await expect(readLegacyDeviceKeyRecord("legacy-user")).resolves.toBeUndefined();
+  });
+
+  it("still reads legacy IndexedDB device keys when migration cannot persist yet", async () => {
+    const legacyDeviceKey = new Uint8Array(32).fill(13);
+    localSecretState.supported = false;
+
+    await writeLegacyDeviceKeyRecord("legacy-unsupported-user", legacyDeviceKey);
+
+    await expect(getDeviceKey("legacy-unsupported-user")).resolves.toEqual(legacyDeviceKey);
+    expect(localSecretState.store.has("device-key:legacy-unsupported-user")).toBe(false);
+    await expect(readLegacyDeviceKeyRecord("legacy-unsupported-user")).resolves.toEqual(
+      expect.objectContaining({ userId: "legacy-unsupported-user" }),
+    );
   });
 
   it("exports and imports device keys with PIN-based transfer encryption", async () => {
