@@ -697,19 +697,28 @@ async function encryptRawKeyBytes(
 ): Promise<string> {
     const wrappingKey = await deriveWrappingKey(prfOutput);
     const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+    let ciphertextBytes: Uint8Array | null = null;
+    let combined: Uint8Array | null = null;
 
-    const ciphertext = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv, tagLength: 128 },
-        wrappingKey,
-        rawKeyBytes,
-    );
+    try {
+        const ciphertext = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv, tagLength: 128 },
+            wrappingKey,
+            rawKeyBytes,
+        );
 
-    // Combine IV + ciphertext (includes auth tag appended by AES-GCM)
-    const combined = new Uint8Array(iv.length + ciphertext.byteLength);
-    combined.set(iv, 0);
-    combined.set(new Uint8Array(ciphertext), iv.length);
+        ciphertextBytes = new Uint8Array(ciphertext);
+        // Combine IV + ciphertext (includes auth tag appended by AES-GCM)
+        combined = new Uint8Array(iv.length + ciphertextBytes.byteLength);
+        combined.set(iv, 0);
+        combined.set(ciphertextBytes, iv.length);
 
-    return uint8ArrayToBase64(combined);
+        return uint8ArrayToBase64(combined);
+    } finally {
+        iv.fill(0);
+        ciphertextBytes?.fill(0);
+        combined?.fill(0);
+    }
 }
 
 /**
@@ -725,17 +734,27 @@ async function decryptRawKeyBytes(
 ): Promise<Uint8Array> {
     const wrappingKey = await deriveWrappingKey(prfOutput);
     const combined = base64ToUint8Array(encryptedBase64);
+    if (combined.length <= IV_LENGTH) {
+        combined.fill(0);
+        throw new Error('Invalid passkey key envelope');
+    }
 
     const iv = combined.slice(0, IV_LENGTH);
     const ciphertext = combined.slice(IV_LENGTH);
 
-    const plaintext = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv, tagLength: 128 },
-        wrappingKey,
-        ciphertext,
-    );
+    try {
+        const plaintext = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv, tagLength: 128 },
+            wrappingKey,
+            ciphertext,
+        );
 
-    return new Uint8Array(plaintext);
+        return new Uint8Array(plaintext);
+    } finally {
+        combined.fill(0);
+        iv.fill(0);
+        ciphertext.fill(0);
+    }
 }
 
 function formatPasskeyEnvelopeV2(payload: string): string {

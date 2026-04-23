@@ -217,7 +217,7 @@ async function handleLoginStart(
     // Look up user
     const { data: users, error: userError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: normalizedIdentifier });
     if (userError || !users || users.length === 0) {
-        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
+        return await opaqueUnavailableResponse(opaqueRateLimit, startTime, headers);
     }
 
     const userId = users[0].id;
@@ -231,7 +231,7 @@ async function handleLoginStart(
 
     if (opaqueError || !opaqueData) {
         // User doesn't have OPAQUE record — they should use legacy auth
-        return new Response(JSON.stringify({ error: "OPAQUE not configured", useLegacy: true }), { status: 400, headers });
+        return await opaqueUnavailableResponse(opaqueRateLimit, startTime, headers);
     }
 
     const { serverLoginState, loginResponse } = opaque.server.startLogin({
@@ -543,6 +543,23 @@ async function invalidOpaqueAttemptResponse(
     }
 
     return new Response(JSON.stringify({ error: message }), { status: 401, headers });
+}
+
+async function opaqueUnavailableResponse(
+    rateLimitState: AuthRateLimitState,
+    startTime: number,
+    headers: Headers,
+): Promise<Response> {
+    const failure = await recordAuthRateLimitFailure(rateLimitState);
+    await delayUntilMinimum(startTime, 300);
+    if (failure.lockedUntil) {
+        return authRateLimitResponse(toLockedState(failure), headers);
+    }
+
+    return new Response(JSON.stringify({
+        error: "OPAQUE not configured",
+        useLegacy: true,
+    }), { status: 400, headers });
 }
 
 function toLockedState(failure: AuthRateLimitFailureResult) {

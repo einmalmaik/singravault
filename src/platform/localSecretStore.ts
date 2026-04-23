@@ -82,29 +82,39 @@ export async function saveLocalSecretBytes(key: string, value: Uint8Array): Prom
   }
 
   const iv = crypto.getRandomValues(new Uint8Array(WRAPPING_IV_LENGTH));
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    wrappingKey,
-    value,
-  );
+  let encryptedBytes: Uint8Array | null = null;
+  let combined: Uint8Array | null = null;
 
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(encrypted), iv.length);
-  const encodedPayload = bytesToBase64(combined);
+  try {
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      wrappingKey,
+      value,
+    );
 
-  await withStore<void>(SECRETS_STORE, "readwrite", (store, _transaction, resolve, reject) => {
-    const request = store.put({
-      key,
-      payload: encodedPayload,
-      updatedAt: new Date().toISOString(),
-    } satisfies SecretRecord);
+    encryptedBytes = new Uint8Array(encrypted);
+    combined = new Uint8Array(iv.length + encryptedBytes.byteLength);
+    combined.set(iv, 0);
+    combined.set(encryptedBytes, iv.length);
+    const encodedPayload = bytesToBase64(combined);
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+    await withStore<void>(SECRETS_STORE, "readwrite", (store, _transaction, resolve, reject) => {
+      const request = store.put({
+        key,
+        payload: encodedPayload,
+        updatedAt: new Date().toISOString(),
+      } satisfies SecretRecord);
 
-  browserSecretPayloadCache.set(key, encodedPayload);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+
+    browserSecretPayloadCache.set(key, encodedPayload);
+  } finally {
+    iv.fill(0);
+    encryptedBytes?.fill(0);
+    combined?.fill(0);
+  }
 }
 
 export async function loadLocalSecretBytes(key: string): Promise<Uint8Array | null> {
@@ -145,6 +155,7 @@ export async function loadLocalSecretBytes(key: string): Promise<Uint8Array | nu
 
   if (combined.length <= WRAPPING_IV_LENGTH) {
     browserSecretPayloadCache.delete(key);
+    combined.fill(0);
     return null;
   }
 
@@ -164,6 +175,10 @@ export async function loadLocalSecretBytes(key: string): Promise<Uint8Array | nu
     // as an unreadable secret, not permanent data loss.
     browserSecretPayloadCache.delete(key);
     return null;
+  } finally {
+    combined.fill(0);
+    iv.fill(0);
+    ciphertext.fill(0);
   }
 }
 

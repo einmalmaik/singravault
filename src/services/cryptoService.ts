@@ -47,6 +47,9 @@ const TAG_LENGTH = 128; // 128 bits authentication tag
 /** Constant used in v3 verification hashes (no plaintext stored in DB) */
 const VERIFICATION_CONSTANT_V3 = 'SINGRA_VAULT_VERIFY_V3';
 
+/** New encrypted_user_key envelopes store raw key bytes, not a wipe-resistant JS string. */
+const USER_KEY_ENVELOPE_V2_PREFIX = 'usk-wrap-v2:';
+
 /** Internal counter for legacy (no-AAD) decryption fallbacks (Phase 1 monitoring) */
 let _legacyDecryptCount = 0;
 
@@ -104,8 +107,7 @@ export async function deriveRawKey(
     } else if (result instanceof ArrayBuffer) {
         argon2Bytes = new Uint8Array(result);
     } else if (typeof result === 'string') {
-        // SECURITY: Hex string conversion with immediate cleanup
-        // Use SecureBuffer to minimize heap exposure
+        // Test/legacy shim support. Real hash-wasm binary output is Uint8Array.
         const hex = result;
         argon2Bytes = new Uint8Array(hex.length / 2);
 
@@ -114,24 +116,13 @@ export async function deriveRawKey(
             argon2Bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
         }
 
-        // Attempt to clear the hex string from memory
-        // Note: JavaScript strings are immutable, but this helps GC
-        try {
-            // Force the string out of any internal caches
-            if (typeof (hex as any).fill === 'function') {
-                (hex as any).fill(0);
-            }
-        } catch {
-            // Best effort - strings are immutable in JS
-        }
+        // JS strings are immutable; avoid this path for real key material.
+    } else if (Array.isArray(result)) {
+        argon2Bytes = new Uint8Array(result);
+    } else if (ArrayBuffer.isView(result)) {
+        argon2Bytes = new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
     } else {
-        // Fallback: try to construct Uint8Array
-        try {
-            // @ts-ignore
-            argon2Bytes = new Uint8Array(result);
-        } catch {
-            throw new Error('argon2id returned unsupported type');
-        }
+        throw new Error('argon2id returned unsupported type');
     }
 
     // If a Device Key is provided, strengthen via HKDF-Expand.
@@ -233,27 +224,55 @@ export async function encrypt(
     key: CryptoKey,
     aad?: string
 ): Promise<string> {
-    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
     const plaintextBytes = new TextEncoder().encode(plaintext);
+    try {
+        return await encryptBytes(plaintextBytes, key, aad);
+    } finally {
+        plaintextBytes.fill(0);
+    }
+}
+
+/**
+ * Encrypts binary data using AES-256-GCM.
+ *
+ * Use this for key material to avoid creating immutable JS strings that cannot
+ * be wiped from memory. The caller still owns and must clear plaintextBytes.
+ */
+async function encryptBytes(
+    plaintextBytes: Uint8Array,
+    key: CryptoKey,
+    aad?: string,
+): Promise<string> {
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
     const additionalData = aad ? new TextEncoder().encode(aad) : undefined;
+    let ciphertextBytes: Uint8Array | null = null;
+    let combined: Uint8Array | null = null;
 
-    const ciphertext = await crypto.subtle.encrypt(
-        {
-            name: 'AES-GCM',
-            iv: iv,
-            tagLength: TAG_LENGTH,
-            ...(additionalData && { additionalData }),
-        },
-        key,
-        plaintextBytes
-    );
+    try {
+        const ciphertext = await crypto.subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: TAG_LENGTH,
+                ...(additionalData && { additionalData }),
+            },
+            key,
+            plaintextBytes
+        );
 
-    // Combine IV + ciphertext (includes auth tag)
-    const combined = new Uint8Array(iv.length + ciphertext.byteLength);
-    combined.set(iv, 0);
-    combined.set(new Uint8Array(ciphertext), iv.length);
+        ciphertextBytes = new Uint8Array(ciphertext);
+        // Combine IV + ciphertext (includes auth tag)
+        combined = new Uint8Array(iv.length + ciphertextBytes.byteLength);
+        combined.set(iv, 0);
+        combined.set(ciphertextBytes, iv.length);
 
-    return uint8ArrayToBase64(combined);
+        return uint8ArrayToBase64(combined);
+    } finally {
+        iv.fill(0);
+        additionalData?.fill(0);
+        ciphertextBytes?.fill(0);
+        combined?.fill(0);
+    }
 }
 
 /**
@@ -272,25 +291,55 @@ export async function decrypt(
     key: CryptoKey,
     aad?: string
 ): Promise<string> {
+    let plaintextBytes: Uint8Array | null = null;
+    try {
+        plaintextBytes = await decryptBytes(encryptedBase64, key, aad);
+        return new TextDecoder().decode(plaintextBytes);
+    } finally {
+        plaintextBytes?.fill(0);
+    }
+}
+
+/**
+ * Decrypts AES-256-GCM data and returns plaintext bytes.
+ *
+ * The returned buffer contains secret material and must be wiped by the caller.
+ */
+async function decryptBytes(
+    encryptedBase64: string,
+    key: CryptoKey,
+    aad?: string,
+): Promise<Uint8Array> {
     const combined = base64ToUint8Array(encryptedBase64);
+    if (combined.length <= IV_LENGTH) {
+        combined.fill(0);
+        throw new Error('Invalid encrypted data');
+    }
 
     // Extract IV and ciphertext
     const iv = combined.slice(0, IV_LENGTH);
     const ciphertext = combined.slice(IV_LENGTH);
     const additionalData = aad ? new TextEncoder().encode(aad) : undefined;
 
-    const plaintextBytes = await crypto.subtle.decrypt(
-        {
-            name: 'AES-GCM',
-            iv: iv,
-            tagLength: TAG_LENGTH,
-            ...(additionalData && { additionalData }),
-        },
-        key,
-        ciphertext
-    );
+    try {
+        const plaintextBytes = await crypto.subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: TAG_LENGTH,
+                ...(additionalData && { additionalData }),
+            },
+            key,
+            ciphertext
+        );
 
-    return new TextDecoder().decode(plaintextBytes);
+        return new Uint8Array(plaintextBytes);
+    } finally {
+        combined.fill(0);
+        iv.fill(0);
+        ciphertext.fill(0);
+        additionalData?.fill(0);
+    }
 }
 
 /**
@@ -1279,7 +1328,7 @@ export async function createEncryptedUserKey(kdfOutputBytes: Uint8Array): Promis
     try {
         wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
         const wrapKey = await importMasterKey(wrapKeyBytes);
-        const encryptedUserKey = await encrypt(uint8ArrayToBase64(userKeyBytes), wrapKey);
+        const encryptedUserKey = `${USER_KEY_ENVELOPE_V2_PREFIX}${await encryptBytes(userKeyBytes, wrapKey)}`;
         const userKey = await importMasterKey(userKeyBytes);
         return { encryptedUserKey, userKey };
     } finally {
@@ -1305,7 +1354,7 @@ export async function migrateToUserKey(kdfOutputBytes: Uint8Array): Promise<User
         userKeyBytes = await deriveInitialUserKeyBytes(kdfOutputBytes);
         wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
         const wrapKey = await importMasterKey(wrapKeyBytes);
-        const encryptedUserKey = await encrypt(uint8ArrayToBase64(userKeyBytes), wrapKey);
+        const encryptedUserKey = `${USER_KEY_ENVELOPE_V2_PREFIX}${await encryptBytes(userKeyBytes, wrapKey)}`;
         const userKey = await importMasterKey(userKeyBytes);
         return { encryptedUserKey, userKey };
     } finally {
@@ -1351,6 +1400,12 @@ export async function unwrapUserKeyBytes(
     try {
         wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
         const wrapKey = await importMasterKey(wrapKeyBytes);
+        if (encryptedUserKey.startsWith(USER_KEY_ENVELOPE_V2_PREFIX)) {
+            return await decryptBytes(encryptedUserKey.slice(USER_KEY_ENVELOPE_V2_PREFIX.length), wrapKey);
+        }
+
+        // Legacy wrappers encrypted a base64 string. Keep read compatibility,
+        // but new writes use byte envelopes above so the UserKey is wipeable.
         const userKeyBase64 = await decrypt(encryptedUserKey, wrapKey);
         return base64ToUint8Array(userKeyBase64);
     } finally {
@@ -1373,20 +1428,17 @@ export async function rewrapUserKey(
     oldKdfOutputBytes: Uint8Array,
     newKdfOutputBytes: Uint8Array,
 ): Promise<string> {
-    let oldWrapKeyBytes: Uint8Array | null = null;
     let newWrapKeyBytes: Uint8Array | null = null;
+    let userKeyBytes: Uint8Array | null = null;
     try {
-        oldWrapKeyBytes = await deriveWrapKey(oldKdfOutputBytes);
-        const oldWrapKey = await importMasterKey(oldWrapKeyBytes);
-        // Note: userKeyBase64 is a JS string — cannot be securely wiped.
-        const userKeyBase64 = await decrypt(encryptedUserKey, oldWrapKey);
+        userKeyBytes = await unwrapUserKeyBytes(encryptedUserKey, oldKdfOutputBytes);
 
         newWrapKeyBytes = await deriveWrapKey(newKdfOutputBytes);
         const newWrapKey = await importMasterKey(newWrapKeyBytes);
-        return await encrypt(userKeyBase64, newWrapKey);
+        return `${USER_KEY_ENVELOPE_V2_PREFIX}${await encryptBytes(userKeyBytes, newWrapKey)}`;
     } finally {
-        oldWrapKeyBytes?.fill(0);
         newWrapKeyBytes?.fill(0);
+        userKeyBytes?.fill(0);
     }
 }
 

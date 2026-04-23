@@ -102,6 +102,7 @@ serve(async (req) => {
         });
         if (revokeError) {
             console.error("Failed to revoke existing sessions after password reset:", revokeError);
+            throw new Error("Failed to revoke existing sessions after password reset");
         }
 
         await supabaseAdmin
