@@ -73,9 +73,10 @@ export async function restoreQuarantinedItemFromTrustedSnapshot(
   trustedItem: VaultItemRow,
 ): Promise<{ syncedOnline: boolean }> {
   const payload = await buildTrustedItemUpsertPayload(userId, trustedItem);
+  const allowOfflineQueue = !isAppOnline();
   let syncedOnline = false;
 
-  if (isAppOnline()) {
+  if (!allowOfflineQueue) {
     try {
       const { data, error } = await supabase
         .from('vault_items')
@@ -95,10 +96,12 @@ export async function restoreQuarantinedItemFromTrustedSnapshot(
       if (!isLikelyOfflineError(error)) {
         throw error;
       }
+
+      return { syncedOnline: false };
     }
   }
 
-  if (!syncedOnline) {
+  if (allowOfflineQueue && !syncedOnline) {
     await upsertOfflineItemRow(userId, buildVaultItemRowFromInsert(payload), payload.vault_id);
     await enqueueOfflineMutation({
       userId,
@@ -114,28 +117,41 @@ export async function deleteQuarantinedItemFromVault(
   userId: string,
   itemId: string,
 ): Promise<{ syncedOnline: boolean }> {
+  const allowOfflineQueue = !isAppOnline();
   let syncedOnline = false;
 
-  if (isAppOnline()) {
+  if (!allowOfflineQueue) {
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('vault_items')
         .delete()
+        .select('id')
+        .eq('user_id', userId)
         .eq('id', itemId);
 
       if (error) {
         throw error;
+      }
+      if (!Array.isArray(data) || data.length === 0) {
+        const alreadyAbsentOnServer = await isVaultItemAbsentOnServer(userId, itemId);
+        if (!alreadyAbsentOnServer) {
+          throw new Error('Der Quarantäne-Eintrag konnte serverseitig nicht gelöscht werden.');
+        }
       }
       syncedOnline = true;
     } catch (error) {
       if (!isLikelyOfflineError(error)) {
         throw error;
       }
+
+      return { syncedOnline: false };
     }
   }
 
-  await removeOfflineItemRow(userId, itemId);
-  if (!syncedOnline) {
+  if (syncedOnline || allowOfflineQueue) {
+    await removeOfflineItemRow(userId, itemId);
+  }
+  if (allowOfflineQueue && !syncedOnline) {
     await enqueueOfflineMutation({
       userId,
       type: 'delete_item',
@@ -144,6 +160,20 @@ export async function deleteQuarantinedItemFromVault(
   }
 
   return { syncedOnline };
+}
+
+async function isVaultItemAbsentOnServer(userId: string, itemId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('vault_items')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('id', itemId);
+
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) && data.length === 0;
 }
 
 async function buildTrustedItemUpsertPayload(

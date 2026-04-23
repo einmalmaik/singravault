@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const supabaseState = vi.hoisted(() => ({
   upsertResult: null as Record<string, unknown> | null,
   upsertError: null as Error | null,
+  deleteResult: [{ id: 'item-1' }] as Array<Record<string, unknown>>,
   deleteError: null as Error | null,
+  lookupResult: [{ id: 'item-1' }] as Array<Record<string, unknown>>,
+  lookupError: null as Error | null,
   operations: [] as Array<Record<string, unknown>>,
 }));
 
@@ -24,6 +27,23 @@ const dependencyMocks = vi.hoisted(() => ({
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (table: string) => ({
+      select: () => {
+        const filters: Record<string, string> = {};
+        const chain = {
+          eq: (column: string, value: string) => {
+            filters[column] = value;
+            supabaseState.operations.push({ kind: 'lookup-filter', table, column, value });
+            if ('user_id' in filters && 'id' in filters) {
+              return Promise.resolve({
+                data: supabaseState.lookupResult,
+                error: supabaseState.lookupError,
+              });
+            }
+            return chain;
+          },
+        };
+        return chain;
+      },
       upsert: (payload: Record<string, unknown>, options: Record<string, unknown>) => {
         supabaseState.operations.push({ kind: 'upsert', table, payload, options });
         return {
@@ -36,9 +56,22 @@ vi.mock('@/integrations/supabase/client', () => ({
         };
       },
       delete: () => ({
-        eq: async (_column: string, value: string) => {
-          supabaseState.operations.push({ kind: 'delete', table, id: value });
-          return { error: supabaseState.deleteError };
+        select: () => {
+          const filters: Record<string, string> = {};
+          const chain = {
+            eq: (column: string, value: string) => {
+              filters[column] = value;
+              supabaseState.operations.push({ kind: 'delete-filter', table, column, value });
+              if ('user_id' in filters && 'id' in filters) {
+                return Promise.resolve({
+                  data: supabaseState.deleteResult,
+                  error: supabaseState.deleteError,
+                });
+              }
+              return chain;
+            },
+          };
+          return chain;
         },
       }),
     }),
@@ -83,7 +116,10 @@ describe('vaultQuarantineRecoveryService', () => {
   beforeEach(() => {
     supabaseState.upsertResult = trustedItem;
     supabaseState.upsertError = null;
+    supabaseState.deleteResult = [{ id: 'item-1' }];
     supabaseState.deleteError = null;
+    supabaseState.lookupResult = [{ id: 'item-1' }];
+    supabaseState.lookupError = null;
     supabaseState.operations.length = 0;
     vi.clearAllMocks();
     dependencyMocks.resolveDefaultVaultId.mockResolvedValue('vault-1');
@@ -154,8 +190,7 @@ describe('vaultQuarantineRecoveryService', () => {
   });
 
   it('queues an offline restore when the remote write cannot be reached', async () => {
-    dependencyMocks.isLikelyOfflineError.mockReturnValue(true);
-    supabaseState.upsertError = new Error('network down');
+    dependencyMocks.isAppOnline.mockReturnValue(false);
 
     const result = await restoreQuarantinedItemFromTrustedSnapshot('user-1', trustedItem);
 
@@ -173,18 +208,64 @@ describe('vaultQuarantineRecoveryService', () => {
     );
   });
 
+  it('does not mutate local restore state when an online write fails transiently', async () => {
+    dependencyMocks.isLikelyOfflineError.mockReturnValue(true);
+    supabaseState.upsertError = new Error('network down');
+
+    const result = await restoreQuarantinedItemFromTrustedSnapshot('user-1', trustedItem);
+
+    expect(result).toEqual({ syncedOnline: false });
+    expect(dependencyMocks.buildVaultItemRowFromInsert).not.toHaveBeenCalled();
+    expect(dependencyMocks.upsertOfflineItemRow).not.toHaveBeenCalled();
+    expect(dependencyMocks.enqueueOfflineMutation).not.toHaveBeenCalled();
+  });
+
   it('deletes a quarantined item and skips queueing when the remote delete succeeds', async () => {
     const result = await deleteQuarantinedItemFromVault('user-1', 'item-1');
 
     expect(result).toEqual({ syncedOnline: true });
     expect(supabaseState.operations).toContainEqual(
       expect.objectContaining({
-        kind: 'delete',
+        kind: 'delete-filter',
         table: 'vault_items',
-        id: 'item-1',
+        column: 'id',
+        value: 'item-1',
       }),
     );
     expect(dependencyMocks.removeOfflineItemRow).toHaveBeenCalledWith('user-1', 'item-1');
+    expect(dependencyMocks.enqueueOfflineMutation).not.toHaveBeenCalled();
+  });
+
+  it('does not mutate local delete state when an online delete fails transiently', async () => {
+    dependencyMocks.isLikelyOfflineError.mockReturnValue(true);
+    supabaseState.deleteError = new Error('network down');
+
+    const result = await deleteQuarantinedItemFromVault('user-1', 'item-1');
+
+    expect(result).toEqual({ syncedOnline: false });
+    expect(dependencyMocks.removeOfflineItemRow).not.toHaveBeenCalled();
+    expect(dependencyMocks.enqueueOfflineMutation).not.toHaveBeenCalled();
+  });
+
+  it('treats an already missing server item as successfully deleted', async () => {
+    supabaseState.deleteResult = [];
+    supabaseState.lookupResult = [];
+
+    await expect(deleteQuarantinedItemFromVault('user-1', 'item-1')).resolves.toEqual({
+      syncedOnline: true,
+    });
+    expect(dependencyMocks.removeOfflineItemRow).toHaveBeenCalledWith('user-1', 'item-1');
+    expect(dependencyMocks.enqueueOfflineMutation).not.toHaveBeenCalled();
+  });
+
+  it('does not rebaseline against a delete no-op while the item still exists on the server', async () => {
+    supabaseState.deleteResult = [];
+    supabaseState.lookupResult = [{ id: 'item-1' }];
+
+    await expect(deleteQuarantinedItemFromVault('user-1', 'item-1')).rejects.toThrow(
+      'serverseitig nicht gelöscht',
+    );
+    expect(dependencyMocks.removeOfflineItemRow).not.toHaveBeenCalled();
     expect(dependencyMocks.enqueueOfflineMutation).not.toHaveBeenCalled();
   });
 });

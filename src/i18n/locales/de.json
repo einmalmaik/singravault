@@ -626,7 +626,9 @@
       "confirmAcceptMissingTitle": "Löschung akzeptieren?",
       "confirmAcceptMissingDescription": "Der fehlende Eintrag wird aus der vertrauenswürdigen lokalen Baseline entfernt. Danach ist keine Wiederherstellung mehr möglich, solange keine andere lokale Kopie existiert.",
       "safeModeDescription": "Safe Mode arbeitet ausschließlich mit dem letzten vertrauenswürdigen lokalen Snapshot. Änderungen sind deaktiviert.",
-      "safeModeNotice": "Safe Mode ist schreibgeschützt. Prüfe deine Einträge und exportiere sie bei Bedarf, bevor du den Tresor zurücksetzt."
+      "safeModeNotice": "Safe Mode ist schreibgeschützt. Prüfe deine Einträge und exportiere sie bei Bedarf, bevor du den Tresor zurücksetzt.",
+      "resetChallengeExpired": "Die Sicherheitsbestätigung für den Tresor-Reset ist abgelaufen. Bitte versuche es erneut.",
+      "resetFailed": "Der Tresor konnte nicht zurückgesetzt werden."
     }
   },
   "generator": {
@@ -1380,12 +1382,14 @@
     "failed": "Re-Authentifizierung fehlgeschlagen. Bitte versuche es erneut.",
     "accountDeleteContext": "Bitte bestätige deine Identität, bevor du dein Konto löschst.",
     "subscriptionCancelContext": "Bitte bestätige deine Identität, bevor du dein Abonnement kündigst.",
+    "vaultResetContext": "Bitte bestätige deine Identität, bevor du deinen Tresor unwiderruflich zurücksetzt.",
     "confirmationLabel": "Gib {{keyword}} ein",
     "confirmationPlaceholder": "{{keyword}} eingeben",
     "confirmationHint": "Bei Social-Login ohne Konto-Passwort bestätigst du diese Aktion mit einem Sicherheitswort.",
     "confirmationMismatch": "Bitte gib exakt {{keyword}} ein.",
     "confirmationKeywordDefault": "BESTÄTIGEN",
-    "cancelKeyword": "KÜNDIGEN"
+    "cancelKeyword": "KÜNDIGEN",
+    "resetKeyword": "ZURÜCKSETZEN"
   },
   "passkey": {
     "title": "Passkeys",

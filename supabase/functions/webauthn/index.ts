@@ -36,6 +36,10 @@ import {
     FIRST_PARTY_DESKTOP_ORIGINS,
     FIRST_PARTY_LOCAL_DEV_ORIGINS,
 } from "../_shared/desktopOrigins.ts";
+import {
+    authorizeWebauthnAction,
+    isWebauthnAction,
+} from "./authPolicy.ts";
 
 const DEFAULT_SITE_URL = "https://singravault.mauntingstudios.de";
 const CONFIGURED_SITE_ORIGIN = normalizeHttpOrigin(Deno.env.get("SITE_URL")) ?? DEFAULT_SITE_URL;
@@ -97,7 +101,11 @@ Deno.serve(async (req: Request) => {
 
         // 2. Parse action & Auth check
         const body = await req.json();
-        const { action, email } = body;
+        const { action } = body;
+
+        if (!isWebauthnAction(action)) {
+            return jsonResponse({ error: `Unknown action: ${String(action)}` }, 400, corsHeaders);
+        }
 
         let user: { id: string; email?: string } | null = null;
 
@@ -114,37 +122,13 @@ Deno.serve(async (req: Request) => {
             }
         }
 
-        if (!user) {
-            // Bestimme, ob ein gültiges JWT nötig ist.
-            const requiresAuth = !["generate-authentication-options", "verify-authentication"].includes(action);
-
-            if (requiresAuth) {
-                return jsonResponse({ error: "Unauthorized", details: authErrorDetails }, 401, corsHeaders);
-            }
-
-            // Für Login: Hole die User ID anhand der E-Mail aus der RPC
-            if (!email) {
-                return jsonResponse({ error: "Missing email for authentication" }, 400, corsHeaders);
-            }
-            const { data: users, error: rpcError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: email });
-            if (rpcError || !users || users.length === 0) {
-                // Enumeration Guard
-                if (action === "generate-authentication-options") {
-                    const fakeChallenge = new Uint8Array(32);
-                    crypto.getRandomValues(fakeChallenge);
-                    const fakeChallengeB64 = isoBase64URL.fromBuffer(fakeChallenge);
-                    return jsonResponse({
-                        options: { rpId: getRpConfig(req).rpID, challenge: fakeChallengeB64, allowCredentials: [], userVerification: "required" },
-                        prfSalts: {}
-                    }, 200, corsHeaders);
-                } else if (action === "verify-authentication") {
-                    return jsonResponse({ error: "Verification failed" }, 400, corsHeaders);
-                } else {
-                    return jsonResponse({ error: "Invalid user" }, 400, corsHeaders);
-                }
-            }
-            user = { id: users[0].id, email: email };
+        // WebAuthn here extends vault unlock for an already authenticated app
+        // identity. It must not become a parallel login channel.
+        const authz = authorizeWebauthnAction(action, user, authErrorDetails);
+        if (!authz.ok) {
+            return jsonResponse(authz.body, authz.status, corsHeaders);
         }
+        user = authz.user;
 
         const rp = getRpConfig(req);
 
@@ -159,7 +143,7 @@ Deno.serve(async (req: Request) => {
                 return await handleGenerateAuthenticationOptions(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "verify-authentication":
-                return await handleVerifyAuthentication(user as any, rp, supabaseAdmin, body, corsHeaders);
+                return await handleVerifyAuthentication(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "activate-prf":
                 return await handleActivatePrf(user, rp, supabaseAdmin, body, corsHeaders);
@@ -937,3 +921,4 @@ function dedupeRpIds(origins: string[]): string[] {
 
     return Array.from(uniqueRpIds);
 }
+

@@ -32,5 +32,7 @@ describe("auth edge functions use anon auth clients for user sessions", () => {
         expect(webauthnSource).not.toContain("authClient.auth.verifyOtp");
         expect(webauthnSource).not.toContain("createSupabaseAuthClient");
         expect(webauthnSource).not.toContain("setCookie(");
+        expect(webauthnSource).not.toContain("get_user_id_by_email");
+        expect(webauthnSource).not.toContain("Missing email for authentication");
     });
 });
