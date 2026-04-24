@@ -22,12 +22,15 @@ The implementation uses `@serenity-kit/opaque` (RFC 9807 based). The app passwor
 |---|---|
 | `src/pages/Auth.tsx` | Login, signup, reset and OAuth UI orchestration |
 | `src/services/opaqueService.ts` | Client-side OPAQUE wrapper, identifier normalization, server-key pinning, session binding verification |
+| `src/services/accountPasswordResetService.ts` | Shared client reset/change state transitions; never sends the new account password |
 | `supabase/functions/auth-opaque/index.ts` | Server-side OPAQUE login and authenticated OPAQUE record registration |
 | `supabase/functions/auth-register/index.ts` | OPAQUE-only signup start/finish |
+| `supabase/functions/auth-recovery/index.ts` | Shared email-code and 2FA authorization for forgot-password and authenticated password-change |
 | `supabase/functions/auth-reset-password/index.ts` | OPAQUE-only password reset start/finish |
 | `supabase/functions/auth-session/index.ts` | Session hydration/logout and OAuth sync only; password POSTs return `LEGACY_PASSWORD_LOGIN_DISABLED` |
 | `supabase/functions/_shared/opaqueAuth.ts` | Shared identifier normalization and session-binding proof helpers |
 | `supabase/migrations/20260424120000_enforce_opaque_password_auth.sql` | OPAQUE identifiers, one-time states, and GoTrue password-grant hard block |
+| `supabase/migrations/20260424193000_opaque_password_reset_change_flow.sql` | Reset/change authorization fields, reset rate limits, and DB trigger blocking GoTrue password verifier writes |
 
 ## Login Flow
 
@@ -52,15 +55,31 @@ Client                                      Server
 
 If any OPAQUE step fails, login stops. There is no automatic or manual fallback to a password-over-TLS flow.
 
-## Registration And Reset
+## Registration, Reset, And Password Change
 
-Signup and password reset are two-step OPAQUE registrations:
+Signup, forgot-password, and authenticated password-change are OPAQUE registrations:
 
 1. The client checks password quality locally and starts OPAQUE registration.
 2. The server returns a registration challenge/response and stores only short-lived server state.
 3. The client finishes OPAQUE registration locally and sends the `registrationRecord`.
 4. The server stores the record in `user_opaque_records` using the normalized identifier.
 5. The server removes GoTrue password verifiers via `disable_gotrue_password_login()` so direct Supabase password grants cannot bypass OPAQUE.
+
+Forgot-password and authenticated password-change share the same authorization sequence:
+
+```text
+START
+  -> request email code (anti-enumeration for forgot-password)
+  -> verify one-time email code
+  -> TWO_FACTOR_REQUIRED when account 2FA is enabled
+  -> verify TOTP or recovery code
+  -> NEW_PASSWORD_ALLOWED
+  -> OPAQUE re-registration
+  -> revoke existing sessions
+  -> DONE
+```
+
+`auth-reset-password` refuses OPAQUE re-registration until the reset challenge has `authorized_at`; when 2FA was enabled it also requires `two_factor_verified_at`. The new account password is not sent to `auth-recovery`, `auth-reset-password`, Supabase Auth, or logs. The authenticated settings flow signs the local client out after success because the server revokes refresh tokens/sessions.
 
 Existing accounts without an OPAQUE record cannot be migrated server-side because the server must not know the app password. They must use the OPAQUE reset flow to enroll a new OPAQUE registration record. This is a compatibility path, not a legacy login path.
 
@@ -108,6 +127,7 @@ Legacy password login is blocked at multiple layers:
 - `auth-session` contains no `signInWithPassword` and no app-password Argon2 verification.
 - Signup/reset store OPAQUE records and remove `user_security` rows.
 - The migration nulls `auth.users.encrypted_password` and adds `disable_gotrue_password_login()` for future OPAQUE registration/reset writes.
+- `enforce_opaque_no_gotrue_password_on_auth_users` clears direct GoTrue password verifier writes, including direct `supabase.auth.updateUser({ password })` attempts.
 
 ## Key Stretching
 

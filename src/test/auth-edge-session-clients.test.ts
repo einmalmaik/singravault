@@ -5,14 +5,15 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 describe("auth edge functions use anon auth clients for user sessions", () => {
-    it("keeps auth-session user session operations on an anon auth client", () => {
+    it("keeps auth-session limited to refresh/hydration and OAuth sync", () => {
         const source = readFileSync("supabase/functions/auth-session/index.ts", "utf-8");
 
         expect(source).toContain('const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!');
         expect(source).toContain("function createSupabaseAuthClient()");
         expect(source).toContain("authClient.auth.refreshSession");
-        expect(source).toContain("authClient.auth.signInWithPassword");
-        expect(source).toContain("authClient.auth.verifyOtp");
+        expect(source).not.toContain("authClient.auth.signInWithPassword");
+        expect(source).not.toContain("authClient.auth.verifyOtp");
+        expect(source).toContain("LEGACY_PASSWORD_LOGIN_DISABLED");
     });
 
     it("keeps OPAQUE session issuance on anon clients and recovery reset-scoped", () => {

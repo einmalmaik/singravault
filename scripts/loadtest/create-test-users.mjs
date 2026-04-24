@@ -68,7 +68,6 @@ function buildEmail(index, prefix, domain) {
 async function main() {
   const supabaseUrl = requiredEnvAny(['SUPABASE_URL', 'VITE_SUPABASE_URL']);
   const serviceRoleKey = requiredEnvAny(['SUPABASE_SERVICE_ROLE_KEY']);
-  const password = requiredEnvAny(['TEST_USER_PASSWORD']);
 
   const count = intValue('--count', Number(process.env.TEST_USERS_COUNT || 50));
   const startIndex = intValue('--start-index', Number(process.env.TEST_USERS_START_INDEX || 1));
@@ -92,42 +91,40 @@ async function main() {
     existingUsers.map((user) => user.email).filter((email) => typeof email === 'string'),
   );
 
-  const targetCredentials = [];
+  const targetUsers = [];
   for (let i = 0; i < count; i += 1) {
     const index = startIndex + i;
-    targetCredentials.push({
+    targetUsers.push({
       index,
       email: buildEmail(index, emailPrefix, emailDomain),
-      password,
     });
   }
 
   let created = 0;
-  for (const credential of targetCredentials) {
-    if (existingEmails.has(credential.email)) {
+  for (const user of targetUsers) {
+    if (existingEmails.has(user.email)) {
       continue;
     }
 
     const { error } = await adminClient.auth.admin.createUser({
-      email: credential.email,
-      password: credential.password,
+      email: user.email,
       email_confirm: true,
       user_metadata: {
         loadtest: true,
-        loadtest_index: credential.index,
+        loadtest_index: user.index,
       },
     });
 
     if (error) {
-      throw new Error(`Failed to create user ${credential.email}: ${error.message}`);
+      throw new Error(`Failed to create user ${user.email}: ${error.message}`);
     }
 
-    existingEmails.add(credential.email);
+    existingEmails.add(user.email);
     created += 1;
   }
 
   await ensureDirForFile(outputPath);
-  const userLines = targetCredentials.map((entry) => `${entry.email},${entry.password}`);
+  const userLines = targetUsers.map((entry) => entry.email);
   await fs.writeFile(outputPath, `${userLines.join('\n')}\n`, 'utf8');
 
   console.log(`Seed complete. Requested: ${count}, created: ${created}, existing: ${count - created}`);

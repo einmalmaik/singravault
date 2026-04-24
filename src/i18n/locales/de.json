@@ -273,7 +273,8 @@
         "bullets": [
           "Beim App-eigenen Passwort-Login wird das Passwort lokal in OPAQUE verarbeitet. An die Edge Function gehen nur OPAQUE-Protokollnachrichten, kein Passwort, Passwort-Hash oder passwortäquivalenter Wert.",
           "OPAQUE-Fehler brechen den Login ab. auth-session blockiert direkte Passwort-POSTs serverseitig mit LEGACY_PASSWORD_LOGIN_DISABLED.",
-          "Registrierung und Passwort-Reset erzeugen OPAQUE-Registration-Records clientseitig; GoTrue-Passwortverifier werden entfernt, damit Supabase-Passwortgrants OPAQUE nicht umgehen können.",
+          "Registrierung, Passwort-Reset und Passwortänderung erzeugen OPAQUE-Registration-Records clientseitig; GoTrue-Passwortverifier werden entfernt und DB-seitig blockiert, damit Supabase-Passwortgrants OPAQUE nicht umgehen können.",
+          "Passwort-Reset und Passwortänderung teilen dieselbe Sicherheitslogik: E-Mail-Code, bei aktiver Account-2FA zusätzlicher TOTP- oder Recovery-Code, danach OPAQUE-Re-Registration. OAuth/Social Login nutzt diesen Pfad nicht.",
           "Der OPAQUE Server Static Public Key wird im Client gegen VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY geprüft. Fehlt der Pin oder passt er nicht, entsteht keine App-Session.",
           "Die Supabase-App-Session wird erst nach erfolgreichem OPAQUE-Finish erstellt und zusätzlich mit einem HMAC über den OPAQUE sessionKey an Access Token und User-ID gebunden."
         ]
@@ -726,7 +727,16 @@
       "updateSuccess": "Passwort erfolgreich aktualisiert.",
       "updateFailed": "Passwort konnte nicht aktualisiert werden.",
       "minLength": "Passwort muss mindestens 12 Zeichen lang sein.",
-      "weakPassword": "Bitte wähle ein stärkeres Passwort."
+      "weakPassword": "Bitte wähle ein stärkeres Passwort.",
+      "requestEmailCode": "E-Mail-Code senden",
+      "resendEmailCode": "Code erneut senden",
+      "emailCode": "E-Mail-Code",
+      "emailCodeSent": "Wenn dein Konto ein App-Passwort nutzt, wurde ein Code an deine Konto-E-Mail gesendet.",
+      "emailCodeVerified": "E-Mail-Code bestätigt. Du kannst jetzt ein neues Account-Passwort setzen.",
+      "twoFactorVerified": "Zwei-Faktor-Authentifizierung bestätigt.",
+      "codeInvalid": "Der Code ist ungültig oder abgelaufen.",
+      "authorizationRequired": "Bitte bestätige zuerst den E-Mail-Code.",
+      "socialOnlyDescription": "Dieses Konto nutzt Social Login. Ein App-eigenes Passwort ist für diesen Auth-Pfad nicht eingerichtet."
     },
     "accountDataExport": {
       "title": "DSGVO-Datenexport",

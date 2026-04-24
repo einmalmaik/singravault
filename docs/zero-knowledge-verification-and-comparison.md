@@ -25,18 +25,18 @@ Relevant auth functions after the OPAQUE cutover:
 
 - `auth-opaque`: OPAQUE login and authenticated OPAQUE record registration; creates a Supabase session only after successful OPAQUE finish.
 - `auth-register`: OPAQUE-only signup start/finish; receives no app password.
-- `auth-reset-password`: OPAQUE-only password reset start/finish; receives no new app password.
+- `auth-reset-password`: OPAQUE-only password reset/change start/finish; receives no new app password and refuses tokens that have not passed email-code plus required 2FA authorization.
 - `auth-session`: session hydration/logout and OAuth sync only; direct password POSTs are blocked with `LEGACY_PASSWORD_LOGIN_DISABLED`.
-- `auth-recovery`: recovery-code delivery/verification; the new password is enrolled later through OPAQUE.
+- `auth-recovery`: shared forgot-password/password-change email-code delivery and verification, plus required TOTP/recovery-code verification; the new password is enrolled later through OPAQUE.
 
 None of these functions reads, writes, or decrypts vault item `encrypted_data`.
 
 ### Password-Leak Check
 
 - App-owned password login sends only OPAQUE messages to Edge Functions.
-- Signup and password reset perform OPAQUE registration client-side; the server stores the resulting OPAQUE record.
+- Signup, password reset, and password change perform OPAQUE registration client-side; the server stores the resulting OPAQUE record.
 - There is no `auth-session` password verification path, no Argon2id server hash for app-password login, and no allowed fallback to Supabase `signInWithPassword`.
-- GoTrue password verifiers are removed by migration/RPC so direct Supabase password grants cannot bypass OPAQUE.
+- GoTrue password verifiers are removed by migration/RPC and direct verifier writes are cleared by a database trigger so direct Supabase password grants or `updateUser({ password })` cannot bypass OPAQUE.
 
 ### Admin Access
 
@@ -68,7 +68,7 @@ This comparison is high-level and should be rechecked before publication because
 
 ## Conclusion
 
-The public claim is technically aligned with the current implementation for app-owned password login: the app password is handled locally by OPAQUE and does not leave the client. OAuth/social login is separate, and vault unlock/master-password handling is separate. Legacy password login is not an allowed compatibility path.
+The public claim is technically aligned with the current implementation for app-owned password login, password reset, and password change: the app password is handled locally by OPAQUE and does not leave the client. OAuth/social login is separate, and vault unlock/master-password handling is separate. Legacy password login/reset is not an allowed compatibility path.
 
 **References:**
 

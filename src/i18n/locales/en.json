@@ -273,7 +273,8 @@
         "bullets": [
           "For app-owned password login, the password is processed locally by OPAQUE. Edge Functions receive only OPAQUE protocol messages, never a password, password hash, or password-equivalent value.",
           "OPAQUE failures abort login. auth-session blocks direct password POSTs server-side with LEGACY_PASSWORD_LOGIN_DISABLED.",
-          "Signup and password reset create OPAQUE registration records client-side; GoTrue password verifiers are removed so Supabase password grants cannot bypass OPAQUE.",
+          "Signup, password reset, and password change create OPAQUE registration records client-side; GoTrue password verifiers are removed and blocked at the database layer so Supabase password grants cannot bypass OPAQUE.",
+          "Password reset and password change share the same security logic: email code, additional TOTP or recovery code when account 2FA is active, then OPAQUE re-registration. OAuth/social login does not use this path.",
           "The OPAQUE server static public key is pinned in the client via VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY. If the pin is missing or mismatched, no app session is created.",
           "The Supabase app session is created only after successful OPAQUE finish and is additionally bound to the OPAQUE sessionKey with an HMAC over access token and user ID."
         ]
@@ -703,7 +704,16 @@
       "updateSuccess": "Password updated successfully.",
       "updateFailed": "Failed to update password.",
       "minLength": "Password must be at least 12 characters long.",
-      "weakPassword": "Please choose a stronger password."
+      "weakPassword": "Please choose a stronger password.",
+      "requestEmailCode": "Send email code",
+      "resendEmailCode": "Resend code",
+      "emailCode": "Email code",
+      "emailCodeSent": "If your account uses an app password, a code was sent to your account email.",
+      "emailCodeVerified": "Email code confirmed. You can now set a new account password.",
+      "twoFactorVerified": "Two-factor authentication confirmed.",
+      "codeInvalid": "The code is invalid or expired.",
+      "authorizationRequired": "Confirm the email code first.",
+      "socialOnlyDescription": "This account uses social login. An app-owned password is not configured for this auth path."
     },
     "accountDataExport": {
       "title": "GDPR Data Export",

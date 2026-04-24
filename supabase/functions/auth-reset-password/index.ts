@@ -3,7 +3,14 @@ import * as opaque from "npm:@serenity-kit/opaque";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import {
-    createUnusableGotruePassword,
+    authRateLimitResponse,
+    checkAuthRateLimit,
+    recordAuthRateLimitFailure,
+    resetAuthRateLimit,
+    type AuthRateLimitFailureResult,
+    type AuthRateLimitState,
+} from "../_shared/authRateLimit.ts";
+import {
     normalizeOpaqueIdentifier,
     sha256Hex,
 } from "../_shared/opaqueAuth.ts";
@@ -36,11 +43,11 @@ Deno.serve(async (req) => {
         const action = typeof body.action === "string" ? body.action : "";
 
         if (action === "opaque-reset-start") {
-            return await handleOpaqueResetStart(body, headers);
+            return await handleOpaqueResetStart(req, body, headers);
         }
 
         if (action === "opaque-reset-finish") {
-            return await handleOpaqueResetFinish(body, headers);
+            return await handleOpaqueResetFinish(req, body, headers);
         }
 
         return new Response(JSON.stringify({ error: "OPAQUE password reset required" }), { status: 400, headers });
@@ -51,6 +58,7 @@ Deno.serve(async (req) => {
 });
 
 async function handleOpaqueResetStart(
+    req: Request,
     body: { resetToken?: unknown; registrationRequest?: unknown },
     headers: Headers,
 ): Promise<Response> {
@@ -64,6 +72,22 @@ async function handleOpaqueResetStart(
     if (!challenge) {
         await delay(300);
         return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
+    }
+
+    const resetRateLimit = await checkOpaqueResetRateLimit(req, challenge.user_id);
+    if (!resetRateLimit.allowed) {
+        return authRateLimitResponse(resetRateLimit, headers);
+    }
+
+    if (!isResetChallengeAuthorized(challenge)) {
+        return await invalidOpaqueResetAttemptResponse(
+            resetRateLimit,
+            Date.now(),
+            headers,
+            "Two-factor verification required",
+            403,
+            "TWO_FACTOR_REQUIRED",
+        );
     }
 
     const email = normalizeOpaqueIdentifier(challenge.email);
@@ -97,6 +121,7 @@ async function handleOpaqueResetStart(
 }
 
 async function handleOpaqueResetFinish(
+    req: Request,
     body: { resetToken?: unknown; resetRegistrationId?: unknown; registrationRecord?: unknown },
     headers: Headers,
 ): Promise<Response> {
@@ -113,6 +138,22 @@ async function handleOpaqueResetFinish(
         return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
     }
 
+    const resetRateLimit = await checkOpaqueResetRateLimit(req, challenge.user_id);
+    if (!resetRateLimit.allowed) {
+        return authRateLimitResponse(resetRateLimit, headers);
+    }
+
+    if (!isResetChallengeAuthorized(challenge)) {
+        return await invalidOpaqueResetAttemptResponse(
+            resetRateLimit,
+            Date.now(),
+            headers,
+            "Two-factor verification required",
+            403,
+            "TWO_FACTOR_REQUIRED",
+        );
+    }
+
     const { data: consumedResetState, error: stateConsumeError } = await supabaseAdmin
         .from("opaque_password_reset_states")
         .update({ consumed_at: new Date().toISOString() })
@@ -124,7 +165,7 @@ async function handleOpaqueResetFinish(
         .maybeSingle();
 
     if (stateConsumeError || !consumedResetState) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
+        return await invalidOpaqueResetAttemptResponse(resetRateLimit, Date.now(), headers, "Unauthorized");
     }
 
     const { data: consumedChallenge, error: consumeError } = await supabaseAdmin
@@ -136,7 +177,7 @@ async function handleOpaqueResetFinish(
         .maybeSingle();
 
     if (consumeError || !consumedChallenge) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
+        return await invalidOpaqueResetAttemptResponse(resetRateLimit, Date.now(), headers, "Unauthorized");
     }
 
     const email = normalizeOpaqueIdentifier(consumedResetState.email);
@@ -154,12 +195,6 @@ async function handleOpaqueResetFinish(
         throw new Error(`Failed to update OPAQUE registration record: ${upsertError.message}`);
     }
 
-    const { error: gotruePasswordError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-        password: createUnusableGotruePassword(),
-    });
-    if (gotruePasswordError) {
-        throw new Error(`Failed to randomize GoTrue password: ${gotruePasswordError.message}`);
-    }
     await disableGotruePasswordLogin(userId);
 
     const { error: revokeError } = await supabaseAdmin.rpc("revoke_user_auth_sessions", {
@@ -176,6 +211,7 @@ async function handleOpaqueResetFinish(
         supabaseAdmin.from("password_reset_challenges").delete().eq("user_id", userId),
         supabaseAdmin.from("opaque_password_reset_states").delete().eq("user_id", userId),
     ]);
+    await resetAuthRateLimit(resetRateLimit);
 
     await sendPasswordResetNotification(email);
 
@@ -186,11 +222,14 @@ async function findActiveResetChallenge(resetToken: string): Promise<{
     id: string;
     user_id: string;
     email: string;
+    two_factor_required: boolean;
+    two_factor_verified_at: string | null;
+    authorized_at: string | null;
 } | null> {
     const resetTokenHash = await sha256Hex(resetToken);
     const { data: challenges, error } = await supabaseAdmin
         .from("password_reset_challenges")
-        .select("id, user_id, email")
+        .select("id, user_id, email, two_factor_required, two_factor_verified_at, authorized_at")
         .eq("token_hash", resetTokenHash)
         .is("used_at", null)
         .gt("expires_at", new Date().toISOString())
@@ -200,7 +239,65 @@ async function findActiveResetChallenge(resetToken: string): Promise<{
         return null;
     }
 
-    return challenges[0] as { id: string; user_id: string; email: string };
+    return challenges[0] as {
+        id: string;
+        user_id: string;
+        email: string;
+        two_factor_required: boolean;
+        two_factor_verified_at: string | null;
+        authorized_at: string | null;
+    };
+}
+
+function isResetChallengeAuthorized(challenge: {
+    two_factor_required: boolean;
+    two_factor_verified_at: string | null;
+    authorized_at: string | null;
+}): boolean {
+    if (!challenge.authorized_at) {
+        return false;
+    }
+
+    return !challenge.two_factor_required || Boolean(challenge.two_factor_verified_at);
+}
+
+async function checkOpaqueResetRateLimit(req: Request, userId: string): Promise<AuthRateLimitState> {
+    return await checkAuthRateLimit({
+        supabaseAdmin,
+        req,
+        action: "opaque_reset",
+        account: { kind: "user", value: userId },
+    });
+}
+
+async function invalidOpaqueResetAttemptResponse(
+    rateLimitState: AuthRateLimitState,
+    startTime: number,
+    headers: Headers,
+    message: string,
+    status = 401,
+    code?: string,
+): Promise<Response> {
+    const failure = await recordAuthRateLimitFailure(rateLimitState);
+    await delayUntilMinimum(startTime, 300);
+    if (failure.lockedUntil) {
+        return authRateLimitResponse(toLockedState(failure), headers);
+    }
+
+    return new Response(JSON.stringify({ error: message, ...(code ? { code } : {}) }), {
+        status,
+        headers,
+    });
+}
+
+function toLockedState(failure: AuthRateLimitFailureResult) {
+    return {
+        status: 429 as const,
+        error: "Too many attempts",
+        attemptsRemaining: failure.attemptsRemaining,
+        lockedUntil: failure.lockedUntil,
+        retryAfterSeconds: failure.retryAfterSeconds,
+    };
 }
 
 async function sendPasswordResetNotification(email: string | null): Promise<void> {
@@ -235,6 +332,13 @@ async function sendPasswordResetNotification(email: string | null): Promise<void
 
 async function delay(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function delayUntilMinimum(startTime: number, minimumMs: number): Promise<void> {
+    const remaining = minimumMs - (Date.now() - startTime);
+    if (remaining > 0) {
+        await delay(remaining);
+    }
 }
 
 async function disableGotruePasswordLogin(userId: string): Promise<void> {

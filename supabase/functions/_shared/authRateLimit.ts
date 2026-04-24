@@ -1,9 +1,11 @@
 export type AuthRateLimitAction =
   | "password_login"
+  | "recovery_request"
   | "recovery_verify"
   | "totp_verify"
   | "backup_code_verify"
-  | "opaque_login";
+  | "opaque_login"
+  | "opaque_reset";
 
 type AccountIdentifierKind = "email" | "user";
 
@@ -67,6 +69,11 @@ const AUTH_RATE_LIMITS: Record<AuthRateLimitAction, AuthRateLimitConfig> = {
     windowMs: 15 * 60 * 1000,
     lockoutMs: 15 * 60 * 1000,
   },
+  recovery_request: {
+    maxAttempts: 5,
+    windowMs: 15 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
+  },
   recovery_verify: {
     maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
@@ -86,6 +93,11 @@ const AUTH_RATE_LIMITS: Record<AuthRateLimitAction, AuthRateLimitConfig> = {
     maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
     lockoutMs: 15 * 60 * 1000,
+  },
+  opaque_reset: {
+    maxAttempts: 5,
+    windowMs: 15 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
   },
 };
 

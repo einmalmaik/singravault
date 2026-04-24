@@ -211,9 +211,11 @@ export default function SecurityWhitepaper() {
                 evidence: [
                     'src/pages/Auth.tsx',
                     'src/services/opaqueService.ts',
+                    'src/services/accountPasswordResetService.ts',
                     'supabase/functions/auth-opaque/index.ts',
                     'supabase/functions/auth-session/index.ts',
                     'supabase/functions/auth-register/index.ts',
+                    'supabase/functions/auth-recovery/index.ts',
                     'supabase/functions/auth-reset-password/index.ts',
                 ],
             },

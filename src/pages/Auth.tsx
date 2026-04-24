@@ -10,7 +10,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { createClient, type Session } from '@supabase/supabase-js';
-import { Mail, Lock, Eye, EyeOff, Loader2, ClipboardPaste, Link2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Loader2, ClipboardPaste, Link2, WandSparkles } from 'lucide-react';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -47,6 +47,13 @@ import { openExternalUrl } from '@/platform/openExternalUrl';
 import { createDesktopOAuthUrl, exchangeDesktopOAuthCode, type DesktopOAuthProvider } from '@/platform/desktopOAuth';
 import { runtimeConfig } from '@/config/runtimeConfig';
 import * as opaqueClient from '@/services/opaqueService';
+import {
+  completeOpaqueAccountPasswordReset,
+  requestAccountPasswordEmailCode,
+  verifyAccountPasswordEmailCode,
+  verifyAccountPasswordResetSecondFactor,
+} from '@/services/accountPasswordResetService';
+import { DEFAULT_PASSWORD_OPTIONS, generatePassword } from '@/services/passwordGenerator';
 
 const emailFieldSchema = z.preprocess(
   (value) => typeof value === 'string' ? opaqueClient.normalizeOpaqueIdentifier(value) : value,
@@ -291,8 +298,8 @@ export default function Auth() {
     }
   }, [authMode, authReady, user, mode, navigate, postAuthRedirectPath]);
 
-  // Note: 2FA Logik (TOTP) bleibt bestehen, wird hier vereinfacht
   const [show2FAModal, setShow2FAModal] = useState(false);
+  const [twoFactorMode, setTwoFactorMode] = useState<'login' | 'password-reset' | null>(null);
   const [pendingLoginData, setPendingLoginData] = useState<LoginFormData | null>(null);
 
   const passwordCheck = usePasswordCheck({ enforceStrong: true });
@@ -354,6 +361,7 @@ export default function Auth() {
         refresh_token: opaqueSession.refresh_token || '',
       });
       setShow2FAModal(false);
+      setTwoFactorMode(null);
       setPendingLoginData(null);
       toast({ title: t('common.success'), description: t('auth.success') });
       navigate(postAuthRedirectPath, { replace: true });
@@ -438,6 +446,7 @@ export default function Auth() {
 
     if (result.requires2FA) {
       setPendingLoginData(data);
+      setTwoFactorMode('login');
       setShow2FAModal(true);
       return '2fa';
     }
@@ -452,6 +461,10 @@ export default function Auth() {
 
 
   const handle2FAVerify = async (code: string, isBackupCode: boolean) => {
+    if (twoFactorMode === 'password-reset') {
+      return await handlePasswordReset2FAVerify(code, isBackupCode);
+    }
+
     if (!pendingLoginData) return false;
     return await handleLogin(pendingLoginData, code, isBackupCode);
   };
@@ -574,15 +587,7 @@ export default function Auth() {
     try {
       const email = opaqueClient.normalizeOpaqueIdentifier(data.email);
       recoverForm.setValue('email', email);
-      await fetch(`${API_URL}/auth-recovery`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`
-        },
-        credentials: usesCookieSession ? 'include' : 'omit',
-        body: JSON.stringify({ email })
-      });
+      await requestAccountPasswordEmailCode({ purpose: 'forgot', email });
 
       // User Enumeration Prevention: Timing Attack Safe Response
       toast({
@@ -605,35 +610,29 @@ export default function Auth() {
     setLoading(true);
     try {
       const email = opaqueClient.normalizeOpaqueIdentifier(recoverForm.getValues('email'));
-
-      // Verify recovery code via our custom auth-recovery endpoint
-      const res = await fetch(`${API_URL}/auth-recovery`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`
-        },
-        credentials: usesCookieSession ? 'include' : 'omit',
-        body: JSON.stringify({ email, action: 'verify', code: data.code })
+      const { resetToken, requires2FA } = await verifyAccountPasswordEmailCode({
+        purpose: 'forgot',
+        email,
+        code: data.code,
       });
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Ungültiger oder abgelaufener Code.');
-      }
-
-      const { resetToken } = await res.json();
-
-      if (typeof resetToken !== 'string' || !resetToken) {
-        throw new Error('Reset-Berechtigung fehlt. Bitte fordere einen neuen Code an.');
-      }
-
       setPasswordResetToken(resetToken);
+      if (requires2FA) {
+        setTwoFactorMode('password-reset');
+        setShow2FAModal(true);
+        toast({
+          title: t('common.success'),
+          description: 'Code verifiziert. Bitte bestätige jetzt deine Zwei-Faktor-Authentifizierung.',
+        });
+        return;
+      }
+
       setMode('update_password');
       toast({
         title: t('common.success'),
         description: 'Code verifiziert. Bitte gib ein neues Passwort ein.',
       });
+      return;
     } catch (error: unknown) {
       toast({
         variant: 'destructive',
@@ -642,6 +641,28 @@ export default function Auth() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePasswordReset2FAVerify = async (code: string, isBackupCode: boolean) => {
+    if (!passwordResetToken) return false;
+
+    try {
+      await verifyAccountPasswordResetSecondFactor({
+        resetToken: passwordResetToken,
+        code,
+        isBackupCode,
+      });
+      setShow2FAModal(false);
+      setTwoFactorMode(null);
+      setMode('update_password');
+      toast({
+        title: t('common.success'),
+        description: '2FA bestätigt. Bitte gib ein neues Passwort ein.',
+      });
+      return true;
+    } catch {
+      return false;
     }
   };
 
@@ -665,57 +686,10 @@ export default function Auth() {
         return;
       }
 
-      opaqueClient.assertOpaqueServerKeyPinConfigured();
-      const { clientRegistrationState, registrationRequest } = await opaqueClient.startRegistration(data.password);
-      const res = await fetch(`${API_URL}/auth-reset-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`
-        },
-        credentials: usesCookieSession ? 'include' : 'omit',
-        body: JSON.stringify({
-          action: 'opaque-reset-start',
-          resetToken: passwordResetToken,
-          registrationRequest,
-        })
+      await completeOpaqueAccountPasswordReset({
+        resetToken: passwordResetToken,
+        newPassword: data.password,
       });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Reset failed');
-      }
-
-      const { resetRegistrationId, registrationResponse } = await res.json();
-      if (typeof resetRegistrationId !== 'string' || typeof registrationResponse !== 'string') {
-        throw new Error('OPAQUE reset start failed');
-      }
-
-      const { registrationRecord } = await opaqueClient.finishRegistration(
-        clientRegistrationState,
-        registrationResponse,
-        data.password,
-      );
-
-      const finishRes = await fetch(`${API_URL}/auth-reset-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`
-        },
-        credentials: usesCookieSession ? 'include' : 'omit',
-        body: JSON.stringify({
-          action: 'opaque-reset-finish',
-          resetToken: passwordResetToken,
-          resetRegistrationId,
-          registrationRecord,
-        })
-      });
-
-      if (!finishRes.ok) {
-        const errorData = await finishRes.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Reset failed');
-      }
 
       toast({ title: t('common.success'), description: 'Passwort erfolgreich aktualisiert.' });
       setPasswordResetToken(null);
@@ -730,6 +704,13 @@ export default function Auth() {
     }
   };
 
+  const handleGenerateUpdatePassword = () => {
+    const generatedPassword = generatePassword(DEFAULT_PASSWORD_OPTIONS);
+    updatePasswordForm.setValue('password', generatedPassword, { shouldDirty: true, shouldValidate: true });
+    updatePasswordForm.setValue('confirmPassword', generatedPassword, { shouldDirty: true, shouldValidate: true });
+    passwordCheck.onPasswordChange(generatedPassword);
+    passwordCheck.onPasswordBlur(generatedPassword);
+  };
 
   const handleOAuth = async (provider: DesktopOAuthProvider) => {
     setLoading(true);
@@ -898,7 +879,15 @@ export default function Auth() {
             {mode === 'update_password' && (
               <Form {...updatePasswordForm}>
                 <form onSubmit={updatePasswordForm.handleSubmit(handleUpdatePassword)} className="space-y-4">
-                  {/* Remove the unnecessary email field for reset password, as identity comes from JWT */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleGenerateUpdatePassword}
+                  >
+                    <WandSparkles className="w-4 h-4 mr-2" />
+                    {t('settings.password.generateButton')}
+                  </Button>
                   <FormField
                     control={updatePasswordForm.control}
                     name="password"
@@ -908,7 +897,21 @@ export default function Auth() {
                         <FormControl>
                           <div className="relative">
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input {...field} type={showPassword ? 'text' : 'password'} placeholder="••••••••••••" className="pl-10 pr-10" />
+                            <Input
+                              {...field}
+                              type={showPassword ? 'text' : 'password'}
+                              placeholder="••••••••••••"
+                              className="pl-10 pr-10"
+                              onFocus={passwordCheck.onFieldFocus}
+                              onChange={(event) => {
+                                field.onChange(event);
+                                passwordCheck.onPasswordChange(event.target.value);
+                              }}
+                              onBlur={(event) => {
+                                field.onBlur();
+                                passwordCheck.onPasswordBlur(event.target.value);
+                              }}
+                            />
                             <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
@@ -934,7 +937,17 @@ export default function Auth() {
                       </FormItem>
                     )}
                   />
-                  <Button type="submit" className="w-full" disabled={loading}>
+                  {passwordCheck.strengthResult && (
+                    <PasswordStrengthMeter
+                      score={passwordCheck.strengthResult.score}
+                      feedback={passwordCheck.strengthResult.feedback}
+                      crackTimeDisplay={passwordCheck.strengthResult.crackTimeDisplay}
+                      isPwned={passwordCheck.pwnedResult?.isPwned ?? false}
+                      pwnedCount={passwordCheck.pwnedResult?.pwnedCount ?? 0}
+                      isChecking={passwordCheck.isChecking}
+                    />
+                  )}
+                  <Button type="submit" className="w-full" disabled={loading || passwordCheck.isChecking}>
                     {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     Passwort Speichern
                   </Button>
@@ -1192,7 +1205,11 @@ export default function Auth() {
         onVerify={handle2FAVerify}
         onCancel={() => {
           setShow2FAModal(false);
+          setTwoFactorMode(null);
           setPendingLoginData(null);
+          if (twoFactorMode === 'password-reset') {
+            setPasswordResetToken(null);
+          }
           setLoading(false);
         }}
       />
