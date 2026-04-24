@@ -36,17 +36,21 @@ Signup is OPAQUE registration:
 
 The app password is not sent to `auth-register`.
 
-### Password Reset
+### Password Reset And Password Change
 
-Password reset re-enrolls OPAQUE credentials:
+Forgot-password and authenticated password-change use the same reset authorization and OPAQUE re-enrollment logic:
 
-1. `auth-recovery` verifies the recovery code and returns a reset token.
-2. The client starts OPAQUE registration for the new password.
-3. `auth-reset-password` `opaque-reset-start` returns a registration response.
-4. The client finishes OPAQUE registration locally.
-5. `auth-reset-password` `opaque-reset-finish` stores the new OPAQUE record, removes GoTrue password verifiers, revokes sessions, and clears reset state.
+1. `accountPasswordResetService` requests an email code through `auth-recovery`.
+2. `auth-recovery` verifies the one-time email code without issuing an app session.
+3. If account 2FA is enabled, `auth-recovery` requires a TOTP code or recovery code before authorizing the reset token.
+4. The client starts OPAQUE registration for the new password.
+5. `auth-reset-password` `opaque-reset-start` returns a registration response only for an authorized reset token.
+6. The client finishes OPAQUE registration locally.
+7. `auth-reset-password` `opaque-reset-finish` stores the new OPAQUE record, removes GoTrue password verifiers, revokes sessions, and clears reset state.
 
 The new app password is never sent to the server.
+
+Authenticated password-change does not let the user edit the email address; the server reads it from the current session. OAuth/social-only accounts do not enter this app-password flow.
 
 ### OAuth/Social Login
 
@@ -62,4 +66,4 @@ OAuth providers (`google`, `discord`, `github`) use `supabase.auth.signInWithOAu
 
 ## 2FA
 
-2FA for app-password login is enforced inside `auth-opaque` after successful OPAQUE verification and before session issuance. Backup-code verification still uses Argon2id hashes, but those hashes are backup-code material, not app-password hashes.
+2FA for app-password login is enforced inside `auth-opaque` after successful OPAQUE verification and before session issuance. 2FA for password reset/change is enforced inside `auth-recovery` before the reset token can be used for OPAQUE re-registration. Backup-code verification still uses Argon2id hashes, but those hashes are backup-code material, not app-password hashes.

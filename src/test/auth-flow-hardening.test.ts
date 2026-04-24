@@ -38,6 +38,74 @@ describe("auth flow hardening", () => {
     expect(migrationSourceForSessions()).toContain("information_schema.columns");
   });
 
+  it("centralizes forgot-password and password-change on the OPAQUE reset service", () => {
+    const serviceSource = readFileSync("src/services/accountPasswordResetService.ts", "utf-8");
+    const authPageSource = readFileSync("src/pages/Auth.tsx", "utf-8");
+    const passwordSettingsSource = readFileSync("src/components/settings/PasswordSettings.tsx", "utf-8");
+    const networkBodies = extractJsonRequestBodies(serviceSource);
+
+    expect(serviceSource).toContain("Central OPAQUE account-password reset/change flow");
+    expect(serviceSource).toContain("requestAccountPasswordEmailCode");
+    expect(serviceSource).toContain("verifyAccountPasswordEmailCode");
+    expect(serviceSource).toContain("verifyAccountPasswordResetSecondFactor");
+    expect(serviceSource).toContain("completeOpaqueAccountPasswordReset");
+    expect(serviceSource).toContain("opaqueClient.startRegistration(input.newPassword)");
+    expect(serviceSource).toContain("opaqueClient.finishRegistration");
+    expect(serviceSource).toContain("'opaque-reset-start'");
+    expect(serviceSource).toContain("'opaque-reset-finish'");
+    expect(serviceSource).toContain("credentials: 'omit'");
+    expect(serviceSource).not.toContain("credentials: 'include'");
+    expect(networkBodies).toContain("registrationRequest");
+    expect(networkBodies).toContain("registrationRecord");
+    expect(networkBodies).not.toContain("newPassword");
+    expect(networkBodies).not.toMatch(/\bpassword\s*:/);
+    expect(serviceSource).not.toContain("resetPasswordForEmail");
+    expect(serviceSource).not.toContain("signInWithPassword");
+    expect(serviceSource).not.toContain("updateUser({ password");
+
+    expect(authPageSource).toContain("completeOpaqueAccountPasswordReset");
+    expect(authPageSource).toContain("verifyAccountPasswordResetSecondFactor");
+    expect(passwordSettingsSource).toContain("completeOpaqueAccountPasswordReset");
+    expect(passwordSettingsSource).toContain("requestAccountPasswordEmailCode({ purpose: 'change' })");
+    expect(passwordSettingsSource).toContain("canCurrentUserUseAppPasswordFlow");
+    expect(passwordSettingsSource).not.toContain("updateUser({ password");
+    expect(passwordSettingsSource).not.toContain("resetPasswordForEmail");
+  });
+
+  it("requires email-code plus configured 2FA before OPAQUE reset registration", () => {
+    const recoverySource = readFileSync("supabase/functions/auth-recovery/index.ts", "utf-8");
+    const resetSource = readFileSync("supabase/functions/auth-reset-password/index.ts", "utf-8");
+    const migrationSource = readFileSync("supabase/migrations/20260424193000_opaque_password_reset_change_flow.sql", "utf-8");
+    const resetStartSection = extractSection(
+      resetSource,
+      "async function handleOpaqueResetStart",
+      "async function handleOpaqueResetFinish",
+    );
+    const resetFinishSection = extractSection(
+      resetSource,
+      "async function handleOpaqueResetFinish",
+      "async function findActiveResetChallenge",
+    );
+
+    expect(recoverySource).toContain('action === "verify-two-factor"');
+    expect(recoverySource).toContain("two_factor_required: twoFactorRequired");
+    expect(recoverySource).toContain("authorized_at: twoFactorRequired ? null : nowIso");
+    expect(recoverySource).toContain("verifyAndConsumeBackupCode");
+    expect(recoverySource).toContain("verifyTotpCode");
+    expect(resetStartSection).toContain("isResetChallengeAuthorized(challenge)");
+    expect(resetStartSection).toContain('"TWO_FACTOR_REQUIRED"');
+    expect(resetFinishSection).toContain("isResetChallengeAuthorized(challenge)");
+    expect(resetFinishSection).toContain("opaque_password_reset_states");
+    expect(resetSource).toContain('action: "opaque_reset"');
+    expect(resetSource).toContain("two_factor_verified_at");
+    expect(resetSource).toContain("authorized_at");
+    expect(migrationSource).toContain("two_factor_required BOOLEAN NOT NULL DEFAULT FALSE");
+    expect(migrationSource).toContain("authorized_at TIMESTAMPTZ");
+    expect(migrationSource).toContain("used_at TIMESTAMPTZ");
+    expect(migrationSource).toContain("enforce_opaque_no_gotrue_password_on_auth_users");
+    expect(migrationSource).toContain("NEW.encrypted_password = NULL");
+  });
+
   it("enforces auth-specific server-side throttling in critical auth paths", () => {
     const helperSource = readFileSync("supabase/functions/_shared/authRateLimit.ts", "utf-8");
     const sessionSource = readFileSync("supabase/functions/auth-session/index.ts", "utf-8");
@@ -151,6 +219,11 @@ function extractSection(source: string, startNeedle: string, endNeedle: string):
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
   return source.slice(start, end);
+}
+
+function extractJsonRequestBodies(source: string): string {
+  const matches = source.matchAll(/body:\s*JSON\.stringify\(\{([\s\S]*?)\}\),/g);
+  return Array.from(matches, (match) => match[1]).join("\n");
 }
 
 function migrationSourceForSessions(): string {
