@@ -1,97 +1,41 @@
-# AuthContext — Authentifizierungs-Kontext
+# AuthContext — Authentication State
 
-> **Datei:** `src/contexts/AuthContext.tsx`  
-> **Zweck:** Verwaltet den Authentifizierungsstatus der Anwendung und stellt Login/Signup/OAuth-Methoden bereit.
+> **File:** `src/contexts/AuthContext.tsx`
+> **Purpose:** Holds React-facing auth state and exposes logout. It does not implement app-password login.
 
----
+## Boundary
 
-## Context-Interface
+`AuthContext` is intentionally thin. It tracks the current Supabase session/user, hydrates persisted sessions via `authSessionManager`, and signs out. Login flows live in `src/pages/Auth.tsx`:
+
+- App-owned password login: OPAQUE only (`auth-opaque`).
+- OAuth/social login: Supabase OAuth + `auth-session` `oauth-sync`.
+- Vault unlock/master password: separate vault flow after an app session exists.
+
+`AuthContext` must not call `supabase.auth.signInWithPassword()` and must not accept an app password.
+
+## Context Interface
 
 ```typescript
 interface AuthContextType {
-    user: User | null;              // Supabase User-Objekt
-    session: Session | null;        // Supabase Session-Objekt
-    loading: boolean;               // true während Initialisierung
-    signUp: (email, password) => Promise<{ error }>;
-    signIn: (email, password) => Promise<{ error }>;
-    signInWithOAuth: (provider) => Promise<{ error }>;
-    signOut: () => Promise<void>;
+  user: User | null;
+  session: Session | null;
+  loading: boolean;
+  authReady: boolean;
+  authMode: AuthMode;
+  isOfflineSession: boolean;
+  signOut: () => Promise<void>;
 }
 ```
 
----
+## Initialization
 
-## `AuthProvider` — React Context Provider
+1. Registers `supabase.auth.onAuthStateChange()`.
+2. Hydrates an existing session via `hydrateAuthSession()`.
+3. Applies session/user state when a valid session exists.
+4. Supports the local Tauri dev bypass when explicitly enabled.
 
-### Initialisierung (useEffect)
+## Sign Out
 
-**Ablauf:**
-1. Registriert `supabase.auth.onAuthStateChange()` als Listener **zuerst**
-2. Ruft danach `supabase.auth.getSession()` auf, um eine existierende Session zu prüfen
-3. Setzt `user`, `session` und `loading` bei jedem Auth-Event
+`signOut()` clears local persistence, signs out of Supabase memory auth, and deletes the BFF session cookie through `auth-session` `DELETE` in normal web runtime.
 
-> **Reihenfolge:** Listener wird vor `getSession()` gesetzt, um Race-Conditions zu vermeiden.
-
-**Cleanup:** Deregistriert den Listener via `subscription.unsubscribe()`.
-
----
-
-### `getRedirectUrl(): string` (intern)
-
-Berechnet die korrekte Redirect-URL für OAuth und Signup-Bestätigungen.
-
-**Ablauf:**
-1. Ermittelt den aktuellen Origin (`window.location.origin`)
-2. Prüft ob aktueller Host `localhost` / `127.0.0.1` / `[::1]` ist
-3. **Nicht-Localhost + Browser:** Verwendet `window.location.origin`
-4. **Localhost:** Liest `VITE_SITE_URL` aus Environment
-   - **Typo-Fix:** Erkennt automatisch `mauntingstudios,de` → `mauntingstudios.de`
-5. **Sicherheit:** Verhindert, dass Produktions-Deployments auf `localhost` redirecten (ignoriert localhost `VITE_SITE_URL` auf Non-Localhost-Hosts)
-
----
-
-### `signUp(email, password): Promise<{ error }>`
-
-Registriert einen neuen Nutzer.
-
-**Ablauf:**
-1. Redirect-URL: `getRedirectUrl() + '/vault'`
-2. `supabase.auth.signUp({ email, password, options: { emailRedirectTo } })`
-
----
-
-### `signIn(email, password): Promise<{ error }>`
-
-Meldet einen Nutzer mit E-Mail/Passwort an.
-
-**Ablauf:** `supabase.auth.signInWithPassword({ email, password })`
-
----
-
-### `signInWithOAuth(provider): Promise<{ error }>`
-
-OAuth-Anmeldung mit Google, Discord oder GitHub.
-
-**Parameter:** `provider: 'google' | 'discord' | 'github'`
-
-**Ablauf:**
-1. Redirect-URL: `getRedirectUrl() + '/vault'`
-2. `supabase.auth.signInWithOAuth({ provider, options: { redirectTo } })`
-
----
-
-### `signOut(): Promise<void>`
-
-Meldet den aktuellen Nutzer ab.
-
-**Ablauf:** `supabase.auth.signOut()`
-
----
-
-## Hook: `useAuth()`
-
-```typescript
-export function useAuth(): AuthContextType
-```
-
-Zugriff auf den Auth-Kontext. Wirft `Error` wenn außerhalb des `AuthProvider` verwendet.
+`auth-session` is not a password-login endpoint. Its current responsibilities are session hydration/logout and OAuth sync only.

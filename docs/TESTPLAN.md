@@ -453,7 +453,7 @@ Erweitert die bestehenden Marker-Tests um die DB-abhängigen Funktionen.
 | 2 | Initial State: `user=null, session=null, loading=true` | Korrekte Anfangswerte ✅ |
 | 3 | `signUp()` ruft `supabase.auth.signUp()` auf | Korrekte Parameter ✅ |
 | 4 | `signUp()` gibt Error zurück bei Fehler | Error propagiert ✅ |
-| 5 | `signIn()` ruft `supabase.auth.signInWithPassword()` auf | Korrekte Parameter ✅ |
+| 5 | App-Passwort-Login nutzt OPAQUE statt `supabase.auth.signInWithPassword()` | Nur OPAQUE-Protokollnachrichten werden gesendet ✅ |
 | 6 | `signIn()` gibt Error zurück bei Fehler | Error propagiert ✅ |
 | 7 | `signInWithOAuth()` mit google | Provider korrekt ✅ |
 | 8 | `signInWithOAuth()` mit discord | Provider korrekt ✅ |

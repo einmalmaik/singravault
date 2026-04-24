@@ -1,22 +1,14 @@
 /**
  * @fileoverview OPAQUE Protocol Edge Function
  *
- * Implements the server-side of the OPAQUE PAKE protocol.
- * The user's password NEVER reaches this server — not even as a hash.
+ * App-owned password authentication is only allowed through OPAQUE.
+ * The user's password never reaches this server, not even as a hash.
  *
  * Endpoints (via `action` field in POST body):
- *   - register-start:  Server processes registration request (requires valid session)
- *   - register-finish: Server stores the registration record (requires valid session)
- *   - login-start:     Server processes login request
- *   - login-finish:    Server verifies auth proof and issues session
- *
- * SECURITY:
- *   - serverLoginState is stored server-side in the DB (not sent to client)
- *   - Registration requires an authenticated session (migration only)
- *   - 2FA integration delegates to auth-session with opaqueVerified flag
- *
- * Required Secrets:
- *   - OPAQUE_SERVER_SETUP: Long-term server setup string
+ *   - register-start:  Server processes registration request for an authenticated account
+ *   - register-finish: Server stores the registration record for an authenticated account
+ *   - login-start:     Server processes OPAQUE login request
+ *   - login-finish:    Server verifies OPAQUE proof and issues session
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -33,15 +25,20 @@ import {
     type AuthRateLimitFailureResult,
     type AuthRateLimitState,
 } from "../_shared/authRateLimit.ts";
+import {
+    createOpaqueSessionBindingProof,
+    isValidOpaqueIdentifier,
+    normalizeOpaqueIdentifier,
+    OPAQUE_SESSION_BINDING_VERSION,
+} from "../_shared/opaqueAuth.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
 const OPAQUE_SERVER_SETUP = Deno.env.get("OPAQUE_SERVER_SETUP")!;
 const SESSION_COOKIE_NAME = "sb-bff-session";
 const SESSION_COOKIE_MAX_AGE = Number(Deno.env.get("SESSION_COOKIE_MAX_AGE_SECONDS") ?? 60 * 60 * 24 * 400);
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 await opaque.ready;
 
@@ -72,9 +69,7 @@ Deno.serve(async (req) => {
 
     try {
         const body = await req.json();
-        const { action } = body;
-
-        switch (action) {
+        switch (body.action) {
             case "register-start":
                 return await handleRegisterStart(body, headers, req);
             case "register-finish":
@@ -92,42 +87,37 @@ Deno.serve(async (req) => {
     }
 });
 
-// ============ Auth Helper ============
-
-/**
- * Extracts and validates the JWT from the Authorization header.
- * Returns the authenticated user ID or null.
- */
 async function getAuthenticatedUserId(req: Request): Promise<string | null> {
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) return null;
+    if (!authHeader?.startsWith("Bearer ")) {
+        return null;
+    }
 
     const token = authHeader.replace("Bearer ", "");
     const { data, error } = await supabaseAdmin.auth.getUser(token);
-    if (error || !data.user) return null;
+    if (error || !data.user) {
+        return null;
+    }
 
     return data.user.id;
 }
 
-// ============ Registration ============
-
 async function handleRegisterStart(
-    body: { userIdentifier: string; registrationRequest: string },
+    body: { userIdentifier?: unknown; registrationRequest?: unknown },
     headers: Headers,
     req: Request,
 ): Promise<Response> {
-    // Registration requires an active session (migration from legacy)
     const authenticatedUserId = await getAuthenticatedUserId(req);
     if (!authenticatedUserId) {
         return new Response(JSON.stringify({ error: "Authentication required" }), { status: 401, headers });
     }
 
-    const { userIdentifier, registrationRequest } = body;
-    if (!userIdentifier || !registrationRequest) {
+    const userIdentifier = normalizeOpaqueIdentifier(body.userIdentifier);
+    const registrationRequest = typeof body.registrationRequest === "string" ? body.registrationRequest : "";
+    if (!isValidOpaqueIdentifier(userIdentifier) || !registrationRequest) {
         return new Response(JSON.stringify({ error: "Missing fields" }), { status: 400, headers });
     }
 
-    // Verify the authenticated user matches the requested email
     const { data: users } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: userIdentifier });
     if (!users || users.length === 0 || users[0].id !== authenticatedUserId) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers });
@@ -143,34 +133,32 @@ async function handleRegisterStart(
 }
 
 async function handleRegisterFinish(
-    body: { userIdentifier: string; registrationRecord: string },
+    body: { userIdentifier?: unknown; registrationRecord?: unknown },
     headers: Headers,
     req: Request,
 ): Promise<Response> {
-    // Registration requires an active session
     const authenticatedUserId = await getAuthenticatedUserId(req);
     if (!authenticatedUserId) {
         return new Response(JSON.stringify({ error: "Authentication required" }), { status: 401, headers });
     }
 
-    const { userIdentifier, registrationRecord } = body;
-    if (!userIdentifier || !registrationRecord) {
+    const userIdentifier = normalizeOpaqueIdentifier(body.userIdentifier);
+    const registrationRecord = typeof body.registrationRecord === "string" ? body.registrationRecord : "";
+    if (!isValidOpaqueIdentifier(userIdentifier) || !registrationRecord) {
         return new Response(JSON.stringify({ error: "Missing fields" }), { status: 400, headers });
     }
 
-    // Verify the authenticated user matches the requested email
     const { data: users, error: userError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: userIdentifier });
     if (userError || !users || users.length === 0 || users[0].id !== authenticatedUserId) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers });
     }
 
     const userId = users[0].id;
-
-    // Store registration record (upsert — handles re-registration)
     const { error: upsertError } = await supabaseAdmin
         .from("user_opaque_records")
         .upsert({
             user_id: userId,
+            opaque_identifier: userIdentifier,
             registration_record: registrationRecord,
             updated_at: new Date().toISOString(),
         }, { onConflict: "user_id" });
@@ -180,98 +168,94 @@ async function handleRegisterFinish(
         return new Response(JSON.stringify({ error: "Failed to store record" }), { status: 500, headers });
     }
 
-    // Update auth_protocol in profiles
-    await supabaseAdmin
-        .from("profiles")
-        .update({ auth_protocol: "opaque" })
-        .eq("user_id", userId);
+    await Promise.all([
+        supabaseAdmin.from("profiles").update({ auth_protocol: "opaque" }).eq("user_id", userId),
+        supabaseAdmin.from("user_security").delete().eq("id", userId),
+    ]);
+    await disableGotruePasswordLogin(userId);
 
     return new Response(JSON.stringify({ success: true }), { status: 200, headers });
 }
 
-// ============ Login ============
-
 async function handleLoginStart(
-    body: { userIdentifier: string; startLoginRequest: string },
+    body: { userIdentifier?: unknown; startLoginRequest?: unknown },
     headers: Headers,
     req: Request,
 ): Promise<Response> {
-    const { userIdentifier, startLoginRequest } = body;
-
-    if (!userIdentifier || !startLoginRequest) {
+    const userIdentifier = normalizeOpaqueIdentifier(body.userIdentifier);
+    const startLoginRequest = typeof body.startLoginRequest === "string" ? body.startLoginRequest : "";
+    if (!isValidOpaqueIdentifier(userIdentifier) || !startLoginRequest) {
         return new Response(JSON.stringify({ error: "Missing fields" }), { status: 400, headers });
     }
 
-    const normalizedIdentifier = String(userIdentifier).toLowerCase().trim();
     const opaqueRateLimit = await checkAuthRateLimit({
         supabaseAdmin,
         req,
         action: "opaque_login",
-        account: { kind: "email", value: normalizedIdentifier },
+        account: { kind: "email", value: userIdentifier },
     });
     if (!opaqueRateLimit.allowed) {
         return authRateLimitResponse(opaqueRateLimit, headers);
     }
     const startTime = Date.now();
 
-    // Look up user
-    const { data: users, error: userError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: normalizedIdentifier });
+    const { data: users, error: userError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: userIdentifier });
     if (userError || !users || users.length === 0) {
         return await opaqueUnavailableResponse(opaqueRateLimit, startTime, headers);
     }
 
     const userId = users[0].id;
-
-    // Fetch OPAQUE registration record
     const { data: opaqueData, error: opaqueError } = await supabaseAdmin
         .from("user_opaque_records")
-        .select("registration_record")
+        .select("registration_record, opaque_identifier")
         .eq("user_id", userId)
-        .single();
+        .maybeSingle();
 
-    if (opaqueError || !opaqueData) {
-        // User doesn't have OPAQUE record — they should use legacy auth
+    if (opaqueError || !opaqueData?.registration_record) {
         return await opaqueUnavailableResponse(opaqueRateLimit, startTime, headers);
     }
 
-    const { serverLoginState, loginResponse } = opaque.server.startLogin({
-        serverSetup: OPAQUE_SERVER_SETUP,
-        userIdentifier: normalizedIdentifier,
-        registrationRecord: opaqueData.registration_record,
-        startLoginRequest,
-    });
+    const recordIdentifier = normalizeOpaqueIdentifier(opaqueData.opaque_identifier || userIdentifier);
+    let loginResponse: string;
+    let serverLoginState: string;
+    try {
+        const result = opaque.server.startLogin({
+            serverSetup: OPAQUE_SERVER_SETUP,
+            userIdentifier: recordIdentifier,
+            registrationRecord: opaqueData.registration_record,
+            startLoginRequest,
+        });
+        loginResponse = result.loginResponse;
+        serverLoginState = result.serverLoginState;
+    } catch {
+        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
+    }
 
-    // Store serverLoginState server-side (NEVER send to client)
-    // Use a short-lived entry keyed by a random loginId
     const loginId = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 min TTL
-
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
     const { error: storeError } = await supabaseAdmin
         .from("opaque_login_states")
         .insert({
             id: loginId,
             user_id: userId,
+            opaque_identifier: recordIdentifier,
             server_login_state: serverLoginState,
             expires_at: expiresAt,
         });
 
     if (storeError) {
-        console.error("Failed to store login state:", storeError);
+        console.error("Failed to store OPAQUE login state:", storeError);
         return new Response(JSON.stringify({ error: "Internal error" }), { status: 500, headers });
     }
 
-    // Return loginResponse + loginId (opaque reference, NOT the state itself)
-    return new Response(JSON.stringify({
-        loginResponse,
-        loginId,
-    }), { status: 200, headers });
+    return new Response(JSON.stringify({ loginResponse, loginId }), { status: 200, headers });
 }
 
 async function handleLoginFinish(
     body: {
-        userIdentifier: string;
-        finishLoginRequest: string;
-        loginId: string;
+        userIdentifier?: unknown;
+        finishLoginRequest?: unknown;
+        loginId?: unknown;
         totpCode?: string;
         isBackupCode?: boolean;
         skipCookie?: boolean;
@@ -279,128 +263,153 @@ async function handleLoginFinish(
     headers: Headers,
     req: Request,
 ): Promise<Response> {
-    const { userIdentifier, finishLoginRequest, loginId, totpCode, isBackupCode, skipCookie } = body;
-
-    if (!userIdentifier || !finishLoginRequest || !loginId) {
+    const userIdentifier = normalizeOpaqueIdentifier(body.userIdentifier);
+    const finishLoginRequest = typeof body.finishLoginRequest === "string" ? body.finishLoginRequest : "";
+    const loginId = typeof body.loginId === "string" ? body.loginId : "";
+    if (!isValidOpaqueIdentifier(userIdentifier) || !finishLoginRequest || !loginId) {
         return new Response(JSON.stringify({ error: "Missing fields" }), { status: 400, headers });
     }
 
-    const normalizedIdentifier = String(userIdentifier).toLowerCase().trim();
     const opaqueRateLimit = await checkAuthRateLimit({
         supabaseAdmin,
         req,
         action: "opaque_login",
-        account: { kind: "email", value: normalizedIdentifier },
+        account: { kind: "email", value: userIdentifier },
     });
     if (!opaqueRateLimit.allowed) {
         return authRateLimitResponse(opaqueRateLimit, headers);
     }
     const startTime = Date.now();
 
-    // Retrieve server login state from DB
     const { data: loginState, error: stateError } = await supabaseAdmin
         .from("opaque_login_states")
-        .select("server_login_state, user_id, expires_at")
+        .select("server_login_state, user_id, opaque_identifier, expires_at")
         .eq("id", loginId)
-        .single();
+        .maybeSingle();
 
-    // Always delete the state after retrieval (one-time use)
     await supabaseAdmin.from("opaque_login_states").delete().eq("id", loginId);
 
     if (stateError || !loginState) {
         return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid or expired login session");
     }
 
-    // Check expiry
     if (new Date(loginState.expires_at) < new Date()) {
         return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Login session expired");
     }
 
-    // Verify the login
-    const { sessionKey } = opaque.server.finishLogin({
-        finishLoginRequest,
-        serverLoginState: loginState.server_login_state,
-    });
+    const stateIdentifier = normalizeOpaqueIdentifier(loginState.opaque_identifier || userIdentifier);
+    if (stateIdentifier !== userIdentifier) {
+        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
+    }
+
+    let sessionKey: string;
+    try {
+        const result = opaque.server.finishLogin({
+            finishLoginRequest,
+            serverLoginState: loginState.server_login_state,
+        });
+        sessionKey = result.sessionKey;
+    } catch {
+        return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
+    }
 
     if (!sessionKey) {
         return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
     }
 
-    // OPAQUE verification succeeded! Password was proven without ever being sent.
-    const userId = loginState.user_id;
-
-    // Verify userIdentifier matches
-    const { data: users } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: normalizedIdentifier });
+    const userId = loginState.user_id as string;
+    const { data: users } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: userIdentifier });
     if (!users || users.length === 0 || users[0].id !== userId) {
         return await invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials");
     }
 
     await resetAuthRateLimit(opaqueRateLimit);
 
-    // Check email confirmation
     const { data: adminUser, error: adminUserError } = await supabaseAdmin.auth.admin.getUserById(userId);
     if (adminUserError || !adminUser.user.email_confirmed_at) {
         return new Response(JSON.stringify({ error: "Email verification required" }), { status: 403, headers });
     }
 
-    // Check 2FA
-    const { data: user2fa } = await supabaseAdmin
-        .from("user_2fa")
-        .select("is_enabled")
-        .eq("user_id", userId)
-        .single();
-
-    if (user2fa?.is_enabled) {
-        // Return a challenge until the client submits a TOTP or backup code.
-        if (!totpCode && !isBackupCode) {
-            return new Response(JSON.stringify({
-                requires2FA: true,
-                opaqueVerified: true,
-            }), { status: 200, headers });
-        }
-
-        if (!totpCode) {
-            return new Response(JSON.stringify({ error: "Invalid request payload" }), { status: 400, headers });
-        }
-
-        const secondFactorRateLimit = await checkAuthRateLimit({
-            supabaseAdmin,
-            req,
-            action: isBackupCode ? "backup_code_verify" : "totp_verify",
-            account: { kind: "user", value: userId },
-        });
-        if (!secondFactorRateLimit.allowed) {
-            return authRateLimitResponse(secondFactorRateLimit, headers);
-        }
-
-        const secondFactorStartTime = Date.now();
-        const secondFactorValid = isBackupCode
-            ? await verifyAndConsumeBackupCode(userId, totpCode)
-            : await verifyTotpCode(userId, totpCode);
-
-        if (!secondFactorValid) {
-            return await invalidOpaqueAttemptResponse(
-                secondFactorRateLimit,
-                secondFactorStartTime,
-                headers,
-                isBackupCode ? "Invalid backup code" : "Invalid 2FA code",
-            );
-        }
-
-        await resetAuthRateLimit(secondFactorRateLimit);
-        await supabaseAdmin.from("user_2fa").update({ last_verified_at: new Date().toISOString() }).eq("user_id", userId);
+    const twoFactorResponse = await enforceSecondFactorIfNeeded({
+        userId,
+        req,
+        headers,
+        totpCode: body.totpCode,
+        isBackupCode: Boolean(body.isBackupCode),
+    });
+    if (twoFactorResponse) {
+        return twoFactorResponse;
     }
 
-    // Generate session
-    const session = await issueSession(normalizedIdentifier, headers, skipCookie);
+    const session = await issueSession(userIdentifier, headers, Boolean(body.skipCookie));
     if (!session) {
         return new Response(JSON.stringify({ error: "Session generation failed" }), { status: 500, headers });
     }
 
-    return new Response(JSON.stringify({ success: true, session }), { status: 200, headers });
+    const opaqueSessionBinding = await createSessionBinding(sessionKey, session);
+    return new Response(JSON.stringify({
+        success: true,
+        session,
+        opaqueSessionBinding,
+    }), { status: 200, headers });
 }
 
-// ============ Helpers ============
+async function enforceSecondFactorIfNeeded(params: {
+    userId: string;
+    req: Request;
+    headers: Headers;
+    totpCode?: string;
+    isBackupCode: boolean;
+}): Promise<Response | null> {
+    const { data: user2fa } = await supabaseAdmin
+        .from("user_2fa")
+        .select("is_enabled")
+        .eq("user_id", params.userId)
+        .maybeSingle();
+
+    if (!user2fa?.is_enabled) {
+        return null;
+    }
+
+    if (!params.totpCode && !params.isBackupCode) {
+        return new Response(JSON.stringify({
+            requires2FA: true,
+            opaqueVerified: true,
+        }), { status: 200, headers: params.headers });
+    }
+
+    if (!params.totpCode) {
+        return new Response(JSON.stringify({ error: "Invalid request payload" }), { status: 400, headers: params.headers });
+    }
+
+    const secondFactorRateLimit = await checkAuthRateLimit({
+        supabaseAdmin,
+        req: params.req,
+        action: params.isBackupCode ? "backup_code_verify" : "totp_verify",
+        account: { kind: "user", value: params.userId },
+    });
+    if (!secondFactorRateLimit.allowed) {
+        return authRateLimitResponse(secondFactorRateLimit, params.headers);
+    }
+
+    const startTime = Date.now();
+    const secondFactorValid = params.isBackupCode
+        ? await verifyAndConsumeBackupCode(params.userId, params.totpCode)
+        : await verifyTotpCode(params.userId, params.totpCode);
+
+    if (!secondFactorValid) {
+        return await invalidOpaqueAttemptResponse(
+            secondFactorRateLimit,
+            startTime,
+            params.headers,
+            params.isBackupCode ? "Invalid backup code" : "Invalid 2FA code",
+        );
+    }
+
+    await resetAuthRateLimit(secondFactorRateLimit);
+    await supabaseAdmin.from("user_2fa").update({ last_verified_at: new Date().toISOString() }).eq("user_id", params.userId);
+    return null;
+}
 
 async function verifyTotpCode(userId: string, code: string): Promise<boolean> {
     const { data: totpSecret, error: totpSecretError } = await supabaseAdmin.rpc("get_user_2fa_secret", {
@@ -468,7 +477,7 @@ async function verifyAndConsumeBackupCode(userId: string, code: string): Promise
 async function issueSession(
     email: string,
     headers: Headers,
-    skipCookie?: boolean,
+    skipCookie: boolean,
 ): Promise<Record<string, unknown> | null> {
     const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
         type: "magiclink",
@@ -481,7 +490,9 @@ async function issueSession(
     }
 
     const tokenHash = linkData.properties.hashed_token;
-    if (!tokenHash) return null;
+    if (!tokenHash) {
+        return null;
+    }
 
     const authClient = createSupabaseAuthClient();
     const { data: sessionData, error: verifyError } = await authClient.auth.verifyOtp({
@@ -498,7 +509,25 @@ async function issueSession(
         setSessionCookie(headers, sessionData.session.refresh_token);
     }
 
-    return sessionData.session;
+    return sessionData.session as unknown as Record<string, unknown>;
+}
+
+async function createSessionBinding(
+    sessionKey: string,
+    session: Record<string, unknown>,
+): Promise<{ version: string; userId: string; proof: string }> {
+    const accessToken = typeof session.access_token === "string" ? session.access_token : "";
+    const user = session.user as { id?: unknown } | undefined;
+    const userId = typeof user?.id === "string" ? user.id : "";
+    if (!accessToken || !userId) {
+        throw new Error("Cannot bind OPAQUE session without access token and user id");
+    }
+
+    return {
+        version: OPAQUE_SESSION_BINDING_VERSION,
+        userId,
+        proof: await createOpaqueSessionBindingProof({ sessionKey, userId, accessToken }),
+    };
 }
 
 function setSessionCookie(headers: Headers, refreshToken: string): void {
@@ -557,9 +586,9 @@ async function opaqueUnavailableResponse(
     }
 
     return new Response(JSON.stringify({
-        error: "OPAQUE not configured",
-        useLegacy: true,
-    }), { status: 400, headers });
+        error: "OPAQUE credentials are not configured for this account",
+        code: "OPAQUE_CREDENTIALS_REQUIRED",
+    }), { status: 401, headers });
 }
 
 function toLockedState(failure: AuthRateLimitFailureResult) {
@@ -570,4 +599,13 @@ function toLockedState(failure: AuthRateLimitFailureResult) {
         lockedUntil: failure.lockedUntil,
         retryAfterSeconds: failure.retryAfterSeconds,
     };
+}
+
+async function disableGotruePasswordLogin(userId: string): Promise<void> {
+    const { error } = await supabaseAdmin.rpc("disable_gotrue_password_login", {
+        p_user_id: userId,
+    });
+    if (error) {
+        throw new Error(`Failed to disable GoTrue password login: ${error.message}`);
+    }
 }

@@ -3,6 +3,7 @@ const REQUIRED_ENV = [
   "VITE_SUPABASE_PUBLISHABLE_KEY",
   "VITE_SUPABASE_URL",
   "VITE_SITE_URL",
+  "VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY",
 ];
 
 const missing = REQUIRED_ENV.filter((name) => !String(process.env[name] ?? "").trim());
@@ -12,7 +13,7 @@ if (missing.length > 0) {
     [
       "Official desktop release configuration is incomplete.",
       `Missing variables: ${missing.join(", ")}`,
-      "Set the OFFICIAL_VITE_* repository variables before creating a release tag.",
+      "Set the OFFICIAL_VITE_* repository variables and VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY repository secret before creating a release tag.",
     ].join("\n"),
   );
   process.exit(1);

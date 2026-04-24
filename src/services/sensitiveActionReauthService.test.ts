@@ -7,18 +7,30 @@ const {
   mockGetUser,
   mockSetSession,
   mockRefreshSession,
+  mockOpaqueStartLogin,
+  mockOpaqueFinishLogin,
+  mockVerifyOpaqueSessionBinding,
+  mockAssertOpaqueServerKeyPinConfigured,
   supabaseMock,
 } = vi.hoisted(() => {
   const mockGetSession = vi.fn();
   const mockGetUser = vi.fn();
   const mockSetSession = vi.fn();
   const mockRefreshSession = vi.fn();
+  const mockOpaqueStartLogin = vi.fn();
+  const mockOpaqueFinishLogin = vi.fn();
+  const mockVerifyOpaqueSessionBinding = vi.fn();
+  const mockAssertOpaqueServerKeyPinConfigured = vi.fn();
 
   return {
     mockGetSession,
     mockGetUser,
     mockSetSession,
     mockRefreshSession,
+    mockOpaqueStartLogin,
+    mockOpaqueFinishLogin,
+    mockVerifyOpaqueSessionBinding,
+    mockAssertOpaqueServerKeyPinConfigured,
     supabaseMock: {
       auth: {
         getSession: mockGetSession,
@@ -32,6 +44,14 @@ const {
 
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: supabaseMock,
+}));
+
+vi.mock('@/services/opaqueService', () => ({
+  assertOpaqueServerKeyPinConfigured: mockAssertOpaqueServerKeyPinConfigured,
+  normalizeOpaqueIdentifier: (value: string) => value.trim().toLowerCase(),
+  startLogin: mockOpaqueStartLogin,
+  finishLogin: mockOpaqueFinishLogin,
+  verifyOpaqueSessionBinding: mockVerifyOpaqueSessionBinding,
 }));
 
 import {
@@ -62,6 +82,15 @@ describe('sensitiveActionReauthService', () => {
     vi.stubGlobal('fetch', fetchMock);
     mockSetSession.mockResolvedValue({ error: null });
     mockRefreshSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockOpaqueStartLogin.mockResolvedValue({
+      clientLoginState: 'client-login-state',
+      startLoginRequest: 'start-login-request',
+    });
+    mockOpaqueFinishLogin.mockResolvedValue({
+      finishLoginRequest: 'finish-login-request',
+      sessionKey: 'opaque-session-key',
+    });
+    mockVerifyOpaqueSessionBinding.mockResolvedValue(undefined);
   });
 
   it('treats sessions with recent iat as fresh', async () => {
@@ -192,7 +221,7 @@ describe('sensitiveActionReauthService', () => {
       data: { user: { email: 'user@example.com' } },
       error: null,
     });
-    fetchMock.mockResolvedValue(
+    fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: 'Invalid credentials' }), { status: 401 }),
     );
 
@@ -210,9 +239,12 @@ describe('sensitiveActionReauthService', () => {
       data: { user: { email: 'user@example.com' } },
       error: null,
     });
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ requires2FA: true }), { status: 200 }),
-    );
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        loginResponse: 'login-response',
+        loginId: 'login-id',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ requires2FA: true }), { status: 200 }));
 
     const result = await reauthenticateWithAccountPassword('valid-pass');
 
@@ -228,14 +260,23 @@ describe('sensitiveActionReauthService', () => {
       data: { user: { email: 'user@example.com' } },
       error: null,
     });
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        loginResponse: 'login-response',
+        loginId: 'login-id',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
         session: {
           access_token: 'new-access-token',
           refresh_token: 'new-refresh-token',
+          user: { id: 'user-id' },
         },
-      }), { status: 200 }),
-    );
+        opaqueSessionBinding: {
+          version: 'opaque-session-binding-v1',
+          userId: 'user-id',
+          proof: 'proof',
+        },
+      }), { status: 200 }));
 
     const result = await reauthenticateWithAccountPassword('valid-pass');
 

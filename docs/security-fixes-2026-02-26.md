@@ -2,6 +2,8 @@
 
 Basierend auf dem Audit `docs/security-audit-2026-02-26.md` wurden folgende 3 kritische Punkte behoben.
 
+> Historischer Fix-Stand. App-Passwort-Login läuft seit dem OPAQUE-Cutover vom 2026-04-24 nicht mehr über `auth-session` oder serverseitige Argon2id-Passworthashes.
+
 ---
 
 ## Fix 1: `backup_codes.used` → `is_used` (auth-session)

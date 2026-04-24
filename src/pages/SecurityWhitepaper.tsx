@@ -39,6 +39,7 @@ import { Footer } from '@/components/landing/Footer';
 import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
 type WhitepaperTag =
+    | 'auth'
     | 'crypto'
     | 'client'
     | 'rls'
@@ -82,6 +83,7 @@ export default function SecurityWhitepaper() {
     const tagMeta = useMemo(() => {
         const tags: Array<{ id: WhitepaperTag; label: string }> = [
             { id: 'crypto', label: t('securityWhitepaper.tags.crypto') },
+            { id: 'auth', label: t('securityWhitepaper.tags.auth') },
             { id: 'client', label: t('securityWhitepaper.tags.client') },
             { id: 'rls', label: t('securityWhitepaper.tags.rls') },
             { id: 'storage', label: t('securityWhitepaper.tags.storage') },
@@ -196,6 +198,24 @@ export default function SecurityWhitepaper() {
                 summary: t('securityWhitepaper.sections.offline.summary'),
                 bullets: asStringArray(t('securityWhitepaper.sections.offline.bullets', { returnObjects: true })),
                 evidence: ['src/services/offlineVaultService.ts', 'src/contexts/VaultContext.tsx'],
+            },
+            {
+                id: 'authentication',
+                tags: ['auth', 'client', 'hardening'],
+                icon: <Lock className="h-5 w-5 text-primary" />,
+                title: t('securityWhitepaper.sections.authentication.title'),
+                summary: t('securityWhitepaper.sections.authentication.summary'),
+                bullets: asStringArray(
+                    t('securityWhitepaper.sections.authentication.bullets', { returnObjects: true }),
+                ),
+                evidence: [
+                    'src/pages/Auth.tsx',
+                    'src/services/opaqueService.ts',
+                    'supabase/functions/auth-opaque/index.ts',
+                    'supabase/functions/auth-session/index.ts',
+                    'supabase/functions/auth-register/index.ts',
+                    'supabase/functions/auth-reset-password/index.ts',
+                ],
             },
             {
                 id: 'categories',

@@ -62,16 +62,61 @@ describe("auth flow hardening", () => {
     }
 
     expect(sessionSource).toContain('action: "password_login"');
-    expect(sessionSource).toContain('action: "totp_verify"');
-    expect(sessionSource).toContain('action: "backup_code_verify"');
+    expect(sessionSource).not.toContain('action: "totp_verify"');
+    expect(sessionSource).not.toContain('action: "backup_code_verify"');
     expect(opaqueSource).toContain('action: "opaque_login"');
-    expect(opaqueSource).toContain('action: isBackupCode ? "backup_code_verify" : "totp_verify"');
+    expect(opaqueSource).toContain('action: params.isBackupCode ? "backup_code_verify" : "totp_verify"');
     expect(opaqueSource).toContain("opaqueUnavailableResponse");
-    expect(opaqueStartSection).not.toContain('invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials")');
+    expect(opaqueStartSection).toContain("opaqueUnavailableResponse(opaqueRateLimit, startTime, headers)");
+    expect(opaqueStartSection).toContain('invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials")');
     expect(recoverySource).toContain('action: "recovery_verify"');
     expect(sessionSource).toContain("recordAuthRateLimitFailure");
     expect(opaqueSource).toContain("recordAuthRateLimitFailure");
     expect(recoverySource).toContain("recordAuthRateLimitFailure");
+  });
+
+  it("removes legacy app-password login as a client or server bypass", () => {
+    const authPageSource = readFileSync("src/pages/Auth.tsx", "utf-8");
+    const sessionSource = readFileSync("supabase/functions/auth-session/index.ts", "utf-8");
+    const opaqueSource = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
+    const registerSource = readFileSync("supabase/functions/auth-register/index.ts", "utf-8");
+    const resetSource = readFileSync("supabase/functions/auth-reset-password/index.ts", "utf-8");
+    const loadtestSource = readFileSync("loadtest/lib/supabase.js", "utf-8");
+
+    expect(authPageSource).not.toContain("legacyLogin");
+    expect(authPageSource).not.toContain("migrateToOpaque");
+    expect(authPageSource).not.toContain("password: data.password");
+    expect(authPageSource).toContain("verifyOpaqueSessionBinding");
+    expect(sessionSource).toContain("LEGACY_PASSWORD_LOGIN_DISABLED");
+    expect(sessionSource).not.toContain("signInWithPassword");
+    expect(sessionSource).not.toContain("argon2Verify");
+    expect(opaqueSource).not.toContain("useLegacy");
+    expect(opaqueSource).toContain("disableGotruePasswordLogin");
+    expect(registerSource).toContain("disableGotruePasswordLogin");
+    expect(resetSource).toContain("disableGotruePasswordLogin");
+    expect(registerSource).not.toContain("argon2id");
+    expect(resetSource).toContain("OPAQUE password reset required");
+    expect(resetSource).not.toContain("newPassword");
+    expect(loadtestSource).not.toContain("grant_type=password");
+  });
+
+  it("keeps the OPAQUE identifier and server-key/session binding explicit", () => {
+    const clientOpaqueSource = readFileSync("src/services/opaqueService.ts", "utf-8");
+    const serverOpaqueSource = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
+    const migrationSource = readFileSync("supabase/migrations/20260424120000_enforce_opaque_password_auth.sql", "utf-8");
+
+    expect(clientOpaqueSource).toContain("normalizeOpaqueIdentifier");
+    expect(clientOpaqueSource).toContain("OPAQUE_KEY_STRETCHING");
+    expect(clientOpaqueSource).toContain("'memory-constrained'");
+    expect(clientOpaqueSource).toContain("assertServerStaticPublicKey");
+    expect(clientOpaqueSource).toContain("verifyOpaqueSessionBinding");
+    expect(serverOpaqueSource).toContain("opaque_identifier");
+    expect(serverOpaqueSource).toContain("createOpaqueSessionBindingProof");
+    expect(migrationSource).toContain("opaque_identifier");
+    expect(migrationSource).toContain("opaque_registration_challenges");
+    expect(migrationSource).toContain("opaque_password_reset_states");
+    expect(migrationSource).toContain("disable_gotrue_password_login");
+    expect(migrationSource).toContain("encrypted_password = NULL");
   });
 
   it("keeps long lockouts active after the short attempt window has elapsed", async () => {
