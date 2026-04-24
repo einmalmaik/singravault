@@ -88,15 +88,19 @@ const mockGetOfflineCredentials = vi.fn();
 const mockSaveOfflineCredentials = vi.fn();
 const mockLoadVaultSnapshot = vi.fn();
 const mockFetchRemoteOfflineSnapshot = vi.fn();
+const mockGetOfflineSnapshot = vi.fn();
 const mockGetTrustedOfflineSnapshot = vi.fn();
+const mockIsRecentLocalVaultMutation = vi.fn();
 const mockSaveTrustedOfflineSnapshot = vi.fn();
 const mockClearOfflineVaultData = vi.fn();
 vi.mock("@/services/offlineVaultService", () => ({
   isAppOnline: vi.fn(() => true),
   isLikelyOfflineError: vi.fn(() => false),
   fetchRemoteOfflineSnapshot: (...args: unknown[]) => mockFetchRemoteOfflineSnapshot(...args),
+  getOfflineSnapshot: (...args: unknown[]) => mockGetOfflineSnapshot(...args),
   getOfflineCredentials: (...args: unknown[]) => mockGetOfflineCredentials(...args),
   getTrustedOfflineSnapshot: (...args: unknown[]) => mockGetTrustedOfflineSnapshot(...args),
+  isRecentLocalVaultMutation: (...args: unknown[]) => mockIsRecentLocalVaultMutation(...args),
   saveOfflineCredentials: (...args: unknown[]) => mockSaveOfflineCredentials(...args),
   saveTrustedOfflineSnapshot: (...args: unknown[]) => mockSaveTrustedOfflineSnapshot(...args),
   loadVaultSnapshot: (...args: unknown[]) => mockLoadVaultSnapshot(...args),
@@ -180,7 +184,9 @@ describe("VaultContext", () => {
       lastSyncedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
+    mockGetOfflineSnapshot.mockResolvedValue(null);
     mockGetTrustedOfflineSnapshot.mockResolvedValue(null);
+    mockIsRecentLocalVaultMutation.mockReturnValue(false);
     mockSaveTrustedOfflineSnapshot.mockResolvedValue(undefined);
     mockClearOfflineVaultData.mockResolvedValue(undefined);
     mockStoreDeviceKey.mockResolvedValue(undefined);
@@ -262,6 +268,29 @@ describe("VaultContext", () => {
       });
 
       expect(result.current.isSetupRequired).toBe(true);
+    });
+
+    it("uses the local setup path only for the dedicated Tauri dev user", async () => {
+      mockUseAuth.mockReturnValue({
+        user: { id: "00000000-0000-4000-8000-000000000001", email: "tauri-dev@singra.local" },
+        authReady: true,
+      });
+      mockGetOfflineCredentials.mockResolvedValue({
+        salt: "dev-salt",
+        verifier: "dev-verifier",
+        kdfVersion: 2,
+        encryptedUserKey: "dev-encrypted-user-key",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.isSetupRequired).toBe(false);
+      expect(mockGetOfflineCredentials).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000001");
+      expect(mockSupabase.from).not.toHaveBeenCalled();
     });
 
     it("should load existing vault setup from profile", async () => {
@@ -502,6 +531,64 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(false);
     });
 
+    it("tauri dev unlock verifies the local snapshot without server reads", async () => {
+      const devUserId = "00000000-0000-4000-8000-000000000001";
+      mockUseAuth.mockReturnValue({
+        user: { id: devUserId, email: "tauri-dev@singra.local" },
+        authReady: true,
+      });
+      mockGetOfflineCredentials.mockResolvedValue({
+        salt: "dev-salt",
+        verifier: "dev-verifier",
+        kdfVersion: 2,
+        encryptedUserKey: "dev-encrypted-user-key",
+      });
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockDecrypt.mockResolvedValue("QA Kategorie");
+      mockLoadVaultSnapshot.mockResolvedValue({
+        snapshot: {
+          userId: devUserId,
+          vaultId: "00000000-0000-4000-8000-000000000002",
+          items: [],
+          categories: [
+            {
+              id: "cat-1",
+              user_id: devUserId,
+              name: "enc:cat:v1:category-cipher",
+              icon: null,
+              color: "enc:cat:v1:color-cipher",
+              parent_id: null,
+              sort_order: null,
+              created_at: "2026-04-22T10:00:00.000Z",
+              updated_at: "2026-04-22T11:00:00.000Z",
+            },
+          ],
+          lastSyncedAt: null,
+          updatedAt: "2026-04-22T11:00:00.000Z",
+        },
+        source: "cache",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(false);
+      expect(result.current.integrityMode).toBe("healthy");
+      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(devUserId);
+      expect(mockFetchRemoteOfflineSnapshot).not.toHaveBeenCalled();
+      expect(mockSupabase.from).not.toHaveBeenCalled();
+    });
+
     it("keeps unlock digest-based and accepts deferred unreadable item quarantine", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
@@ -723,7 +810,10 @@ describe("VaultContext", () => {
         updatedAt: "2026-04-22T11:00:00.000Z",
       };
 
-      mockFetchRemoteOfflineSnapshot.mockResolvedValue(trustedSnapshot);
+      mockLoadVaultSnapshot.mockResolvedValue({
+        snapshot: trustedSnapshot,
+        source: "cache",
+      });
       mockDecryptVaultItem.mockResolvedValue({ id: "item-1" });
       mockDecrypt.mockResolvedValue("decrypted-category");
 
@@ -738,7 +828,68 @@ describe("VaultContext", () => {
       expect(result.current.integrityMode).toBe("healthy");
       expect(result.current.integrityBlockedReason).toBeNull();
       expect(result.current.quarantinedItems).toEqual([]);
+      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(mockUser.id);
       expect(mockSaveTrustedOfflineSnapshot).toHaveBeenLastCalledWith(trustedSnapshot);
+    });
+
+    it("uses the local mutation overlay for trusted category re-baselining", async () => {
+      mockGenerateSalt.mockReturnValue("fresh-salt");
+      mockCreateVerificationHash.mockResolvedValue("fresh-verifier");
+      mockEncrypt.mockImplementation(async (plaintext: unknown) => String(plaintext));
+      mockDecrypt.mockImplementation(async (payload: unknown) => {
+        const value = String(payload);
+        return value.startsWith("{") ? value : "decrypted-category";
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.setupMasterPassword("CorrectPassword!");
+      });
+
+      const mergedSnapshot = {
+        userId: mockUser.id,
+        vaultId: "vault-123",
+        items: [],
+        categories: [
+          {
+            id: "cat-1",
+            user_id: mockUser.id,
+            name: "enc:cat:v1:local-cipher",
+            icon: null,
+            color: "enc:cat:v1:local-color",
+            parent_id: null,
+            sort_order: null,
+            created_at: "2026-04-22T10:00:00.000Z",
+            updated_at: "2026-04-22T11:00:00.000Z",
+          },
+        ],
+        lastSyncedAt: "2026-04-22T11:00:00.000Z",
+        updatedAt: "2026-04-22T11:00:00.000Z",
+      };
+
+      mockLoadVaultSnapshot.mockClear();
+      mockSaveTrustedOfflineSnapshot.mockClear();
+      mockLoadVaultSnapshot.mockResolvedValue({
+        snapshot: mergedSnapshot,
+        source: "cache",
+      });
+
+      await act(async () => {
+        await result.current.refreshIntegrityBaseline({
+          categoryIds: ["cat-1"],
+        });
+      });
+
+      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(mockUser.id);
+      expect(mockSaveTrustedOfflineSnapshot).toHaveBeenLastCalledWith(mergedSnapshot);
+      expect(result.current.isLocked).toBe(false);
+      expect(result.current.integrityMode).toBe("healthy");
+      expect(result.current.integrityBlockedReason).toBeNull();
     });
 
   });
