@@ -71,6 +71,7 @@ vi.mock("@/services/offlineVaultService", () => ({
   isLikelyOfflineError: vi.fn().mockReturnValue(false),
   loadVaultSnapshot: vi.fn().mockResolvedValue({ snapshot: { items: [], categories: [] } }),
   resolveDefaultVaultId: vi.fn().mockResolvedValue("vault-1"),
+  shouldUseLocalOnlyVault: vi.fn().mockReturnValue(false),
   upsertOfflineItemRow: vi.fn(),
   upsertOfflineCategoryRow: vi.fn(),
   removeOfflineItemRow: vi.fn(),

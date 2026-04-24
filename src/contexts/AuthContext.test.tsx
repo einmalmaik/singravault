@@ -63,6 +63,8 @@ beforeEach(() => {
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "test-publishable-key");
     sessionStorage.clear();
     localStorage.clear();
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    window.history.replaceState(null, "", "/");
 
     // Default: auth state listener returns unsubscribe fn and captures callback
     mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
@@ -147,6 +149,24 @@ describe("AuthContext", () => {
 
             // BFF fetch was attempted (not iframe in jsdom)
             expect(result.current.authReady).toBe(true);
+        });
+
+        it("uses the Tauri dev bypass only when explicitly requested", async () => {
+            Object.defineProperty(window, "__TAURI_INTERNALS__", {
+                value: {},
+                configurable: true,
+            });
+            window.history.replaceState(null, "", "/?tauriDevAuth=1");
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.user?.email).toBe("tauri-dev@singra.local");
+            expect(result.current.authMode).toBe("offline");
+            expect(mockSupabase.auth.onAuthStateChange).not.toHaveBeenCalled();
         });
     });
 

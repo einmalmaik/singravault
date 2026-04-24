@@ -7,7 +7,7 @@
  * and vault stats.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
     ChevronLeft,
@@ -44,7 +44,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { CategoryIcon } from './CategoryIcon';
-import { CategoryDialog } from './CategoryDialog';
+import { CategoryDialog, type CategoryChangeEvent } from './CategoryDialog';
 import {
     isAppOnline,
     loadVaultSnapshot,
@@ -105,26 +105,32 @@ export function VaultSidebar({
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
     const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
     const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
+    const fetchRequestIdRef = useRef(0);
+    const quarantinedItemIdsRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         failedDecryptPayloadByItemIdRef.current.clear();
         loggedDecryptFailuresRef.current.clear();
     }, [user?.id, isDuressMode]);
 
-    const quarantinedItemIds = useMemo(
-        () => new Set((lastIntegrityResult?.quarantinedItems ?? []).map((item) => item.id)),
-        [lastIntegrityResult],
-    );
+    useEffect(() => {
+        quarantinedItemIdsRef.current = new Set((lastIntegrityResult?.quarantinedItems ?? []).map((item) => item.id));
+    }, [lastIntegrityResult]);
 
     // Fetch categories
     const fetchCategories = useCallback(async () => {
         if (!user) return;
 
+        const requestId = fetchRequestIdRef.current + 1;
+        fetchRequestIdRef.current = requestId;
+
         try {
             const { snapshot, source } = await loadVaultSnapshot(user.id);
             const integrityResult = await verifyIntegrity(snapshot);
             if (integrityResult?.mode === 'blocked') {
-                setCategories([]);
+                if (fetchRequestIdRef.current === requestId) {
+                    setCategories([]);
+                }
                 return;
             }
             const canPersistMigrations = integrityResult?.mode === 'healthy'
@@ -146,7 +152,7 @@ export function VaultSidebar({
                         return;
                     }
 
-                    if (quarantinedItemIds.has(item.id)) {
+                    if (quarantinedItemIdsRef.current.has(item.id)) {
                         if (item.category_id) {
                             counts[item.category_id] = (counts[item.category_id] || 0) + 1;
                         }
@@ -350,11 +356,15 @@ export function VaultSidebar({
                 });
             }
 
-            setCategories(resolvedCategories);
+            if (fetchRequestIdRef.current === requestId) {
+                setCategories(resolvedCategories);
+            }
         } catch (err) {
             console.error('Error fetching categories:', err);
         } finally {
-            setLoading(false);
+            if (fetchRequestIdRef.current === requestId) {
+                setLoading(false);
+            }
         }
     }, [
         user,
@@ -363,7 +373,6 @@ export function VaultSidebar({
         encryptData,
         encryptItem,
         isDuressMode,
-        quarantinedItemIds,
         refreshIntegrityBaseline,
         verifyIntegrity,
     ]);
@@ -388,7 +397,10 @@ export function VaultSidebar({
         setDialogOpen(true);
     };
 
-    const handleCategoryChange = () => {
+    const handleCategoryChange = (event?: CategoryChangeEvent) => {
+        if (event?.type === 'deleted' && selectedCategory === event.categoryId) {
+            onSelectCategory(null);
+        }
         fetchCategories();
     };
 

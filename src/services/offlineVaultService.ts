@@ -9,6 +9,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
+import { isTauriDevUserId, TAURI_DEV_VAULT_ID } from '@/platform/tauriDevMode';
 
 type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
 type VaultItemInsert = Database['public']['Tables']['vault_items']['Insert'];
@@ -21,6 +22,17 @@ const SNAPSHOTS_STORE = 'snapshots';
 const TRUSTED_SNAPSHOTS_STORE = 'trusted-snapshots';
 const MUTATIONS_STORE = 'mutations';
 const MUTATIONS_USER_INDEX = 'by_user';
+// Keeps legitimate local writes authoritative while follow-up reads and remote
+// replication settle. The window is scoped to the exact changed row IDs.
+const LOCAL_WRITE_CACHE_TTL_MS = 60_000;
+
+interface RecentLocalMutationWindow {
+  freshUntil: number;
+  itemIds: Set<string>;
+  categoryIds: Set<string>;
+}
+
+const recentLocalMutationsByUser = new Map<string, RecentLocalMutationWindow>();
 
 export interface OfflineVaultSnapshot {
   userId: string;
@@ -73,6 +85,61 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function markLocalSnapshotFresh(
+  userId: string,
+  mutation: { itemId?: string; categoryId?: string },
+): void {
+  const current = recentLocalMutationsByUser.get(userId);
+  const next: RecentLocalMutationWindow = {
+    freshUntil: Date.now() + LOCAL_WRITE_CACHE_TTL_MS,
+    itemIds: new Set(current?.itemIds),
+    categoryIds: new Set(current?.categoryIds),
+  };
+
+  if (mutation.itemId) {
+    next.itemIds.add(mutation.itemId);
+  }
+
+  if (mutation.categoryId) {
+    next.categoryIds.add(mutation.categoryId);
+  }
+
+  recentLocalMutationsByUser.set(userId, next);
+}
+
+function getRecentLocalMutationWindow(userId: string): RecentLocalMutationWindow | null {
+  const recent = recentLocalMutationsByUser.get(userId);
+  if (!recent) {
+    return null;
+  }
+
+  if (Date.now() <= recent.freshUntil) {
+    return recent;
+  }
+
+  recentLocalMutationsByUser.delete(userId);
+  return null;
+}
+
+export function isRecentLocalVaultMutation(
+  userId: string,
+  mutation: { itemIds?: Iterable<string>; categoryIds?: Iterable<string> },
+): boolean {
+  const itemIds = [...(mutation.itemIds ?? [])];
+  const categoryIds = [...(mutation.categoryIds ?? [])];
+  if (itemIds.length === 0 && categoryIds.length === 0) {
+    return false;
+  }
+
+  const recent = getRecentLocalMutationWindow(userId);
+  if (!recent) {
+    return false;
+  }
+
+  return itemIds.every((itemId) => recent.itemIds.has(itemId))
+    && categoryIds.every((categoryId) => recent.categoryIds.has(categoryId));
+}
+
 function sanitizeOptionalUuid(value: string | null | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -84,7 +151,7 @@ function createEmptySnapshot(userId: string): OfflineVaultSnapshot {
   const now = nowIso();
   return {
     userId,
-    vaultId: null,
+    vaultId: isTauriDevUserId(userId) ? TAURI_DEV_VAULT_ID : null,
     items: [],
     categories: [],
     lastSyncedAt: null,
@@ -152,6 +219,10 @@ export function isLikelyOfflineError(error: unknown): boolean {
 
 export function isAppOnline(): boolean {
   return typeof navigator === 'undefined' ? true : navigator.onLine;
+}
+
+export function shouldUseLocalOnlyVault(userId: string | null | undefined): boolean {
+  return isTauriDevUserId(userId);
 }
 
 export function buildVaultItemRowFromInsert(insert: VaultItemInsert & { id: string }): VaultItemRow {
@@ -302,6 +373,7 @@ export async function upsertOfflineItemRow(
   snapshot.vaultId = vaultIdOverride ?? snapshot.vaultId ?? row.vault_id;
   snapshot.updatedAt = nowIso();
   await saveOfflineSnapshot(snapshot);
+  markLocalSnapshotFresh(userId, { itemId: row.id });
 }
 
 export async function removeOfflineItemRow(userId: string, itemId: string): Promise<void> {
@@ -309,6 +381,7 @@ export async function removeOfflineItemRow(userId: string, itemId: string): Prom
   snapshot.items = snapshot.items.filter((item) => item.id !== itemId);
   snapshot.updatedAt = nowIso();
   await saveOfflineSnapshot(snapshot);
+  markLocalSnapshotFresh(userId, { itemId });
 }
 
 export async function upsertOfflineCategoryRow(userId: string, row: CategoryRow): Promise<void> {
@@ -324,6 +397,7 @@ export async function upsertOfflineCategoryRow(userId: string, row: CategoryRow)
   snapshot.categories = [merged, ...snapshot.categories.filter((cat) => cat.id !== row.id)];
   snapshot.updatedAt = nowIso();
   await saveOfflineSnapshot(snapshot);
+  markLocalSnapshotFresh(userId, { categoryId: row.id });
 }
 
 export async function removeOfflineCategoryRow(userId: string, categoryId: string): Promise<void> {
@@ -331,12 +405,46 @@ export async function removeOfflineCategoryRow(userId: string, categoryId: strin
   snapshot.categories = snapshot.categories.filter((cat) => cat.id !== categoryId);
   snapshot.updatedAt = nowIso();
   await saveOfflineSnapshot(snapshot);
+  markLocalSnapshotFresh(userId, { categoryId });
+}
+
+export async function applyOfflineCategoryDeletion(
+  userId: string,
+  categoryId: string,
+  options: {
+    updatedItems?: VaultItemRow[];
+    deletedItemIds?: string[];
+    vaultIdOverride?: string | null;
+  } = {},
+): Promise<void> {
+  const snapshot = await ensureSnapshot(userId);
+  const updatedItems = options.updatedItems ?? [];
+  const updatedItemIds = new Set(updatedItems.map((item) => item.id));
+  const deletedItemIds = new Set(options.deletedItemIds ?? []);
+
+  snapshot.items = [
+    ...updatedItems,
+    ...snapshot.items.filter((item) => !updatedItemIds.has(item.id) && !deletedItemIds.has(item.id)),
+  ];
+  snapshot.categories = snapshot.categories.filter((cat) => cat.id !== categoryId);
+  snapshot.vaultId = options.vaultIdOverride ?? snapshot.vaultId;
+  snapshot.updatedAt = nowIso();
+  await saveOfflineSnapshot(snapshot);
+
+  for (const itemId of new Set([...updatedItemIds, ...deletedItemIds])) {
+    markLocalSnapshotFresh(userId, { itemId });
+  }
+  markLocalSnapshotFresh(userId, { categoryId });
 }
 
 export async function enqueueOfflineMutation(
   mutation: Omit<OfflineMutation, 'id' | 'createdAt'>,
 ): Promise<string> {
   const id = crypto.randomUUID();
+  if (isTauriDevUserId(mutation.userId)) {
+    return id;
+  }
+
   const fullMutation = {
     ...mutation,
     id,
@@ -385,6 +493,16 @@ export async function clearOfflineMutations(userId: string): Promise<void> {
 }
 
 export async function resolveDefaultVaultId(userId: string): Promise<string | null> {
+  if (isTauriDevUserId(userId)) {
+    const snapshot = await ensureSnapshot(userId);
+    if (snapshot.vaultId !== TAURI_DEV_VAULT_ID) {
+      snapshot.vaultId = TAURI_DEV_VAULT_ID;
+      snapshot.updatedAt = nowIso();
+      await saveOfflineSnapshot(snapshot);
+    }
+    return TAURI_DEV_VAULT_ID;
+  }
+
   if (isAppOnline()) {
     try {
       const { data, error } = await supabase
@@ -476,12 +594,77 @@ export async function fetchRemoteOfflineSnapshot(
   return snapshot;
 }
 
+function applyRecentLocalMutations(
+  remoteSnapshot: OfflineVaultSnapshot,
+  cachedSnapshot: OfflineVaultSnapshot,
+  recent: RecentLocalMutationWindow,
+): OfflineVaultSnapshot {
+  const itemsById = new Map(remoteSnapshot.items.map((item) => [item.id, item]));
+  const cachedItemsById = new Map(cachedSnapshot.items.map((item) => [item.id, item]));
+  for (const itemId of recent.itemIds) {
+    const cachedItem = cachedItemsById.get(itemId);
+    if (cachedItem) {
+      itemsById.set(itemId, cachedItem);
+    } else {
+      itemsById.delete(itemId);
+    }
+  }
+
+  const categoriesById = new Map(remoteSnapshot.categories.map((category) => [category.id, category]));
+  const cachedCategoriesById = new Map(cachedSnapshot.categories.map((category) => [category.id, category]));
+  for (const categoryId of recent.categoryIds) {
+    const cachedCategory = cachedCategoriesById.get(categoryId);
+    if (cachedCategory) {
+      categoriesById.set(categoryId, cachedCategory);
+    } else {
+      categoriesById.delete(categoryId);
+    }
+  }
+
+  return {
+    ...remoteSnapshot,
+    items: [...itemsById.values()],
+    categories: [...categoriesById.values()],
+    updatedAt: nowIso(),
+    encryptionSalt: cachedSnapshot.encryptionSalt ?? remoteSnapshot.encryptionSalt,
+    masterPasswordVerifier: cachedSnapshot.masterPasswordVerifier ?? remoteSnapshot.masterPasswordVerifier,
+    kdfVersion: cachedSnapshot.kdfVersion ?? remoteSnapshot.kdfVersion,
+    encryptedUserKey: cachedSnapshot.encryptedUserKey ?? remoteSnapshot.encryptedUserKey,
+  };
+}
+
 export async function loadVaultSnapshot(userId: string): Promise<{
   snapshot: OfflineVaultSnapshot;
   source: 'remote' | 'cache' | 'empty';
 }> {
+  if (isTauriDevUserId(userId)) {
+    const cached = await getOfflineSnapshot(userId);
+    return cached
+      ? { snapshot: cached, source: 'cache' }
+      : { snapshot: createEmptySnapshot(userId), source: 'empty' };
+  }
+
   if (isAppOnline()) {
     try {
+      const pendingMutations = await getOfflineMutations(userId);
+      if (pendingMutations.length > 0) {
+        const cached = await getOfflineSnapshot(userId);
+        if (cached) {
+          return { snapshot: cached, source: 'cache' };
+        }
+      }
+
+      const recent = getRecentLocalMutationWindow(userId);
+      if (recent) {
+        const cached = await getOfflineSnapshot(userId);
+        if (cached) {
+          const remoteSnapshot = await fetchRemoteOfflineSnapshot(userId, { persist: false });
+          const mergedSnapshot = applyRecentLocalMutations(remoteSnapshot, cached, recent);
+          await saveOfflineSnapshot(mergedSnapshot);
+          return { snapshot: mergedSnapshot, source: 'cache' };
+        }
+      }
+
       const snapshot = await fetchRemoteOfflineSnapshot(userId);
       return { snapshot, source: 'remote' };
     } catch (err) {
@@ -512,6 +695,10 @@ export async function syncOfflineMutations(userId: string): Promise<{
   remaining: number;
   errors: number;
 }> {
+  if (isTauriDevUserId(userId)) {
+    return { processed: 0, remaining: 0, errors: 0 };
+  }
+
   const queue = await getOfflineMutations(userId);
   if (queue.length === 0 || !isAppOnline()) {
     return { processed: 0, remaining: queue.length, errors: 0 };

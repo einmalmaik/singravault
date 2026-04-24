@@ -37,7 +37,7 @@ import { VaultSidebar } from '@/components/vault/VaultSidebar';
 import { VaultItemList } from '@/components/vault/VaultItemList';
 import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
 import { VaultIntegrityRecovery } from '@/components/vault/VaultIntegrityRecovery';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { isPremiumActive } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
@@ -171,6 +171,7 @@ export default function VaultPage() {
             {isMobile && (
                 <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
                     <SheetContent side="left" className="p-0 w-[88vw] max-w-[20rem]">
+                        <SheetTitle className="sr-only">{t('vault.sidebar.title')}</SheetTitle>
                         <VaultSidebar
                             compactMode
                             selectedCategory={selectedCategory}

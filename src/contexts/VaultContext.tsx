@@ -45,9 +45,12 @@ import {
     isAppOnline,
     isLikelyOfflineError,
     fetchRemoteOfflineSnapshot,
+    getOfflineSnapshot,
     getOfflineCredentials,
     getTrustedOfflineSnapshot,
+    isRecentLocalVaultMutation,
     loadVaultSnapshot,
+    saveOfflineSnapshot,
     saveTrustedOfflineSnapshot,
     saveOfflineCredentials,
     type OfflineVaultSnapshot,
@@ -89,6 +92,7 @@ import {
     type QuarantineResolutionState,
     type TrustedSnapshotItemsById,
 } from '@/services/vaultQuarantineRecoveryService';
+import { isTauriDevUserId, TAURI_DEV_VAULT_ID } from '@/platform/tauriDevMode';
 
 // Auto-lock timeout in milliseconds (default 15 minutes)
 const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
@@ -219,6 +223,54 @@ function canRebaselineTrustedMutation(
         assessment.inspection.categoryDriftIds.length > 0
         || assessment.inspection.itemDrifts.length > 0
     );
+}
+
+function canRebaselineRecentLocalMutation(
+    userId: string,
+    assessment: VaultIntegrityAssessment,
+): boolean {
+    if (
+        assessment.unreadableCategoryReason
+        || assessment.inspection.snapshotValidationError
+        || assessment.inspection.legacyBaselineMismatch
+    ) {
+        return false;
+    }
+
+    if (
+        assessment.inspection.itemDrifts.length === 0
+        && assessment.inspection.categoryDriftIds.length === 0
+    ) {
+        return false;
+    }
+
+    return isRecentLocalVaultMutation(userId, {
+        itemIds: assessment.inspection.itemDrifts.map((item) => item.id),
+        categoryIds: assessment.inspection.categoryDriftIds,
+    });
+}
+
+function hasTrustedMutationScope(
+    trustedMutation: NormalizedTrustedVaultMutation,
+): boolean {
+    return trustedMutation.itemIds.size > 0 || trustedMutation.categoryIds.size > 0;
+}
+
+async function ensureTauriDevVaultSnapshot(userId: string): Promise<void> {
+    if (!isTauriDevUserId(userId)) {
+        return;
+    }
+
+    const snapshot = await getOfflineSnapshot(userId);
+    if (!snapshot || snapshot.vaultId === TAURI_DEV_VAULT_ID) {
+        return;
+    }
+
+    await saveOfflineSnapshot({
+        ...snapshot,
+        vaultId: TAURI_DEV_VAULT_ID,
+        updatedAt: new Date().toISOString(),
+    });
 }
 
 function canPersistIntegrityBaselineImmediately(
@@ -560,13 +612,29 @@ export function VaultProvider({ children }: VaultProviderProps) {
     }), []);
 
     const loadCurrentIntegritySnapshot = useCallback(async (
-        options?: { persistRemoteSnapshot?: boolean },
+        options?: { persistRemoteSnapshot?: boolean; useLocalMutationOverlay?: boolean },
     ): Promise<{
         rawSnapshot: OfflineVaultSnapshot;
         integritySnapshot: VaultIntegritySnapshot;
     } | null> => {
         if (!user) {
             return null;
+        }
+
+        if (isTauriDevUserId(user.id)) {
+            const { snapshot } = await loadVaultSnapshot(user.id);
+            return {
+                rawSnapshot: snapshot,
+                integritySnapshot: buildIntegritySnapshot(snapshot),
+            };
+        }
+
+        if (options?.useLocalMutationOverlay) {
+            const { snapshot } = await loadVaultSnapshot(user.id);
+            return {
+                rawSnapshot: snapshot,
+                integritySnapshot: buildIntegritySnapshot(snapshot),
+            };
         }
 
         if (isAppOnline()) {
@@ -988,12 +1056,17 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return;
         }
 
-        const snapshotBundle = await loadCurrentIntegritySnapshot();
+        const normalizedTrustedMutation = normalizeTrustedVaultMutation(trustedMutation);
+        const snapshotBundle = await loadCurrentIntegritySnapshot({
+            // Trusted writes update IndexedDB before re-baselining. The offline
+            // service overlays only those fresh local rows onto the remote
+            // snapshot, preserving the rest of the vault while Supabase catches up.
+            useLocalMutationOverlay: hasTrustedMutationScope(normalizedTrustedMutation),
+        });
         if (!snapshotBundle) {
             return;
         }
 
-        const normalizedTrustedMutation = normalizeTrustedVaultMutation(trustedMutation);
         const integrityAssessment = await assessVaultIntegrity(snapshotBundle.rawSnapshot, encryptionKey);
         const integrityResult = integrityAssessment.result;
         const trustedRebaselineAllowed = canRebaselineTrustedMutation(
@@ -1041,9 +1114,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
             mode: 'healthy',
             quarantinedItems: [],
         });
+        bumpVaultDataVersion();
     }, [
         applyIntegrityResultState,
         assessVaultIntegrity,
+        bumpVaultDataVersion,
         encryptionKey,
         loadCurrentIntegritySnapshot,
         persistTrustedIntegritySnapshot,
@@ -1215,6 +1290,27 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }
 
             console.debug('[VaultContext] authReady is true, fetching user profiles...');
+
+            if (isTauriDevUserId(user.id)) {
+                const cached = await getOfflineCredentials(user.id);
+                if (cached) {
+                    setIsSetupRequired(false);
+                    setSalt(cached.salt);
+                    setVerificationHash(cached.verifier);
+                    if (cached.kdfVersion !== null) {
+                        setKdfVersion(cached.kdfVersion);
+                    }
+                    setEncryptedUserKey(cached.encryptedUserKey);
+                    await ensureTauriDevVaultSnapshot(user.id);
+                } else {
+                    setIsSetupRequired(true);
+                    setIsLocked(true);
+                }
+                setDeviceKeyActive(false);
+                setCurrentDeviceKey(null);
+                setIsLoading(false);
+                return;
+            }
 
             // ============ Offline-First: skip network if offline ============
             if (!isAppOnline()) {
@@ -1390,6 +1486,25 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
             // Create verification hash from the UserKey (not raw KDF bytes)
             const verifyHash = await createVerificationHash(uskBundle.userKey);
+
+            if (isTauriDevUserId(user.id)) {
+                setSalt(newSalt);
+                setVerificationHash(verifyHash);
+                setEncryptionKey(uskBundle.userKey);
+                setEncryptedUserKey(uskBundle.encryptedUserKey);
+                setKdfVersion(CURRENT_KDF_VERSION);
+                setIsSetupRequired(false);
+
+                await saveOfflineCredentials(
+                    user.id,
+                    newSalt,
+                    verifyHash,
+                    CURRENT_KDF_VERSION,
+                    uskBundle.encryptedUserKey,
+                );
+                await ensureTauriDevVaultSnapshot(user.id);
+                return finalizeVaultUnlock(uskBundle.userKey);
+            }
 
             // Create default vault
             const { data: existingVault } = await supabase
@@ -1581,7 +1696,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     console.warn('KDF upgrade failed, continuing with current version');
                 }
 
-                if (kdfVersion >= 2) {
+                if (!isTauriDevUserId(user.id) && kdfVersion >= 2) {
                     try {
                         const { data: probeItems } = await supabase
                             .from('vault_items')
@@ -1801,7 +1916,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 kdfOutputBytes.fill(0);
             }
 
-            if (kdfVersion >= 2) {
+            if (!isTauriDevUserId(user.id) && kdfVersion >= 2) {
                 try {
                     const { data: probeItems } = await supabase
                         .from('vault_items')
@@ -1950,10 +2065,12 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 }
             }
 
-            try {
-                await migrateLegacyPrivateKeysToUserKey(user.id, masterPassword, activeKey);
-            } catch (pkMigrErr) {
-                console.warn('Private key USK migration failed, will retry next unlock:', pkMigrErr);
+            if (!isTauriDevUserId(user.id)) {
+                try {
+                    await migrateLegacyPrivateKeysToUserKey(user.id, masterPassword, activeKey);
+                } catch (pkMigrErr) {
+                    console.warn('Private key USK migration failed, will retry next unlock:', pkMigrErr);
+                }
             }
 
             const finalizeResult = await finalizeVaultUnlock(activeKey);
@@ -1961,7 +2078,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return finalizeResult;
             }
 
-            if (shouldBackfillVerifier) {
+            if (shouldBackfillVerifier && !isTauriDevUserId(user.id)) {
                 await backfillVerificationHash(activeKey);
             }
 
@@ -2302,6 +2419,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         try {
             const rawSnapshot = snapshot ?? (await loadCurrentIntegritySnapshot({
                 persistRemoteSnapshot: false,
+                useLocalMutationOverlay: true,
             }))?.rawSnapshot;
             if (!rawSnapshot) {
                 return null;
@@ -2309,14 +2427,40 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
             const integrityAssessment = await assessVaultIntegrity(rawSnapshot, encryptionKey);
             const result = integrityAssessment.result;
+            const recentLocalRebaselineAllowed = canRebaselineRecentLocalMutation(
+                user.id,
+                integrityAssessment,
+            );
 
-            if (result.mode === 'blocked') {
+            if (result.mode === 'blocked' && !recentLocalRebaselineAllowed) {
                 await setBlockedIntegrityState(
                     encryptionKey,
                     result.blockedReason ?? 'snapshot_malformed',
                     result,
                 );
                 return result;
+            }
+
+            if (recentLocalRebaselineAllowed) {
+                const digest = await persistIntegrityBaseline(
+                    user.id,
+                    buildIntegritySnapshot(rawSnapshot),
+                    encryptionKey,
+                    integrityAssessment.inspection.digest,
+                );
+                await persistTrustedIntegritySnapshot(rawSnapshot);
+                const trustedResult: VaultIntegrityVerificationResult = {
+                    valid: true,
+                    isFirstCheck: false,
+                    computedRoot: digest,
+                    storedRoot: digest,
+                    itemCount: rawSnapshot.items.length,
+                    categoryCount: rawSnapshot.categories.length,
+                    mode: 'healthy',
+                    quarantinedItems: [],
+                };
+                applyIntegrityResultState(trustedResult);
+                return trustedResult;
             }
 
             applyIntegrityResultState(result);

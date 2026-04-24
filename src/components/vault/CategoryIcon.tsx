@@ -3,12 +3,13 @@
 /**
  * @fileoverview Category Icon Component
  * 
- * Renders category icons as emoji/text only.
- * Legacy SVG payloads are intentionally ignored for security hardening.
+ * Renders only category icons approved by categoryIconPolicy.
+ * Legacy SVG/text payloads are intentionally ignored for security hardening.
  */
 
 import { Folder } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { normalizeCategoryIcon } from './categoryIconPolicy';
 
 interface CategoryIconProps {
     icon: string | null | undefined;
@@ -16,27 +17,15 @@ interface CategoryIconProps {
     fallbackSize?: number;
 }
 
-function isSvgPayload(str: string): boolean {
-    return str.trim().startsWith('<svg') || str.trim().startsWith('<?xml');
-}
-
 export function CategoryIcon({ icon, className, fallbackSize = 4 }: CategoryIconProps) {
-    // No icon - show folder fallback
-    if (!icon || icon.trim() === '') {
+    const normalizedIcon = normalizeCategoryIcon(icon);
+    if (!normalizedIcon) {
         return <Folder className={cn(`w-${fallbackSize} h-${fallbackSize}`, className)} />;
     }
 
-    const trimmedIcon = icon.trim();
-
-    // Legacy SVG icon payloads are blocked and replaced with fallback icon.
-    if (isSvgPayload(trimmedIcon)) {
-        return <Folder className={cn(`w-${fallbackSize} h-${fallbackSize}`, className)} />;
-    }
-
-    // Emoji or text icon
     return (
         <span className={cn('text-base leading-none', className)}>
-            {trimmedIcon}
+            {normalizedIcon}
         </span>
     );
 }

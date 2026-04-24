@@ -82,6 +82,7 @@ import {
     loadVaultSnapshot,
     removeOfflineItemRow,
     resolveDefaultVaultId,
+    shouldUseLocalOnlyVault,
     upsertOfflineCategoryRow,
     upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
@@ -193,6 +194,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             const canPersistMigrations = integrityResult?.mode === 'healthy'
                 && integrityResult.isFirstCheck
                 && source === 'remote'
+                && !shouldUseLocalOnlyVault(user.id)
                 && isAppOnline();
             let integrityBaselineDirty = false;
             const trustedCategoryIds = new Set<string>();
@@ -407,6 +409,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 }
                 vaultId = newVault.id;
             }
+            const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
 
             // Prepare item data
             const itemDataToEncrypt = {
@@ -448,8 +451,9 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             };
 
             let syncedOnline = false;
+            let itemRowForCache = buildVaultItemRowFromInsert(itemData);
 
-            if (isAppOnline()) {
+            if (canSyncOnline) {
                 try {
                     const { data: savedItem, error } = await supabase
                         .from('vault_items')
@@ -459,7 +463,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
                     if (error) throw error;
                     if (savedItem) {
-                        await upsertOfflineItemRow(user.id, savedItem, vaultId);
+                        itemRowForCache = savedItem;
                     }
                     syncedOnline = true;
                 } catch (err) {
@@ -469,8 +473,9 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 }
             }
 
+            await upsertOfflineItemRow(user.id, itemRowForCache, vaultId);
+
             if (!syncedOnline) {
-                await upsertOfflineItemRow(user.id, buildVaultItemRowFromInsert(itemData), vaultId);
                 await enqueueOfflineMutation({
                     userId: user.id,
                     type: 'upsert_item',
@@ -512,7 +517,8 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         setDeleting(true);
         try {
             let syncedOnline = false;
-            if (isAppOnline()) {
+            const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
+            if (canSyncOnline) {
                 try {
                     const { error } = await supabase
                         .from('vault_items')

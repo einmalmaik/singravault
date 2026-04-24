@@ -329,12 +329,25 @@
           "Limitation: browser storage can be wiped; integrity depends on a local baseline."
         ]
       },
+      "categories": {
+        "title": "Category system & delete behavior",
+        "summary": "Category name, color, and icon are stored encrypted; items also carry their category inside the encrypted item payload.",
+        "bullets": [
+          "When an item is created or edited, the category assignment is stored in encrypted_data as categoryId. The old plaintext category_id column is read only as a legacy/migration fallback and then cleaned up.",
+          "When a category is deleted, loadItemsInCategory() first finds affected items by decrypting each local item payload. That is how the client knows which items belong to that category.",
+          "The dialog exposes two paths: deleting only the category re-encrypts affected items with categoryId=null; deleting category and items also removes those item rows.",
+          "applyOfflineCategoryDeletion() writes category removal and item changes in one local snapshot update. That prevents the UI from alternating between old and new category state.",
+          "Category icons come from a fixed emoji allowlist. Free SVG input is blocked so category icons cannot become an XSS or HTML injection path."
+        ]
+      },
       "integrity": {
         "title": "Tamper detection & quarantine",
         "summary": "The client stores an encrypted local integrity baseline and a trusted snapshot. Suspicious items are isolated, while category drift blocks normal access.",
         "bullets": [
           "The current vault state is checked locally as a canonical snapshot over encrypted item and category data; the server never receives plaintext for this check.",
           "Item drift leads to quarantine instead of silent rendering: changed ciphertext, missing items, and unknown server items are surfaced separately.",
+          "The baseline stores separate digests for items and categories. Item drift can be quarantined; category drift blocks normal access because categories affect vault structure and visibility.",
+          "Legitimate local changes call refreshIntegrityBaseline() with the affected item/category IDs. Only those IDs may update the baseline; arbitrary database changes are not trusted.",
           "Recovery is only possible from an already trusted local copy. Without such a copy there is no cryptographic recovery path.",
           "Tampered categories or unreadable local baselines block normal access. In that case only Safe Mode, local export, or a vault reset remain."
         ]
@@ -354,7 +367,7 @@
         "bullets": [
           "If delivered client code is compromised (supply chain/XSS), it can steal secrets during unlock.",
           "Malware on the device or a compromised browser can read the vault while unlocked.",
-          "Metadata trade-offs: some table fields are plaintext (e.g., categories.name, tags.name, shared_collections.name)."
+          "Metadata trade-offs: IDs, timestamps, and ownership links remain structural metadata. Core vault metadata such as item title/URL and category name/icon/color is encrypted; other product areas may still need plaintext names."
         ]
       }
     },
@@ -508,6 +521,9 @@
   "vault": {
     "title": "My Vault",
     "loadError": "Failed to load vault items.",
+    "offlineSaved": "Saved offline. Will sync automatically when internet is available.",
+    "offlineDeleteQueued": "Deleted offline. The deletion will sync when internet is available.",
+    "syncedAfterOffline": "{{count}} offline changes synchronized.",
     "copied": "Copied",
     "copiedPassword": "Password has been copied.",
     "copiedUsername": "Username has been copied.",
@@ -1151,6 +1167,7 @@
     "name": "Name",
     "namePlaceholder": "e.g. Social Media",
     "icon": "Icon",
+    "noIcon": "No icon",
     "emojiPlaceholder": "Enter or select an emoji",
     "svgHint": "Paste SVG code (24x24px recommended)",
     "svgDisabled": "SVG icons are disabled for security reasons.",
@@ -1159,10 +1176,15 @@
     "created": "Category created",
     "updated": "Category updated",
     "deleted": "Category deleted",
+    "deletedOnlyCategory": "Category deleted. {{count}} items remain without a category.",
+    "deletedWithItems": "Category and {{count}} items deleted.",
     "saveFailed": "Failed to save category",
     "deleteFailed": "Failed to delete category",
     "deleteConfirmTitle": "Delete category?",
     "deleteConfirmDesc": "The category will be deleted. Items in this category won't be deleted, but will no longer have a category.",
+    "deleteWithItemsDesc": "This category contains {{count}} items. You can delete only the category or delete the items too.",
+    "deleteCategoryOnly": "Delete category only",
+    "deleteCategoryAndItems": "Delete category and items",
     "empty": "No categories yet",
     "addFirst": "Create your first category",
     "selectPlaceholder": "Select Category",

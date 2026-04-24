@@ -59,7 +59,7 @@ interface WhitepaperSection {
     evidence: string[];
 }
 
-const SECURITY_WHITEPAPER_LAST_UPDATED = '23.04.2026';
+const SECURITY_WHITEPAPER_LAST_UPDATED = '24.04.2026';
 
 function asStringArray(value: unknown): string[] {
     if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
@@ -198,6 +198,21 @@ export default function SecurityWhitepaper() {
                 evidence: ['src/services/offlineVaultService.ts', 'src/contexts/VaultContext.tsx'],
             },
             {
+                id: 'categories',
+                tags: ['crypto', 'client', 'offline', 'integrity'],
+                icon: <Database className="h-5 w-5 text-primary" />,
+                title: t('securityWhitepaper.sections.categories.title'),
+                summary: t('securityWhitepaper.sections.categories.summary'),
+                bullets: asStringArray(t('securityWhitepaper.sections.categories.bullets', { returnObjects: true })),
+                evidence: [
+                    'src/components/vault/CategoryDialog.tsx:200 (loadItemsInCategory: Eintrag-zu-Kategorie-Zuordnung)',
+                    'src/components/vault/CategoryDialog.tsx:264 (handleDelete: Nur Kategorie vs. Kategorie + Einträge)',
+                    'src/services/offlineVaultService.ts:411 (applyOfflineCategoryDeletion: ein lokaler Snapshot-Write)',
+                    'src/components/vault/VaultSidebar.tsx:124 (race-sicherer Kategorie-Refresh)',
+                    'src/components/vault/categoryIconPolicy.ts:9 (zulässige Icon-Presets; kein SVG-Input)',
+                ],
+            },
+            {
                 id: 'integrity',
                 tags: ['integrity', 'crypto', 'limitations'],
                 icon: <AlertTriangle className="h-5 w-5 text-primary" />,
@@ -207,9 +222,12 @@ export default function SecurityWhitepaper() {
                     t('securityWhitepaper.sections.integrity.bullets', { returnObjects: true }),
                 ),
                 evidence: [
-                    'src/services/vaultIntegrityService.ts',
-                    'src/services/offlineVaultService.ts',
-                    'src/contexts/VaultContext.tsx',
+                    'src/services/vaultIntegrityService.ts:131 (inspectVaultSnapshotIntegrity)',
+                    'src/services/vaultIntegrityService.ts:377 (computeVaultSnapshotDigest)',
+                    'src/services/vaultIntegrityService.ts:494 (detectItemDigestDrift)',
+                    'src/services/vaultIntegrityService.ts:540 (detectCategoryDigestDriftIds)',
+                    'src/contexts/VaultContext.tsx:1052 (refreshIntegrityBaseline)',
+                    'src/contexts/VaultContext.tsx:2412 (verifyIntegrity)',
                     'src/components/vault/VaultIntegrityRecovery.tsx',
                 ],
             },

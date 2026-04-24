@@ -329,12 +329,25 @@
           "Limitierung: Browser-Speicher kann vom Nutzer gelöscht werden; Integrität hängt von lokaler Baseline ab."
         ]
       },
+      "categories": {
+        "title": "Kategoriesystem & Löschverhalten",
+        "summary": "Kategorienamen, Farbe und Symbol werden verschlüsselt gespeichert; Einträge tragen ihre Kategorie zusätzlich im verschlüsselten Item-Payload.",
+        "bullets": [
+          "Die Kategoriezuordnung wird beim Erstellen/Bearbeiten eines Eintrags in encrypted_data als categoryId gespeichert. Die alte Klartextspalte category_id wird nur noch als Legacy-/Migrationsfallback gelesen und danach bereinigt.",
+          "Beim Löschen einer Kategorie ermittelt loadItemsInCategory() zuerst alle betroffenen Einträge, indem es deren verschlüsselten Payload lokal entschlüsselt. Daraus weiß der Client, welche Einträge zu dieser Kategorie gehören.",
+          "Der Dialog bietet zwei Pfade: Nur Kategorie löschen entkategorisiert die Einträge und verschlüsselt sie neu; Kategorie und Einträge löschen entfernt zusätzlich die betroffenen Item-Zeilen.",
+          "applyOfflineCategoryDeletion() schreibt Kategorieentfernung und Item-Änderungen in einem lokalen Snapshot-Update. Dadurch kann die UI nicht zwischen altem und neuem Kategoriezustand flackern.",
+          "Kategoriesymbole kommen aus einer festen Emoji-Allowlist. Freie SVG-Eingaben sind blockiert, damit Kategorie-Icons kein XSS- oder HTML-Injektionspfad werden."
+        ]
+      },
       "integrity": {
         "title": "Manipulationserkennung & Quarantäne",
         "summary": "Der Client speichert eine verschlüsselte lokale Integritäts-Baseline und einen vertrauenswürdigen Snapshot. Verdächtige Einträge werden isoliert, Kategorien blockieren den normalen Zugriff.",
         "bullets": [
           "Der aktuelle Tresorstand wird lokal als kanonischer Snapshot aus verschlüsselten Item- und Kategorie-Daten geprüft; der Server erhält dabei keinen Klartext.",
           "Item-Drift führt zu Quarantäne statt stiller Anzeige: veränderte Inhalte, fehlende Einträge und unbekannte Server-Einträge werden getrennt ausgewiesen.",
+          "Die Baseline enthält getrennte Digests für Items und Kategorien. Item-Drift kann quarantänisiert werden, Kategorie-Drift blockiert den normalen Zugriff, weil Kategorien Struktur und Sichtbarkeit des Tresors beeinflussen.",
+          "Legitime lokale Änderungen rufen refreshIntegrityBaseline() mit den betroffenen Item-/Kategorie-IDs auf. Nur diese IDs dürfen die Baseline aktualisieren; zufällige Datenbankänderungen werden nicht vertraut.",
           "Wiederherstellung ist nur aus einer bereits vorhandenen vertrauenswürdigen lokalen Kopie möglich. Ohne solche Kopie gibt es keinen kryptografischen Wiederherstellungspfad.",
           "Manipulierte Kategorien oder unlesbare lokale Baselines blockieren den normalen Zugriff. Dann bleiben nur Safe Mode, lokaler Export oder ein Tresor-Reset."
         ]
@@ -354,7 +367,7 @@
         "bullets": [
           "Wenn der ausgelieferte Client-Code kompromittiert ist (Supply Chain/XSS), kann er beim Unlock Secrets abgreifen.",
           "Malware auf dem Gerät oder kompromittierter Browser kann den Vault im entsperrten Zustand auslesen.",
-          "Metadaten-Trade-offs: Einige Tabellenfelder sind Klartext (z.B. categories.name, tags.name, shared_collections.name)."
+          "Metadaten-Trade-offs: IDs, Zeitstempel und Besitz-Zuordnungen bleiben strukturelle Metadaten. Zentrale Tresor-Metadaten wie Item-Titel/URL und Kategoriename/Icon/Farbe werden verschlüsselt gespeichert; andere Produktbereiche können weiterhin Klartextnamen benötigen."
         ]
       }
     },
@@ -508,6 +521,9 @@
   "vault": {
     "title": "Mein Tresor",
     "loadError": "Tresor-Einträge konnten nicht geladen werden.",
+    "offlineSaved": "Offline gespeichert. Wird bei Internet automatisch synchronisiert.",
+    "offlineDeleteQueued": "Offline gelöscht. Löschung wird bei Internet synchronisiert.",
+    "syncedAfterOffline": "{{count}} Offline-Änderungen synchronisiert.",
     "empty": {
       "title": "Dein Tresor ist leer",
       "description": "Füge deinen ersten Eintrag hinzu, um loszulegen.",
@@ -1174,6 +1190,7 @@
     "name": "Name",
     "namePlaceholder": "z.B. Soziale Medien",
     "icon": "Symbol",
+    "noIcon": "Kein Symbol",
     "emojiPlaceholder": "Emoji eingeben oder auswählen",
     "svgHint": "Füge einen SVG-Code ein (max. 24x24px empfohlen)",
     "svgDisabled": "SVG-Icons sind aus Sicherheitsgründen deaktiviert.",
@@ -1182,10 +1199,15 @@
     "created": "Kategorie erstellt",
     "updated": "Kategorie aktualisiert",
     "deleted": "Kategorie gelöscht",
+    "deletedOnlyCategory": "Kategorie gelöscht. {{count}} Einträge bleiben ohne Kategorie.",
+    "deletedWithItems": "Kategorie und {{count}} Einträge gelöscht.",
     "saveFailed": "Kategorie konnte nicht gespeichert werden",
     "deleteFailed": "Kategorie konnte nicht gelöscht werden",
     "deleteConfirmTitle": "Kategorie löschen?",
     "deleteConfirmDesc": "Die Kategorie wird gelöscht. Einträge in dieser Kategorie werden nicht gelöscht, aber haben keine Kategorie mehr.",
+    "deleteWithItemsDesc": "Diese Kategorie enthält {{count}} Einträge. Du kannst nur die Kategorie löschen oder die Einträge mitlöschen.",
+    "deleteCategoryOnly": "Nur Kategorie löschen",
+    "deleteCategoryAndItems": "Kategorie und Einträge löschen",
     "empty": "Keine Kategorien vorhanden",
     "addFirst": "Erste Kategorie erstellen"
   },
