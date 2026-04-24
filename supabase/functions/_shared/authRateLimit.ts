@@ -320,7 +320,7 @@ function getActiveLockout(attempts: RateLimitAttempt[], now: Date): string | nul
   const activeLockouts = attempts
     .map((attempt) => attempt.locked_until)
     .filter((lockedUntil): lockedUntil is string => (
-      Boolean(lockedUntil) && new Date(lockedUntil).getTime() > now.getTime()
+      typeof lockedUntil === "string" && new Date(lockedUntil).getTime() > now.getTime()
     ))
     .sort();
 

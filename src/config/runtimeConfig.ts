@@ -4,7 +4,7 @@
 const MISSING_SUPABASE_URL = "https://missing-supabase-url.invalid";
 const MISSING_SUPABASE_PUBLISHABLE_KEY = "missing-supabase-publishable-key";
 
-function readEnv(name: "VITE_SUPABASE_URL" | "VITE_SUPABASE_PUBLISHABLE_KEY"): string {
+function readEnv(name: "VITE_SUPABASE_URL" | "VITE_SUPABASE_PUBLISHABLE_KEY" | "VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY"): string {
   return String(import.meta.env[name] ?? "").trim();
 }
 
@@ -34,6 +34,10 @@ export function getWebUrl(): string {
   return String(import.meta.env.VITE_SITE_URL ?? import.meta.env.VITE_WEB_URL ?? window.location.origin).replace(/\/+$/, "");
 }
 
+export function getOpaqueServerStaticPublicKey(): string {
+  return readEnv("VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY");
+}
+
 export const runtimeConfig = {
   get supabaseUrl(): string {
     return getSupabaseUrl();
@@ -46,6 +50,9 @@ export const runtimeConfig = {
   },
   get webUrl(): string {
     return getWebUrl();
+  },
+  get opaqueServerStaticPublicKey(): string {
+    return getOpaqueServerStaticPublicKey();
   },
   get isSupabaseConfigured(): boolean {
     return isSupabaseConfigured();

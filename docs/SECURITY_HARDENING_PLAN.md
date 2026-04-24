@@ -590,17 +590,15 @@ ALTER TABLE profiles ADD COLUMN duress_kdf_version INTEGER;
 
 ---
 
-### 5.3 OPAQUE-Protokoll für Server-Auth (Langfrist-Vision) — ❌ ZURÜCKGESTELLT
+### 5.3 OPAQUE-Protokoll für App-Passwort-Login — ✅ IMPLEMENTIERT
 
-**Status:** Zurückgestellt für zukünftige Versionen.
+**Status:** Seit 2026-04-24 ist OPAQUE der einzige erlaubte App-Passwort-Loginpfad.
 
-**Warum:** Aktuell wird das Supabase-Auth-Passwort (für Login) getrennt vom Master-Passwort verwaltet. Mit OPAQUE könnte das Master-Passwort gleichzeitig zur Server-Authentifizierung UND zur Vault-Verschlüsselung genutzt werden — ohne dass der Server jemals das Passwort sieht (auch nicht als Hash).
+**Warum:** App-eigene Passwort-Logins dürfen kein Passwort, keinen Passwort-Hash und keinen passwortäquivalenten Wert an den Server senden. Der Client verwendet OPAQUE; Edge Functions erhalten nur OPAQUE-Protokollnachrichten.
 
-**Status:** OPAQUE ist noch kein IETF-Standard (Draft), aber bereits in der Praxis bei Signal und WhatsApp im Einsatz.
+**Abgrenzung:** OAuth/Social Login bleibt ein separater Pfad. Vault-Entsperrung/Masterpasswort bleibt ein separater lokaler Vault-KDF-Pfad.
 
-**Komplexität:** Hoch. Erfordert Server-seitige Änderungen (nicht nur Edge Functions).
-
-**Entscheidung:** Phase 5 gilt als abgeschlossen. OPAQUE bleibt als Langfrist-Vision dokumentiert, wird aber nicht aktiv verfolgt.
+**Durchsetzung:** Es gibt keinen Legacy-Fallback. `auth-session` blockiert direkte Passwort-POSTs, und die Migration entfernt GoTrue-Passwortverifier, damit Supabase-Passwortgrants OPAQUE nicht umgehen können.
 
 ---
 

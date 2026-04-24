@@ -4,6 +4,8 @@
 **Durchgeführt von:** Lovable AI Agent  
 **Scope:** Vollständiges Repository (Frontend, Services, Edge Functions, DB)
 
+> Historischer Audit-Stand. Die beschriebenen App-Passwort-Login-Findings zu `auth-session`, serverseitigem Argon2id und Passwort-über-TLS sind durch den OPAQUE-Cutover vom 2026-04-24 ersetzt: App-eigene Passwort-Logins laufen nur noch über OPAQUE; `auth-session` blockiert Passwort-POSTs.
+
 ---
 
 ## Bereich 1 — Kryptographie

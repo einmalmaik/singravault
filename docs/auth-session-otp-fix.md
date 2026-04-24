@@ -1,5 +1,7 @@
 # Auth Session OTP Fix (2026-02-25)
 
+> Historisches Dokument. `auth-session` ist seit dem OPAQUE-Cutover kein App-Passwort-Login-Endpunkt mehr. Es bleibt nur für Session-Hydration, Logout und OAuth-Sync zuständig; direkte Passwort-POSTs werden mit `LEGACY_PASSWORD_LOGIN_DISABLED` blockiert.
+
 ## Problem
 
 Login über die `auth-session` Edge Function schlug fehl mit `otp_expired` / `token has expired or is invalid`. Nutzer konnten sich trotz existierendem Account nicht anmelden.

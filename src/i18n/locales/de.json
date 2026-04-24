@@ -236,6 +236,7 @@
     },
     "tags": {
       "crypto": "Krypto",
+      "auth": "Auth",
       "client": "Client",
       "rls": "RLS",
       "storage": "Storage",
@@ -249,6 +250,7 @@
       "title": "Kurzfakten",
       "subtitle": "Was du sofort wissen solltest",
       "items": [
+        "App-eigener Passwort-Login läuft ausschließlich über OPAQUE; es gibt keinen Legacy-Passwort-Fallback.",
         "Tresor-Inhalte werden clientseitig verschlüsselt, bevor sie gespeichert/gesendet werden.",
         "Key Derivation: Argon2id mit KDF-Versionen v1 (64 MiB) und v2 (128 MiB).",
         "AES-GCM CryptoKeys sind nicht-extrahierbar; Roh-Bytes werden nach Import best-effort genullt.",
@@ -263,6 +265,17 @@
           "Vault Items werden als encrypted_data gespeichert; Titel/URL-Metadaten werden bewusst nicht im Klartext gespeichert (Platzhalter + null).",
           "Import/Erstellen verschlüsselt Daten vor dem DB-Write; der Server sieht dabei nie den Klartext der Tresor-Einträge.",
           "Hinweis: Einige strukturelle Metadaten (z.B. Kategorien/Tags/Namen von Collections) sind weiterhin Klartext-DB-Felder."
+        ]
+      },
+      "authentication": {
+        "title": "Authentifizierung & OPAQUE",
+        "summary": "OAuth/Social Login ist ein separater Pfad; app-eigene Passwort-Logins verwenden ausschließlich OPAQUE.",
+        "bullets": [
+          "Beim App-eigenen Passwort-Login wird das Passwort lokal in OPAQUE verarbeitet. An die Edge Function gehen nur OPAQUE-Protokollnachrichten, kein Passwort, Passwort-Hash oder passwortäquivalenter Wert.",
+          "OPAQUE-Fehler brechen den Login ab. auth-session blockiert direkte Passwort-POSTs serverseitig mit LEGACY_PASSWORD_LOGIN_DISABLED.",
+          "Registrierung und Passwort-Reset erzeugen OPAQUE-Registration-Records clientseitig; GoTrue-Passwortverifier werden entfernt, damit Supabase-Passwortgrants OPAQUE nicht umgehen können.",
+          "Der OPAQUE Server Static Public Key wird im Client gegen VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY geprüft. Fehlt der Pin oder passt er nicht, entsteht keine App-Session.",
+          "Die Supabase-App-Session wird erst nach erfolgreichem OPAQUE-Finish erstellt und zusätzlich mit einem HMAC über den OPAQUE sessionKey an Access Token und User-ID gebunden."
         ]
       },
       "cryptography": {
@@ -442,6 +455,7 @@
     }
   },
   "auth": {
+    "success": "Erfolgreich angemeldet.",
     "login": {
       "title": "Willkommen zurück",
       "subtitle": "Melde dich an, um auf deinen Tresor zuzugreifen",

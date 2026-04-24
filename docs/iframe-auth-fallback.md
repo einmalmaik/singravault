@@ -20,10 +20,11 @@ erkannt und blockiert.
 - Standalone (eigener Tab):
   - Verhalten bleibt unverändert (BFF Cookie Pattern)
 
-### Backend (`auth-session/index.ts`)
+### Backend (`auth-opaque/index.ts`, `auth-session/index.ts`)
 
 - Neuer Body-Parameter `skipCookie: boolean`
-- Wenn `skipCookie === true`: kein `Set-Cookie` Header, Session wird nur als JSON zurückgegeben
+- Beim OPAQUE-Login wertet `auth-opaque` `skipCookie` aus. Wenn `skipCookie === true`: kein `Set-Cookie` Header, Session wird nur als JSON zurückgegeben
+- Beim OAuth/Social-Login wertet `auth-session` nur den getrennten `oauth-sync` Pfad aus
 - Das Frontend nutzt `supabase.auth.setSession()` um die Session im Memory zu halten
 
 ## Sicherheitsbetrachtung
@@ -31,10 +32,12 @@ erkannt und blockiert.
 - Im Iframe-Modus wird die Session nur im Memory gehalten (kein Cookie, kein localStorage)
 - Bei Page-Reload geht die Session verloren (akzeptables Verhalten für Dev-Preview)
 - In Produktion (eigener Tab/Domain) wird weiterhin das sichere BFF Cookie Pattern genutzt
-- `skipCookie` hat keinen Einfluss auf die Authentifizierung selbst (Argon2id + 2FA bleiben identisch)
+- `skipCookie` hat keinen Einfluss auf die Authentifizierung selbst (OPAQUE + 2FA bleiben identisch)
+- `auth-session` ist kein App-Passwort-Login-Endpunkt; direkte Passwort-POSTs bleiben blockiert
 
 ## Betroffene Dateien
 
 - `src/contexts/AuthContext.tsx` — Iframe-Erkennung, Cookie-Hydration skip
 - `src/pages/Auth.tsx` — `skipCookie` Flag, `credentials: 'omit'` im Iframe
-- `supabase/functions/auth-session/index.ts` — `skipCookie` Parameter
+- `supabase/functions/auth-opaque/index.ts` — OPAQUE-Login und `skipCookie`
+- `supabase/functions/auth-session/index.ts` — OAuth-Sync und Session-Hydration

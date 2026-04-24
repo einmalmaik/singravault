@@ -236,6 +236,7 @@
     },
     "tags": {
       "crypto": "Crypto",
+      "auth": "Auth",
       "client": "Client",
       "rls": "RLS",
       "storage": "Storage",
@@ -249,6 +250,7 @@
       "title": "Quick facts",
       "subtitle": "What to know at a glance",
       "items": [
+        "App-owned password login runs only through OPAQUE; there is no legacy password fallback.",
         "Vault item contents are encrypted client-side before storage/transmission.",
         "Key derivation: Argon2id with KDF versions v1 (64 MiB) and v2 (128 MiB).",
         "AES-GCM CryptoKeys are non-extractable; raw bytes are best-effort zeroed after import.",
@@ -263,6 +265,17 @@
           "Vault items are stored as encrypted_data; title/URL metadata is intentionally not stored in plaintext (placeholder + null).",
           "Create/import encrypts before writing to the database; the server never receives vault-item plaintext.",
           "Note: Some structural metadata (e.g., category/tag/collection names) remains plaintext DB fields."
+        ]
+      },
+      "authentication": {
+        "title": "Authentication & OPAQUE",
+        "summary": "OAuth/social login is a separate path; app-owned password login uses OPAQUE only.",
+        "bullets": [
+          "For app-owned password login, the password is processed locally by OPAQUE. Edge Functions receive only OPAQUE protocol messages, never a password, password hash, or password-equivalent value.",
+          "OPAQUE failures abort login. auth-session blocks direct password POSTs server-side with LEGACY_PASSWORD_LOGIN_DISABLED.",
+          "Signup and password reset create OPAQUE registration records client-side; GoTrue password verifiers are removed so Supabase password grants cannot bypass OPAQUE.",
+          "The OPAQUE server static public key is pinned in the client via VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY. If the pin is missing or mismatched, no app session is created.",
+          "The Supabase app session is created only after successful OPAQUE finish and is additionally bound to the OPAQUE sessionKey with an HMAC over access token and user ID."
         ]
       },
       "cryptography": {
@@ -442,6 +455,7 @@
     }
   },
   "auth": {
+    "success": "Signed in successfully.",
     "login": {
       "title": "Welcome back",
       "subtitle": "Sign in to access your vault",

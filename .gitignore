@@ -53,3 +53,5 @@ notizen.md
 /src-tauri/target/
 /supabase/.temp
 FINAL_REVIEW.md
+
+.vercel
