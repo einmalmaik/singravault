@@ -4,6 +4,14 @@ export type AuthRateLimitAction =
   | "recovery_verify"
   | "totp_verify"
   | "backup_code_verify"
+  | "login_totp_verify"
+  | "login_backup_code_verify"
+  | "password_reset_totp_verify"
+  | "password_reset_backup_code_verify"
+  | "vault_totp_verify"
+  | "vault_backup_code_verify"
+  | "disable_2fa_verify"
+  | "critical_2fa_verify"
   | "opaque_login"
   | "opaque_reset"
   | "opaque_register";
@@ -92,6 +100,46 @@ const AUTH_RATE_LIMITS: Record<AuthRateLimitAction, AuthRateLimitConfig> = {
   backup_code_verify: {
     maxAttempts: 5,
     windowMs: 30 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
+  },
+  login_totp_verify: {
+    maxAttempts: 5,
+    windowMs: 5 * 60 * 1000,
+    lockoutMs: 15 * 60 * 1000,
+  },
+  login_backup_code_verify: {
+    maxAttempts: 5,
+    windowMs: 30 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
+  },
+  password_reset_totp_verify: {
+    maxAttempts: 5,
+    windowMs: 5 * 60 * 1000,
+    lockoutMs: 30 * 60 * 1000,
+  },
+  password_reset_backup_code_verify: {
+    maxAttempts: 5,
+    windowMs: 30 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
+  },
+  vault_totp_verify: {
+    maxAttempts: 5,
+    windowMs: 5 * 60 * 1000,
+    lockoutMs: 15 * 60 * 1000,
+  },
+  vault_backup_code_verify: {
+    maxAttempts: 5,
+    windowMs: 30 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
+  },
+  disable_2fa_verify: {
+    maxAttempts: 3,
+    windowMs: 10 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
+  },
+  critical_2fa_verify: {
+    maxAttempts: 3,
+    windowMs: 10 * 60 * 1000,
     lockoutMs: 60 * 60 * 1000,
   },
   opaque_login: {

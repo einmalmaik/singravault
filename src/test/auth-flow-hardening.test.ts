@@ -92,8 +92,9 @@ describe("auth flow hardening", () => {
     expect(recoverySource).toContain('action === "verify-two-factor"');
     expect(recoverySource).toContain("two_factor_required: twoFactorRequired");
     expect(recoverySource).toContain("authorized_at: twoFactorRequired ? null : nowIso");
-    expect(recoverySource).toContain("verifyAndConsumeBackupCode");
-    expect(recoverySource).toContain("verifyTotpCode");
+    expect(recoverySource).toContain("verifyTwoFactorServer");
+    expect(recoverySource).not.toContain("async function verifyAndConsumeBackupCode");
+    expect(recoverySource).not.toContain("async function verifyTotpCode");
     expect(resetStartSection).toContain("isResetChallengeAuthorized(challenge)");
     expect(resetStartSection).toContain('"TWO_FACTOR_REQUIRED"');
     expect(resetFinishSection).toContain("isResetChallengeAuthorized(challenge)");
@@ -110,6 +111,8 @@ describe("auth flow hardening", () => {
 
   it("enforces auth-specific server-side throttling in critical auth paths", () => {
     const helperSource = readFileSync("supabase/functions/_shared/authRateLimit.ts", "utf-8");
+    const twoFactorSource = readFileSync("supabase/functions/_shared/twoFactor.ts", "utf-8");
+    const auth2faSource = readFileSync("supabase/functions/auth-2fa/index.ts", "utf-8");
     const sessionSource = readFileSync("supabase/functions/auth-session/index.ts", "utf-8");
     const opaqueSource = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
     const recoverySource = readFileSync("supabase/functions/auth-recovery/index.ts", "utf-8");
@@ -117,6 +120,7 @@ describe("auth flow hardening", () => {
       readFileSync("supabase/migrations/20260423210000_auth_flow_hardening.sql", "utf-8"),
       readFileSync("supabase/migrations/20260424193000_opaque_password_reset_change_flow.sql", "utf-8"),
       migrationSourceForSecurityFollowups(),
+      readFileSync("supabase/migrations/20260425170000_central_two_factor_validation.sql", "utf-8"),
     ].join("\n");
     const registerSource = readFileSync("supabase/functions/auth-register/index.ts", "utf-8");
     const opaqueStartSection = extractSection(
@@ -131,6 +135,14 @@ describe("auth flow hardening", () => {
       "recovery_verify",
       "totp_verify",
       "backup_code_verify",
+      "login_totp_verify",
+      "login_backup_code_verify",
+      "password_reset_totp_verify",
+      "password_reset_backup_code_verify",
+      "vault_totp_verify",
+      "vault_backup_code_verify",
+      "disable_2fa_verify",
+      "critical_2fa_verify",
       "opaque_login",
       "opaque_reset",
       "opaque_register",
@@ -143,7 +155,7 @@ describe("auth flow hardening", () => {
     expect(sessionSource).not.toContain('action: "totp_verify"');
     expect(sessionSource).not.toContain('action: "backup_code_verify"');
     expect(opaqueSource).toContain('action: "opaque_login"');
-    expect(opaqueSource).toContain('action: params.isBackupCode ? "backup_code_verify" : "totp_verify"');
+    expect(opaqueSource).toContain("verifyTwoFactorServer");
     expect(opaqueSource).toContain("opaqueUnavailableResponse");
     expect(opaqueStartSection).toContain("opaqueUnavailableResponse(opaqueRateLimit, startTime, headers)");
     expect(opaqueStartSection).toContain('invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials")');
@@ -155,6 +167,12 @@ describe("auth flow hardening", () => {
     expect(sessionSource).toContain("recordAuthRateLimitFailure");
     expect(opaqueSource).toContain("recordAuthRateLimitFailure");
     expect(recoverySource).toContain("recordAuthRateLimitFailure");
+    expect(auth2faSource).toContain("verifyTwoFactorServer");
+    expect(auth2faSource).toContain("two_factor_challenges");
+    expect(auth2faSource).not.toContain("body.verified");
+    expect(twoFactorSource).toContain("verifyAndConsumeBackupCodeServer");
+    expect(twoFactorSource).toContain("disable_2fa_verify");
+    expect(twoFactorSource).toContain("vault_totp_verify");
   });
 
   it("removes legacy app-password login as a client or server bypass", () => {

@@ -18,7 +18,7 @@ The app-password path uses OPAQUE only:
 2. `opaqueService.startLogin(password)` creates a blinded OPAQUE request locally.
 3. `auth-opaque` `login-start` returns `loginResponse` and `loginId`.
 4. `opaqueService.finishLogin(...)` derives the OPAQUE `sessionKey` locally and validates the pinned server static public key.
-5. `auth-opaque` `login-finish` verifies the OPAQUE proof, enforces 2FA if needed, and creates the Supabase session.
+5. `auth-opaque` `login-finish` verifies the OPAQUE proof, enforces 2FA through the shared server-side 2FA validator if needed, and creates the Supabase session.
 6. The client verifies `opaqueSessionBinding` before applying the session.
 
 Failure in any OPAQUE step aborts login. There is no legacy password fallback.
@@ -42,7 +42,7 @@ Forgot-password and authenticated password-change use the same reset authorizati
 
 1. `accountPasswordResetService` requests an email code through `auth-recovery`.
 2. `auth-recovery` verifies the one-time email code without issuing an app session.
-3. If account 2FA is enabled, `auth-recovery` requires a TOTP code or recovery code before authorizing the reset token.
+3. If account 2FA is enabled, `auth-recovery` requires a TOTP code or recovery code through the shared server-side 2FA validator before authorizing the reset token.
 4. The client starts OPAQUE registration for the new password.
 5. `auth-reset-password` `opaque-reset-start` returns a registration response only for an authorized reset token.
 6. The client finishes OPAQUE registration locally.
@@ -70,4 +70,12 @@ Resetting the account password does not decrypt the vault and does not recreate 
 
 ## 2FA
 
-2FA for app-password login is enforced inside `auth-opaque` after successful OPAQUE verification and before session issuance. 2FA for password reset/change is enforced inside `auth-recovery` before the reset token can be used for OPAQUE re-registration. Backup-code verification still uses Argon2id hashes, but those hashes are backup-code material, not app-password hashes.
+2FA for app-password login is enforced inside `auth-opaque` after successful OPAQUE verification and before session issuance. 2FA for password reset/change is enforced inside `auth-recovery` before the reset token can be used for OPAQUE re-registration.
+
+The server-side implementation is centralized in `supabase/functions/_shared/twoFactor.ts`. It owns TOTP verification, backup-code verification/consumption, purpose-specific rate-limit actions, and generic error handling. Backup-code verification supports current Argon2id `v3:` hashes plus legacy HMAC/SHA-256 formats for compatibility; backup codes are consumed server-side with an `is_used = false` guard.
+
+Vault 2FA/VaultFA uses `auth-2fa`. The client may request a requirement or submit a code, but the server creates and consumes short-lived `two_factor_challenges` bound to the authenticated user and purpose. If VaultFA is enabled and the server cannot verify the code, the official app keeps the Vault locked and does not release the Vault key.
+
+2FA disable is also handled by `auth-2fa` and accepts only the current TOTP code. Backup codes are rejected for `disable_2fa`.
+
+Limit: Vault decryption remains local. Server-side VaultFA prevents the official client from releasing the Vault key before server verification, but it cannot retroactively protect data already decrypted on a compromised device or in a modified local client.

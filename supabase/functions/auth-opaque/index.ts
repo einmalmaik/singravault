@@ -14,7 +14,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import * as opaque from "npm:@serenity-kit/opaque";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { argon2Verify } from "npm:hash-wasm";
 import { setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import {
@@ -31,6 +30,10 @@ import {
     normalizeOpaqueIdentifier,
     OPAQUE_SESSION_BINDING_VERSION,
 } from "../_shared/opaqueAuth.ts";
+import {
+    twoFactorFailureResponse,
+    verifyTwoFactorServer,
+} from "../_shared/twoFactor.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -382,96 +385,18 @@ async function enforceSecondFactorIfNeeded(params: {
         return new Response(JSON.stringify({ error: "Invalid request payload" }), { status: 400, headers: params.headers });
     }
 
-    const secondFactorRateLimit = await checkAuthRateLimit({
+    const secondFactor = await verifyTwoFactorServer({
         supabaseAdmin,
         req: params.req,
-        action: params.isBackupCode ? "backup_code_verify" : "totp_verify",
-        account: { kind: "user", value: params.userId },
+        userId: params.userId,
+        purpose: "account_login",
+        method: params.isBackupCode ? "backup_code" : "totp",
+        code: params.totpCode,
     });
-    if (!secondFactorRateLimit.allowed) {
-        return authRateLimitResponse(secondFactorRateLimit, params.headers);
+    if (!secondFactor.ok) {
+        return twoFactorFailureResponse(secondFactor, params.headers);
     }
-
-    const startTime = Date.now();
-    const secondFactorValid = params.isBackupCode
-        ? await verifyAndConsumeBackupCode(params.userId, params.totpCode)
-        : await verifyTotpCode(params.userId, params.totpCode);
-
-    if (!secondFactorValid) {
-        return await invalidOpaqueAttemptResponse(
-            secondFactorRateLimit,
-            startTime,
-            params.headers,
-            params.isBackupCode ? "Invalid backup code" : "Invalid 2FA code",
-        );
-    }
-
-    await resetAuthRateLimit(secondFactorRateLimit);
-    await supabaseAdmin.from("user_2fa").update({ last_verified_at: new Date().toISOString() }).eq("user_id", params.userId);
     return null;
-}
-
-async function verifyTotpCode(userId: string, code: string): Promise<boolean> {
-    const { data: totpSecret, error: totpSecretError } = await supabaseAdmin.rpc("get_user_2fa_secret", {
-        p_user_id: userId,
-        p_require_enabled: true,
-    });
-
-    if (totpSecretError || !totpSecret) {
-        console.error("Failed to load TOTP secret for OPAQUE login:", totpSecretError);
-        return false;
-    }
-
-    const OTPAuth = await import("npm:otpauth");
-    const totp = new OTPAuth.TOTP({
-        issuer: "Singra Vault",
-        algorithm: "SHA1",
-        digits: 6,
-        period: 30,
-        secret: OTPAuth.Secret.fromBase32(String(totpSecret).replace(/\s/g, "")),
-    });
-
-    return totp.validate({ token: code.replace(/\s/g, ""), window: 1 }) !== null;
-}
-
-async function verifyAndConsumeBackupCode(userId: string, code: string): Promise<boolean> {
-    const { data: backupCodes } = await supabaseAdmin
-        .from("backup_codes")
-        .select("id, code_hash")
-        .eq("user_id", userId)
-        .eq("is_used", false);
-
-    let validCodeId: string | null = null;
-    if (backupCodes && backupCodes.length > 0) {
-        for (const backupCode of backupCodes) {
-            const isMatch = await argon2Verify({
-                password: code.replace(/\s/g, ""),
-                hash: backupCode.code_hash,
-            });
-            if (isMatch) {
-                validCodeId = backupCode.id;
-                break;
-            }
-        }
-    }
-
-    if (!validCodeId) {
-        return false;
-    }
-
-    const { data: consumedBackupCode, error: consumeError } = await supabaseAdmin
-        .from("backup_codes")
-        .update({
-            is_used: true,
-            used_at: new Date().toISOString(),
-        })
-        .eq("id", validCodeId)
-        .eq("user_id", userId)
-        .eq("is_used", false)
-        .select("id")
-        .maybeSingle();
-
-    return !consumeError && Boolean(consumedBackupCode);
 }
 
 async function issueSession(

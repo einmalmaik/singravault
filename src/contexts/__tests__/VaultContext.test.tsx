@@ -174,6 +174,11 @@ vi.mock("@/services/rateLimiterService", () => ({
   resetUnlockAttempts: () => mockResetUnlockAttempts(),
 }));
 
+const mockGetTwoFactorRequirement = vi.fn();
+vi.mock("@/services/twoFactorService", () => ({
+  getTwoFactorRequirement: (...args: unknown[]) => mockGetTwoFactorRequirement(...args),
+}));
+
 // ============ Test Helpers ============
 
 function createWrapper() {
@@ -247,6 +252,11 @@ describe("VaultContext", () => {
     mockDeleteQuarantinedItemFromVault.mockResolvedValue({ syncedOnline: true });
     mockGetUnlockCooldown.mockReturnValue(null);
     mockUnwrapUserKeyBytes.mockResolvedValue(new Uint8Array(32));
+    mockGetTwoFactorRequirement.mockResolvedValue({
+      context: "vault_unlock",
+      required: false,
+      status: "loaded",
+    });
 
     // Default Supabase profile response - no vault setup yet
     const mockEqChain = createSelectQueryMock(null, []);
@@ -567,6 +577,89 @@ describe("VaultContext", () => {
       expect(mockDeriveRawKey).toHaveBeenCalledWith("CorrectPassword!", "existing-salt", 2, undefined);
       expect(mockVerifyKey).toHaveBeenCalled();
       expect(result.current.isLocked).toBe(false);
+    });
+
+    it("blocks master-password unlock when vault 2FA is required but no verifier callback is supplied", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA verification required");
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("unlocks with master password only after vault 2FA verification succeeds", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlock("CorrectPassword!", {
+          verifyTwoFactor: async () => true,
+        });
+      });
+
+      expect(result.current.isLocked).toBe(false);
+    });
+
+    it("keeps the vault locked when master-password 2FA verification fails", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!", {
+          verifyTwoFactor: async () => false,
+        });
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA verification failed");
+      expect(result.current.isLocked).toBe(true);
     });
 
     it("tauri dev unlock verifies the local snapshot without server reads", async () => {
@@ -1021,6 +1114,102 @@ describe("VaultContext", () => {
       });
 
       expect(mockRecordFailedAttempt).toHaveBeenCalledTimes(1);
+    });
+
+    it("blocks passkey unlock when vault 2FA is required but no verifier callback is supplied", async () => {
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey();
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA verification required");
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("blocks passkey unlock when vault 2FA verification fails", async () => {
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey({
+          verifyTwoFactor: async () => false,
+        });
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA verification failed");
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("allows passkey unlock only after vault 2FA verification succeeds", async () => {
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlockWithPasskey({
+          verifyTwoFactor: async () => true,
+        });
+      });
+
+      expect(result.current.isLocked).toBe(false);
+    });
+
+    it("fails closed when vault 2FA status cannot be loaded", async () => {
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "unavailable",
+        reason: "status_unavailable",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey({
+          verifyTwoFactor: async () => true,
+        });
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA status unavailable");
+      expect(result.current.isLocked).toBe(true);
     });
   });
 
