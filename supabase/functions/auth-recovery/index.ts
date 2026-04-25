@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { argon2Verify } from "npm:hash-wasm";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import {
     authRateLimitResponse,
@@ -16,6 +15,10 @@ import {
     normalizeOpaqueIdentifier,
     sha256Hex,
 } from "../_shared/opaqueAuth.ts";
+import {
+    twoFactorFailureResponse,
+    verifyTwoFactorServer,
+} from "../_shared/twoFactor.ts";
 
 type ResetPurpose = "forgot" | "change";
 
@@ -29,6 +32,7 @@ interface ResetChallenge {
     id: string;
     user_id: string;
     email: string;
+    purpose: ResetPurpose;
     two_factor_required: boolean;
     two_factor_verified_at: string | null;
     authorized_at: string | null;
@@ -310,28 +314,17 @@ async function handleVerifyTwoFactor(
         }), { status: 200, headers });
     }
 
-    const secondFactorRateLimit = await checkAuthRateLimit({
+    const secondFactor = await verifyTwoFactorServer({
         supabaseAdmin,
         req,
-        action: isBackupCode ? "backup_code_verify" : "totp_verify",
-        account: { kind: "user", value: challenge.user_id },
+        userId: challenge.user_id,
+        purpose: challenge.purpose === "change" ? "password_change" : "password_reset",
+        method: isBackupCode ? "backup_code" : "totp",
+        code,
+        challengeId: challenge.id,
     });
-    if (!secondFactorRateLimit.allowed) {
-        return authRateLimitResponse(secondFactorRateLimit, headers);
-    }
-
-    const startTime = Date.now();
-    const valid = isBackupCode
-        ? await verifyAndConsumeBackupCode(challenge.user_id, code)
-        : await verifyTotpCode(challenge.user_id, code);
-
-    if (!valid) {
-        return await invalidSecondFactorAttemptResponse(
-            secondFactorRateLimit,
-            startTime,
-            headers,
-            isBackupCode ? "Invalid backup code" : "Invalid 2FA code",
-        );
+    if (!secondFactor.ok) {
+        return twoFactorFailureResponse(secondFactor, headers);
     }
 
     const nowIso = new Date().toISOString();
@@ -350,9 +343,6 @@ async function handleVerifyTwoFactor(
     if (updateError || !updatedChallenge) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
     }
-
-    await resetAuthRateLimit(secondFactorRateLimit);
-    await supabaseAdmin.from("user_2fa").update({ last_verified_at: nowIso }).eq("user_id", challenge.user_id);
 
     return new Response(JSON.stringify({
         success: true,
@@ -579,7 +569,7 @@ async function findActiveResetChallenge(resetToken: string): Promise<ResetChalle
     const resetTokenHash = await sha256Hex(resetToken);
     const { data: challenge, error } = await supabaseAdmin
         .from("password_reset_challenges")
-        .select("id, user_id, email, two_factor_required, two_factor_verified_at, authorized_at")
+        .select("id, user_id, email, purpose, two_factor_required, two_factor_verified_at, authorized_at")
         .eq("token_hash", resetTokenHash)
         .is("used_at", null)
         .gt("expires_at", new Date().toISOString())
@@ -600,69 +590,6 @@ async function isTwoFactorEnabled(userId: string): Promise<boolean> {
         .maybeSingle();
 
     return Boolean(user2fa?.is_enabled);
-}
-
-async function verifyTotpCode(userId: string, code: string): Promise<boolean> {
-    const { data: totpSecret, error: totpSecretError } = await supabaseAdmin.rpc("get_user_2fa_secret", {
-        p_user_id: userId,
-        p_require_enabled: true,
-    });
-
-    if (totpSecretError || !totpSecret) {
-        console.error("Failed to load TOTP secret for password reset:", totpSecretError);
-        return false;
-    }
-
-    const OTPAuth = await import("npm:otpauth");
-    const totp = new OTPAuth.TOTP({
-        issuer: "Singra Vault",
-        algorithm: "SHA1",
-        digits: 6,
-        period: 30,
-        secret: OTPAuth.Secret.fromBase32(String(totpSecret).replace(/\s/g, "")),
-    });
-
-    return totp.validate({ token: code.replace(/\s/g, ""), window: 1 }) !== null;
-}
-
-async function verifyAndConsumeBackupCode(userId: string, code: string): Promise<boolean> {
-    const { data: backupCodes } = await supabaseAdmin
-        .from("backup_codes")
-        .select("id, code_hash")
-        .eq("user_id", userId)
-        .eq("is_used", false);
-
-    let validCodeId: string | null = null;
-    if (backupCodes && backupCodes.length > 0) {
-        for (const backupCode of backupCodes) {
-            const isMatch = await argon2Verify({
-                password: code.replace(/\s/g, ""),
-                hash: backupCode.code_hash,
-            });
-            if (isMatch) {
-                validCodeId = backupCode.id;
-                break;
-            }
-        }
-    }
-
-    if (!validCodeId) {
-        return false;
-    }
-
-    const { data: consumedBackupCode, error: consumeError } = await supabaseAdmin
-        .from("backup_codes")
-        .update({
-            is_used: true,
-            used_at: new Date().toISOString(),
-        })
-        .eq("id", validCodeId)
-        .eq("user_id", userId)
-        .eq("is_used", false)
-        .select("id")
-        .maybeSingle();
-
-    return !consumeError && Boolean(consumedBackupCode);
 }
 
 function parsePurpose(value: unknown): ResetPurpose {

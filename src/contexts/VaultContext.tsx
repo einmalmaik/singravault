@@ -70,6 +70,7 @@ import {
     recordFailedAttempt,
     resetUnlockAttempts,
 } from '@/services/rateLimiterService';
+import { getTwoFactorRequirement } from '@/services/twoFactorService';
 import {
     inspectVaultSnapshotIntegrity,
     persistIntegrityBaseline,
@@ -294,8 +295,8 @@ interface VaultContextType {
 
     // Actions
     setupMasterPassword: (masterPassword: string) => Promise<{ error: Error | null }>;
-    unlock: (masterPassword: string) => Promise<{ error: Error | null }>;
-    unlockWithPasskey: () => Promise<{ error: Error | null }>;
+    unlock: (masterPassword: string, options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
+    unlockWithPasskey: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
     lock: () => void;
     /** Enables Device Key protection: generates key, re-encrypts vault */
     enableDeviceKey: (masterPassword: string) => Promise<{ error: Error | null }>;
@@ -387,6 +388,10 @@ interface VaultContextType {
      * an integrity failure so the vault can be re-initialized safely.
      */
     resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+}
+
+interface VaultUnlockOptions {
+    verifyTwoFactor?: () => Promise<boolean>;
 }
 
 const VaultContext = createContext<VaultContextType | undefined>(undefined);
@@ -1056,6 +1061,38 @@ export function VaultProvider({ children }: VaultProviderProps) {
         user,
     ]);
 
+    const enforceVaultTwoFactorBeforeKeyRelease = useCallback(async (
+        options?: VaultUnlockOptions,
+    ): Promise<{ error: Error | null }> => {
+        if (!user) {
+            return { error: new Error('No active user session') };
+        }
+
+        const requirement = await getTwoFactorRequirement({
+            userId: user.id,
+            context: 'vault_unlock',
+        });
+
+        if (requirement.status === 'unavailable') {
+            return { error: new Error('Vault 2FA status unavailable. Vault remains locked.') };
+        }
+
+        if (!requirement.required) {
+            return { error: null };
+        }
+
+        if (!options?.verifyTwoFactor) {
+            return { error: new Error('Vault 2FA verification required before unlock.') };
+        }
+
+        const verified = await options.verifyTwoFactor();
+        if (!verified) {
+            return { error: new Error('Vault 2FA verification failed.') };
+        }
+
+        return { error: null };
+    }, [user]);
+
     const refreshIntegrityBaseline = useCallback(async (
         trustedMutation?: TrustedVaultMutation,
     ): Promise<void> => {
@@ -1497,7 +1534,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
             if (isTauriDevUserId(user.id)) {
                 setSalt(newSalt);
                 setVerificationHash(verifyHash);
-                setEncryptionKey(uskBundle.userKey);
                 setEncryptedUserKey(uskBundle.encryptedUserKey);
                 setKdfVersion(CURRENT_KDF_VERSION);
                 setIsSetupRequired(false);
@@ -1547,7 +1583,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
             // Update state
             setSalt(newSalt);
             setVerificationHash(verifyHash);
-            setEncryptionKey(uskBundle.userKey);
             setEncryptedUserKey(uskBundle.encryptedUserKey);
             setKdfVersion(CURRENT_KDF_VERSION);
             setIsSetupRequired(false);
@@ -1570,7 +1605,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
      * only decoy items.
      */
     const unlock = useCallback(async (
-        masterPassword: string
+        masterPassword: string,
+        options?: VaultUnlockOptions,
     ): Promise<{ error: Error | null }> => {
         if (!user || !salt) {
             return { error: new Error('Vault not set up') };
@@ -1606,6 +1642,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 resetUnlockAttempts();
 
                 if (result.mode === 'duress') {
+                    const twoFactorResult = await enforceVaultTwoFactorBeforeKeyRelease(options);
+                    if (twoFactorResult.error) {
+                        return twoFactorResult;
+                    }
+
                     setEncryptionKey(result.key);
                     setIsDuressMode(true);
                     setIsLocked(false);
@@ -1849,6 +1890,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     }
                 }
 
+                const twoFactorResult = await enforceVaultTwoFactorBeforeKeyRelease(options);
+                if (twoFactorResult.error) {
+                    return twoFactorResult;
+                }
+
                 const finalizeResult = await finalizeVaultUnlock(activeKey);
                 if (finalizeResult.error) {
                     return finalizeResult;
@@ -2080,6 +2126,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 }
             }
 
+            const twoFactorResult = await enforceVaultTwoFactorBeforeKeyRelease(options);
+            if (twoFactorResult.error) {
+                return twoFactorResult;
+            }
+
             const finalizeResult = await finalizeVaultUnlock(activeKey);
             if (finalizeResult.error) {
                 return finalizeResult;
@@ -2102,6 +2153,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         kdfVersion,
         duressConfig,
         encryptedUserKey,
+        enforceVaultTwoFactorBeforeKeyRelease,
         finalizeVaultUnlock,
         backfillVerificationHash,
         getRequiredDeviceKey,
@@ -2109,7 +2161,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         migrateLegacyVaultToUserKey,
     ]);
 
-    const unlockWithPasskey = useCallback(async (): Promise<{ error: Error | null }> => {
+    const unlockWithPasskey = useCallback(async (options?: VaultUnlockOptions): Promise<{ error: Error | null }> => {
         if (!user) {
             console.warn('unlockWithPasskey called without active user session');
             return { error: new Error('User session not ready. Please wait a moment.') };
@@ -2172,6 +2224,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }
 
             resetUnlockAttempts();
+            const twoFactorResult = await enforceVaultTwoFactorBeforeKeyRelease(options);
+            if (twoFactorResult.error) {
+                return twoFactorResult;
+            }
+
             const finalizeResult = await finalizeVaultUnlock(activeKey);
             if (finalizeResult.error) {
                 return finalizeResult;
@@ -2191,6 +2248,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         user,
         verificationHash,
         encryptedUserKey,
+        enforceVaultTwoFactorBeforeKeyRelease,
         finalizeVaultUnlock,
         backfillVerificationHash,
         recoverLegacyKeyWithoutVerifier,

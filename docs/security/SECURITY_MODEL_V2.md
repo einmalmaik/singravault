@@ -35,6 +35,8 @@ Unlock geschieht entweder:
 - per Passwort
 - oder per Passkey mit PRF, sofern ein passender Passkey registriert wurde
 
+Wenn VaultFA aktiviert ist, muss der offizielle Client vor Freigabe des aktiven Vault-Keys eine serverseitige 2FA-Challenge über `auth-2fa` bestehen. Passkey und Masterpasswort sind Unlock-Methoden, aber kein Ersatz für VaultFA.
+
 ### Sync
 
 Sync bedeutet:
