@@ -154,63 +154,18 @@ async function handleOpaqueResetFinish(
         );
     }
 
-    const { data: consumedResetState, error: stateConsumeError } = await supabaseAdmin
-        .from("opaque_password_reset_states")
-        .update({ consumed_at: new Date().toISOString() })
-        .eq("id", resetRegistrationId)
-        .eq("user_id", challenge.user_id)
-        .is("consumed_at", null)
-        .gt("expires_at", new Date().toISOString())
-        .select("id, email")
-        .maybeSingle();
-
-    if (stateConsumeError || !consumedResetState) {
-        return await invalidOpaqueResetAttemptResponse(resetRateLimit, Date.now(), headers, "Unauthorized");
-    }
-
-    const { data: consumedChallenge, error: consumeError } = await supabaseAdmin
-        .from("password_reset_challenges")
-        .update({ used_at: new Date().toISOString() })
-        .eq("id", challenge.id)
-        .is("used_at", null)
-        .select("id, user_id, email")
-        .maybeSingle();
-
-    if (consumeError || !consumedChallenge) {
-        return await invalidOpaqueResetAttemptResponse(resetRateLimit, Date.now(), headers, "Unauthorized");
-    }
-
-    const email = normalizeOpaqueIdentifier(consumedResetState.email);
-    const userId = consumedChallenge.user_id as string;
-    const { error: upsertError } = await supabaseAdmin
-        .from("user_opaque_records")
-        .upsert({
-            user_id: userId,
-            opaque_identifier: email,
-            registration_record: registrationRecord,
-            updated_at: new Date().toISOString(),
-        }, { onConflict: "user_id" });
-
-    if (upsertError) {
-        throw new Error(`Failed to update OPAQUE registration record: ${upsertError.message}`);
-    }
-
-    await disableGotruePasswordLogin(userId);
-
-    const { error: revokeError } = await supabaseAdmin.rpc("revoke_user_auth_sessions", {
-        p_user_id: userId,
+    const { data: finishResult, error: finishError } = await supabaseAdmin.rpc("finish_opaque_password_reset", {
+        p_challenge_id: challenge.id,
+        p_reset_state_id: resetRegistrationId,
+        p_registration_record: registrationRecord,
     });
-    if (revokeError) {
-        console.error("Failed to revoke existing sessions after password reset:", revokeError);
-        throw new Error("Failed to revoke existing sessions after password reset");
+    const finishedReset = Array.isArray(finishResult) ? finishResult[0] : finishResult;
+    if (finishError || !finishedReset) {
+        console.error("Failed to finish OPAQUE password reset atomically:", finishError);
+        return await invalidOpaqueResetAttemptResponse(resetRateLimit, Date.now(), headers, "Unauthorized");
     }
 
-    await Promise.all([
-        supabaseAdmin.from("profiles").update({ auth_protocol: "opaque" }).eq("user_id", userId),
-        supabaseAdmin.from("user_security").delete().eq("id", userId),
-        supabaseAdmin.from("password_reset_challenges").delete().eq("user_id", userId),
-        supabaseAdmin.from("opaque_password_reset_states").delete().eq("user_id", userId),
-    ]);
+    const email = normalizeOpaqueIdentifier(finishedReset.email);
     await resetAuthRateLimit(resetRateLimit);
 
     await sendPasswordResetNotification(email);
@@ -338,14 +293,5 @@ async function delayUntilMinimum(startTime: number, minimumMs: number): Promise<
     const remaining = minimumMs - (Date.now() - startTime);
     if (remaining > 0) {
         await delay(remaining);
-    }
-}
-
-async function disableGotruePasswordLogin(userId: string): Promise<void> {
-    const { error } = await supabaseAdmin.rpc("disable_gotrue_password_login", {
-        p_user_id: userId,
-    });
-    if (error) {
-        throw new Error(`Failed to disable GoTrue password login: ${error.message}`);
     }
 }

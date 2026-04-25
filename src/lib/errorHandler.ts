@@ -159,7 +159,7 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; code: ErrorCode; message: string 
 /**
  * Global error handler that converts any error to a safe AppError
  */
-export function handleError(error: unknown, context?: Record<string, any>): AppError {
+export function handleError(error: unknown, context?: Record<string, unknown>): AppError {
     const correlationId = generateCorrelationId();
 
     // Already an AppError
@@ -279,7 +279,7 @@ export function handleReactError(
  */
 export async function withErrorHandling<T>(
     fn: () => Promise<T>,
-    context?: Record<string, any>
+    context?: Record<string, unknown>
 ): Promise<T> {
     try {
         return await fn();

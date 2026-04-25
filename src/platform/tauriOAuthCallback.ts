@@ -8,6 +8,7 @@ const TAURI_CALLBACK_HOST = "auth";
 const TAURI_CALLBACK_PATH = "/callback";
 const WEB_CALLBACK_PATH = "/auth";
 const BRIDGE_ONLY_CALLBACK_KEYS = new Set(["source"]);
+const BLOCKED_SUPABASE_CALLBACK_TYPES = new Set(["recovery", "signup", "magiclink", "email_change"]);
 const AUTH_PAYLOAD_KEYS = [
   "access_token",
   "refresh_token",
@@ -72,6 +73,20 @@ export function parseOAuthCallbackPayload(callbackUrl: string, baseUrl?: string)
 export function hasOAuthCallbackPayload(callbackUrl: string, baseUrl?: string): boolean {
   const payload = parseOAuthCallbackPayload(callbackUrl, baseUrl);
   return Boolean(payload?.hasAuthPayload);
+}
+
+export function getSupabaseCallbackType(payload: OAuthCallbackPayload): string | null {
+  const callbackType = payload.params.get("type");
+  return callbackType ? callbackType.trim().toLowerCase() : null;
+}
+
+export function isBlockedSupabaseAuthCallback(payload: OAuthCallbackPayload): boolean {
+  const callbackType = getSupabaseCallbackType(payload);
+  if (!callbackType) {
+    return false;
+  }
+
+  return BLOCKED_SUPABASE_CALLBACK_TYPES.has(callbackType) || Boolean(payload.tokens);
 }
 
 export function isDesktopOAuthBridgeUrl(callbackUrl: string, baseUrl?: string): boolean {

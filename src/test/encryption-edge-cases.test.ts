@@ -22,10 +22,15 @@ import { createClient } from "@supabase/supabase-js";
 // Create a Supabase client with service role for testing
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const hasSupabaseTestEnv = Boolean(supabaseUrl && supabaseServiceKey);
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = createClient(
+  supabaseUrl || "http://localhost:54321",
+  supabaseServiceKey || "test-service-role-key",
+);
+const describeIfSupabase = hasSupabaseTestEnv ? describe : describe.skip;
 
-describe("2FA Encryption Edge Cases", () => {
+describeIfSupabase("2FA Encryption Edge Cases", () => {
   let migrationsApplied = false;
 
   beforeAll(async () => {

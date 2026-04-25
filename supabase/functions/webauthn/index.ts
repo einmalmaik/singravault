@@ -162,14 +162,7 @@ Deno.serve(async (req: Request) => {
         }
     } catch (err) {
         console.error("WebAuthn edge function error:", err);
-        return jsonResponse(
-            {
-                error: "Internal server error",
-                details: err instanceof Error ? err.message : String(err),
-            },
-            500,
-            corsHeaders,
-        );
+        return jsonResponse({ error: "Internal server error" }, 500, corsHeaders);
     }
 });
 

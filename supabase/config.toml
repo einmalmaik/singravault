@@ -1,5 +1,8 @@
 project_id = "lcrtadxlojaucwapgzmy"
 
+[auth]
+jwt_expiry = 600
+
 # ============ Core Functions (öffentlich) ============
 
 [functions.auth-opaque]

@@ -586,8 +586,8 @@ async function opaqueUnavailableResponse(
     }
 
     return new Response(JSON.stringify({
-        error: "OPAQUE credentials are not configured for this account",
-        code: "OPAQUE_CREDENTIALS_REQUIRED",
+        error: "Invalid credentials",
+        code: "INVALID_CREDENTIALS",
     }), { status: 401, headers });
 }
 

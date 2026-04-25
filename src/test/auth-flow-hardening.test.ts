@@ -31,8 +31,8 @@ describe("auth flow hardening", () => {
     expect(verifyRecoverSection).not.toContain("applyAuthenticatedSession");
     expect(resetSource).toContain("resetToken");
     expect(resetSource).toContain("used_at");
-    expect(resetSource).toContain("revoke_user_auth_sessions");
-    expect(resetSource).toContain('throw new Error("Failed to revoke existing sessions after password reset")');
+    expect(resetSource).toContain("finish_opaque_password_reset");
+    expect(migrationSourceForSecurityFollowups()).toContain("PERFORM public.revoke_user_auth_sessions");
     expect(resetSource).toContain("sendPasswordResetNotification");
     expect(migrationSourceForSessions()).not.toContain("WHERE user_id = p_user_id::TEXT");
     expect(migrationSourceForSessions()).toContain("information_schema.columns");
@@ -68,6 +68,8 @@ describe("auth flow hardening", () => {
     expect(passwordSettingsSource).toContain("completeOpaqueAccountPasswordReset");
     expect(passwordSettingsSource).toContain("requestAccountPasswordEmailCode({ purpose: 'change' })");
     expect(passwordSettingsSource).toContain("canCurrentUserUseAppPasswordFlow");
+    expect(authPageSource).toContain("stellt keinen verlorenen Vault-Key wieder her");
+    expect(passwordSettingsSource).toContain("stellt keinen verlorenen Vault-Key wieder her");
     expect(passwordSettingsSource).not.toContain("updateUser({ password");
     expect(passwordSettingsSource).not.toContain("resetPasswordForEmail");
   });
@@ -95,7 +97,7 @@ describe("auth flow hardening", () => {
     expect(resetStartSection).toContain("isResetChallengeAuthorized(challenge)");
     expect(resetStartSection).toContain('"TWO_FACTOR_REQUIRED"');
     expect(resetFinishSection).toContain("isResetChallengeAuthorized(challenge)");
-    expect(resetFinishSection).toContain("opaque_password_reset_states");
+    expect(resetFinishSection).toContain("finish_opaque_password_reset");
     expect(resetSource).toContain('action: "opaque_reset"');
     expect(resetSource).toContain("two_factor_verified_at");
     expect(resetSource).toContain("authorized_at");
@@ -111,7 +113,12 @@ describe("auth flow hardening", () => {
     const sessionSource = readFileSync("supabase/functions/auth-session/index.ts", "utf-8");
     const opaqueSource = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
     const recoverySource = readFileSync("supabase/functions/auth-recovery/index.ts", "utf-8");
-    const migrationSource = readFileSync("supabase/migrations/20260423210000_auth_flow_hardening.sql", "utf-8");
+    const migrationSource = [
+      readFileSync("supabase/migrations/20260423210000_auth_flow_hardening.sql", "utf-8"),
+      readFileSync("supabase/migrations/20260424193000_opaque_password_reset_change_flow.sql", "utf-8"),
+      migrationSourceForSecurityFollowups(),
+    ].join("\n");
+    const registerSource = readFileSync("supabase/functions/auth-register/index.ts", "utf-8");
     const opaqueStartSection = extractSection(
       opaqueSource,
       "async function handleLoginStart",
@@ -120,10 +127,13 @@ describe("auth flow hardening", () => {
 
     for (const action of [
       "password_login",
+      "recovery_request",
       "recovery_verify",
       "totp_verify",
       "backup_code_verify",
       "opaque_login",
+      "opaque_reset",
+      "opaque_register",
     ]) {
       expect(helperSource).toContain(action);
       expect(migrationSource).toContain(action);
@@ -137,7 +147,11 @@ describe("auth flow hardening", () => {
     expect(opaqueSource).toContain("opaqueUnavailableResponse");
     expect(opaqueStartSection).toContain("opaqueUnavailableResponse(opaqueRateLimit, startTime, headers)");
     expect(opaqueStartSection).toContain('invalidOpaqueAttemptResponse(opaqueRateLimit, startTime, headers, "Invalid credentials")');
+    expect(opaqueSource).toContain('"INVALID_CREDENTIALS"');
+    expect(opaqueSource).not.toContain("OPAQUE_CREDENTIALS_REQUIRED");
     expect(recoverySource).toContain('action: "recovery_verify"');
+    expect(registerSource).toContain('action: "opaque_register"');
+    expect(registerSource).toContain("checkAuthRateLimit");
     expect(sessionSource).toContain("recordAuthRateLimitFailure");
     expect(opaqueSource).toContain("recordAuthRateLimitFailure");
     expect(recoverySource).toContain("recordAuthRateLimitFailure");
@@ -161,7 +175,7 @@ describe("auth flow hardening", () => {
     expect(opaqueSource).not.toContain("useLegacy");
     expect(opaqueSource).toContain("disableGotruePasswordLogin");
     expect(registerSource).toContain("disableGotruePasswordLogin");
-    expect(resetSource).toContain("disableGotruePasswordLogin");
+    expect(resetSource).toContain("finish_opaque_password_reset");
     expect(registerSource).not.toContain("argon2id");
     expect(resetSource).toContain("OPAQUE password reset required");
     expect(resetSource).not.toContain("newPassword");
@@ -185,6 +199,20 @@ describe("auth flow hardening", () => {
     expect(migrationSource).toContain("opaque_password_reset_states");
     expect(migrationSource).toContain("disable_gotrue_password_login");
     expect(migrationSource).toContain("encrypted_password = NULL");
+  });
+
+  it("blocks direct Supabase recovery callbacks and disables URL session detection", () => {
+    const authPageSource = readFileSync("src/pages/Auth.tsx", "utf-8");
+    const callbackSource = readFileSync("src/platform/tauriOAuthCallback.ts", "utf-8");
+    const supabaseClientSource = readFileSync("src/integrations/supabase/client.ts", "utf-8");
+
+    expect(supabaseClientSource).toContain("detectSessionInUrl: false");
+    expect(callbackSource).toContain("BLOCKED_SUPABASE_CALLBACK_TYPES");
+    expect(callbackSource).toContain('"recovery"');
+    expect(callbackSource).toContain('"magiclink"');
+    expect(authPageSource).toContain("isBlockedSupabaseAuthCallback");
+    expect(authPageSource).toContain("clearPersistentSession");
+    expect(authPageSource).not.toContain("type=recovery') ? 'supabase-recovery'");
   });
 
   it("keeps long lockouts active after the short attempt window has elapsed", async () => {
@@ -228,6 +256,10 @@ function extractJsonRequestBodies(source: string): string {
 
 function migrationSourceForSessions(): string {
   return readFileSync("supabase/migrations/20260423210000_auth_flow_hardening.sql", "utf-8");
+}
+
+function migrationSourceForSecurityFollowups(): string {
+  return readFileSync("supabase/migrations/20260425120000_security_hardening_followups.sql", "utf-8");
 }
 
 function createRateLimitSupabaseMock({

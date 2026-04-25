@@ -16,6 +16,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_opaque_records_identifier
 COMMENT ON COLUMN public.user_opaque_records.opaque_identifier IS
     'Normalized OPAQUE identifier used for registration and login. OAuth/social-only accounts do not need a row here.';
 
+CREATE TABLE IF NOT EXISTS public.opaque_reenrollment_required (
+    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT 'gotrue_password_without_opaque_record',
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.opaque_reenrollment_required ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.opaque_reenrollment_required FROM PUBLIC;
+REVOKE ALL ON TABLE public.opaque_reenrollment_required FROM anon;
+REVOKE ALL ON TABLE public.opaque_reenrollment_required FROM authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.opaque_reenrollment_required TO service_role;
+
+COMMENT ON TABLE public.opaque_reenrollment_required IS
+    'Service-role audit list for pre-cutover email/password users that must re-enroll through OPAQUE reset because their GoTrue verifier cannot be migrated without handling the password server-side.';
+
+INSERT INTO public.opaque_reenrollment_required (user_id, email)
+SELECT users.id, LOWER(TRIM(users.email::TEXT))
+FROM auth.users AS users
+LEFT JOIN public.user_opaque_records AS records ON records.user_id = users.id
+WHERE users.encrypted_password IS NOT NULL
+  AND users.email IS NOT NULL
+  AND records.user_id IS NULL
+ON CONFLICT (user_id) DO NOTHING;
+
 ALTER TABLE public.opaque_login_states
     ADD COLUMN IF NOT EXISTS opaque_identifier TEXT;
 

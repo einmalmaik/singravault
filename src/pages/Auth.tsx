@@ -38,10 +38,17 @@ import { SEO } from '@/components/SEO';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService';
-import { applyAuthenticatedSession, persistAuthenticatedSession } from '@/services/authSessionManager';
+import { applyAuthenticatedSession, clearPersistentSession, persistAuthenticatedSession } from '@/services/authSessionManager';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
-import { isDesktopOAuthBridgeUrl, isTauriOAuthCallbackUrl, normalizeOAuthCallbackInput, parseOAuthCallbackPayload } from '@/platform/tauriOAuthCallback';
+import {
+  getSupabaseCallbackType,
+  isBlockedSupabaseAuthCallback,
+  isDesktopOAuthBridgeUrl,
+  isTauriOAuthCallbackUrl,
+  normalizeOAuthCallbackInput,
+  parseOAuthCallbackPayload,
+} from '@/platform/tauriOAuthCallback';
 import { isTauriRuntime } from '@/platform/runtime';
 import { openExternalUrl } from '@/platform/openExternalUrl';
 import { createDesktopOAuthUrl, exchangeDesktopOAuthCode, type DesktopOAuthProvider } from '@/platform/desktopOAuth';
@@ -107,7 +114,7 @@ export default function Auth() {
   const { toast } = useToast();
   const { user, authReady, authMode } = useAuth();
 
-  const urlToken = searchParams.get('token') || (window.location.hash.includes('type=recovery') ? 'supabase-recovery' : null);
+  const urlToken = searchParams.get('token');
   const [mode, setMode] = useState<'login' | 'signup' | 'verify_signup' | 'recover' | 'verify_recover' | 'update_password'>(
     urlToken ? 'update_password' :
       searchParams.get('mode') === 'signup' ? 'signup' :
@@ -162,6 +169,27 @@ export default function Auth() {
     }
 
     if (isDesktopBridgeCallback(callbackPayload)) {
+      return false;
+    }
+
+    if (isBlockedSupabaseAuthCallback(callbackPayload)) {
+      settledCallbacks.current.add(callbackKey);
+      processedCallbackKeys.add(callbackKey);
+      const callbackType = getSupabaseCallbackType(callbackPayload);
+      console.warn('[Auth] Blocked direct Supabase auth callback:', callbackType ?? 'unknown');
+      await supabase.auth.signOut().catch(() => undefined);
+      await clearPersistentSession();
+      cleanAuthCallbackUrl();
+      setLoading(false);
+      setMode(callbackType === 'recovery' ? 'recover' : 'login');
+      const { t: translate, toast: showToast } = authCallbackRuntimeRef.current;
+      notifyCallbackFailure(notifiedCallbacks.current, callbackKey, () => {
+        showToast({
+          variant: 'destructive',
+          title: translate('common.error'),
+          description: translate('auth.errors.generic'),
+        });
+      });
       return false;
     }
 
@@ -879,6 +907,9 @@ export default function Auth() {
             {mode === 'update_password' && (
               <Form {...updatePasswordForm}>
                 <form onSubmit={updatePasswordForm.handleSubmit(handleUpdatePassword)} className="space-y-4">
+                  <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                    Das Kontopasswort setzt nur den Login neu. Es entschlüsselt keinen Vault und stellt keinen verlorenen Vault-Key wieder her.
+                  </p>
                   <Button
                     type="button"
                     variant="outline"
@@ -959,6 +990,9 @@ export default function Auth() {
             {mode === 'recover' && (
               <Form {...recoverForm}>
                 <form onSubmit={recoverForm.handleSubmit(handleRecover)} className="space-y-4">
+                  <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                    Der Reset ändert nur den Account-Login. Ohne deinen Vault-Key können verschlüsselte Vault-Daten nicht wiederhergestellt werden.
+                  </p>
                   <FormField
                     control={recoverForm.control}
                     name="email"

@@ -37,6 +37,7 @@ interface ResetChallenge {
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const resendApiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+const recoveryCodePepper = Deno.env.get("AUTH_RECOVERY_CODE_PEPPER") ?? "";
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
@@ -429,7 +430,7 @@ async function maybeIssueEmailCode(email: string, purpose: ResetPurpose): Promis
         .eq("purpose", purpose);
 
     const code = generateCode();
-    const codeHash = await sha256Hex(code);
+    const codeHash = await hashRecoveryEmailCode(email, purpose, code);
     const expiresAt = new Date(Date.now() + EMAIL_CODE_TTL_MS).toISOString();
 
     const { error: insertError } = await supabaseAdmin
@@ -477,19 +478,50 @@ async function sendRecoveryEmail(email: string, code: string, purpose: ResetPurp
 }
 
 async function consumeEmailCode(email: string, purpose: ResetPurpose, code: string): Promise<boolean> {
-    const codeHash = await sha256Hex(code);
+    const codeHash = recoveryCodePepper
+        ? await hashRecoveryEmailCode(email, purpose, code)
+        : "";
+    if (codeHash && await consumeEmailCodeByHash(email, purpose, codeHash)) {
+        return true;
+    }
+
+    const legacyCodeHash = await sha256Hex(code);
+    return await consumeEmailCodeByHash(email, purpose, legacyCodeHash);
+}
+
+async function consumeEmailCodeByHash(email: string, purpose: ResetPurpose, tokenHash: string): Promise<boolean> {
     const { data, error } = await supabaseAdmin
         .from("recovery_tokens")
         .update({ used_at: new Date().toISOString() })
         .eq("email", email)
         .eq("purpose", purpose)
-        .eq("token_hash", codeHash)
+        .eq("token_hash", tokenHash)
         .is("used_at", null)
         .gt("expires_at", new Date().toISOString())
         .select("id")
         .maybeSingle();
 
     return !error && Boolean(data);
+}
+
+async function hashRecoveryEmailCode(email: string, purpose: ResetPurpose, code: string): Promise<string> {
+    if (!recoveryCodePepper) {
+        throw new Error("AUTH_RECOVERY_CODE_PEPPER is required for recovery code hashing");
+    }
+
+    const key = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(recoveryCodePepper),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+    );
+    const message = `${purpose}\0${normalizeOpaqueIdentifier(email)}\0${code}`;
+    const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+    const hex = Array.from(new Uint8Array(signature))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+    return `hmac-sha256:v1:${hex}`;
 }
 
 async function findAppPasswordUserByEmail(email: string): Promise<AuthUser | null> {

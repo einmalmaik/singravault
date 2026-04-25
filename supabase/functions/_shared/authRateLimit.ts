@@ -5,7 +5,8 @@ export type AuthRateLimitAction =
   | "totp_verify"
   | "backup_code_verify"
   | "opaque_login"
-  | "opaque_reset";
+  | "opaque_reset"
+  | "opaque_register";
 
 type AccountIdentifierKind = "email" | "user";
 
@@ -27,6 +28,10 @@ interface SupabaseQueryResult<T> {
 
 interface SupabaseAdminClient {
   from: (table: string) => unknown;
+  rpc?: (fn: string, args: Record<string, unknown>) => Promise<{
+    data: Array<{ failure_count?: number; locked_until?: string | null }> | null;
+    error: { message?: string } | null;
+  }>;
 }
 
 interface AuthRateLimitConfig {
@@ -95,6 +100,11 @@ const AUTH_RATE_LIMITS: Record<AuthRateLimitAction, AuthRateLimitConfig> = {
     lockoutMs: 15 * 60 * 1000,
   },
   opaque_reset: {
+    maxAttempts: 5,
+    windowMs: 15 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
+  },
+  opaque_register: {
     maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
     lockoutMs: 60 * 60 * 1000,
@@ -168,11 +178,33 @@ export async function recordAuthRateLimitFailure(
   state: AuthRateLimitState,
 ): Promise<AuthRateLimitFailureResult> {
   const now = new Date();
+  if (state.supabaseAdmin.rpc) {
+    const { data, error } = await state.supabaseAdmin.rpc("record_auth_rate_limit_failure_atomic", {
+      p_identifier: state.identifier,
+      p_action: state.action,
+      p_ip_address: state.ipAddress === "unknown" ? null : state.ipAddress,
+      p_window_ms: state.limits.windowMs,
+      p_lockout_ms: state.limits.lockoutMs,
+      p_max_attempts: state.limits.maxAttempts,
+    });
+
+    if (!error && data?.[0]) {
+      const failureCount = Number(data[0].failure_count ?? state.failureCount + 1);
+      const lockedUntil = data[0].locked_until ?? null;
+      return {
+        attemptsRemaining: Math.max(0, state.limits.maxAttempts - failureCount),
+        lockedUntil,
+        retryAfterSeconds: lockedUntil ? secondsUntil(lockedUntil, now) : null,
+      };
+    }
+
+    console.error("Failed to record auth rate limit failure atomically:", error);
+  }
+
   const failedAttempts = state.failureCount + 1;
   const lockedUntil = failedAttempts >= state.limits.maxAttempts
     ? new Date(now.getTime() + getEffectiveLockoutMs(state.limits, failedAttempts)).toISOString()
     : null;
-
   const insertQuery = state.supabaseAdmin.from("rate_limit_attempts") as {
     insert: (values: Record<string, unknown>) => Promise<{ error: { message?: string } | null }>;
   };

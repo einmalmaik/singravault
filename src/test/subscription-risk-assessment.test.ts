@@ -11,8 +11,13 @@ const supabaseAnonKey =
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const hasSupabaseTestEnv = Boolean(supabaseUrl && supabaseAnonKey && supabaseServiceKey);
 
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+const supabaseAdmin = createClient(
+  supabaseUrl || "http://localhost:54321",
+  supabaseServiceKey || "test-service-role-key",
+);
+const describeIfSupabase = hasSupabaseTestEnv ? describe : describe.skip;
 
 async function createAndSignInTestUser() {
   const email = `risk-subscription-${Date.now()}-${Math.random()
@@ -55,7 +60,7 @@ async function createAndSignInTestUser() {
   return { userClient, userId: createUserResult.data.user.id };
 }
 
-describe("Subscription risk assessment", () => {
+describeIfSupabase("Subscription risk assessment", () => {
   it("allows parallel checkout session creation for the same user and plan (duplicate-flow risk)", async () => {
     const { userClient, userId } = await createAndSignInTestUser();
 

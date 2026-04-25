@@ -45,6 +45,11 @@ const VERSION_HYBRID_STANDARD_V2 = 0x04;
 
 /** ML-KEM-768 ciphertext size in bytes */
 const ML_KEM_768_CIPHERTEXT_SIZE = 1088;
+const RSA_4096_CIPHERTEXT_SIZE = 512;
+const AES_GCM_IV_SIZE = 12;
+const AES_GCM_TAG_SIZE = 16;
+const HYBRID_CIPHERTEXT_MIN_SIZE =
+    1 + ML_KEM_768_CIPHERTEXT_SIZE + RSA_4096_CIPHERTEXT_SIZE + AES_GCM_IV_SIZE + AES_GCM_TAG_SIZE;
 
 /** ML-KEM-768 public key size in bytes */
 const ML_KEM_768_PUBLIC_KEY_SIZE = 1184;
@@ -158,7 +163,7 @@ export async function hybridEncrypt(
     const rsaCiphertext = await crypto.subtle.encrypt(
         { name: 'RSA-OAEP' },
         rsaPubKey,
-        aesKeyBytes as any
+        asBufferSource(aesKeyBytes)
     );
 
     const rsaCiphertextBytes = new Uint8Array(rsaCiphertext);
@@ -173,7 +178,7 @@ export async function hybridEncrypt(
     // 5. Encrypt plaintext with combined AES key
     const aesKey = await crypto.subtle.importKey(
         'raw',
-        combinedKey as any,
+        asBufferSource(combinedKey),
         { name: 'AES-GCM', length: 256 },
         false,
         ['encrypt']
@@ -256,7 +261,7 @@ async function legacyRsaDecrypt(
     const plaintextBytes = await crypto.subtle.decrypt(
         { name: 'RSA-OAEP' },
         rsaPrivKey,
-        ciphertext as any
+        asBufferSource(ciphertext)
     );
     
     return new TextDecoder().decode(plaintextBytes);
@@ -443,7 +448,7 @@ async function deriveHybridCombinedKey(
 ): Promise<Uint8Array> {
     const baseKey = await crypto.subtle.importKey(
         'raw',
-        pqSharedSecret as any,
+        asBufferSource(pqSharedSecret),
         'HKDF',
         false,
         ['deriveBits'],
@@ -455,8 +460,8 @@ async function deriveHybridCombinedKey(
             {
                 name: 'HKDF',
                 hash: 'SHA-256',
-                salt: aesKeyBytes as any,
-                info: info as any,
+                salt: asBufferSource(aesKeyBytes),
+                info: asBufferSource(info),
             },
             baseKey,
             256,
@@ -486,7 +491,7 @@ async function deriveHybridCombinedKeyV2(
 
     const baseKey = await crypto.subtle.importKey(
         'raw',
-        ikm as any,
+        asBufferSource(ikm),
         'HKDF',
         false,
         ['deriveBits'],
@@ -498,8 +503,8 @@ async function deriveHybridCombinedKeyV2(
             {
                 name: 'HKDF',
                 hash: 'SHA-256',
-                salt: new Uint8Array(32) as any, // zero-byte salt (NIST-recommended)
-                info: info as any,
+                salt: asBufferSource(new Uint8Array(32)), // zero-byte salt (NIST-recommended)
+                info: asBufferSource(info),
             },
             baseKey,
             256,
@@ -575,7 +580,7 @@ async function decryptHybridCiphertext(
     const aesKeyBytes = new Uint8Array(await crypto.subtle.decrypt(
         { name: 'RSA-OAEP' },
         rsaPrivKey,
-        rsaCiphertext as any
+        asBufferSource(rsaCiphertext)
     ));
 
     // Select KDF based on version
@@ -598,7 +603,7 @@ async function decryptHybridCiphertext(
     // Decrypt plaintext with combined AES key.
     const aesKey = await crypto.subtle.importKey(
         'raw',
-        combinedKey as any,
+        asBufferSource(combinedKey),
         { name: 'AES-GCM', length: 256 },
         false,
         ['decrypt']
@@ -606,14 +611,14 @@ async function decryptHybridCiphertext(
 
     try {
         const aadBytes = aad ? new TextEncoder().encode(aad) : undefined;
-        const gcmParams: AesGcmParams = { name: 'AES-GCM', iv: iv as any, tagLength: 128 };
+        const gcmParams: AesGcmParams = { name: 'AES-GCM', iv: asBufferSource(iv), tagLength: 128 };
         if (aadBytes) {
             gcmParams.additionalData = aadBytes;
         }
         const plaintextBytes = await crypto.subtle.decrypt(
             gcmParams,
             aesKey,
-            aesCiphertext as any
+            asBufferSource(aesCiphertext)
         );
 
         return new TextDecoder().decode(plaintextBytes);
@@ -625,20 +630,44 @@ async function decryptHybridCiphertext(
 }
 
 function parseHybridCiphertext(combined: Uint8Array): ParsedHybridCiphertext {
+    const version = combined[0];
+    if (
+        combined.length < HYBRID_CIPHERTEXT_MIN_SIZE ||
+        (
+            version !== VERSION_HYBRID_LEGACY &&
+            version !== VERSION_HYBRID_STANDARD_V1 &&
+            version !== VERSION_HYBRID_STANDARD_V2
+        )
+    ) {
+        throw new Error('Invalid hybrid ciphertext format.');
+    }
+
     let offset = 1;
 
     const pqCiphertext = combined.slice(offset, offset + ML_KEM_768_CIPHERTEXT_SIZE);
     offset += ML_KEM_768_CIPHERTEXT_SIZE;
 
-    const rsaCiphertext = combined.slice(offset, offset + 512);
-    offset += 512;
+    const rsaCiphertext = combined.slice(offset, offset + RSA_4096_CIPHERTEXT_SIZE);
+    offset += RSA_4096_CIPHERTEXT_SIZE;
 
-    const iv = combined.slice(offset, offset + 12);
-    offset += 12;
+    const iv = combined.slice(offset, offset + AES_GCM_IV_SIZE);
+    offset += AES_GCM_IV_SIZE;
 
     const aesCiphertext = combined.slice(offset);
+    if (
+        pqCiphertext.length !== ML_KEM_768_CIPHERTEXT_SIZE ||
+        rsaCiphertext.length !== RSA_4096_CIPHERTEXT_SIZE ||
+        iv.length !== AES_GCM_IV_SIZE ||
+        aesCiphertext.length < AES_GCM_TAG_SIZE
+    ) {
+        throw new Error('Invalid hybrid ciphertext format.');
+    }
 
     return { pqCiphertext, rsaCiphertext, iv, aesCiphertext };
+}
+
+function asBufferSource(bytes: Uint8Array): BufferSource {
+    return bytes as unknown as BufferSource;
 }
 
 // ============ Type Definitions ============

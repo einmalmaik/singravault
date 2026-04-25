@@ -1,6 +1,5 @@
-// @ts-nocheck — RPC type inference broken for DB functions with params
-// Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+﻿// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 â€” see LICENSE
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 
@@ -21,8 +20,13 @@ import { createClient } from "@supabase/supabase-js";
 // Create a Supabase client with service role for testing
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const hasSupabaseTestEnv = Boolean(supabaseUrl && supabaseServiceKey);
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = createClient(
+  supabaseUrl || "http://localhost:54321",
+  supabaseServiceKey || "test-service-role-key",
+);
+const describeIfSupabase = hasSupabaseTestEnv ? describe : describe.skip;
 
 // Test user data
 const TEST_USER_EMAIL = `test-2fa-${Date.now()}@example.com`;
@@ -47,7 +51,7 @@ async function signInTestUserWithMagicLink(
   });
 }
 
-describe("2FA Setup Flow Integration Tests", () => {
+describeIfSupabase("2FA Setup Flow Integration Tests", () => {
   let testUserId: string | null = null;
   let testUserClient: ReturnType<typeof createClient> | null = null;
 
