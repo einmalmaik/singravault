@@ -18,8 +18,13 @@ import { createClient } from "@supabase/supabase-js";
 // Create a Supabase client with service role for testing
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const hasSupabaseTestEnv = Boolean(supabaseUrl && supabaseServiceKey);
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = createClient(
+  supabaseUrl || "http://localhost:54321",
+  supabaseServiceKey || "test-service-role-key",
+);
+const describeIfSupabase = hasSupabaseTestEnv ? describe : describe.skip;
 
 // Base32 alphabet (used for TOTP secrets)
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -36,7 +41,7 @@ const base32StringArbitrary = fc
       .map((chars) => chars.join(""))
   );
 
-describe("2FA Encryption Round-Trip Property Tests", () => {
+describeIfSupabase("2FA Encryption Round-Trip Property Tests", () => {
   beforeAll(async () => {
     // Verify that the encryption key exists in the database
     const { data, error } = await supabase.rpc("get_totp_encryption_key");

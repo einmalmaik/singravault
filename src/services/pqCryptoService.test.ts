@@ -439,6 +439,45 @@ describe('pqCryptoService', () => {
         });
     });
 
+    describe('hybrid ciphertext parsing', () => {
+        it.each([
+            ['truncated PQ segment', 1 + 500],
+            ['truncated RSA segment', 1 + 1088 + 100],
+            ['missing IV', 1 + 1088 + 512],
+            ['missing AES-GCM tag', 1 + 1088 + 512 + 12 + 8],
+        ])('should reject %s as a generic format error', async (_caseName, byteLength) => {
+            const hybridKeys = await generateHybridKeyPair();
+            const ciphertext = await hybridEncrypt(
+                'test',
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+            );
+            const raw = atob(ciphertext);
+            const truncated = btoa(raw.slice(0, byteLength));
+
+            await expect(hybridDecrypt(
+                truncated,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey,
+            )).rejects.toThrow('Invalid hybrid ciphertext format.');
+        });
+
+        it('should keep valid v4 ciphertext compatible', async () => {
+            const hybridKeys = await generateHybridKeyPair();
+            const ciphertext = await hybridEncrypt(
+                'valid v4 ciphertext',
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+            );
+
+            await expect(hybridDecrypt(
+                ciphertext,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey,
+            )).resolves.toBe('valid v4 ciphertext');
+        });
+    });
+
     describe('HYBRID_VERSION constant', () => {
         it('should be version 4', () => {
             expect(HYBRID_VERSION).toBe(4);

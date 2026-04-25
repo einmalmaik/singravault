@@ -46,11 +46,13 @@ Forgot-password and authenticated password-change use the same reset authorizati
 4. The client starts OPAQUE registration for the new password.
 5. `auth-reset-password` `opaque-reset-start` returns a registration response only for an authorized reset token.
 6. The client finishes OPAQUE registration locally.
-7. `auth-reset-password` `opaque-reset-finish` stores the new OPAQUE record, removes GoTrue password verifiers, revokes sessions, and clears reset state.
+7. `auth-reset-password` `opaque-reset-finish` calls `finish_opaque_password_reset(...)`, which atomically stores the new OPAQUE record, removes GoTrue password verifiers, revokes sessions, and clears reset state.
 
-The new app password is never sent to the server.
+The new app password is never sent to the server. Email reset codes are stored as versioned HMAC-SHA-256 values bound to purpose, normalized email, and code via `AUTH_RECOVERY_CODE_PEPPER`; short-lived legacy SHA-256 records are accepted only until their normal expiry.
 
 Authenticated password-change does not let the user edit the email address; the server reads it from the current session. OAuth/social-only accounts do not enter this app-password flow.
+
+Direct Supabase recovery/signup/magiclink/email-change callbacks are not accepted as app sessions. The Supabase client has `detectSessionInUrl: false`; `Auth.tsx` only applies expected OAuth callbacks and routes account recovery through `auth-recovery` plus `auth-reset-password`.
 
 ### OAuth/Social Login
 
@@ -59,6 +61,8 @@ OAuth providers (`google`, `discord`, `github`) use `supabase.auth.signInWithOAu
 ## Vault Unlock
 
 `VaultUnlock` is separate from app authentication. It unlocks local vault encryption after an app session exists. The master password/vault key path is not a replacement for OPAQUE login and is not sent to auth Edge Functions.
+
+Resetting the account password does not decrypt the vault and does not recreate a lost vault key. Existing access JWTs can remain valid until the configured Supabase JWT TTL (`supabase/config.toml`: 600 seconds); refresh tokens and sessions are revoked during OPAQUE reset finish.
 
 ## Master Password Setup
 

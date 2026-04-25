@@ -399,7 +399,8 @@ export async function encryptVaultItem(
 export async function decryptVaultItem(
     encryptedData: string,
     key: CryptoKey,
-    entryId: string
+    entryId: string,
+    options: { allowLegacyNoAadFallback?: boolean } = {},
 ): Promise<VaultItemData> {
     let json: string;
     const envelope = parseVaultItemEnvelope(encryptedData);
@@ -413,8 +414,11 @@ export async function decryptVaultItem(
             json = await decrypt(envelope.payload, key, entryId);
         } catch {
             // Older legacy payloads predate AAD and can be swapped between
-            // rows by a server-side attacker. Keep read compatibility and
-            // rewrite them through encryptVaultItem on the next migration path.
+            // rows by a server-side attacker. Only explicit migration paths may
+            // read them so they can be rewritten as versioned, AAD-bound items.
+            if (!options.allowLegacyNoAadFallback) {
+                throw new Error('Legacy vault item without AAD requires migration.');
+            }
             console.warn(`Legacy entry without AAD detected: ${entryId}`);
             _legacyDecryptCount++;
             json = await decrypt(envelope.payload, key);
@@ -730,7 +734,9 @@ export async function reEncryptVault(
         try {
             // decryptVaultItem accepts unversioned legacy rows; encryptVaultItem
             // always writes the current versioned, AAD-bound vault-item envelope.
-            const plaintext = await decryptVaultItem(item.encrypted_data, oldKey, item.id);
+            const plaintext = await decryptVaultItem(item.encrypted_data, oldKey, item.id, {
+                allowLegacyNoAadFallback: true,
+            });
             const newEncrypted = await encryptVaultItem(plaintext, newKey, item.id);
             itemUpdates.push({ id: item.id, encrypted_data: newEncrypted });
         } catch (err) {

@@ -48,6 +48,7 @@ vi.mock("@/extensions/registry", () => ({
   isPremiumActive: () => mockPremiumActive,
   getServiceHooks: () => ({
     getTeamAccess: mockGetTeamAccess,
+    getAdminEntryPath: () => "/admin",
   }),
 }));
 

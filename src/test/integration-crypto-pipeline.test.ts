@@ -287,12 +287,23 @@ describe("Integration: Core Cryptographic Pipeline", () => {
       await expect(decryptVaultItem(legacyPayload, key, "item-legacy")).resolves.toEqual(item);
     });
 
-    it("should still read legacy unversioned vault item payloads without AAD", async () => {
+    it("should reject legacy unversioned vault item payloads without AAD by default", async () => {
+      const item: VaultItemData = { title: "Legacy no AAD", password: "secret" };
+      const legacyPayload = await encrypt(JSON.stringify(item), key);
+
+      await expect(decryptVaultItem(legacyPayload, key, "item-legacy")).rejects.toThrow(
+        /requires migration/,
+      );
+    });
+
+    it("should read legacy unversioned vault item payloads without AAD only for migration", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const item: VaultItemData = { title: "Legacy no AAD", password: "secret" };
       const legacyPayload = await encrypt(JSON.stringify(item), key);
 
-      await expect(decryptVaultItem(legacyPayload, key, "item-legacy")).resolves.toEqual(item);
+      await expect(decryptVaultItem(legacyPayload, key, "item-legacy", {
+        allowLegacyNoAadFallback: true,
+      })).resolves.toEqual(item);
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Legacy entry without AAD detected"));
       warnSpy.mockRestore();
     });

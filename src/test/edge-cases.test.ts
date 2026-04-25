@@ -37,6 +37,7 @@ import { writeClipboard } from "@/services/clipboardService";
 import {
     hashBackupCode,
     generateBackupCodes,
+    verifyBackupCodeHash,
 } from "@/services/twoFactorService";
 import { languages, changeLanguage } from "@/i18n";
 
@@ -464,10 +465,8 @@ describe("Backup-Code Edge Cases", () => {
 
     it("normalizes lowercase backup code to uppercase", async () => {
         const hash1 = await hashBackupCode("aaaa-bbbb", "salt123");
-        const hash2 = await hashBackupCode("AAAABBBB", "salt123");
         
-        // After normalization (remove dash + uppercase), should be same
-        expect(hash1).toBe(hash2);
+        expect(await verifyBackupCodeHash("AAAABBBB", hash1)).toBe(true);
     });
 
     it("generates 5 unique backup codes without duplicates", () => {

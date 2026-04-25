@@ -149,7 +149,7 @@ export class SecureBuffer {
      */
     static random(size: number): SecureBuffer {
         const secure = new SecureBuffer(size);
-        crypto.getRandomValues(secure.buffer as any);
+        crypto.getRandomValues(secure.buffer);
         return secure;
     }
 

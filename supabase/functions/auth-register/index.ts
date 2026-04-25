@@ -3,6 +3,11 @@ import * as opaque from "npm:@serenity-kit/opaque";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import {
+    authRateLimitResponse,
+    checkAuthRateLimit,
+    recordAuthRateLimitFailure,
+} from "../_shared/authRateLimit.ts";
+import {
     createUnusableGotruePassword,
     isValidOpaqueIdentifier,
     normalizeOpaqueIdentifier,
@@ -39,7 +44,7 @@ Deno.serve(async (req) => {
             return await handleRegistrationFinish(body, headers);
         }
 
-        return await handleRegistrationStart(body, headers);
+        return await handleRegistrationStart(req, body, headers);
     } catch (err) {
         console.error("Auth Register Error:", err);
         return new Response(JSON.stringify({ error: "Internal Server Error" }), { status: 500, headers });
@@ -47,6 +52,7 @@ Deno.serve(async (req) => {
 });
 
 async function handleRegistrationStart(
+    req: Request,
     body: { email?: unknown; registrationRequest?: unknown },
     headers: Headers,
 ): Promise<Response> {
@@ -55,6 +61,27 @@ async function handleRegistrationStart(
 
     if (!isValidOpaqueIdentifier(email) || !registrationRequest) {
         return new Response(JSON.stringify({ error: "Invalid input" }), { status: 400, headers });
+    }
+
+    const registerRateLimit = await checkAuthRateLimit({
+        supabaseAdmin,
+        req,
+        action: "opaque_register",
+        account: { kind: "email", value: email },
+    });
+    if (!registerRateLimit.allowed) {
+        return authRateLimitResponse(registerRateLimit, headers);
+    }
+
+    const registerFailure = await recordAuthRateLimitFailure(registerRateLimit);
+    if (registerFailure.lockedUntil) {
+        return authRateLimitResponse({
+            status: 429,
+            error: "Too many attempts",
+            attemptsRemaining: registerFailure.attemptsRemaining,
+            lockedUntil: registerFailure.lockedUntil,
+            retryAfterSeconds: registerFailure.retryAfterSeconds,
+        }, headers);
     }
 
     const { data: existingUsers } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: email });

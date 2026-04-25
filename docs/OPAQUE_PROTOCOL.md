@@ -1,6 +1,6 @@
 # OPAQUE Protocol Integration
 
-**Stand:** 2026-04-24
+**Stand:** 2026-04-25
 
 Singra Vault uses OPAQUE for every app-owned password login. OAuth/social login is a separate authentication path; vault unlock/master-password handling is also separate. A password login that is not OAuth/social must go through OPAQUE.
 
@@ -31,6 +31,7 @@ The implementation uses `@serenity-kit/opaque` (RFC 9807 based). The app passwor
 | `supabase/functions/_shared/opaqueAuth.ts` | Shared identifier normalization and session-binding proof helpers |
 | `supabase/migrations/20260424120000_enforce_opaque_password_auth.sql` | OPAQUE identifiers, one-time states, and GoTrue password-grant hard block |
 | `supabase/migrations/20260424193000_opaque_password_reset_change_flow.sql` | Reset/change authorization fields, reset rate limits, and DB trigger blocking GoTrue password verifier writes |
+| `supabase/migrations/20260425120000_security_hardening_followups.sql` | Atomic reset-finish RPC, atomic rate-limit failure RPC, signup rate-limit action, and OPAQUE re-enrollment audit table |
 
 ## Login Flow
 
@@ -79,9 +80,11 @@ START
   -> DONE
 ```
 
-`auth-reset-password` refuses OPAQUE re-registration until the reset challenge has `authorized_at`; when 2FA was enabled it also requires `two_factor_verified_at`. The new account password is not sent to `auth-recovery`, `auth-reset-password`, Supabase Auth, or logs. The authenticated settings flow signs the local client out after success because the server revokes refresh tokens/sessions.
+`auth-reset-password` refuses OPAQUE re-registration until the reset challenge has `authorized_at`; when 2FA was enabled it also requires `two_factor_verified_at`. The final write uses `finish_opaque_password_reset(...)`, so challenge consumption, OPAQUE record upsert, GoTrue verifier removal, refresh-token/session revocation, and cleanup commit or roll back together. The new account password is not sent to `auth-recovery`, `auth-reset-password`, Supabase Auth, or logs. The authenticated settings flow signs the local client out after success because the server revokes refresh tokens/sessions.
 
-Existing accounts without an OPAQUE record cannot be migrated server-side because the server must not know the app password. They must use the OPAQUE reset flow to enroll a new OPAQUE registration record. This is a compatibility path, not a legacy login path.
+Existing accounts without an OPAQUE record cannot be migrated server-side because the server must not know the app password. Pre-cutover GoTrue password users without an OPAQUE row are recorded in the service-role-only `opaque_reenrollment_required` audit table before GoTrue password verifiers are removed. They must use the OPAQUE reset flow to enroll a new OPAQUE registration record. This is a compatibility path, not a legacy login path. Without email access, account recovery is not possible through the app-password path.
+
+Resetting the account password does not decrypt the vault and does not recreate a lost vault key. Direct Supabase recovery/signup/magiclink/email-change callbacks are blocked by the app client; recovery must go through the OPAQUE-compatible reset flow.
 
 ## Identifier Binding
 
@@ -128,6 +131,7 @@ Legacy password login is blocked at multiple layers:
 - Signup/reset store OPAQUE records and remove `user_security` rows.
 - The migration nulls `auth.users.encrypted_password` and adds `disable_gotrue_password_login()` for future OPAQUE registration/reset writes.
 - `enforce_opaque_no_gotrue_password_on_auth_users` clears direct GoTrue password verifier writes, including direct `supabase.auth.updateUser({ password })` attempts.
+- `supabase/config.toml` sets `auth.jwt_expiry = 600`, so old access JWTs can survive session revocation for at most 10 minutes in this repo configuration.
 
 ## Key Stretching
 

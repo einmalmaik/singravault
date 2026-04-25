@@ -230,6 +230,10 @@ export function PasswordSettings() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                        Das Kontopasswort setzt nur den Login neu. Es entschlüsselt keinen Vault und stellt keinen verlorenen Vault-Key wieder her.
+                    </p>
+
                     <div className="space-y-2">
                         <Label>{t('settings.account.email')}</Label>
                         <div className="flex min-h-10 items-center rounded-md border bg-muted/40 px-3 text-sm">
