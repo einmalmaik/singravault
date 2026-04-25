@@ -82,6 +82,18 @@ export function VaultUnlock() {
     };
 
     const handlePasskeyUnlock = async () => {
+        if (!webAuthnAvailable) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t(
+                    'passkey.webAuthnUnavailable',
+                    'Passkey-Entsperrung ist in diesem Browser oder für diese App-Oberfläche nicht verfügbar.',
+                ),
+            });
+            return;
+        }
+
         setPasskeyLoading(true);
         const { error } = await unlockWithPasskey();
         setPasskeyLoading(false);
@@ -128,7 +140,7 @@ export function VaultUnlock() {
         await signOut();
     };
 
-    const showPasskeyOption = webAuthnAvailable && hasPasskeyUnlock;
+    const showPasskeyOption = hasPasskeyUnlock;
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">

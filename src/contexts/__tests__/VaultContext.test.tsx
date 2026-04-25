@@ -83,6 +83,42 @@ vi.mock("@/services/cryptoService", () => ({
   CURRENT_KDF_VERSION: 2,
 }));
 
+const mockRestoreQuarantinedItemFromTrustedSnapshot = vi.fn();
+const mockDeleteQuarantinedItemFromVault = vi.fn();
+vi.mock("@/services/vaultQuarantineRecoveryService", () => ({
+  indexTrustedSnapshotItems: (snapshot: { items: Array<{ id: string }> } | null) => {
+    if (!snapshot) return {};
+    return Object.fromEntries(snapshot.items.map((item) => [item.id, item]));
+  },
+  buildQuarantineResolutionMap: (
+    items: Array<{ id: string; reason: string }>,
+    trustedItemsById: Record<string, unknown>,
+    runtimeStateById: Record<string, { isBusy: boolean; lastError: string | null }> = {},
+  ) =>
+    Object.fromEntries(
+      items.map((item) => {
+        const runtimeState = runtimeStateById[item.id] ?? { isBusy: false, lastError: null };
+        const hasTrustedLocalCopy = Boolean(trustedItemsById[item.id]);
+        return [
+          item.id,
+          {
+            reason: item.reason,
+            canRestore: hasTrustedLocalCopy && item.reason !== "unknown_on_server",
+            canDelete: item.reason === "ciphertext_changed" || item.reason === "unknown_on_server",
+            canAcceptMissing: item.reason === "missing_on_server",
+            hasTrustedLocalCopy,
+            isBusy: runtimeState.isBusy,
+            lastError: runtimeState.lastError,
+          },
+        ];
+      }),
+    ),
+  restoreQuarantinedItemFromTrustedSnapshot: (...args: unknown[]) =>
+    mockRestoreQuarantinedItemFromTrustedSnapshot(...args),
+  deleteQuarantinedItemFromVault: (...args: unknown[]) =>
+    mockDeleteQuarantinedItemFromVault(...args),
+}));
+
 // Mock offline vault service
 const mockGetOfflineCredentials = vi.fn();
 const mockSaveOfflineCredentials = vi.fn();
@@ -207,6 +243,8 @@ describe("VaultContext", () => {
       keySource: "vault-key",
     });
     mockListPasskeys.mockResolvedValue([]);
+    mockRestoreQuarantinedItemFromTrustedSnapshot.mockResolvedValue({ syncedOnline: true });
+    mockDeleteQuarantinedItemFromVault.mockResolvedValue({ syncedOnline: true });
     mockGetUnlockCooldown.mockReturnValue(null);
     mockUnwrapUserKeyBytes.mockResolvedValue(new Uint8Array(32));
 
@@ -651,6 +689,45 @@ describe("VaultContext", () => {
           reason: "ciphertext_changed",
         }),
       ]);
+    });
+
+    it("removes runtime unreadable quarantine entries immediately after delete succeeds", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlock("CorrectPassword!");
+      });
+
+      act(() => {
+        result.current.reportUnreadableItems([
+          {
+            id: "item-bad",
+            reason: "ciphertext_changed",
+            updatedAt: "2026-04-22T10:00:00.000Z",
+          },
+        ]);
+      });
+
+      expect(result.current.quarantinedItems).toEqual([
+        expect.objectContaining({ id: "item-bad" }),
+      ]);
+
+      await act(async () => {
+        await result.current.deleteQuarantinedItem("item-bad");
+      });
+
+      expect(mockDeleteQuarantinedItemFromVault).toHaveBeenCalledWith(mockUser.id, "item-bad");
+      expect(result.current.quarantinedItems).toEqual([]);
+      expect(result.current.integrityMode).toBe("healthy");
     });
 
     it("blocks unlock when encrypted categories can no longer be decrypted", async () => {
@@ -1359,6 +1436,44 @@ describe("VaultContext", () => {
 
       expect(result.current.webAuthnAvailable).toBe(false);
       expect(result.current.hasPasskeyUnlock).toBe(false);
+    });
+
+    it("loads registered passkey unlock status even when the local WebAuthn probe is false", async () => {
+      mockListPasskeys.mockResolvedValue([
+        {
+          id: "passkey-1",
+          credential_id: "credential-1",
+          device_name: "Windows Hello",
+          prf_enabled: true,
+          created_at: "2026-04-22T10:00:00.000Z",
+          last_used_at: null,
+          rp_id: "127.0.0.1",
+        },
+      ]);
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            encrypted_user_key: "encrypted-user-key",
+            kdf_version: 2,
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await waitFor(() => {
+        expect(result.current.hasPasskeyUnlock).toBe(true);
+      });
+      expect(result.current.webAuthnAvailable).toBe(false);
     });
   });
 });

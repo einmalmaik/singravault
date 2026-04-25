@@ -143,8 +143,7 @@ async function invokeWebauthn<TResponse>(
 export function isWebAuthnAvailable(): boolean {
     return (
         typeof window !== 'undefined' &&
-        typeof window.PublicKeyCredential !== 'undefined' &&
-        typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
+        typeof window.PublicKeyCredential !== 'undefined'
     );
 }
 
@@ -156,6 +155,9 @@ export function isWebAuthnAvailable(): boolean {
  */
 export async function isPlatformAuthenticatorAvailable(): Promise<boolean> {
     if (!isWebAuthnAvailable()) return false;
+    if (typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable !== 'function') {
+        return false;
+    }
     try {
         return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
     } catch {
