@@ -87,14 +87,14 @@ describe("VaultUnlock", () => {
     });
   });
 
-  it("should show passkey button only when webAuthn available and hasPasskeyUnlock", () => {
+  it("should show passkey button when passkey unlock credentials exist", () => {
     mockVaultContext.webAuthnAvailable = false;
     mockVaultContext.hasPasskeyUnlock = false;
     const { rerender } = render(<VaultUnlock />);
 
     expect(screen.queryByText("Unlock with Passkey")).not.toBeInTheDocument();
 
-    mockVaultContext.webAuthnAvailable = true;
+    mockVaultContext.webAuthnAvailable = false;
     mockVaultContext.hasPasskeyUnlock = true;
     rerender(<VaultUnlock />);
 

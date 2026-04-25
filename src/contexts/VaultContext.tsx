@@ -534,7 +534,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
     };
 
     const refreshPasskeyUnlockStatus = useCallback(async (): Promise<void> => {
-        if (!authReady || !user || !webAuthnAvailable) {
+        if (!authReady || !user) {
             setHasPasskeyUnlock(false);
             return;
         }
@@ -548,7 +548,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             // Non-fatal: passkey status check can fail silently
             setHasPasskeyUnlock(false);
         }
-    }, [user, webAuthnAvailable, authReady]); // authReady required â€” stale closure fix
+    }, [user, authReady]); // authReady required â€” stale closure fix
 
     const getResolvedDeviceKey = useCallback(async (): Promise<Uint8Array | null> => {
         if (currentDeviceKey) {
@@ -917,6 +917,13 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
         try {
             await action();
+            const nextRuntimeUnreadableItems = runtimeUnreadableItemsRef.current.filter(
+                (item) => item.id !== itemId,
+            );
+            if (nextRuntimeUnreadableItems.length !== runtimeUnreadableItemsRef.current.length) {
+                runtimeUnreadableItemsRef.current = nextRuntimeUnreadableItems;
+                applyDisplayedIntegrityState(baseIntegrityResultRef.current, nextRuntimeUnreadableItems);
+            }
             setQuarantineActionStateById((currentState) => ({
                 ...currentState,
                 [itemId]: {
@@ -939,7 +946,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }));
             return { error: resolvedError };
         }
-    }, []);
+    }, [applyDisplayedIntegrityState]);
 
     const bumpVaultDataVersion = useCallback(() => {
         setVaultDataVersion((currentVersion) => currentVersion + 1);
