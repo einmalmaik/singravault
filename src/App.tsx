@@ -16,7 +16,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import { ThemeProvider } from "@/contexts/ThemeProvider";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { VaultProvider } from "@/contexts/VaultContext";
 import { SubscriptionProvider } from "@/contexts/SubscriptionContext";
 import { ProtectedRoute } from "./components/layout/ProtectedRoute";
@@ -24,8 +24,9 @@ import { VaultUnlockRequiredRoute } from "./components/layout/VaultUnlockRequire
 import { CookieConsent } from "./components/CookieConsent";
 import { AppConfigurationNotice } from "@/components/AppConfigurationNotice";
 import { getExtensionRoutes, getExtension } from "@/extensions/registry";
+import type { SupportWidgetExtensionProps } from "@/extensions/types";
 import { checkForDesktopUpdates } from "@/services/desktopUpdateService";
-import { useEffect } from "react";
+import { useEffect, type ComponentType } from "react";
 
 // Import i18n configuration
 import "@/i18n";
@@ -44,10 +45,32 @@ import DesktopUpdatePreviewPage from "./pages/DesktopUpdatePreviewPage";
 
 const queryClient = new QueryClient();
 
+interface SupportWidgetHostProps {
+  SupportWidget: ComponentType<SupportWidgetExtensionProps> | null;
+}
+
+function SupportWidgetHost({ SupportWidget }: SupportWidgetHostProps) {
+  const { user, session, authReady, isOfflineSession } = useAuth();
+
+  if (!SupportWidget) {
+    return null;
+  }
+
+  return (
+    <SupportWidget
+      auth={{
+        user,
+        session,
+        authReady,
+        isOfflineSession,
+      }}
+    />
+  );
+}
+
 const App = () => {
   const premiumRoutes = getExtensionRoutes();
-  
-  const SupportWidget = getExtension('layout.support-widget');
+  const SupportWidget = getExtension<SupportWidgetExtensionProps>('layout.support-widget');
 
   useEffect(() => {
     void checkForDesktopUpdates();
@@ -72,7 +95,7 @@ const App = () => {
                   >
                     <AppConfigurationNotice />
                     <CookieConsent />
-                    {SupportWidget && <SupportWidget />}
+                    <SupportWidgetHost SupportWidget={SupportWidget} />
                     <Routes>
                       {/* Core Routes */}
                       <Route path="/" element={<Index />} />
