@@ -60,7 +60,7 @@ interface WhitepaperSection {
     evidence: string[];
 }
 
-const SECURITY_WHITEPAPER_LAST_UPDATED = '24.04.2026';
+const SECURITY_WHITEPAPER_LAST_UPDATED = '26.04.2026';
 
 function asStringArray(value: unknown): string[] {
     if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
@@ -175,6 +175,9 @@ export default function SecurityWhitepaper() {
                 evidence: [
                     '@singra/premium/src/services/fileAttachmentService.ts',
                     'supabase/migrations/20260213120000_secure_vault_attachments_bucket.sql',
+                    'supabase/migrations/20260426143000_file_attachment_e2ee_chunked_limits.sql',
+                    'docs/premium-file-upload-e2ee.md',
+                    'scripts/check-release-artifacts.mjs',
                 ],
             },
             {

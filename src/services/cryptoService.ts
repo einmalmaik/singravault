@@ -257,7 +257,7 @@ export async function encrypt(
  * Use this for key material to avoid creating immutable JS strings that cannot
  * be wiped from memory. The caller still owns and must clear plaintextBytes.
  */
-async function encryptBytes(
+export async function encryptBytes(
     plaintextBytes: Uint8Array,
     key: CryptoKey,
     aad?: string,
@@ -324,7 +324,7 @@ export async function decrypt(
  *
  * The returned buffer contains secret material and must be wiped by the caller.
  */
-async function decryptBytes(
+export async function decryptBytes(
     encryptedBase64: string,
     key: CryptoKey,
     aad?: string,

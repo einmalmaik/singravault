@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "release:check-artifacts": "node scripts/check-release-artifacts.mjs",
     "test:watch": "vitest",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

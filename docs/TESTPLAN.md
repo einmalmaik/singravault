@@ -241,7 +241,7 @@ Testet alle 9 DB-abhängigen Funktionen mit gemocktem Supabase.
 |---|---|---|
 | 1–3 | `getAttachments()` | Gibt Liste zurück; Entschlüsselt Metadaten wenn decryptFn vorhanden; Leere Liste bei keinen Anhängen |
 | 4–5 | `getStorageUsage()` | Gibt {used, limit} zurück; limit = 1073741824 |
-| 6–9 | `uploadAttachment()` | Verschlüsselt Datei + Metadaten; Speichert in Supabase Storage; Erstellt DB-Eintrag; Fehler bei zu großer Datei (>100MB) |
+| 6–9 | `uploadAttachment()` | Verschlüsselt Datei + Metadaten; Speichert in Supabase Storage; Erstellt DB-Eintrag; Fehler bei zu großer Datei (>1GB) |
 | 10–12 | `downloadAttachment()` | Lädt herunter + entschlüsselt; Erstellt Blob + triggert Download; Fehler bei fehlender Datei |
 | 13–14 | `deleteAttachment()` | Löscht aus Storage + DB; Fehler bei ungültiger ID |
 
