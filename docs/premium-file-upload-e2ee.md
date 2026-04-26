@@ -6,6 +6,14 @@
 
 Premium attachments use `sv-file-manifest-v1` in `@singra/premium/src/services/fileAttachmentService.ts`.
 
+Current create-flow limitation: core mounts the Premium attachment UI only after a
+vault item has a real `vaultItemId`. Attachments can therefore be added to
+password, authenticator, and note entries after the first save. Selecting files
+while creating a new item is intentionally not implemented in core yet because a
+safe pending-attachment flow must keep draft files only in memory, create the
+item first, then run the normal client-side E2EE upload and cleanup/rebaseline
+logic. No file may be uploaded before the real `vaultItemId` exists.
+
 - One random AES-256-GCM file key is generated per file.
 - The file key is wrapped with the locally unlocked vault/UserKey via binary vault encryption.
 - Files are sliced into 4 MiB plaintext chunks.

@@ -327,6 +327,32 @@ describe("Snapshot round-trip", () => {
     expect(loaded).toEqual(snapshot);
   });
 
+  it("keeps note plaintext out of offline snapshots when callers provide encrypted_data rows", async () => {
+    const privateNote = "offline snapshot must not contain this note";
+    const snapshot = {
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      items: [
+        makeItemRow({
+          item_type: "note",
+          encrypted_data: "sv-vault-item-v1:ciphertext-without-note-plaintext",
+        }),
+      ],
+      categories: [],
+      lastSyncedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    await svc.saveOfflineSnapshot(snapshot);
+    const loaded = await svc.getOfflineSnapshot(USER_ID);
+
+    expect(JSON.stringify(loaded)).not.toContain(privateNote);
+    expect(loaded?.items[0]).toMatchObject({
+      item_type: "note",
+      encrypted_data: "sv-vault-item-v1:ciphertext-without-note-plaintext",
+    });
+  });
+
   it("getOfflineSnapshot returns null when nothing is saved", async () => {
     const loaded = await svc.getOfflineSnapshot("nonexistent-user");
     expect(loaded).toBeNull();

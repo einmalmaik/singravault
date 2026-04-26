@@ -166,7 +166,7 @@ describe("VaultItemDialog", () => {
 
     const payload = buildVaultItemPayloadForEncryption({
       title: "Secure note",
-      url: "",
+      url: "https://stale.example.test",
       username: "ignored@example.test",
       password: "ignored-password",
       notes: "private notes",
@@ -185,6 +185,7 @@ describe("VaultItemDialog", () => {
     });
     expect(payload.username).toBeUndefined();
     expect(payload.password).toBeUndefined();
+    expect(payload.websiteUrl).toBeUndefined();
     expect(payload).not.toHaveProperty("totpSecret");
     expect(payload).not.toHaveProperty("totpIssuer");
     expect(payload).not.toHaveProperty("totpLabel");
@@ -250,6 +251,36 @@ describe("VaultItemDialog", () => {
     });
     expect(payload.username).toBeUndefined();
     expect(payload.password).toBeUndefined();
+  });
+
+  it.each([
+    ["password" as const, { username: "person@example.test", password: "secret-password" }],
+    ["totp" as const, { totpSecret: "JBSWY3DPEHPK3PXP" }],
+    ["note" as const, {}],
+  ])("keeps notes in the same encrypted payload shape for %s items", async (itemType, expectedFields) => {
+    const { buildVaultItemPayloadForEncryption } = await import("../VaultItemDialog");
+
+    const payload = buildVaultItemPayloadForEncryption({
+      title: "Entry",
+      url: "example.com",
+      username: "person@example.test",
+      password: "secret-password",
+      notes: "private recovery note",
+      totpSecret: "JBSWY3DPEHPK3PXP",
+      totpIssuer: "GitHub",
+      totpLabel: "person@example.test",
+      totpAlgorithm: "SHA1",
+      totpDigits: 6,
+      totpPeriod: 30,
+      isFavorite: false,
+    }, itemType, null);
+
+    expect(payload).toMatchObject({
+      itemType,
+      notes: "private recovery note",
+      ...expectedFields,
+    });
+    expect(Object.prototype.hasOwnProperty.call(payload, "notes")).toBe(true);
   });
 
   it("should support cancel action via onOpenChange", () => {
