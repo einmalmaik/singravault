@@ -317,12 +317,14 @@
         ]
       },
       "attachments": {
-        "title": "File Attachments",
-        "summary": "Datei-Inhalte und -Metadaten werden clientseitig verschlüsselt; DB/RLS schützt Owner-Zugriff.",
+        "title": "Datei-Anhänge",
+        "summary": "Datei-Inhalte, Dateinamen, Typen und Metadaten werden vor dem Upload clientseitig Ende-zu-Ende verschlüsselt.",
         "bullets": [
-          "Upload speichert verschlüsselten Content in Supabase Storage (application/octet-stream).",
-          "Datei-Metadaten (Name/MIME) werden zusätzlich als encrypted_metadata gespeichert; Klartext-Spalten sind als Platzhalter gedacht.",
-          "DB-RLS Policies erzwingen Zugriff nur für auth.uid() = user_id."
+          "Jede Datei erhält einen zufälligen File-Key; jeder Chunk wird mit AES-256-GCM, eigener Nonce und AAD verschlüsselt.",
+          "Das verschlüsselte Manifest enthält Dateiname, Endung, MIME-Type, Originalgröße, Chunk-Liste, Hashes und Preview-Info. Klartext-Spalten bleiben nur opaque Platzhalter.",
+          "Storage-Pfade enthalten keine Dateinamen oder Endungen. Sichtbar bleiben technische Metadaten wie Owner-Zuordnung, Upload-Zeitpunkt, Anzahl/Größe der Ciphertext-Chunks und Zugriffsmuster.",
+          "Downloads schreiben entschlüsselte Chunks streamend über File System Access oder Tauri-Datei-IO, wenn verfügbar; ältere Browser nutzen einen dokumentierten Blob-Fallback.",
+          "Rollback wird durch versionierte Manifeste, Manifest-Root, Chunk-AAD und lokale Last-Seen-Checkpoints erkannt, sofern ein vertrauenswürdiger vorheriger Zustand vorhanden ist."
         ]
       },
       "sharing": {
@@ -381,7 +383,9 @@
         "bullets": [
           "Wenn der ausgelieferte Client-Code kompromittiert ist (Supply Chain/XSS), kann er beim Unlock Secrets abgreifen.",
           "Malware auf dem Gerät oder kompromittierter Browser kann den Vault im entsperrten Zustand auslesen.",
-          "Metadaten-Trade-offs: IDs, Zeitstempel und Besitz-Zuordnungen bleiben strukturelle Metadaten. Zentrale Tresor-Metadaten wie Item-Titel/URL und Kategoriename/Icon/Farbe werden verschlüsselt gespeichert; andere Produktbereiche können weiterhin Klartextnamen benötigen."
+          "Metadaten-Trade-offs: IDs, Zeitstempel und Besitz-Zuordnungen bleiben strukturelle Metadaten. Zentrale Tresor-Metadaten wie Item-Titel/URL und Kategoriename/Icon/Farbe werden verschlüsselt gespeichert; andere Produktbereiche können weiterhin Klartextnamen benötigen.",
+          "Datei-Rollback-Schutz ist Detektion, keine absolute Garantie: Ohne lokalen Checkpoint oder externes Audit-System kann ein Server alte gültige Ciphertext-Zustände an ein neues Gerät ausliefern.",
+          "Dateigrößen-Padding ist für Datei-Anhänge noch nicht implementiert; Ciphertext-Größe, Chunk-Anzahl und Zugriffsmuster bleiben sichtbar."
         ]
       }
     },

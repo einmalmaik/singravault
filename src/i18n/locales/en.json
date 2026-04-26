@@ -318,11 +318,13 @@
       },
       "attachments": {
         "title": "File attachments",
-        "summary": "File contents and metadata are encrypted client-side; DB/RLS restricts access to the owner.",
+        "summary": "File contents, names, types, and metadata are end-to-end encrypted client-side before upload.",
         "bullets": [
-          "Upload stores encrypted content in Supabase Storage (application/octet-stream).",
-          "File metadata (name/MIME) is stored additionally as encrypted_metadata; plaintext columns are intended as opaque placeholders.",
-          "DB RLS policies enforce access only for auth.uid() = user_id."
+          "Every file gets a random file key; every chunk is encrypted with AES-256-GCM, a unique nonce, and AAD.",
+          "The encrypted manifest contains file name, extension, MIME type, original size, chunk list, hashes, and preview information. Plaintext columns remain opaque placeholders only.",
+          "Storage paths contain no filenames or extensions. Technical metadata remains visible: owner binding, upload time, number/size of ciphertext chunks, and access patterns.",
+          "Downloads stream decrypted chunks through File System Access or Tauri file I/O when available; older browsers use a documented Blob fallback.",
+          "Rollback is detected through versioned manifests, a manifest root, chunk AAD, and local last-seen checkpoints when a trusted previous state exists."
         ]
       },
       "sharing": {
@@ -381,7 +383,9 @@
         "bullets": [
           "If delivered client code is compromised (supply chain/XSS), it can steal secrets during unlock.",
           "Malware on the device or a compromised browser can read the vault while unlocked.",
-          "Metadata trade-offs: IDs, timestamps, and ownership links remain structural metadata. Core vault metadata such as item title/URL and category name/icon/color is encrypted; other product areas may still need plaintext names."
+          "Metadata trade-offs: IDs, timestamps, and ownership links remain structural metadata. Core vault metadata such as item title/URL and category name/icon/color is encrypted; other product areas may still need plaintext names.",
+          "File rollback protection is detection, not an absolute guarantee: without a local checkpoint or external audit system, a server can serve an old valid ciphertext state to a new device.",
+          "File-size padding is not implemented for attachments yet; ciphertext size, chunk count, and access patterns remain visible."
         ]
       }
     },

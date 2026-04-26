@@ -16,7 +16,9 @@ import {
     deriveRawKey,
     generateSalt,
     encrypt,
+    encryptBytes,
     decrypt,
+    decryptBytes,
     importMasterKey,
     createVerificationHash,
     verifyKey,
@@ -315,8 +317,10 @@ interface VaultContextType {
     getPasskeyWrappingMaterial: (masterPassword: string) => Promise<Uint8Array | null>;
 
     // Encryption helpers
-    encryptData: (plaintext: string) => Promise<string>;
-    decryptData: (encrypted: string) => Promise<string>;
+    encryptData: (plaintext: string, aad?: string) => Promise<string>;
+    decryptData: (encrypted: string, aad?: string) => Promise<string>;
+    encryptBinary: (plaintext: Uint8Array, aad?: string) => Promise<string>;
+    decryptBinary: (encrypted: string, aad?: string) => Promise<Uint8Array>;
     encryptItem: (data: VaultItemData, entryId: string) => Promise<string>;
     decryptItem: (encryptedData: string, entryId: string) => Promise<VaultItemData>;
 
@@ -2728,21 +2732,35 @@ export function VaultProvider({ children }: VaultProviderProps) {
     /**
      * Encrypts plaintext data
      */
-    const encryptData = useCallback(async (plaintext: string): Promise<string> => {
+    const encryptData = useCallback(async (plaintext: string, aad?: string): Promise<string> => {
         if (!encryptionKey) {
             throw new Error('Vault is locked');
         }
-        return encrypt(plaintext, encryptionKey);
+        return encrypt(plaintext, encryptionKey, aad);
     }, [encryptionKey]);
 
     /**
      * Decrypts encrypted data
      */
-    const decryptData = useCallback(async (encrypted: string): Promise<string> => {
+    const decryptData = useCallback(async (encrypted: string, aad?: string): Promise<string> => {
         if (!encryptionKey) {
             throw new Error('Vault is locked');
         }
-        return decrypt(encrypted, encryptionKey);
+        return decrypt(encrypted, encryptionKey, aad);
+    }, [encryptionKey]);
+
+    const encryptBinary = useCallback(async (plaintext: Uint8Array, aad?: string): Promise<string> => {
+        if (!encryptionKey) {
+            throw new Error('Vault is locked');
+        }
+        return encryptBytes(plaintext, encryptionKey, aad);
+    }, [encryptionKey]);
+
+    const decryptBinary = useCallback(async (encrypted: string, aad?: string): Promise<Uint8Array> => {
+        if (!encryptionKey) {
+            throw new Error('Vault is locked');
+        }
+        return decryptBytes(encrypted, encryptionKey, aad);
     }, [encryptionKey]);
 
     /**
@@ -2784,6 +2802,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 getPasskeyWrappingMaterial,
                 encryptData,
                 decryptData,
+                encryptBinary,
+                decryptBinary,
                 encryptItem,
                 decryptItem,
                 autoLockTimeout,

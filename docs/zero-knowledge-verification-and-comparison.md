@@ -1,6 +1,6 @@
 # Zero-Knowledge Verification & Password-Manager Comparison
 
-**Date:** 2026-04-24
+**Date:** 2026-04-26
 **Scope:** Current code-backed verification of Singra Vault's vault-data zero-knowledge model and authentication boundaries.
 
 ## Part 1: Singra Vault Verification
@@ -17,7 +17,7 @@
 | Encryption salt | Yes | Public salt, not useful without the master password |
 | Master-password verifier | Yes | Encrypted verifier value, not an auth password hash |
 | TOTP secrets | Yes | Server-side encrypted; needed for server-side 2FA verification |
-| File attachments | Yes | Client-side encrypted content |
+| File attachments | Yes | Client-side encrypted chunks plus encrypted manifest; server sees only opaque paths, ciphertext, owner binding, timestamps, chunk/object counts, and ciphertext sizes |
 
 ### Edge Function Review
 
@@ -42,6 +42,16 @@ None of these functions reads, writes, or decrypts vault item `encrypted_data`.
 
 With database/service-role access an admin can read ciphertext, salts, OPAQUE records, and structural metadata, but cannot derive the app login password or vault decryption key from the current login path. Vault decryption still depends on client-side key derivation from the vault/master password.
 
+### Premium File Attachments
+
+Premium file attachments use a chunked E2EE format (`sv-file-manifest-v1`). The client generates a random AES-256-GCM file key per file, wraps that file key with the locally unlocked vault/UserKey, encrypts every file chunk locally with its own nonce and AAD, and uploads only ciphertext chunks to the private `vault-attachments` bucket. The manifest is also encrypted and authenticated client-side; it contains the original filename, extension, MIME type, original size, last-modified time, chunk list, ciphertext hashes, revision data, and preview metadata.
+
+The server does not need the original filename, MIME type, extension, EXIF/PDF/text metadata, thumbnails, previews, or plaintext content. The remaining visible metadata is technical: owner/user binding, vault item binding, upload/update timestamps, opaque storage path prefix, ciphertext object sizes, chunk count, approximate storage usage, and access timing. File size is not padded yet, so object sizes reveal an approximate plaintext size.
+
+Downloads prefer a streaming plaintext writer. In browsers with the File System Access API, decrypted chunks are written to the selected file handle one by one and then zeroed best-effort. In Tauri/Desktop, decrypted chunks are written to a temporary `.singra-partial` file and atomically renamed after success; the partial file is removed on handled errors. Browsers without a writable file API still use a documented Blob fallback, which may hold the full plaintext in memory and is not the preferred path for very large files.
+
+Upload currently uses own encrypted chunk objects rather than Supabase TUS resumable uploads. This keeps the cryptographic unit of authentication aligned with the manifest: each object is an independently authenticated ciphertext chunk, and the attachment row becomes visible only after the encrypted manifest is committed. Supabase TUS can be evaluated later as a transport for encrypted objects, but it must not replace client-side E2EE or expose names/MIME/extensions.
+
 ### Important Limitation: 2FA Secrets
 
 TOTP secrets for 2FA are server-side encrypted and decrypted server-side for verification. An attacker with both database access and the TOTP encryption key could verify or recover TOTP secrets. This does not decrypt vault data, but it is intentionally outside the vault-data zero-knowledge boundary.
@@ -65,6 +75,7 @@ This comparison is high-level and should be rechecked before publication because
 - The web delivery model remains sensitive to compromised shipped JavaScript, XSS, malicious extensions, or device malware.
 - Existing accounts without an OPAQUE record cannot be safely auto-migrated without the password entering the server. They must use the OPAQUE reset flow.
 - Metadata such as user IDs, timestamps, ownership links, and some product-level names remains structural plaintext.
+- File attachment rollback protection is detection-oriented. Manifests are versioned, carry a manifest root and previous-manifest hash field, and chunks are bound through AAD to user, item, file, revision, manifest root, index, and chunk count. The client stores a local last-seen revision/hash checkpoint and blocks older/conflicting manifests when that checkpoint exists. Without a trustworthy local checkpoint or an external transparency/audit system, a fully malicious server can still replay an older valid ciphertext state to a fresh device.
 
 ## Conclusion
 
@@ -76,3 +87,9 @@ The public claim is technically aligned with the current implementation for app-
 - [Serenity OPAQUE documentation](https://opaque-auth.com/docs/)
 - [Bitwarden KDF Algorithms](https://bitwarden.com/help/kdf-algorithms/)
 - [Bitwarden Zero-Knowledge Encryption White Paper](https://bitwarden.com/resources/zero-knowledge-encryption-white-paper/)
+- [Supabase Storage resumable uploads](https://supabase.com/docs/guides/storage/uploads/resumable-uploads)
+- [WHATWG Streams](https://streams.spec.whatwg.org/)
+- [File System Access API](https://developer.chrome.com/docs/capabilities/web-apis/file-system-access)
+- [Web Cryptography API](https://www.w3.org/TR/webcrypto-2/)
+- [NIST SP 800-38D: GCM and GMAC](https://csrc.nist.gov/pubs/sp/800/38/d/final)
+- [The Update Framework security model](https://theupdateframework.io/docs/security/)

@@ -1462,7 +1462,7 @@ describe("VaultContext", () => {
       });
 
       expect(encrypted).toBe("encrypted-data-xyz");
-      expect(mockEncrypt).toHaveBeenCalledWith("plaintext", expect.anything());
+      expect(mockEncrypt).toHaveBeenCalledWith("plaintext", expect.anything(), undefined);
     });
 
     it("should decrypt data when vault is unlocked", async () => {
@@ -1484,7 +1484,7 @@ describe("VaultContext", () => {
       });
 
       expect(decrypted).toBe("decrypted-plaintext");
-      expect(mockDecrypt).toHaveBeenCalledWith("encrypted-data", expect.anything());
+      expect(mockDecrypt).toHaveBeenCalledWith("encrypted-data", expect.anything(), undefined);
     });
 
     it("should throw error when trying to encrypt with locked vault", async () => {
