@@ -204,6 +204,7 @@ describe("auth flow hardening", () => {
     const clientOpaqueSource = readFileSync("src/services/opaqueService.ts", "utf-8");
     const serverOpaqueSource = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
     const migrationSource = readFileSync("supabase/migrations/20260424120000_enforce_opaque_password_auth.sql", "utf-8");
+    const registerSource = readFileSync("supabase/functions/auth-register/index.ts", "utf-8");
 
     expect(clientOpaqueSource).toContain("normalizeOpaqueIdentifier");
     expect(clientOpaqueSource).toContain("OPAQUE_KEY_STRETCHING");
@@ -217,6 +218,9 @@ describe("auth flow hardening", () => {
     expect(migrationSource).toContain("opaque_password_reset_states");
     expect(migrationSource).toContain("disable_gotrue_password_login");
     expect(migrationSource).toContain("encrypted_password = NULL");
+    expect(registerSource).toContain("rollbackRegistrationStart");
+    expect(registerSource).toContain("Failed to send signup verification code");
+    expect(registerSource).not.toContain("Warning: Failed to trigger signup OTP email after OPAQUE registration");
   });
 
   it("blocks direct Supabase recovery callbacks and disables URL session detection", () => {
