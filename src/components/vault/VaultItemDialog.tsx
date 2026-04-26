@@ -28,7 +28,16 @@ import {
     Plus,
     QrCode
 } from 'lucide-react';
-import { isValidTOTPSecret, normalizeTOTPSecretInput, parseTOTPUri } from '@/services/totpService';
+import {
+    isValidTOTPSecret,
+    normalizeTOTPConfig,
+    normalizeTOTPSecretInput,
+    parseTOTPUri,
+    validateTOTPConfig,
+    type TOTPAlgorithm,
+    type TOTPDigits,
+} from '@/services/totpService';
+import type { VaultItemData } from '@/services/cryptoService';
 
 import {
     Dialog,
@@ -101,6 +110,11 @@ const itemSchema = z.object({
     password: z.string().optional(),
     notes: z.string().optional(),
     totpSecret: z.string().optional(),
+    totpIssuer: z.string().optional(),
+    totpLabel: z.string().optional(),
+    totpAlgorithm: z.enum(['SHA1', 'SHA256', 'SHA512']).default('SHA1'),
+    totpDigits: z.union([z.literal(6), z.literal(8)]).default(6),
+    totpPeriod: z.number().int().min(15).max(120).default(30),
     isFavorite: z.boolean().default(false),
 });
 
@@ -127,12 +141,63 @@ interface VaultItemDialogProps {
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DEFAULT_TOTP_ALGORITHM: TOTPAlgorithm = 'SHA1';
+const DEFAULT_TOTP_DIGITS: TOTPDigits = 6;
+const DEFAULT_TOTP_PERIOD = 30;
 
 function sanitizeOptionalUuid(value: string | null | undefined): string | null {
     if (!value) return null;
     const trimmed = value.trim();
     if (trimmed === '') return null;
     return UUID_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+function clearTotpFormFields(form: ReturnType<typeof useForm<ItemFormData>>): void {
+    form.setValue('totpSecret', '');
+    form.setValue('totpIssuer', '');
+    form.setValue('totpLabel', '');
+    form.setValue('totpAlgorithm', DEFAULT_TOTP_ALGORITHM);
+    form.setValue('totpDigits', DEFAULT_TOTP_DIGITS);
+    form.setValue('totpPeriod', DEFAULT_TOTP_PERIOD);
+    form.clearErrors('totpSecret');
+}
+
+export function buildVaultItemPayloadForEncryption(
+    data: ItemFormData,
+    itemType: 'password' | 'note' | 'totp',
+    selectedCategoryId: string | null,
+): VaultItemData {
+    const itemData: VaultItemData = {
+        title: data.title,
+        websiteUrl: normalizeUrl(data.url) || undefined,
+        itemType,
+        isFavorite: data.isFavorite,
+        categoryId: sanitizeOptionalUuid(selectedCategoryId),
+        username: itemType === 'password' ? data.username : undefined,
+        password: itemType === 'password' ? data.password : undefined,
+        notes: data.notes,
+    };
+
+    if (itemType === 'totp') {
+        const config = normalizeTOTPConfig({
+            algorithm: data.totpAlgorithm,
+            digits: data.totpDigits,
+            period: data.totpPeriod,
+        }) ?? {
+            algorithm: DEFAULT_TOTP_ALGORITHM,
+            digits: DEFAULT_TOTP_DIGITS,
+            period: DEFAULT_TOTP_PERIOD,
+        };
+
+        itemData.totpSecret = normalizeTOTPSecretInput(data.totpSecret || '');
+        itemData.totpIssuer = data.totpIssuer?.trim() || undefined;
+        itemData.totpLabel = data.totpLabel?.trim() || undefined;
+        itemData.totpAlgorithm = config.algorithm;
+        itemData.totpDigits = config.digits;
+        itemData.totpPeriod = config.period;
+    }
+
+    return itemData;
 }
 
 export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialType = 'password' }: VaultItemDialogProps) {
@@ -177,6 +242,11 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             password: '',
             notes: '',
             totpSecret: '',
+            totpIssuer: '',
+            totpLabel: '',
+            totpAlgorithm: DEFAULT_TOTP_ALGORITHM,
+            totpDigits: DEFAULT_TOTP_DIGITS,
+            totpPeriod: DEFAULT_TOTP_PERIOD,
             isFavorite: false,
         },
     });
@@ -344,6 +414,11 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     password: decrypted.password || '',
                     notes: decrypted.notes || '',
                     totpSecret: normalizeTOTPSecretInput(decrypted.totpSecret || ''),
+                    totpIssuer: decrypted.totpIssuer || '',
+                    totpLabel: decrypted.totpLabel || '',
+                    totpAlgorithm: decrypted.totpAlgorithm || DEFAULT_TOTP_ALGORITHM,
+                    totpDigits: decrypted.totpDigits || DEFAULT_TOTP_DIGITS,
+                    totpPeriod: decrypted.totpPeriod || DEFAULT_TOTP_PERIOD,
                     isFavorite: resolvedFavorite,
                 });
 
@@ -391,6 +466,31 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
         setLoading(true);
         try {
+            if (itemType === 'totp' && !isValidTOTPSecret(data.totpSecret || '')) {
+                form.setError('totpSecret', {
+                    type: 'validate',
+                    message: t('authenticator.invalidSecret'),
+                });
+                return;
+            }
+
+            if (itemType === 'totp') {
+                const configValidation = validateTOTPConfig({
+                    algorithm: data.totpAlgorithm,
+                    digits: data.totpDigits,
+                    period: data.totpPeriod,
+                });
+                if (!configValidation.valid) {
+                    form.setError('totpSecret', {
+                        type: 'validate',
+                        message: t('authenticator.unsupportedParameters', {
+                            defaultValue: 'Nicht unterstützte TOTP-Parameter.',
+                        }),
+                    });
+                    return;
+                }
+            }
+
             let vaultId = sanitizeOptionalUuid(await resolveDefaultVaultId(user.id));
             if (!vaultId) {
                 // Create default vault if it doesn't exist
@@ -411,18 +511,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             }
             const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
 
-            // Prepare item data
-            const itemDataToEncrypt = {
-                title: data.title,
-                websiteUrl: normalizeUrl(data.url) || undefined,
-                itemType,
-                isFavorite: data.isFavorite,
-                categoryId: sanitizeOptionalUuid(selectedCategoryId),
-                username: data.username,
-                password: data.password,
-                notes: data.notes,
-                totpSecret: normalizeTOTPSecretInput(data.totpSecret || ''),
-            };
+            const itemDataToEncrypt = buildVaultItemPayloadForEncryption(data, itemType, selectedCategoryId);
 
             // If in duress mode, mark as decoy item (internal marker inside encrypted data)
             const hooks = getServiceHooks();
@@ -601,7 +690,12 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                     });
                                     return;
                                 }
-                                setItemType(v as typeof itemType);
+                                const nextType = v as typeof itemType;
+                                if (nextType !== 'totp') {
+                                    clearTotpFormFields(form);
+                                    setShowScanner(false);
+                                }
+                                setItemType(nextType);
                             }}
                         >
                             <TabsList className="w-full">
@@ -926,7 +1020,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             </Dialog>
 
             {/* QR Scanner Dialog */}
-            <Dialog open={showScanner} onOpenChange={setShowScanner}>
+            <Dialog open={showScanner && itemType === 'totp' && hasPremiumAuthenticator && canUseTotp} onOpenChange={setShowScanner}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>{t('authenticator.scanQr')}</DialogTitle>
@@ -937,6 +1031,12 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                 const uri = parseTOTPUri(code);
                                 if (uri) {
                                     form.setValue('totpSecret', normalizeTOTPSecretInput(uri.secret));
+                                    form.setValue('totpIssuer', uri.issuer);
+                                    form.setValue('totpLabel', uri.label);
+                                    form.setValue('totpAlgorithm', uri.algorithm || DEFAULT_TOTP_ALGORITHM);
+                                    form.setValue('totpDigits', uri.digits || DEFAULT_TOTP_DIGITS);
+                                    form.setValue('totpPeriod', uri.period || DEFAULT_TOTP_PERIOD);
+                                    form.clearErrors('totpSecret');
                                     if (uri.issuer && !form.getValues('title')) {
                                         form.setValue('title', `${uri.issuer} (${uri.label})`);
                                     }
@@ -944,6 +1044,17 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                     const normalizedCode = normalizeTOTPSecretInput(code);
                                     if (isValidTOTPSecret(normalizedCode)) {
                                         form.setValue('totpSecret', normalizedCode);
+                                        form.setValue('totpAlgorithm', DEFAULT_TOTP_ALGORITHM);
+                                        form.setValue('totpDigits', DEFAULT_TOTP_DIGITS);
+                                        form.setValue('totpPeriod', DEFAULT_TOTP_PERIOD);
+                                        form.clearErrors('totpSecret');
+                                    } else {
+                                        form.setError('totpSecret', {
+                                            type: 'validate',
+                                            message: t('authenticator.unsupportedQr', {
+                                                defaultValue: 'Ungültiger oder nicht unterstützter TOTP-QR-Code.',
+                                            }),
+                                        });
                                     }
                                 }
                                 setShowScanner(false);

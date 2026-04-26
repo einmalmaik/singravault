@@ -21,6 +21,11 @@ describe('vault item encrypted_data storage contract', () => {
       password: 'correct horse battery staple',
       notes: 'private recovery notes',
       totpSecret: 'JBSWY3DPEHPK3PXP',
+      totpIssuer: 'GitHub',
+      totpLabel: 'person@example.test',
+      totpAlgorithm: 'SHA512',
+      totpDigits: 8,
+      totpPeriod: 60,
     };
 
     const encryptedData = await encryptVaultItem(sensitivePayload, key, itemId);
@@ -28,6 +33,9 @@ describe('vault item encrypted_data storage contract', () => {
     expect(encryptedData).not.toContain(sensitivePayload.password);
     expect(encryptedData).not.toContain(sensitivePayload.notes);
     expect(encryptedData).not.toContain(sensitivePayload.totpSecret);
+    expect(encryptedData).not.toContain(sensitivePayload.totpIssuer);
+    expect(encryptedData).not.toContain(sensitivePayload.totpLabel);
+    expect(encryptedData).not.toContain(sensitivePayload.totpAlgorithm);
     await expect(decryptVaultItem(encryptedData, key, 'other-item-id')).rejects.toThrow();
     await expect(decryptVaultItem(encryptedData, key, itemId)).resolves.toMatchObject(sensitivePayload);
   });

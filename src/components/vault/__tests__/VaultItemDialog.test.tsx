@@ -61,7 +61,14 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 vi.mock("@/services/totpService", () => ({
   isValidTOTPSecret: vi.fn().mockReturnValue(true),
+  normalizeTOTPConfig: (config = {}) => ({
+    algorithm: (config as { algorithm?: string }).algorithm || "SHA1",
+    digits: (config as { digits?: 6 | 8 }).digits || 6,
+    period: (config as { period?: number }).period || 30,
+  }),
+  normalizeTOTPSecretInput: (secret: string) => secret.replace(/\s/g, "").toUpperCase(),
   parseTOTPUri: vi.fn().mockReturnValue(null),
+  validateTOTPConfig: vi.fn().mockReturnValue({ valid: true }),
 }));
 
 // Removed duressService mock
@@ -120,6 +127,129 @@ describe("VaultItemDialog", () => {
   it("should define all vault item types", () => {
     const types = ["password", "note", "totp"];
     types.forEach((type) => expect(type).toBeTruthy());
+  });
+
+  it("should omit totpSecret from non-TOTP payloads even when stale form data exists", async () => {
+    const { buildVaultItemPayloadForEncryption } = await import("../VaultItemDialog");
+
+    const payload = buildVaultItemPayloadForEncryption({
+      title: "Login",
+      url: "example.com",
+      username: "person@example.test",
+      password: "secret-password",
+      notes: "private notes",
+      totpSecret: "JBSW Y3DP EHPK 3PXP",
+      totpIssuer: "GitHub",
+      totpLabel: "person@example.test",
+      totpAlgorithm: "SHA512",
+      totpDigits: 8,
+      totpPeriod: 60,
+      isFavorite: false,
+    }, "password", null);
+
+    expect(payload).toMatchObject({
+      itemType: "password",
+      username: "person@example.test",
+      password: "secret-password",
+      notes: "private notes",
+    });
+    expect(payload).not.toHaveProperty("totpSecret");
+    expect(payload).not.toHaveProperty("totpIssuer");
+    expect(payload).not.toHaveProperty("totpLabel");
+    expect(payload).not.toHaveProperty("totpAlgorithm");
+    expect(payload).not.toHaveProperty("totpDigits");
+    expect(payload).not.toHaveProperty("totpPeriod");
+  });
+
+  it("should omit TOTP fields from note payloads", async () => {
+    const { buildVaultItemPayloadForEncryption } = await import("../VaultItemDialog");
+
+    const payload = buildVaultItemPayloadForEncryption({
+      title: "Secure note",
+      url: "",
+      username: "ignored@example.test",
+      password: "ignored-password",
+      notes: "private notes",
+      totpSecret: "JBSWY3DPEHPK3PXP",
+      totpIssuer: "GitHub",
+      totpLabel: "person@example.test",
+      totpAlgorithm: "SHA256",
+      totpDigits: 6,
+      totpPeriod: 30,
+      isFavorite: false,
+    }, "note", null);
+
+    expect(payload).toMatchObject({
+      itemType: "note",
+      notes: "private notes",
+    });
+    expect(payload.username).toBeUndefined();
+    expect(payload.password).toBeUndefined();
+    expect(payload).not.toHaveProperty("totpSecret");
+    expect(payload).not.toHaveProperty("totpIssuer");
+    expect(payload).not.toHaveProperty("totpLabel");
+    expect(payload).not.toHaveProperty("totpAlgorithm");
+    expect(payload).not.toHaveProperty("totpDigits");
+    expect(payload).not.toHaveProperty("totpPeriod");
+  });
+
+  it("should use legacy defaults for manual TOTP payloads without stored parameters", async () => {
+    const { buildVaultItemPayloadForEncryption } = await import("../VaultItemDialog");
+
+    const payload = buildVaultItemPayloadForEncryption({
+      title: "GitHub",
+      url: "",
+      username: "",
+      password: "",
+      notes: "",
+      totpSecret: "JBSWY3DPEHPK3PXP",
+      totpIssuer: "",
+      totpLabel: "",
+      totpAlgorithm: undefined as never,
+      totpDigits: undefined as never,
+      totpPeriod: undefined as never,
+      isFavorite: false,
+    }, "totp", null);
+
+    expect(payload).toMatchObject({
+      itemType: "totp",
+      totpSecret: "JBSWY3DPEHPK3PXP",
+      totpAlgorithm: "SHA1",
+      totpDigits: 6,
+      totpPeriod: 30,
+    });
+  });
+
+  it("should include normalized totpSecret only for TOTP payloads", async () => {
+    const { buildVaultItemPayloadForEncryption } = await import("../VaultItemDialog");
+
+    const payload = buildVaultItemPayloadForEncryption({
+      title: "GitHub",
+      url: "",
+      username: "ignored@example.test",
+      password: "ignored-password",
+      notes: "private notes",
+      totpSecret: "jbsw y3dp ehpk 3pxp",
+      totpIssuer: "GitHub",
+      totpLabel: "person@example.test",
+      totpAlgorithm: "SHA512",
+      totpDigits: 8,
+      totpPeriod: 60,
+      isFavorite: true,
+    }, "totp", null);
+
+    expect(payload).toMatchObject({
+      itemType: "totp",
+      notes: "private notes",
+      totpSecret: "JBSWY3DPEHPK3PXP",
+      totpIssuer: "GitHub",
+      totpLabel: "person@example.test",
+      totpAlgorithm: "SHA512",
+      totpDigits: 8,
+      totpPeriod: 60,
+    });
+    expect(payload.username).toBeUndefined();
+    expect(payload.password).toBeUndefined();
   });
 
   it("should support cancel action via onOpenChange", () => {
