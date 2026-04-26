@@ -260,7 +260,12 @@ export function VaultItemCard({
                 {/* TOTP Display — only in contexts where the Authenticator tab is unavailable (e.g. emergency access) */}
                 {showTotpCode && resolvedItemType === 'totp' && item.decryptedData?.totpSecret && (
                     <div className="mb-3" onClick={(e) => e.stopPropagation()}>
-                        <TOTPDisplay secret={item.decryptedData.totpSecret} />
+                        <TOTPDisplay
+                            secret={item.decryptedData.totpSecret}
+                            algorithm={item.decryptedData.totpAlgorithm}
+                            digits={item.decryptedData.totpDigits}
+                            period={item.decryptedData.totpPeriod}
+                        />
                     </div>
                 )}
 

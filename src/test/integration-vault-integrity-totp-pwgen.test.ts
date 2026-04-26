@@ -61,6 +61,7 @@ import {
   isValidTOTPSecret,
   normalizeTOTPSecretInput,
   validateTOTPSecret,
+  validateTOTPConfig,
   parseOTPAuthUri,
   formatTOTPCode,
   parseTOTPUri,
@@ -89,6 +90,22 @@ describe("Integration: TOTP Service — Code Generation & Validation", () => {
     it("should return dashes for invalid secret", () => {
       const code = generateTOTP("INVALID!!!!");
       expect(code).toBe("------");
+    });
+
+    it("should generate a 6-digit SHA256 code", () => {
+      const code = generateTOTP(VALID_SECRET, { algorithm: "SHA256", digits: 6, period: 30 });
+      expect(code).toMatch(/^\d{6}$/);
+    });
+
+    it("should generate an 8-digit SHA512 code with 60 second period", () => {
+      const code = generateTOTP(VALID_SECRET, { algorithm: "SHA512", digits: 8, period: 60 });
+      expect(code).toMatch(/^\d{8}$/);
+    });
+
+    it("should reject unsupported TOTP config instead of falling back silently", () => {
+      expect(generateTOTP(VALID_SECRET, { algorithm: "MD5" as never, digits: 6, period: 30 })).toBe("------");
+      expect(generateTOTP(VALID_SECRET, { algorithm: "SHA1", digits: 7 as never, period: 30 })).toBe("------");
+      expect(generateTOTP(VALID_SECRET, { algorithm: "SHA1", digits: 6, period: 5 })).toBe("------");
     });
   });
 
@@ -154,6 +171,21 @@ describe("Integration: TOTP Service — Code Generation & Validation", () => {
     });
   });
 
+  describe("validateTOTPConfig", () => {
+    it("should accept supported parameters", () => {
+      expect(validateTOTPConfig({ algorithm: "SHA1", digits: 6, period: 30 }).valid).toBe(true);
+      expect(validateTOTPConfig({ algorithm: "SHA256", digits: 6, period: 30 }).valid).toBe(true);
+      expect(validateTOTPConfig({ algorithm: "SHA512", digits: 8, period: 60 }).valid).toBe(true);
+    });
+
+    it("should reject unsupported algorithm, digits, and period", () => {
+      expect(validateTOTPConfig({ algorithm: "MD5" as never, digits: 6, period: 30 }).valid).toBe(false);
+      expect(validateTOTPConfig({ algorithm: "SHA1", digits: 7 as never, period: 30 }).valid).toBe(false);
+      expect(validateTOTPConfig({ algorithm: "SHA1", digits: 6, period: 5 }).valid).toBe(false);
+      expect(validateTOTPConfig({ algorithm: "SHA1", digits: 6, period: 121 }).valid).toBe(false);
+    });
+  });
+
   describe("parseOTPAuthUri", () => {
     it("should parse a standard otpauth URI", () => {
       const uri = "otpauth://totp/GitHub:user@test.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub";
@@ -212,6 +244,27 @@ describe("Integration: TOTP Service — Code Generation & Validation", () => {
       expect(parsed!.issuer).toBe("Singra Vault");
       expect(parsed!.digits).toBe(6);
       expect(parsed!.period).toBe(30);
+    });
+
+    it("should parse issuer, label, and supported non-default parameters", () => {
+      const uri = "otpauth://totp/GitHub:person@example.test?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&algorithm=SHA512&digits=8&period=60";
+      const parsed = parseTOTPUri(uri);
+
+      expect(parsed).toMatchObject({
+        secret: "JBSWY3DPEHPK3PXP",
+        issuer: "GitHub",
+        label: "GitHub:person@example.test",
+        algorithm: "SHA512",
+        digits: 8,
+        period: 60,
+      });
+    });
+
+    it("should reject unsupported otpauth parameters", () => {
+      expect(parseTOTPUri("otpauth://totp/test?secret=JBSWY3DPEHPK3PXP&algorithm=MD5")).toBeNull();
+      expect(parseTOTPUri("otpauth://totp/test?secret=JBSWY3DPEHPK3PXP&digits=7")).toBeNull();
+      expect(parseTOTPUri("otpauth://totp/test?secret=JBSWY3DPEHPK3PXP&period=5")).toBeNull();
+      expect(parseTOTPUri("otpauth://totp/test?secret=JBSWY3DPEHPK3PXP&period=121")).toBeNull();
     });
   });
 });

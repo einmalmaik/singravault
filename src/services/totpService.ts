@@ -9,6 +9,14 @@
 
 import * as OTPAuth from 'otpauth';
 
+export const SUPPORTED_TOTP_ALGORITHMS = ['SHA1', 'SHA256', 'SHA512'] as const;
+export const SUPPORTED_TOTP_DIGITS = [6, 8] as const;
+export const MIN_TOTP_PERIOD = 15;
+export const MAX_TOTP_PERIOD = 120;
+
+export type TOTPAlgorithm = typeof SUPPORTED_TOTP_ALGORITHMS[number];
+export type TOTPDigits = typeof SUPPORTED_TOTP_DIGITS[number];
+
 /**
  * Normalizes user-provided TOTP secret input.
  *
@@ -21,25 +29,70 @@ export function normalizeTOTPSecretInput(secret: string): string {
     return secret.replace(/\s/g, '').toUpperCase();
 }
 
+export interface TOTPConfig {
+    algorithm?: TOTPAlgorithm;
+    digits?: TOTPDigits;
+    period?: number;
+}
+
+export function normalizeTOTPAlgorithm(value: string | null | undefined): TOTPAlgorithm | null {
+    const normalized = (value || 'SHA1').replace(/[-_\s]/g, '').toUpperCase();
+    return (SUPPORTED_TOTP_ALGORITHMS as readonly string[]).includes(normalized)
+        ? normalized as TOTPAlgorithm
+        : null;
+}
+
+export function normalizeTOTPDigits(value: string | number | null | undefined): TOTPDigits | null {
+    const parsed = typeof value === 'number' ? value : parseInt(value || '6', 10);
+    return (SUPPORTED_TOTP_DIGITS as readonly number[]).includes(parsed)
+        ? parsed as TOTPDigits
+        : null;
+}
+
+export function normalizeTOTPPeriod(value: string | number | null | undefined): number | null {
+    const parsed = typeof value === 'number' ? value : parseInt(value || '30', 10);
+    if (!Number.isInteger(parsed) || parsed < MIN_TOTP_PERIOD || parsed > MAX_TOTP_PERIOD) {
+        return null;
+    }
+    return parsed;
+}
+
+export function normalizeTOTPConfig(config: TOTPConfig = {}): Required<TOTPConfig> | null {
+    const algorithm = normalizeTOTPAlgorithm(config.algorithm);
+    const digits = normalizeTOTPDigits(config.digits);
+    const period = normalizeTOTPPeriod(config.period);
+
+    if (!algorithm || !digits || !period) {
+        return null;
+    }
+
+    return { algorithm, digits, period };
+}
+
 /**
  * Generates a TOTP code from a secret
  * 
  * @param secret - Base32 encoded TOTP secret
- * @returns Current 6-digit TOTP code
+ * @returns Current TOTP code
  */
-export function generateTOTP(secret: string): string {
+export function generateTOTP(secret: string, config: TOTPConfig = {}): string {
     try {
+        const normalizedConfig = normalizeTOTPConfig(config);
+        if (!normalizedConfig) {
+            return '------';
+        }
+
         const totp = new OTPAuth.TOTP({
             issuer: 'Singra Vault',
-            algorithm: 'SHA1',
-            digits: 6,
-            period: 30,
+            algorithm: normalizedConfig.algorithm,
+            digits: normalizedConfig.digits,
+            period: normalizedConfig.period,
             secret: OTPAuth.Secret.fromBase32(normalizeTOTPSecretInput(secret)),
         });
 
         return totp.generate();
-    } catch (error) {
-        console.error('TOTP generation error:', error);
+    } catch {
+        console.error('TOTP generation error: invalid or unsupported secret');
         return '------';
     }
 }
@@ -49,9 +102,10 @@ export function generateTOTP(secret: string): string {
  * 
  * @returns Seconds remaining (0-29)
  */
-export function getTimeRemaining(): number {
+export function getTimeRemaining(period = 30): number {
+    const normalizedPeriod = normalizeTOTPPeriod(period) ?? 30;
     const now = Math.floor(Date.now() / 1000);
-    return 30 - (now % 30);
+    return normalizedPeriod - (now % normalizedPeriod);
 }
 
 /**
@@ -91,6 +145,22 @@ export function validateTOTPSecret(secret: string): { valid: boolean; error?: st
     // Check Base32 format (A-Z, 2-7, optional padding =)
     if (!/^[A-Z2-7]+=*$/.test(cleaned)) {
         return { valid: false, error: 'Ungültiges Format (nur A-Z und 2-7 erlaubt)' };
+    }
+
+    return { valid: true };
+}
+
+export function validateTOTPConfig(config: TOTPConfig): { valid: boolean; error?: string } {
+    if (!normalizeTOTPAlgorithm(config.algorithm)) {
+        return { valid: false, error: 'Unsupported TOTP algorithm' };
+    }
+
+    if (!normalizeTOTPDigits(config.digits)) {
+        return { valid: false, error: 'Unsupported TOTP digit count' };
+    }
+
+    if (!normalizeTOTPPeriod(config.period)) {
+        return { valid: false, error: `Unsupported TOTP period (${MIN_TOTP_PERIOD}-${MAX_TOTP_PERIOD} seconds)` };
     }
 
     return { valid: true };
@@ -137,6 +207,21 @@ export function formatTOTPCode(code: string): string {
     return `${code.slice(0, 3)} ${code.slice(3)}`;
 }
 
+export function getTOTPDataValidationError(data: Pick<TOTPData, 'secret' | 'algorithm' | 'digits' | 'period'>): string | null {
+    const secretValidation = validateTOTPSecret(data.secret);
+    if (!secretValidation.valid) {
+        return secretValidation.error || 'Invalid TOTP secret';
+    }
+
+    const configValidation = validateTOTPConfig({
+        algorithm: data.algorithm,
+        digits: data.digits,
+        period: data.period,
+    });
+
+    return configValidation.valid ? null : configValidation.error || 'Unsupported TOTP parameters';
+}
+
 /**
  * Parses a TOTP URI (otpauth://totp/...) and extracts the secret
  * 
@@ -158,14 +243,23 @@ export function parseTOTPUri(uri: string): TOTPData | null {
         const label = decodeURIComponent(url.pathname.slice(1));
         const issuer = url.searchParams.get('issuer') || '';
 
-        return {
-            secret: secret.toUpperCase(),
+        const algorithm = normalizeTOTPAlgorithm(url.searchParams.get('algorithm'));
+        const digits = normalizeTOTPDigits(url.searchParams.get('digits'));
+        const period = normalizeTOTPPeriod(url.searchParams.get('period'));
+        if (!algorithm || !digits || !period) {
+            return null;
+        }
+
+        const data: TOTPData = {
+            secret: normalizeTOTPSecretInput(secret),
             label,
             issuer,
-            algorithm: url.searchParams.get('algorithm') || 'SHA1',
-            digits: parseInt(url.searchParams.get('digits') || '6', 10),
-            period: parseInt(url.searchParams.get('period') || '30', 10),
+            algorithm,
+            digits,
+            period,
         };
+
+        return getTOTPDataValidationError(data) ? null : data;
     } catch {
         return null;
     }
@@ -196,7 +290,7 @@ export interface TOTPData {
     secret: string;
     label: string;
     issuer: string;
-    algorithm?: string;
-    digits?: number;
+    algorithm?: TOTPAlgorithm;
+    digits?: TOTPDigits;
     period?: number;
 }

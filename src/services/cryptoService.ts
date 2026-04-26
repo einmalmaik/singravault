@@ -859,6 +859,11 @@ export interface VaultItemData {
     password?: string;
     notes?: string;
     totpSecret?: string;
+    totpIssuer?: string;
+    totpLabel?: string;
+    totpAlgorithm?: 'SHA1' | 'SHA256' | 'SHA512';
+    totpDigits?: 6 | 8;
+    totpPeriod?: number;
     customFields?: Record<string, string>;
     /** Internal marker for duress/decoy items (never exposed to UI) */
     _duress?: boolean;
@@ -887,6 +892,8 @@ export function clearReferences(data: VaultItemData): void {
     if (data.password) data.password = '';
     if (data.notes) data.notes = '';
     if (data.totpSecret) data.totpSecret = '';
+    if (data.totpIssuer) data.totpIssuer = '';
+    if (data.totpLabel) data.totpLabel = '';
     if (data.customFields) {
         Object.keys(data.customFields).forEach(key => {
             data.customFields![key] = '';
