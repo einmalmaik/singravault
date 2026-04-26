@@ -180,6 +180,8 @@ interface TrustedVaultMutation {
     categoryIds?: Iterable<string>;
 }
 
+type VaultSnapshotSource = 'remote' | 'cache' | 'empty';
+
 interface NormalizedTrustedVaultMutation {
     itemIds: Set<string>;
     categoryIds: Set<string>;
@@ -284,6 +286,45 @@ function canPersistIntegrityBaselineImmediately(
         || (snapshot.items.length === 0 && snapshot.categories.length === 0);
 }
 
+async function buildDecryptableRemoteRebaselineMutation(
+    assessment: VaultIntegrityAssessment,
+    snapshot: OfflineVaultSnapshot,
+    activeKey: CryptoKey,
+): Promise<TrustedVaultMutation | null> {
+    if (
+        assessment.unreadableCategoryReason
+        || assessment.inspection.snapshotValidationError
+        || assessment.inspection.legacyBaselineMismatch
+        || assessment.inspection.categoryDriftIds.length > 0
+        || assessment.inspection.itemDrifts.length === 0
+    ) {
+        return null;
+    }
+
+    const itemsById = new Map(snapshot.items.map((item) => [item.id, item]));
+    const trustedItemIds: string[] = [];
+
+    for (const drift of assessment.inspection.itemDrifts) {
+        if (drift.reason === 'missing_on_server') {
+            return null;
+        }
+
+        const item = itemsById.get(drift.id);
+        if (!item) {
+            return null;
+        }
+
+        try {
+            await decryptVaultItem(item.encrypted_data, activeKey, item.id);
+            trustedItemIds.push(item.id);
+        } catch {
+            return null;
+        }
+    }
+
+    return { itemIds: trustedItemIds };
+}
+
 interface VaultContextType {
     // State
     isLocked: boolean;
@@ -334,7 +375,10 @@ interface VaultContextType {
      * Call this after loading vault items to detect server-side tampering.
      * @returns Verification result with valid flag and details
      */
-    verifyIntegrity: (snapshot?: OfflineVaultSnapshot) => Promise<VaultIntegrityVerificationResult | null>;
+    verifyIntegrity: (
+        snapshot?: OfflineVaultSnapshot,
+        options?: { source?: VaultSnapshotSource },
+    ) => Promise<VaultIntegrityVerificationResult | null>;
     /**
      * Updates the integrity root after vault modifications.
      * Call this after creating, updating, or deleting vault items.
@@ -603,7 +647,12 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
     const buildIntegritySnapshot = useCallback((
         snapshot: {
-            items: Array<{ id: string; encrypted_data: string; updated_at?: string | null }>;
+            items: Array<{
+                id: string;
+                encrypted_data: string;
+                updated_at?: string | null;
+                item_type?: 'password' | 'note' | 'totp' | 'card' | null;
+            }>;
             categories: Array<{ id: string; name: string; icon: string | null; color: string | null }>;
         },
     ): VaultIntegritySnapshot => ({
@@ -611,6 +660,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             id: item.id,
             encrypted_data: item.encrypted_data,
             updated_at: item.updated_at ?? null,
+            item_type: 'item_type' in item ? item.item_type : null,
         })),
         categories: snapshot.categories.map((category) => ({
             id: category.id,
@@ -625,24 +675,27 @@ export function VaultProvider({ children }: VaultProviderProps) {
     ): Promise<{
         rawSnapshot: OfflineVaultSnapshot;
         integritySnapshot: VaultIntegritySnapshot;
+        source: VaultSnapshotSource;
     } | null> => {
         if (!user) {
             return null;
         }
 
         if (isTauriDevUserId(user.id)) {
-            const { snapshot } = await loadVaultSnapshot(user.id);
+            const { snapshot, source } = await loadVaultSnapshot(user.id);
             return {
                 rawSnapshot: snapshot,
                 integritySnapshot: buildIntegritySnapshot(snapshot),
+                source,
             };
         }
 
         if (options?.useLocalMutationOverlay) {
-            const { snapshot } = await loadVaultSnapshot(user.id);
+            const { snapshot, source } = await loadVaultSnapshot(user.id);
             return {
                 rawSnapshot: snapshot,
                 integritySnapshot: buildIntegritySnapshot(snapshot),
+                source,
             };
         }
 
@@ -655,6 +708,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 return {
                     rawSnapshot,
                     integritySnapshot: buildIntegritySnapshot(rawSnapshot),
+                    source: 'remote',
                 };
             } catch (error) {
                 if (!isLikelyOfflineError(error)) {
@@ -663,10 +717,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
             }
         }
 
-        const { snapshot } = await loadVaultSnapshot(user.id);
+        const { snapshot, source } = await loadVaultSnapshot(user.id);
         return {
             rawSnapshot: snapshot,
             integritySnapshot: buildIntegritySnapshot(snapshot),
+            source,
         };
     }, [buildIntegritySnapshot, user]);
 
@@ -1001,6 +1056,43 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
             const integrityAssessment = await assessVaultIntegrity(snapshotBundle.rawSnapshot, activeKey);
             const integrityResult = integrityAssessment.result;
+
+            if (integrityResult.mode === 'quarantine' && snapshotBundle.source === 'remote') {
+                const trustedRemoteMutation = await buildDecryptableRemoteRebaselineMutation(
+                    integrityAssessment,
+                    snapshotBundle.rawSnapshot,
+                    activeKey,
+                );
+                if (trustedRemoteMutation) {
+                    const digest = await persistIntegrityBaseline(
+                        user.id,
+                        snapshotBundle.integritySnapshot,
+                        activeKey,
+                        integrityAssessment.inspection.digest,
+                    );
+                    await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
+                    applyIntegrityResultState({
+                        valid: true,
+                        isFirstCheck: false,
+                        computedRoot: digest,
+                        storedRoot: digest,
+                        itemCount: snapshotBundle.integritySnapshot.items.length,
+                        categoryCount: snapshotBundle.integritySnapshot.categories.length,
+                        mode: 'healthy',
+                        quarantinedItems: [],
+                    });
+                    setEncryptionKey(activeKey);
+                    setIsLocked(false);
+                    setIsDuressMode(false);
+                    setIntegrityBlockedReason(null);
+                    setLastActivity(Date.now());
+                    sessionStorage.setItem(SESSION_KEY, 'active');
+                    sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
+                    setPendingSessionRestore(false);
+                    return { error: null };
+                }
+            }
+
             applyIntegrityResultState(integrityResult);
 
             if (integrityResult.mode === 'blocked') {
@@ -2480,16 +2572,20 @@ export function VaultProvider({ children }: VaultProviderProps) {
      */
     const verifyIntegrity = useCallback(async (
         snapshot?: OfflineVaultSnapshot,
+        options?: { source?: VaultSnapshotSource },
     ): Promise<VaultIntegrityVerificationResult | null> => {
         if (!user || !encryptionKey) {
             return null;
         }
 
         try {
-            const rawSnapshot = snapshot ?? (await loadCurrentIntegritySnapshot({
-                persistRemoteSnapshot: false,
-                useLocalMutationOverlay: true,
-            }))?.rawSnapshot;
+            const loadedSnapshotBundle = snapshot
+                ? null
+                : await loadCurrentIntegritySnapshot({
+                    persistRemoteSnapshot: false,
+                    useLocalMutationOverlay: true,
+                });
+            const rawSnapshot = snapshot ?? loadedSnapshotBundle?.rawSnapshot;
             if (!rawSnapshot) {
                 return null;
             }
@@ -2500,6 +2596,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 user.id,
                 integrityAssessment,
             );
+            const source = options?.source ?? loadedSnapshotBundle?.source;
 
             if (result.mode === 'blocked' && !recentLocalRebaselineAllowed) {
                 await setBlockedIntegrityState(
@@ -2530,6 +2627,35 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 };
                 applyIntegrityResultState(trustedResult);
                 return trustedResult;
+            }
+
+            if (result.mode === 'quarantine' && source === 'remote') {
+                const trustedRemoteMutation = await buildDecryptableRemoteRebaselineMutation(
+                    integrityAssessment,
+                    rawSnapshot,
+                    encryptionKey,
+                );
+                if (trustedRemoteMutation) {
+                    const digest = await persistIntegrityBaseline(
+                        user.id,
+                        buildIntegritySnapshot(rawSnapshot),
+                        encryptionKey,
+                        integrityAssessment.inspection.digest,
+                    );
+                    await persistTrustedIntegritySnapshot(rawSnapshot);
+                    const trustedResult: VaultIntegrityVerificationResult = {
+                        valid: true,
+                        isFirstCheck: false,
+                        computedRoot: digest,
+                        storedRoot: digest,
+                        itemCount: rawSnapshot.items.length,
+                        categoryCount: rawSnapshot.categories.length,
+                        mode: 'healthy',
+                        quarantinedItems: [],
+                    };
+                    applyIntegrityResultState(trustedResult);
+                    return trustedResult;
+                }
             }
 
             applyIntegrityResultState(result);

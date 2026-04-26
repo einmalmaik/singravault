@@ -40,6 +40,14 @@ export function VaultQuarantinePanel({
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
+        {items.length > 2 && (
+          <p className="rounded-md border border-amber-500/25 bg-background/70 px-4 py-3 text-sm text-muted-foreground">
+            {t('vault.integrity.quarantineSummary', {
+              defaultValue: '{{count}} betroffene Einträge wurden zusammengefasst.',
+              count: items.length,
+            })}
+          </p>
+        )}
         {items.map((item) => (
           <div
             key={item.id}
@@ -50,9 +58,13 @@ export function VaultQuarantinePanel({
                 <div className="flex items-center gap-2">
                   <TriangleAlert className="w-4 h-4 text-amber-600" />
                   <p className="font-medium">
-                    {t('vault.integrity.quarantineItemTitle', {
-                      defaultValue: 'Manipulierter Eintrag',
-                    })}
+                    {item.itemType === 'totp'
+                      ? t('vault.integrity.quarantineAuthenticatorItemTitle', {
+                        defaultValue: 'Manipulierter Authenticator-Eintrag',
+                      })
+                      : t('vault.integrity.quarantineItemTitle', {
+                        defaultValue: 'Manipulierter Eintrag',
+                      })}
                   </p>
                 </div>
                 <p className="mt-1 break-all text-sm text-muted-foreground">

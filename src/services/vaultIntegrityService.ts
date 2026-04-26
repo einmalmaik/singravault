@@ -16,6 +16,7 @@ export interface VaultIntegritySnapshot {
     id: string;
     encrypted_data: string;
     updated_at?: string | null;
+    item_type?: 'password' | 'note' | 'totp' | 'card' | null;
   }>;
   categories: Array<{
     id: string;
@@ -40,6 +41,7 @@ export interface QuarantinedVaultItem {
   id: string;
   reason: VaultIntegrityItemIssueReason;
   updatedAt: string | null;
+  itemType?: 'password' | 'note' | 'totp' | 'card' | null;
 }
 
 export interface VaultIntegrityVerificationResult {
@@ -505,6 +507,7 @@ function detectItemDigestDrift(
         id: item.id,
         reason: 'unknown_on_server',
         updatedAt: item.updated_at ?? null,
+        itemType: item.item_type ?? null,
       });
       continue;
     }
@@ -514,6 +517,7 @@ function detectItemDigestDrift(
         id: item.id,
         reason: 'ciphertext_changed',
         updatedAt: item.updated_at ?? null,
+        itemType: item.item_type ?? null,
       });
     }
   }

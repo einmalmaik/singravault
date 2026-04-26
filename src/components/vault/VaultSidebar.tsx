@@ -126,7 +126,7 @@ export function VaultSidebar({
 
         try {
             const { snapshot, source } = await loadVaultSnapshot(user.id);
-            const integrityResult = await verifyIntegrity(snapshot);
+            const integrityResult = await verifyIntegrity(snapshot, { source });
             if (integrityResult?.mode === 'blocked') {
                 if (fetchRequestIdRef.current === requestId) {
                     setCategories([]);

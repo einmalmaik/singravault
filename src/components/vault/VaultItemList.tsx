@@ -119,7 +119,7 @@ export function VaultItemList({
       setLoading(true);
       try {
         const { snapshot, source } = await loadVaultSnapshot(user.id);
-        const integrityResult = await verifyIntegrity(snapshot);
+        const integrityResult = await verifyIntegrity(snapshot, { source });
         if (integrityResult?.mode === 'blocked') {
           setItems([]);
           return;
@@ -229,6 +229,7 @@ export function VaultItemList({
                 id: item.id,
                 reason: 'ciphertext_changed',
                 updatedAt: item.updated_at ?? null,
+                itemType: item.item_type ?? null,
               });
               const logKey = `${item.id}:${item.updated_at}`;
               if (!loggedDecryptFailuresRef.current.has(logKey)) {
