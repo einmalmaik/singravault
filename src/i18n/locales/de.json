@@ -1241,7 +1241,9 @@
     "deleted": "Anhang gelöscht",
     "deleteError": "Fehler beim Löschen",
     "fileTooLarge": "Datei zu groß. Maximum: {{size}}",
-    "storageLimitReached": "Speicherlimit erreicht. Belegt: {{used}} / {{limit}}"
+    "storageLimitReached": "Speicherlimit erreicht. Belegt: {{used}} / {{limit}}",
+    "pendingUploadFailed": "{{count}} Dateianhang/Dateianhänge konnten nicht hochgeladen werden. Der Eintrag wurde ohne diese Anhänge gespeichert.",
+    "pendingUploadRequiresOnline": "Dateianhänge wurden nicht hochgeladen, weil der Eintrag offline gespeichert wurde. Bitte füge sie nach der Synchronisierung erneut hinzu."
   },
   "categories": {
     "add": "Kategorie hinzufügen",

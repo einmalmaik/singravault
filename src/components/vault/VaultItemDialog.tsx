@@ -7,7 +7,7 @@
  * integrated password generator and TOTP support.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -130,6 +130,25 @@ const normalizeUrl = (url: string | undefined): string | null => {
 
 type ItemFormData = z.infer<typeof itemSchema>;
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
+const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DEFAULT_TOTP_ALGORITHM: TOTPAlgorithm = 'SHA1';
+const DEFAULT_TOTP_DIGITS: TOTPDigits = 6;
+const DEFAULT_TOTP_PERIOD = 30;
+const EMPTY_ITEM_FORM_VALUES: ItemFormData = {
+    title: '',
+    url: '',
+    username: '',
+    password: '',
+    notes: '',
+    totpSecret: '',
+    totpIssuer: '',
+    totpLabel: '',
+    totpAlgorithm: DEFAULT_TOTP_ALGORITHM,
+    totpDigits: DEFAULT_TOTP_DIGITS,
+    totpPeriod: DEFAULT_TOTP_PERIOD,
+    isFavorite: false,
+};
 
 interface VaultItemDialogProps {
     open: boolean;
@@ -139,11 +158,17 @@ interface VaultItemDialogProps {
     initialType?: 'password' | 'note' | 'totp';
 }
 
-const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const DEFAULT_TOTP_ALGORITHM: TOTPAlgorithm = 'SHA1';
-const DEFAULT_TOTP_DIGITS: TOTPDigits = 6;
-const DEFAULT_TOTP_PERIOD = 30;
+interface PendingAttachmentUploadResult {
+    successCount: number;
+    failureCount: number;
+}
+
+interface VaultFileAttachmentsProps {
+    vaultItemId: string | null;
+    pendingMode?: boolean;
+    onPendingFilesChange?: (count: number) => void;
+    onPendingUploadReady?: (uploadPending: ((vaultItemId: string) => Promise<PendingAttachmentUploadResult>) | null) => void;
+}
 
 function sanitizeOptionalUuid(value: string | null | undefined): string | null {
     if (!value) return null;
@@ -160,6 +185,27 @@ function clearTotpFormFields(form: ReturnType<typeof useForm<ItemFormData>>): vo
     form.setValue('totpDigits', DEFAULT_TOTP_DIGITS);
     form.setValue('totpPeriod', DEFAULT_TOTP_PERIOD);
     form.clearErrors('totpSecret');
+}
+
+function resolveInitialItemType(
+    initialType: 'password' | 'note' | 'totp',
+    hasPremiumAuthenticator: boolean,
+    canUseTotp: boolean,
+): 'password' | 'note' | 'totp' {
+    return initialType === 'totp' && (!hasPremiumAuthenticator || !canUseTotp) ? 'password' : initialType;
+}
+
+function clearVaultItemDialogDraftStorage(): void {
+    if (typeof window === 'undefined') return;
+
+    [
+        'singra:vault-item-dialog:draft',
+        'singra-vault-item-dialog-draft',
+        'singra-vault-item-draft',
+    ].forEach((key) => {
+        window.localStorage.removeItem(key);
+        window.sessionStorage.removeItem(key);
+    });
 }
 
 export function buildVaultItemPayloadForEncryption(
@@ -217,7 +263,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const hasPremiumAuthenticator = isPremiumActive();
 
     const [itemType, setItemType] = useState<'password' | 'note' | 'totp'>(
-        initialType === 'totp' && (!hasPremiumAuthenticator || !canUseTotp) ? 'password' : initialType
+        resolveInitialItemType(initialType, hasPremiumAuthenticator, canUseTotp)
     );
     const [showPassword, setShowPassword] = useState(false);
     const [showGenerator, setShowGenerator] = useState(false);
@@ -227,6 +273,8 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
     const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+    const [pendingAttachmentCount, setPendingAttachmentCount] = useState(0);
+    const uploadPendingAttachmentsRef = useRef<((vaultItemId: string) => Promise<PendingAttachmentUploadResult>) | null>(null);
 
     const vaultPasswordCheck = usePasswordCheck({ enforceStrong: false });
 
@@ -235,21 +283,21 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
     const form = useForm<ItemFormData>({
         resolver: zodResolver(itemSchema),
-        defaultValues: {
-            title: '',
-            url: '',
-            username: '',
-            password: '',
-            notes: '',
-            totpSecret: '',
-            totpIssuer: '',
-            totpLabel: '',
-            totpAlgorithm: DEFAULT_TOTP_ALGORITHM,
-            totpDigits: DEFAULT_TOTP_DIGITS,
-            totpPeriod: DEFAULT_TOTP_PERIOD,
-            isFavorite: false,
-        },
+        defaultValues: EMPTY_ITEM_FORM_VALUES,
     });
+
+    const clearSensitiveDialogState = useCallback(() => {
+        form.reset(EMPTY_ITEM_FORM_VALUES);
+        setItemType(resolveInitialItemType(initialType, hasPremiumAuthenticator, canUseTotp));
+        setShowPassword(false);
+        setShowGenerator(false);
+        setShowScanner(false);
+        setSelectedCategoryId(null);
+        setCategoryDialogOpen(false);
+        setPendingAttachmentCount(0);
+        uploadPendingAttachmentsRef.current = null;
+        clearVaultItemDialogDraftStorage();
+    }, [canUseTotp, form, hasPremiumAuthenticator, initialType]);
 
     const fetchCategories = useCallback(async () => {
         if (!user || !open) return;
@@ -439,17 +487,20 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         loadItem();
     }, [normalizedItemId, open, user, decryptItem, form, hasPremiumAuthenticator, toast, t]);
 
+    // Reset create forms every time the dialog opens so sensitive stale values
+    // from the previous entry cannot be reused by React state or browser autofill.
+    useEffect(() => {
+        if (open && !isEditing) {
+            clearSensitiveDialogState();
+        }
+    }, [clearSensitiveDialogState, isEditing, open]);
+
     // Reset form when dialog closes
     useEffect(() => {
         if (!open) {
-            form.reset();
-            setItemType('password');
-            setShowPassword(false);
-            setShowGenerator(false);
-            setSelectedCategoryId(null);
-            setCategoryDialogOpen(false);
+            clearSensitiveDialogState();
         }
-    }, [open, form]);
+    }, [clearSensitiveDialogState, open]);
 
     const onSubmit = async (data: ItemFormData) => {
         if (!user) return;
@@ -572,6 +623,24 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 });
             }
 
+            let pendingAttachmentFailureCount = 0;
+            if (pendingAttachmentCount > 0) {
+                if (syncedOnline && uploadPendingAttachmentsRef.current) {
+                    try {
+                        const result = await uploadPendingAttachmentsRef.current(targetItemId);
+                        pendingAttachmentFailureCount = result.failureCount;
+                    } catch {
+                        pendingAttachmentFailureCount = pendingAttachmentCount;
+                        setPendingAttachmentCount(0);
+                        uploadPendingAttachmentsRef.current = null;
+                    }
+                } else {
+                    pendingAttachmentFailureCount = pendingAttachmentCount;
+                    setPendingAttachmentCount(0);
+                    uploadPendingAttachmentsRef.current = null;
+                }
+            }
+
             toast({
                 title: t('common.success'),
                 description: syncedOnline
@@ -581,10 +650,26 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     }),
             });
 
+            if (pendingAttachmentFailureCount > 0) {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: syncedOnline
+                        ? t('fileAttachments.pendingUploadFailed', {
+                            count: pendingAttachmentFailureCount,
+                            defaultValue: '{{count}} Dateianhang/Dateianhänge konnten nicht hochgeladen werden. Der Eintrag wurde ohne diese Anhänge gespeichert.',
+                        })
+                        : t('fileAttachments.pendingUploadRequiresOnline', {
+                            defaultValue: 'Dateianhänge wurden nicht hochgeladen, weil der Eintrag offline gespeichert wurde. Bitte füge sie nach der Synchronisierung erneut hinzu.',
+                        }),
+                });
+            }
+
             await refreshIntegrityBaseline({
                 itemIds: [targetItemId],
             });
 
+            clearSensitiveDialogState();
             onOpenChange(false);
             // Trigger data refresh without page reload
             onSave?.();
@@ -665,9 +750,16 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         });
     };
 
+    const handleDialogOpenChange = (nextOpen: boolean) => {
+        if (!nextOpen) {
+            clearSensitiveDialogState();
+        }
+        onOpenChange(nextOpen);
+    };
+
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
+            <Dialog open={open} onOpenChange={handleDialogOpenChange}>
                 <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>
@@ -721,7 +813,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     )}
 
                     <Form {...form}>
-                        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" autoComplete="off">
                             {/* Title */}
                             <FormField
                                 control={form.control}
@@ -730,7 +822,11 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                     <FormItem>
                                         <FormLabel>{t('vault.fields.title')}</FormLabel>
                                         <FormControl>
-                                            <Input placeholder={t('vault.fields.titlePlaceholder')} {...field} />
+                                            <Input
+                                                placeholder={t('vault.fields.titlePlaceholder')}
+                                                autoComplete="off"
+                                                {...field}
+                                            />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -751,6 +847,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                                     <Input
                                                         className="pl-10"
                                                         placeholder="example.com"
+                                                        autoComplete="off"
                                                         {...field}
                                                         onBlur={(e) => {
                                                             const val = e.target.value.trim();
@@ -777,7 +874,11 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                         <FormItem>
                                             <FormLabel>{t('vault.fields.username')}</FormLabel>
                                             <FormControl>
-                                                <Input placeholder={t('vault.fields.usernamePlaceholder')} {...field} />
+                                                <Input
+                                                    placeholder={t('vault.fields.usernamePlaceholder')}
+                                                    autoComplete="new-password"
+                                                    {...field}
+                                                />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
@@ -799,6 +900,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                                         <Input
                                                             type={showPassword ? 'text' : 'password'}
                                                             className="pr-10 font-mono"
+                                                            autoComplete="new-password"
                                                             {...field}
                                                             onFocus={vaultPasswordCheck.onFieldFocus}
                                                             onChange={(e) => {
@@ -869,6 +971,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                                     <Input
                                                         placeholder="JBSWY3DPEHPK3PXP"
                                                         className="font-mono"
+                                                        autoComplete="new-password"
                                                         {...field}
                                                         onChange={(event) => {
                                                             field.onChange(normalizeTOTPSecretInput(event.target.value));
@@ -892,11 +995,18 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                             )}
 
                             {/* File Attachments (Premium) */}
-                            {normalizedItemId && (() => {
-                                const FileAttachmentsComp = getExtension<{ vaultItemId: string }>('vault.file-attachments');
+                            {(() => {
+                                const FileAttachmentsComp = getExtension<VaultFileAttachmentsProps>('vault.file-attachments');
                                 return FileAttachmentsComp ? (
                                     <div className="pt-4">
-                                        <FileAttachmentsComp vaultItemId={normalizedItemId} />
+                                        <FileAttachmentsComp
+                                            vaultItemId={normalizedItemId}
+                                            pendingMode={!normalizedItemId}
+                                            onPendingFilesChange={setPendingAttachmentCount}
+                                            onPendingUploadReady={(uploadPending) => {
+                                                uploadPendingAttachmentsRef.current = uploadPending;
+                                            }}
+                                        />
                                     </div>
                                 ) : null;
                             })()}
@@ -912,6 +1022,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                             <Textarea
                                                 placeholder={t('vault.fields.notesPlaceholder')}
                                                 rows={3}
+                                                autoComplete="off"
                                                 {...field}
                                             />
                                         </FormControl>
