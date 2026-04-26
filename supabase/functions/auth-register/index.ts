@@ -117,7 +117,16 @@ async function handleRegistrationStart(
     }
 
     if (!isDecoy) {
-        await sendSignupOtp(email);
+        try {
+            await sendSignupOtp(email);
+        } catch (error) {
+            console.error("Failed to trigger signup OTP email:", error);
+            await rollbackRegistrationStart(userId, registrationId);
+            return new Response(JSON.stringify({ error: "Failed to send signup verification code" }), {
+                status: 502,
+                headers,
+            });
+        }
     }
 
     return new Response(JSON.stringify({
@@ -213,7 +222,24 @@ async function sendSignupOtp(email: string): Promise<void> {
     });
 
     if (error) {
-        console.error("Warning: Failed to trigger signup OTP email after OPAQUE registration:", error);
+        throw new Error(error.message || "Failed to trigger signup OTP email");
+    }
+}
+
+async function rollbackRegistrationStart(userId: string, registrationId: string): Promise<void> {
+    const [challengeCleanup, userCleanup] = await Promise.allSettled([
+        supabaseAdmin
+            .from("opaque_registration_challenges")
+            .delete()
+            .eq("id", registrationId),
+        supabaseAdmin.auth.admin.deleteUser(userId),
+    ]);
+
+    if (challengeCleanup.status === "rejected") {
+        console.error("Failed to delete signup registration challenge after OTP send failure:", challengeCleanup.reason);
+    }
+    if (userCleanup.status === "rejected") {
+        console.error("Failed to delete signup auth user after OTP send failure:", userCleanup.reason);
     }
 }
 
