@@ -52,7 +52,7 @@ vi.mock('@/contexts/AuthContext', () => ({
 
 vi.mock('@/services/offlineVaultService', () => ({
   loadVaultSnapshot: vi.fn().mockResolvedValue({
-    source: 'offline',
+    source: 'remote',
     snapshot: {
       vaultId: 'vault-1',
       categories: [],
@@ -155,7 +155,10 @@ describe('VaultItemList', () => {
     });
 
     expect(screen.queryByText('missing-title')).not.toBeInTheDocument();
-    expect(mockVerifyIntegrity).toHaveBeenCalled();
+    expect(mockVerifyIntegrity).toHaveBeenCalledWith(
+      expect.objectContaining({ vaultId: 'vault-1' }),
+      { source: 'remote' },
+    );
     expect(mockReportUnreadableItems).toHaveBeenCalledWith([
       expect.objectContaining({
         id: 'item-bad',

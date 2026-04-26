@@ -185,7 +185,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         if (!user || !open) return;
         try {
             const { snapshot, source } = await loadVaultSnapshot(user.id);
-            const integrityResult = await verifyIntegrity(snapshot);
+            const integrityResult = await verifyIntegrity(snapshot, { source });
             if (integrityResult?.mode === 'blocked') {
                 setCategories([]);
                 return;
