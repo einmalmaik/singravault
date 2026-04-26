@@ -1218,7 +1218,9 @@
     "deleted": "Attachment deleted",
     "deleteError": "Failed to delete attachment",
     "fileTooLarge": "File too large. Maximum: {{size}}",
-    "storageLimitReached": "Storage limit reached. Used: {{used}} / {{limit}}"
+    "storageLimitReached": "Storage limit reached. Used: {{used}} / {{limit}}",
+    "pendingUploadFailed": "{{count}} attachment(s) could not be uploaded. The entry was saved without those attachments.",
+    "pendingUploadRequiresOnline": "Attachments were not uploaded because the entry was saved offline. Please add them again after sync."
   },
   "categories": {
     "add": "Add Category",
