@@ -50,11 +50,11 @@
   "landing": {
     "hero": {
       "title": "Deine Passwörter.",
-      "titleHighlight": "Deine Kontrolle.",
-      "subtitle": "Der sichere Open-Source Passwortmanager mit Ende-zu-Ende-Verschlüsselung. Deine Daten gehören nur dir.",
+      "titleHighlight": "Nur für dich.",
+      "subtitle": "Open Source. Ende-zu-Ende verschlüsselt. Zero-Knowledge by design.",
       "cta": "Jetzt kostenlos starten",
       "ctaSecondary": "Mehr erfahren",
-      "description": "AES-256-GCM Verschlüsselung. Argon2id Schlüsselableitung. Zero-Knowledge Architektur. Deine Passwörter verlassen dein Gerät niemals unverschlüsselt."
+      "description": "Singra Vault schützt deine Tresor-Daten lokal auf deinem Gerät, bevor sie synchronisiert werden. Der App-Passwortlogin läuft über OPAQUE; OAuth bleibt ein separater Anmeldeweg."
     },
     "security": {
       "title": "Höchste Sicherheitsstandards",
@@ -463,7 +463,11 @@
     "success": "Erfolgreich angemeldet.",
     "login": {
       "title": "Willkommen zurück",
-      "subtitle": "Melde dich an, um auf deinen Tresor zuzugreifen",
+      "titleFirstVisit": "Willkommen bei Singra Vault",
+      "titleReturning": "Willkommen zurück",
+      "subtitle": "Melde dich an, um deinen Tresor zu öffnen.",
+      "subtitleFirstVisit": "Erstelle deinen sicheren Tresor oder melde dich an.",
+      "subtitleReturning": "Melde dich an, um deinen Tresor zu öffnen.",
       "email": "E-Mail",
       "password": "Passwort",
       "submit": "Anmelden",
@@ -510,7 +514,8 @@
     "providers": {
       "google": "Google",
       "discord": "Discord",
-      "github": "GitHub"
+      "github": "GitHub",
+      "lastUsed": "Zuletzt benutzt"
     },
     "errors": {
       "invalidCredentials": "Ungültige E-Mail oder Passwort",
@@ -524,6 +529,17 @@
       "passwordNoLowercase": "Mindestens ein Kleinbuchstabe erforderlich",
       "passwordNoDigit": "Mindestens eine Ziffer erforderlich",
       "passwordNoSymbol": "Mindestens ein Sonderzeichen erforderlich"
+    },
+    "errorCodes": {
+      "ACCOUNT_ALREADY_EXISTS": "Es existiert bereits ein Konto mit dieser E-Mail-Adresse.",
+      "OPAQUE_RECORD_CONFLICT": "Es existiert bereits ein Konto mit dieser E-Mail-Adresse.",
+      "OPAQUE_REGISTRATION_FAILED": "Die Registrierung ist fehlgeschlagen. Bitte versuche es erneut.",
+      "AUTH_EMAIL_ALREADY_IN_USE": "Es existiert bereits ein Konto mit dieser E-Mail-Adresse.",
+      "AUTH_INVALID_OR_EXPIRED_CODE": "Der Code ist ungültig oder abgelaufen.",
+      "TOO_MANY_ATTEMPTS": "Zu viele Versuche. Bitte warte kurz und versuche es erneut.",
+      "AUTH_REQUIRED": "Bitte melde dich erneut an.",
+      "FORBIDDEN": "Du hast keine Berechtigung für diese Aktion.",
+      "SERVER_ERROR": "Serverfehler. Bitte versuche es erneut."
     },
     "twoFactor": {
       "title": "Zwei-Faktor-Authentifizierung",
@@ -690,6 +706,14 @@
   },
   "settings": {
     "title": "Einstellungen",
+    "tabs": {
+      "general": "Allgemein",
+      "security": "Sicherheit",
+      "billingSupport": "Abo & Support",
+      "data": "Daten",
+      "dataLegal": "Daten & Rechtliches",
+      "sharingEmergency": "Freigabe & Notfall"
+    },
     "accountPage": {
       "title": "Konto-Einstellungen"
     },
@@ -716,7 +740,15 @@
       "deleteConfirm": "Konto endgültig löschen",
       "deleteSuccess": "Konto gelöscht",
       "deleteSuccessDesc": "Dein Konto und alle Daten wurden gelöscht.",
-      "deleteFailed": "Konto konnte nicht gelöscht werden."
+      "deleteFailed": "Konto konnte nicht gelöscht werden.",
+      "deleteVaultWarningTitle": "{{count}} Tresor-Einträge vorhanden",
+      "deleteVaultWarningDesc": "Exportiere deine Daten vor der Löschung, wenn du sie behalten möchtest. Die Kontolöschung ist unwiderruflich.",
+      "exportBeforeDelete": "Tresor vor Löschung exportieren",
+      "deleteTwoFactorLabel": "Zwei-Faktor-Code bestätigen",
+      "deleteTotpPlaceholder": "6-stelliger Authenticator-Code",
+      "deleteBackupCodePlaceholder": "Backup-Code",
+      "deleteUseBackupCode": "Backup-Code verwenden",
+      "deleteTwoFactorInvalid": "Der Zwei-Faktor-Code ist ungültig oder abgelaufen."
     },
     "password": {
       "title": "Passwort ändern",

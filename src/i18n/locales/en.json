@@ -50,11 +50,11 @@
   "landing": {
     "hero": {
       "title": "Your Passwords.",
-      "titleHighlight": "Your Control.",
-      "subtitle": "The secure open-source password manager with end-to-end encryption. Your data belongs only to you.",
+      "titleHighlight": "Only for you.",
+      "subtitle": "Open source. End-to-end encrypted. Zero-knowledge by design.",
       "cta": "Get started for free",
       "ctaSecondary": "Learn more",
-      "description": "AES-256-GCM encryption. Argon2id key derivation. Zero-knowledge architecture. Your passwords never leave your device unencrypted."
+      "description": "Singra Vault protects your vault data locally on your device before it is synchronized. App-password login uses OPAQUE; OAuth remains a separate sign-in path."
     },
     "security": {
       "title": "Highest Security Standards",
@@ -463,7 +463,11 @@
     "success": "Signed in successfully.",
     "login": {
       "title": "Welcome back",
-      "subtitle": "Sign in to access your vault",
+      "titleFirstVisit": "Welcome to Singra Vault",
+      "titleReturning": "Welcome back",
+      "subtitle": "Sign in to open your vault.",
+      "subtitleFirstVisit": "Create your secure vault or sign in.",
+      "subtitleReturning": "Sign in to open your vault.",
       "email": "Email",
       "password": "Password",
       "submit": "Sign in",
@@ -510,7 +514,8 @@
     "providers": {
       "google": "Google",
       "discord": "Discord",
-      "github": "GitHub"
+      "github": "GitHub",
+      "lastUsed": "Last used"
     },
     "errors": {
       "invalidCredentials": "Invalid email or password",
@@ -524,6 +529,17 @@
       "passwordNoLowercase": "At least one lowercase letter required",
       "passwordNoDigit": "At least one digit required",
       "passwordNoSymbol": "At least one special character required"
+    },
+    "errorCodes": {
+      "ACCOUNT_ALREADY_EXISTS": "An account with this email address already exists.",
+      "OPAQUE_RECORD_CONFLICT": "An account with this email address already exists.",
+      "OPAQUE_REGISTRATION_FAILED": "Registration failed. Please try again.",
+      "AUTH_EMAIL_ALREADY_IN_USE": "An account with this email address already exists.",
+      "AUTH_INVALID_OR_EXPIRED_CODE": "The code is invalid or expired.",
+      "TOO_MANY_ATTEMPTS": "Too many attempts. Please wait and try again.",
+      "AUTH_REQUIRED": "Please sign in again.",
+      "FORBIDDEN": "You do not have permission for this action.",
+      "SERVER_ERROR": "Server error. Please try again."
     },
     "twoFactor": {
       "title": "Two-Factor Authentication",
@@ -667,6 +683,14 @@
   },
   "settings": {
     "title": "Settings",
+    "tabs": {
+      "general": "General",
+      "security": "Security",
+      "billingSupport": "Billing & Support",
+      "data": "Data",
+      "dataLegal": "Data & Legal",
+      "sharingEmergency": "Sharing & Emergency"
+    },
     "accountPage": {
       "title": "Account Settings"
     },
@@ -693,7 +717,15 @@
       "deleteConfirm": "Delete Account Forever",
       "deleteSuccess": "Account Deleted",
       "deleteSuccessDesc": "Your account and all data have been deleted.",
-      "deleteFailed": "Failed to delete account."
+      "deleteFailed": "Failed to delete account.",
+      "deleteVaultWarningTitle": "{{count}} vault items found",
+      "deleteVaultWarningDesc": "Export your data before deletion if you want to keep it. Account deletion is irreversible.",
+      "exportBeforeDelete": "Export vault before deletion",
+      "deleteTwoFactorLabel": "Confirm two-factor code",
+      "deleteTotpPlaceholder": "6-digit authenticator code",
+      "deleteBackupCodePlaceholder": "Backup code",
+      "deleteUseBackupCode": "Use backup code",
+      "deleteTwoFactorInvalid": "The two-factor code is invalid or expired."
     },
     "password": {
       "title": "Change Password",

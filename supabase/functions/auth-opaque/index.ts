@@ -34,6 +34,7 @@ import {
     twoFactorFailureResponse,
     verifyTwoFactorServer,
 } from "../_shared/twoFactor.ts";
+import { AUTH_ERROR_CODES, isUniqueViolation, jsonError } from "../_shared/authErrors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -167,8 +168,15 @@ async function handleRegisterFinish(
         }, { onConflict: "user_id" });
 
     if (upsertError) {
-        console.error("Failed to store OPAQUE record:", upsertError);
-        return new Response(JSON.stringify({ error: "Failed to store record" }), { status: 500, headers });
+        console.error("Failed to store OPAQUE record:", sanitizeAuthError(upsertError));
+        return jsonError(
+            isUniqueViolation(upsertError)
+                ? AUTH_ERROR_CODES.OPAQUE_RECORD_CONFLICT
+                : AUTH_ERROR_CODES.OPAQUE_REGISTRATION_FAILED,
+            isUniqueViolation(upsertError) ? "Account already exists" : "Registration failed",
+            isUniqueViolation(upsertError) ? 409 : 500,
+            headers,
+        );
     }
 
     await Promise.all([
@@ -178,6 +186,19 @@ async function handleRegisterFinish(
     await disableGotruePasswordLogin(userId);
 
     return new Response(JSON.stringify({ success: true }), { status: 200, headers });
+}
+
+function sanitizeAuthError(error: unknown): Record<string, unknown> {
+    const candidate = error as { code?: unknown; message?: unknown; name?: unknown } | null;
+    return {
+        code: typeof candidate?.code === "string" ? candidate.code : undefined,
+        name: typeof candidate?.name === "string" ? candidate.name : undefined,
+        message: redactSensitiveLogText(typeof candidate?.message === "string" ? candidate.message : String(error)),
+    };
+}
+
+function redactSensitiveLogText(value: string): string {
+    return value.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]");
 }
 
 async function handleLoginStart(

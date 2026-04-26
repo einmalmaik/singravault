@@ -14,6 +14,7 @@ import {
     normalizeOpaqueIdentifier,
     sha256Hex,
 } from "../_shared/opaqueAuth.ts";
+import { AUTH_ERROR_CODES, jsonError } from "../_shared/authErrors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -161,8 +162,23 @@ async function handleOpaqueResetFinish(
     });
     const finishedReset = Array.isArray(finishResult) ? finishResult[0] : finishResult;
     if (finishError || !finishedReset) {
-        console.error("Failed to finish OPAQUE password reset atomically:", finishError);
-        return await invalidOpaqueResetAttemptResponse(resetRateLimit, Date.now(), headers, "Unauthorized");
+        console.error("Failed to finish OPAQUE password reset atomically:", sanitizeAuthError(finishError));
+        if (finishError?.message?.includes("OPAQUE_RECORD_CONFLICT")) {
+            return jsonError(
+                AUTH_ERROR_CODES.OPAQUE_RECORD_CONFLICT,
+                "Registration failed",
+                409,
+                headers,
+            );
+        }
+        return await invalidOpaqueResetAttemptResponse(
+            resetRateLimit,
+            Date.now(),
+            headers,
+            "Invalid or expired code",
+            401,
+            AUTH_ERROR_CODES.AUTH_INVALID_OR_EXPIRED_CODE,
+        );
     }
 
     const email = normalizeOpaqueIdentifier(finishedReset.email);
@@ -171,6 +187,19 @@ async function handleOpaqueResetFinish(
     await sendPasswordResetNotification(email);
 
     return new Response(JSON.stringify({ success: true }), { status: 200, headers });
+}
+
+function sanitizeAuthError(error: unknown): Record<string, unknown> {
+    const candidate = error as { code?: unknown; message?: unknown; name?: unknown } | null;
+    return {
+        code: typeof candidate?.code === "string" ? candidate.code : undefined,
+        name: typeof candidate?.name === "string" ? candidate.name : undefined,
+        message: redactSensitiveLogText(typeof candidate?.message === "string" ? candidate.message : String(error)),
+    };
+}
+
+function redactSensitiveLogText(value: string): string {
+    return value.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]");
 }
 
 async function findActiveResetChallenge(resetToken: string): Promise<{

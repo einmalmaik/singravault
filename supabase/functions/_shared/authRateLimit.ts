@@ -306,6 +306,7 @@ export function authRateLimitResponse(
 
   return new Response(JSON.stringify({
     error: state.error ?? "Too many attempts",
+    code: "TOO_MANY_ATTEMPTS",
     attemptsRemaining: state.attemptsRemaining,
     lockedUntil: state.lockedUntil,
   }), {

@@ -168,6 +168,25 @@ describe("AuthContext", () => {
             expect(result.current.authMode).toBe("offline");
             expect(mockSupabase.auth.onAuthStateChange).not.toHaveBeenCalled();
         });
+
+        it("does not keep the Tauri dev bypass after it is disabled by query param", async () => {
+            Object.defineProperty(window, "__TAURI_INTERNALS__", {
+                value: {},
+                configurable: true,
+            });
+            localStorage.setItem("singra:tauri-dev-auth-bypass", "1");
+            window.history.replaceState(null, "", "/?tauriDevAuth=0");
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.authMode).toBe("unauthenticated");
+            expect(localStorage.getItem("singra:tauri-dev-auth-bypass")).toBeNull();
+        });
     });
 
     // NOTE: signUp, signIn, signInWithOAuth were removed from AuthContext
@@ -214,6 +233,27 @@ describe("AuthContext", () => {
             );
 
             consoleError.mockRestore();
+        });
+
+        it("disables the Tauri dev bypass on explicit signOut", async () => {
+            Object.defineProperty(window, "__TAURI_INTERNALS__", {
+                value: {},
+                configurable: true,
+            });
+            window.history.replaceState(null, "", "/?tauriDevAuth=1");
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => expect(result.current.authMode).toBe("offline"));
+
+            await act(async () => {
+                await result.current.signOut();
+            });
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.authMode).toBe("unauthenticated");
+            expect(localStorage.getItem("singra:tauri-dev-auth-bypass")).toBeNull();
+            expect(mockSupabase.auth.signOut).not.toHaveBeenCalled();
         });
     });
 

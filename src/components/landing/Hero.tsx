@@ -54,7 +54,7 @@ export function Hero() {
               <h1 className="singra-hero-title singra-headline-serif text-balance text-5xl font-bold tracking-[-0.055em] text-foreground [text-shadow:0_0_42px_hsl(228_26%_3%_/_0.96),0_0_110px_hsl(228_26%_3%_/_0.82)] md:text-7xl lg:text-[5.75rem] lg:leading-[0.92]">
                 {t('landing.hero.title')}
                 <br />
-                <span className="text-gradient">Secure</span>
+                <span className="text-gradient">{t('landing.hero.titleHighlight')}</span>
               </h1>
               <p className="singra-hero-subtitle max-w-2xl text-lg font-medium leading-relaxed text-foreground/90 [text-shadow:0_0_22px_hsl(228_26%_3%_/_0.9),0_0_68px_hsl(228_26%_3%_/_0.72)] md:text-2xl lg:text-[1.9rem] lg:leading-[1.3]">
                 {t('landing.hero.subtitle')}

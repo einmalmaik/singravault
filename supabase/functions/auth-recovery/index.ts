@@ -19,6 +19,7 @@ import {
     twoFactorFailureResponse,
     verifyTwoFactorServer,
 } from "../_shared/twoFactor.ts";
+import { AUTH_ERROR_CODES } from "../_shared/authErrors.ts";
 
 type ResetPurpose = "forgot" | "change";
 
@@ -202,7 +203,10 @@ async function handleVerifyEmailCode(
     }
 
     if (!/^\d{8}$/.test(code)) {
-        return new Response(JSON.stringify({ error: "Invalid or expired code" }), {
+        return new Response(JSON.stringify({
+            error: "Invalid or expired code",
+            code: AUTH_ERROR_CODES.AUTH_INVALID_OR_EXPIRED_CODE,
+        }), {
             status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -228,6 +232,7 @@ async function handleVerifyEmailCode(
             startTime,
             corsHeaders,
             "Invalid or expired code",
+            AUTH_ERROR_CODES.AUTH_INVALID_OR_EXPIRED_CODE,
         );
     }
 
@@ -237,6 +242,7 @@ async function handleVerifyEmailCode(
             startTime,
             corsHeaders,
             "Invalid or expired code",
+            AUTH_ERROR_CODES.AUTH_INVALID_OR_EXPIRED_CODE,
         );
     }
 
@@ -636,6 +642,7 @@ async function invalidRecoveryAttemptResponse(
     startTime: number,
     corsHeaders: Record<string, string>,
     message: string,
+    code?: string,
 ): Promise<Response> {
     const failure = await recordAuthRateLimitFailure(rateLimitState);
     await delayUntilMinimum(startTime, VERIFY_MIN_RESPONSE_MS);
@@ -646,7 +653,7 @@ async function invalidRecoveryAttemptResponse(
         );
     }
 
-    return new Response(JSON.stringify({ error: message }), {
+    return new Response(JSON.stringify({ error: message, ...(code ? { code } : {}) }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

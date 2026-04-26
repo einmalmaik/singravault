@@ -31,3 +31,11 @@ export function isTauriDevAuthBypassEnabled(): boolean {
 
   return window.localStorage.getItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY) === '1';
 }
+
+export function disableTauriDevAuthBypass(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.removeItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY);
+}
