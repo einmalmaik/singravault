@@ -3,7 +3,7 @@
  *
  * Reads `ALLOWED_ORIGIN` from environment (comma-separated list) to restrict
  * cross-origin requests. Falls back to the production domain when the env var is unset.
- * Automatically allows localhost origins for development.
+ * Local development origins are opt-in only.
  *
  * Preview environments support two allow-list modes:
  * - `ALLOWED_PREVIEW_ORIGINS`: exact origin matches
@@ -17,7 +17,7 @@
  *   import { corsHeaders } from "../_shared/cors.ts";
  */
 
-import { FIRST_PARTY_DESKTOP_ORIGINS } from "./desktopOrigins.ts";
+import { FIRST_PARTY_DESKTOP_ORIGINS, FIRST_PARTY_LOCAL_DEV_ORIGINS } from "./desktopOrigins.ts";
 
 interface DenoRuntime {
     env?: {
@@ -48,6 +48,14 @@ const configuredDesktopOrigins = (readEnv("ALLOWED_DESKTOP_ORIGINS")
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(isConfiguredOriginSafe);
+const allowLocalDevOrigins = readEnv("ALLOW_LOCAL_DEV_ORIGINS")
+    .trim()
+    .toLowerCase() === "true";
+const configuredLocalDevOrigins = (readEnv("ALLOWED_DEV_ORIGINS")
+    || (allowLocalDevOrigins ? FIRST_PARTY_LOCAL_DEV_ORIGINS.join(",") : ""))
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(isConfiguredOriginSafe);
 const configuredPreviewOriginSuffixes = readEnv("ALLOWED_PREVIEW_ORIGIN_SUFFIXES")
     .split(",")
     .map((suffix) => normalizeHostnameSuffix(suffix))
@@ -56,11 +64,7 @@ const configuredPreviewOriginSuffixes = readEnv("ALLOWED_PREVIEW_ORIGIN_SUFFIXES
 function isAllowedOrigin(origin: string): boolean {
     if (productionOrigins.includes(origin)) return true;
     if (configuredDesktopOrigins.includes(origin)) return true;
-
-    // Fallback: Erlaube immer alle lokalen Entwicklungs-Server
-    if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
-        return true;
-    }
+    if (configuredLocalDevOrigins.includes(origin)) return true;
 
     // Preview-Umgebungen nur mit explizitem Opt-in erlauben.
     if (allowPreviewOrigins && (

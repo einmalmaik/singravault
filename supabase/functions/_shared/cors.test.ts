@@ -88,6 +88,76 @@ describe('core edge function CORS config', () => {
         expect(headers['Access-Control-Allow-Origin']).toBe('null');
     });
 
+    it('rejects localhost unless local development origins are explicitly enabled', async () => {
+        vi.stubGlobal('Deno', {
+            env: {
+                get(key: string) {
+                    switch (key) {
+                        case 'ALLOWED_ORIGIN':
+                            return 'https://singravault.mauntingstudios.de';
+                        default:
+                            return '';
+                    }
+                },
+            },
+        });
+
+        const { getCorsHeaders } = await import('./cors.ts');
+        const headers = getCorsHeaders(new Request('https://example.test', {
+            headers: { Origin: 'http://localhost:8080' },
+        }));
+
+        expect(headers['Access-Control-Allow-Origin']).toBe('null');
+    });
+
+    it('allows localhost only through the local development opt-in', async () => {
+        vi.stubGlobal('Deno', {
+            env: {
+                get(key: string) {
+                    switch (key) {
+                        case 'ALLOWED_ORIGIN':
+                            return 'https://singravault.mauntingstudios.de';
+                        case 'ALLOW_LOCAL_DEV_ORIGINS':
+                            return 'true';
+                        default:
+                            return '';
+                    }
+                },
+            },
+        });
+
+        const { getCorsHeaders } = await import('./cors.ts');
+        const headers = getCorsHeaders(new Request('https://example.test', {
+            headers: { Origin: 'http://localhost:8080' },
+        }));
+
+        expect(headers['Access-Control-Allow-Origin']).toBe('http://localhost:8080');
+    });
+
+    it('allows explicitly configured local development origins', async () => {
+        vi.stubGlobal('Deno', {
+            env: {
+                get(key: string) {
+                    switch (key) {
+                        case 'ALLOWED_ORIGIN':
+                            return 'https://singravault.mauntingstudios.de';
+                        case 'ALLOWED_DEV_ORIGINS':
+                            return 'http://localhost:5173';
+                        default:
+                            return '';
+                    }
+                },
+            },
+        });
+
+        const { getCorsHeaders } = await import('./cors.ts');
+        const headers = getCorsHeaders(new Request('https://example.test', {
+            headers: { Origin: 'http://localhost:5173' },
+        }));
+
+        expect(headers['Access-Control-Allow-Origin']).toBe('http://localhost:5173');
+    });
+
     it('allows configured Tauri desktop origins', async () => {
         vi.stubGlobal('Deno', {
             env: {

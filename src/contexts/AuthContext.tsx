@@ -19,7 +19,12 @@ import {
   persistAuthenticatedSession,
 } from "@/services/authSessionManager";
 import { isTauriRuntime } from "@/platform/runtime";
-import { isTauriDevAuthBypassEnabled, TAURI_DEV_USER_EMAIL, TAURI_DEV_USER_ID } from "@/platform/tauriDevMode";
+import {
+  disableTauriDevAuthBypass,
+  isTauriDevAuthBypassEnabled,
+  TAURI_DEV_USER_EMAIL,
+  TAURI_DEV_USER_ID,
+} from "@/platform/tauriDevMode";
 import { runtimeConfig } from "@/config/runtimeConfig";
 
 interface AuthContextType {
@@ -125,8 +130,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     if (isTauriDevAuthBypassEnabled()) {
-      const devSession = createTauriDevSession();
-      applySessionState(devSession, devSession.user, "offline");
+      disableTauriDevAuthBypass();
+      applySessionState(null, null, "unauthenticated");
       return;
     }
 

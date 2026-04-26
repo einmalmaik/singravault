@@ -6,9 +6,9 @@
  * Displays account information and actions (logout, delete account)
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { User, LogOut, Trash2, Loader2, Mail } from 'lucide-react';
+import { User, LogOut, Trash2, Loader2, Mail, Download, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,7 +17,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
     AlertDialog,
-    AlertDialogAction,
     AlertDialogCancel,
     AlertDialogContent,
     AlertDialogDescription,
@@ -28,20 +27,77 @@ import {
 import { SensitiveActionReauthDialog } from '@/components/security/SensitiveActionReauthDialog';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { deleteDeviceKey } from '@/services/deviceKeyService';
+import { clearIntegrityBaseline } from '@/services/vaultIntegrityService';
 import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthService';
+import { clearOfflineVaultData } from '@/services/offlineVaultService';
+import { saveExportFile } from '@/services/exportFileService';
+import { buildVaultExportPayload } from '@/services/vaultExportService';
+import { verifyTwoFactorChallenge } from '@/services/twoFactorService';
+import { clearLastOAuthProvider } from '@/services/socialLoginPreferenceService';
+
+const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
 export function AccountSettings() {
     const { t } = useTranslation();
     const { user, signOut } = useAuth();
+    const { decryptItem, isLocked } = useVault();
     const { toast } = useToast();
     const navigate = useNavigate();
 
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [showReauthDialog, setShowReauthDialog] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState('');
+    const [twoFactorCode, setTwoFactorCode] = useState('');
+    const [useBackupCode, setUseBackupCode] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
+    const [isLoadingDeleteContext, setIsLoadingDeleteContext] = useState(false);
+    const [vaultItemCount, setVaultItemCount] = useState(0);
+    const [accountTwoFactorEnabled, setAccountTwoFactorEnabled] = useState(false);
+
+    useEffect(() => {
+        if (!showDeleteDialog || !user) {
+            return;
+        }
+
+        let active = true;
+        setIsLoadingDeleteContext(true);
+
+        Promise.all([
+            supabase
+                .from('vault_items')
+                .select('id', { count: 'exact', head: true })
+                .eq('user_id', user.id),
+            supabase
+                .from('user_2fa')
+                .select('is_enabled')
+                .eq('user_id', user.id)
+                .maybeSingle(),
+        ])
+            .then(([itemsResult, twoFactorResult]) => {
+                if (!active) return;
+                setVaultItemCount(itemsResult.count ?? 0);
+                setAccountTwoFactorEnabled(Boolean(twoFactorResult.data?.is_enabled));
+            })
+            .catch(() => {
+                if (!active) return;
+                setVaultItemCount(0);
+                setAccountTwoFactorEnabled(true);
+            })
+            .finally(() => {
+                if (active) {
+                    setIsLoadingDeleteContext(false);
+                }
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [showDeleteDialog, user]);
 
     const handleLogout = async () => {
         await signOut();
@@ -55,8 +111,27 @@ export function AccountSettings() {
                 throw new Error('No authenticated user');
             }
 
-            // Delete auth user server-side. Related app data is removed via ON DELETE CASCADE.
-            const { data, error: deleteError } = await supabase.rpc('delete_my_account');
+            let twoFactorChallengeId: string | null = null;
+            if (accountTwoFactorEnabled) {
+                const verification = await verifyTwoFactorChallenge({
+                    context: 'critical_action',
+                    code: twoFactorCode,
+                    method: useBackupCode ? 'backup_code' : 'totp',
+                });
+                if (!verification.success || !verification.challengeId) {
+                    toast({
+                        variant: 'destructive',
+                        title: t('common.error'),
+                        description: t('settings.account.deleteTwoFactorInvalid'),
+                    });
+                    return false;
+                }
+                twoFactorChallengeId = verification.challengeId;
+            }
+
+            const { data, error: deleteError } = await supabase.rpc('delete_my_account', {
+                p_two_factor_challenge_id: twoFactorChallengeId,
+            });
             if (deleteError) {
                 if (typeof deleteError.message === 'string' && deleteError.message.includes('REAUTH_REQUIRED')) {
                     toast({
@@ -74,6 +149,12 @@ export function AccountSettings() {
 
             // Clear local client artifacts tied to the deleted account.
             localStorage.removeItem(`singra_verify_${user.id}`);
+            await Promise.allSettled([
+                clearOfflineVaultData(user.id),
+                clearIntegrityBaseline(user.id),
+                deleteDeviceKey(user.id),
+            ]);
+            clearLastOAuthProvider();
 
             // Best effort sign-out after account deletion.
             await signOut().catch(() => undefined);
@@ -96,6 +177,8 @@ export function AccountSettings() {
             setIsDeleting(false);
             setShowDeleteDialog(false);
             setDeleteConfirmation('');
+            setTwoFactorCode('');
+            setUseBackupCode(false);
         }
     };
 
@@ -110,6 +193,60 @@ export function AccountSettings() {
         }
 
         await executeDeleteAccount();
+    };
+
+    const handleExportBeforeDelete = async () => {
+        if (!user || isLocked) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('settings.data.unlockRequired'),
+            });
+            return;
+        }
+
+        setIsExporting(true);
+        try {
+            const { data: items, error } = await supabase
+                .from('vault_items')
+                .select('*')
+                .eq('user_id', user.id);
+
+            if (error || !items) {
+                throw error ?? new Error('Failed to fetch items');
+            }
+
+            const exportData = await buildVaultExportPayload(
+                items.map((item) => ({
+                    ...item,
+                    title: item.title || ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
+                    item_type: item.item_type || 'password',
+                    encrypted_data: item.encrypted_data || '',
+                })),
+                decryptItem,
+            );
+
+            const saved = await saveExportFile({
+                name: `singra-vault-export-before-delete-${new Date().toISOString().split('T')[0]}.json`,
+                mime: 'application/json',
+                content: JSON.stringify(exportData, null, 2),
+            });
+
+            if (saved) {
+                toast({
+                    title: t('common.success'),
+                    description: t('settings.data.exportSuccess', { count: exportData.itemCount }),
+                });
+            }
+        } catch {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('settings.data.exportFailed'),
+            });
+        } finally {
+            setIsExporting(false);
+        }
     };
 
     return (
@@ -168,8 +305,64 @@ export function AccountSettings() {
                         <AlertDialogTitle className="text-destructive">
                             {t('settings.account.deleteConfirmTitle')}
                         </AlertDialogTitle>
-                        <AlertDialogDescription className="space-y-4">
-                            <p>{t('settings.account.deleteConfirmDesc')}</p>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-4 text-sm text-muted-foreground">
+                                <p>{t('settings.account.deleteConfirmDesc')}</p>
+                                {isLoadingDeleteContext && (
+                                    <p>{t('common.loading')}</p>
+                                )}
+                                {vaultItemCount > 0 && (
+                                    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+                                        <div className="flex items-start gap-2">
+                                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                                            <div className="space-y-2">
+                                                <p className="font-medium">
+                                                    {t('settings.account.deleteVaultWarningTitle', { count: vaultItemCount })}
+                                                </p>
+                                                <p>{t('settings.account.deleteVaultWarningDesc')}</p>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={handleExportBeforeDelete}
+                                                    disabled={isExporting || isLocked}
+                                                    className="gap-2"
+                                                >
+                                                    {isExporting ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <Download className="h-4 w-4" />
+                                                    )}
+                                                    {t('settings.account.exportBeforeDelete')}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                {accountTwoFactorEnabled && (
+                                    <div className="space-y-2">
+                                        <Label className="flex items-center gap-2">
+                                            <ShieldCheck className="h-4 w-4" />
+                                            {t('settings.account.deleteTwoFactorLabel')}
+                                        </Label>
+                                        <Input
+                                            value={twoFactorCode}
+                                            onChange={(e) => setTwoFactorCode(e.target.value)}
+                                            placeholder={useBackupCode
+                                                ? t('settings.account.deleteBackupCodePlaceholder')
+                                                : t('settings.account.deleteTotpPlaceholder')}
+                                            autoComplete="one-time-code"
+                                        />
+                                        <label className="flex items-center gap-2 text-xs">
+                                            <input
+                                                type="checkbox"
+                                                checked={useBackupCode}
+                                                onChange={(event) => setUseBackupCode(event.target.checked)}
+                                            />
+                                            {t('settings.account.deleteUseBackupCode')}
+                                        </label>
+                                    </div>
+                                )}
                             <div className="space-y-2">
                                 <Label>
                                     {t('settings.account.deleteConfirmInput')}
@@ -180,20 +373,27 @@ export function AccountSettings() {
                                     placeholder="DELETE"
                                 />
                             </div>
+                            </div>
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                         <AlertDialogCancel onClick={() => setDeleteConfirmation('')}>
                             {t('common.cancel')}
                         </AlertDialogCancel>
-                        <AlertDialogAction
+                        <Button
+                            type="button"
                             onClick={handleDeleteAccount}
-                            disabled={deleteConfirmation.trim().toUpperCase() !== 'DELETE' || isDeleting}
+                            disabled={
+                                deleteConfirmation.trim().toUpperCase() !== 'DELETE'
+                                || isDeleting
+                                || isLoadingDeleteContext
+                                || (accountTwoFactorEnabled && !twoFactorCode.trim())
+                            }
                             className="bg-destructive hover:bg-destructive/90"
                         >
                             {isDeleting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                             {t('settings.account.deleteConfirm')}
-                        </AlertDialogAction>
+                        </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>

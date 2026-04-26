@@ -27,6 +27,7 @@ export type TwoFactorContext =
     | 'account_security_change'
     | 'vault_unlock'
     | 'password_reset'
+    | 'critical_action'
     | 'disable_2fa';
 
 export type TwoFactorVerificationMethod = 'totp' | 'backup_code';
@@ -734,49 +735,9 @@ export async function verifyTwoFactorCode(input: {
         return { success: false, error: 'Invalid verification code.' };
     }
 
-    if (input.context === 'vault_unlock' || input.context === 'disable_2fa') {
-        try {
-            const challenge = await invokeAuth2FA<{
-                required?: boolean;
-                challengeId?: string;
-                error?: string;
-            }>({
-                action: 'create-challenge',
-                context: input.context,
-            });
-
-            if (challenge.error) {
-                return { success: false, error: challenge.error.message || 'Invalid verification code.' };
-            }
-
-            if (challenge.data?.required === false) {
-                return { success: true };
-            }
-
-            const challengeId = challenge.data?.challengeId;
-            if (!challengeId) {
-                return { success: false, error: 'Invalid verification code.' };
-            }
-
-            const verified = await invokeAuth2FA<{ success?: boolean; verified?: boolean; error?: string }>({
-                action: 'verify-challenge',
-                context: input.context,
-                challengeId,
-                code: normalizedCode,
-                method: input.method,
-            });
-
-            if (verified.error || !verified.data?.success || !verified.data?.verified) {
-                return {
-                    success: false,
-                    error: verified.data?.error || verified.error?.message || 'Invalid verification code.',
-                };
-            }
-
-            return { success: true };
-        } catch {
-            return { success: false, error: 'Invalid verification code.' };
-        }
+    if (input.context === 'vault_unlock' || input.context === 'disable_2fa' || input.context === 'critical_action') {
+        const result = await verifyTwoFactorChallenge(input);
+        return { success: result.success, error: result.error };
     }
 
     if (input.method === 'backup_code') {
@@ -805,4 +766,58 @@ export async function verifyTwoFactorCode(input: {
     }
 
     return { success: isValid };
+}
+
+export async function verifyTwoFactorChallenge(input: {
+    context: TwoFactorContext;
+    code: string;
+    method: TwoFactorVerificationMethod;
+}): Promise<{ success: boolean; challengeId?: string; error?: string }> {
+    const normalizedCode = input.code.trim();
+    if (!normalizedCode) {
+        return { success: false, error: 'Invalid verification code.' };
+    }
+
+    try {
+        const challenge = await invokeAuth2FA<{
+            required?: boolean;
+            challengeId?: string;
+            error?: string;
+        }>({
+            action: 'create-challenge',
+            context: input.context,
+        });
+
+        if (challenge.error) {
+            return { success: false, error: challenge.error.message || 'Invalid verification code.' };
+        }
+
+        if (challenge.data?.required === false) {
+            return { success: true };
+        }
+
+        const challengeId = challenge.data?.challengeId;
+        if (!challengeId) {
+            return { success: false, error: 'Invalid verification code.' };
+        }
+
+        const verified = await invokeAuth2FA<{ success?: boolean; verified?: boolean; error?: string }>({
+            action: 'verify-challenge',
+            context: input.context,
+            challengeId,
+            code: normalizedCode,
+            method: input.method,
+        });
+
+        if (verified.error || !verified.data?.success || !verified.data?.verified) {
+            return {
+                success: false,
+                error: verified.data?.error || verified.error?.message || 'Invalid verification code.',
+            };
+        }
+
+        return { success: true, challengeId };
+    } catch {
+        return { success: false, error: 'Invalid verification code.' };
+    }
 }

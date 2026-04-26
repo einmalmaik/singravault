@@ -12,6 +12,7 @@ import {
     isValidOpaqueIdentifier,
     normalizeOpaqueIdentifier,
 } from "../_shared/opaqueAuth.ts";
+import { AUTH_ERROR_CODES, isUniqueViolation, jsonError } from "../_shared/authErrors.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -89,8 +90,53 @@ async function handleRegistrationStart(
         ? existingUsers[0].id as string
         : null;
 
-    const userId = existingUserId ?? await createOpaqueOnlyUser(email);
-    const isDecoy = Boolean(existingUserId);
+    if (existingUserId) {
+        return jsonError(
+            AUTH_ERROR_CODES.ACCOUNT_ALREADY_EXISTS,
+            "Account already exists",
+            409,
+            headers,
+        );
+    }
+
+    const { data: existingOpaqueRecord, error: opaqueLookupError } = await supabaseAdmin
+        .from("user_opaque_records")
+        .select("user_id")
+        .eq("opaque_identifier", email)
+        .maybeSingle();
+    if (opaqueLookupError) {
+        console.error("Failed to check OPAQUE registration identifier:", sanitizeAuthError(opaqueLookupError));
+        return jsonError(
+            AUTH_ERROR_CODES.OPAQUE_REGISTRATION_FAILED,
+            "Registration failed",
+            500,
+            headers,
+        );
+    }
+    if (existingOpaqueRecord) {
+        return jsonError(
+            AUTH_ERROR_CODES.OPAQUE_RECORD_CONFLICT,
+            "Account already exists",
+            409,
+            headers,
+        );
+    }
+
+    let userId: string;
+    try {
+        userId = await createOpaqueOnlyUser(email);
+    } catch (error) {
+        console.error("Failed to create OPAQUE-only auth user:", sanitizeAuthError(error));
+        return jsonError(
+            isUniqueViolation(error)
+                ? AUTH_ERROR_CODES.AUTH_EMAIL_ALREADY_IN_USE
+                : AUTH_ERROR_CODES.OPAQUE_REGISTRATION_FAILED,
+            isUniqueViolation(error) ? "Account already exists" : "Registration failed",
+            isUniqueViolation(error) ? 409 : 500,
+            headers,
+        );
+    }
+
     const registrationResponse = opaque.server.createRegistrationResponse({
         serverSetup: OPAQUE_SERVER_SETUP,
         userIdentifier: email,
@@ -103,30 +149,28 @@ async function handleRegistrationStart(
         .from("opaque_registration_challenges")
         .insert({
             id: registrationId,
-            user_id: isDecoy ? null : userId,
+            user_id: userId,
             email,
-            purpose: isDecoy ? "signup-decoy" : "signup",
+            purpose: "signup",
             expires_at: expiresAt,
         });
 
     if (challengeError) {
-        if (!isDecoy) {
-            await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => undefined);
-        }
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => undefined);
         throw challengeError;
     }
 
-    if (!isDecoy) {
-        try {
-            await sendSignupOtp(email);
-        } catch (error) {
-            console.error("Failed to trigger signup OTP email:", error);
-            await rollbackRegistrationStart(userId, registrationId);
-            return new Response(JSON.stringify({ error: "Failed to send signup verification code" }), {
-                status: 502,
-                headers,
-            });
-        }
+    try {
+        await sendSignupOtp(email);
+    } catch (error) {
+        console.error("Failed to send signup verification code:", sanitizeAuthError(error));
+        await rollbackRegistrationStart(userId, registrationId);
+        return jsonError(
+            AUTH_ERROR_CODES.OPAQUE_REGISTRATION_FAILED,
+            "Registration failed",
+            502,
+            headers,
+        );
     }
 
     return new Response(JSON.stringify({
@@ -160,11 +204,12 @@ async function handleRegistrationFinish(
         .maybeSingle();
 
     if (consumeError || !consumedChallenge) {
-        return new Response(JSON.stringify({ error: "Invalid or expired registration" }), { status: 401, headers });
-    }
-
-    if (!consumedChallenge.user_id) {
-        return new Response(JSON.stringify({ success: true }), { status: 200, headers });
+        return jsonError(
+            AUTH_ERROR_CODES.AUTH_INVALID_OR_EXPIRED_CODE,
+            "Invalid or expired code",
+            401,
+            headers,
+        );
     }
 
     const userId = consumedChallenge.user_id as string;
@@ -178,9 +223,16 @@ async function handleRegistrationFinish(
         }, { onConflict: "user_id" });
 
     if (upsertError) {
-        console.error("Failed to store OPAQUE registration record:", upsertError);
+        console.error("Failed to store OPAQUE registration record:", sanitizeAuthError(upsertError));
         await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => undefined);
-        return new Response(JSON.stringify({ error: "Failed to persist OPAQUE registration" }), { status: 500, headers });
+        return jsonError(
+            isUniqueViolation(upsertError)
+                ? AUTH_ERROR_CODES.OPAQUE_RECORD_CONFLICT
+                : AUTH_ERROR_CODES.OPAQUE_REGISTRATION_FAILED,
+            isUniqueViolation(upsertError) ? "Account already exists" : "Registration failed",
+            isUniqueViolation(upsertError) ? 409 : 500,
+            headers,
+        );
     }
 
     await Promise.all([
@@ -190,6 +242,19 @@ async function handleRegistrationFinish(
     await disableGotruePasswordLogin(userId);
 
     return new Response(JSON.stringify({ success: true }), { status: 200, headers });
+}
+
+function sanitizeAuthError(error: unknown): Record<string, unknown> {
+    const candidate = error as { code?: unknown; message?: unknown; name?: unknown } | null;
+    return {
+        code: typeof candidate?.code === "string" ? candidate.code : undefined,
+        name: typeof candidate?.name === "string" ? candidate.name : undefined,
+        message: redactSensitiveLogText(typeof candidate?.message === "string" ? candidate.message : String(error)),
+    };
+}
+
+function redactSensitiveLogText(value: string): string {
+    return value.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]");
 }
 
 async function createOpaqueOnlyUser(email: string): Promise<string> {
