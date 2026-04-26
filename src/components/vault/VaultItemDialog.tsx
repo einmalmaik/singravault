@@ -169,7 +169,7 @@ export function buildVaultItemPayloadForEncryption(
 ): VaultItemData {
     const itemData: VaultItemData = {
         title: data.title,
-        websiteUrl: normalizeUrl(data.url) || undefined,
+        websiteUrl: itemType === 'note' ? undefined : normalizeUrl(data.url) || undefined,
         itemType,
         isFavorite: data.isFavorite,
         categoryId: sanitizeOptionalUuid(selectedCategoryId),

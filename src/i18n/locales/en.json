@@ -838,7 +838,7 @@
       "title": "Data",
       "description": "Export or import your vault data.",
       "export": "Export Data",
-      "exportDesc": "Exports your vault entries as an unencrypted JSON file. Includes Authenticator secrets when those entries exist.",
+      "exportDesc": "Exports your vault entries as an unencrypted JSON file. Includes passwords, notes, and Authenticator secrets when those entries exist.",
       "exportButton": "Export unencrypted JSON",
       "exportSuccess": "{{count}} entries exported successfully.",
       "exportFailed": "Export failed.",

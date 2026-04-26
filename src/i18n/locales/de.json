@@ -861,7 +861,7 @@
       "title": "Daten",
       "description": "Exportiere oder importiere deine Tresor-Daten.",
       "export": "Daten exportieren",
-      "exportDesc": "Exportiert deine Tresor-Einträge als unverschlüsselte JSON-Datei. Enthält auch Authenticator-Secrets, falls solche Einträge vorhanden sind.",
+      "exportDesc": "Exportiert deine Tresor-Einträge als unverschlüsselte JSON-Datei. Enthält Passwörter, Notizen und Authenticator-Secrets, falls solche Einträge vorhanden sind.",
       "exportButton": "Unverschlüsseltes JSON exportieren",
       "exportSuccess": "{{count}} Einträge erfolgreich exportiert.",
       "exportFailed": "Export fehlgeschlagen.",
