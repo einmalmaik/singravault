@@ -12,6 +12,7 @@ import {
     hybridDecrypt,
     hybridWrapKey,
     hybridUnwrapKey,
+    buildSharedKeyWrapAad,
     isHybridEncrypted,
     isCurrentStandardEncrypted,
     migrateToHybrid,
@@ -302,6 +303,12 @@ describe('pqCryptoService', () => {
     describe('hybridWrapKey / hybridUnwrapKey', () => {
         it('should wrap and unwrap shared AES key', async () => {
             const hybridKeys = await generateHybridKeyPair();
+            const aad = buildSharedKeyWrapAad({
+                collectionId: 'col-abc-123',
+                senderUserId: 'user-owner',
+                recipientUserId: 'user-member',
+                keyVersion: 1,
+            });
             
             // Generate a mock shared AES key
             const mockSharedKey = JSON.stringify({
@@ -313,7 +320,8 @@ describe('pqCryptoService', () => {
             const wrapped = await hybridWrapKey(
                 mockSharedKey,
                 hybridKeys.pqPublicKey,
-                hybridKeys.rsaPublicKey
+                hybridKeys.rsaPublicKey,
+                aad
             );
             
             expect(wrapped).toBeDefined();
@@ -321,7 +329,8 @@ describe('pqCryptoService', () => {
             const unwrapped = await hybridUnwrapKey(
                 wrapped,
                 hybridKeys.pqSecretKey,
-                hybridKeys.rsaPrivateKey
+                hybridKeys.rsaPrivateKey,
+                aad
             );
             
             expect(unwrapped).toBe(mockSharedKey);
@@ -334,23 +343,114 @@ describe('pqCryptoService', () => {
                 k: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
                 alg: 'A256GCM',
             });
-            const collectionId = 'col-abc-123';
+            const aad = buildSharedKeyWrapAad({
+                collectionId: 'col-abc-123',
+                senderUserId: 'user-owner',
+                recipientUserId: 'user-member',
+                keyVersion: 2,
+            });
 
             const wrapped = await hybridWrapKey(
                 mockSharedKey,
                 hybridKeys.pqPublicKey,
                 hybridKeys.rsaPublicKey,
-                collectionId
+                aad
             );
 
             const unwrapped = await hybridUnwrapKey(
                 wrapped,
                 hybridKeys.pqSecretKey,
                 hybridKeys.rsaPrivateKey,
-                collectionId
+                aad
             );
 
             expect(unwrapped).toBe(mockSharedKey);
+        });
+
+        it('should reject wrapped-key operations without AAD', async () => {
+            const hybridKeys = await generateHybridKeyPair();
+            const mockSharedKey = JSON.stringify({
+                kty: 'oct',
+                k: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                alg: 'A256GCM',
+            });
+
+            await expect(hybridWrapKey(
+                mockSharedKey,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                ''
+            )).rejects.toThrow('hybridWrapKey requires non-empty AAD');
+        });
+
+        it('should fail unwrap when collection context changes', async () => {
+            const hybridKeys = await generateHybridKeyPair();
+            const mockSharedKey = JSON.stringify({
+                kty: 'oct',
+                k: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                alg: 'A256GCM',
+            });
+            const aad = buildSharedKeyWrapAad({
+                collectionId: 'col-a',
+                senderUserId: 'user-owner',
+                recipientUserId: 'user-member',
+                keyVersion: 1,
+            });
+            const wrongCollectionAad = buildSharedKeyWrapAad({
+                collectionId: 'col-b',
+                senderUserId: 'user-owner',
+                recipientUserId: 'user-member',
+                keyVersion: 1,
+            });
+
+            const wrapped = await hybridWrapKey(
+                mockSharedKey,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                aad
+            );
+
+            await expect(hybridUnwrapKey(
+                wrapped,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey,
+                wrongCollectionAad
+            )).rejects.toThrow();
+        });
+
+        it('should fail unwrap when recipient context changes', async () => {
+            const hybridKeys = await generateHybridKeyPair();
+            const mockSharedKey = JSON.stringify({
+                kty: 'oct',
+                k: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                alg: 'A256GCM',
+            });
+            const aad = buildSharedKeyWrapAad({
+                collectionId: 'col-a',
+                senderUserId: 'user-owner',
+                recipientUserId: 'user-member-a',
+                keyVersion: 1,
+            });
+            const wrongRecipientAad = buildSharedKeyWrapAad({
+                collectionId: 'col-a',
+                senderUserId: 'user-owner',
+                recipientUserId: 'user-member-b',
+                keyVersion: 1,
+            });
+
+            const wrapped = await hybridWrapKey(
+                mockSharedKey,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                aad
+            );
+
+            await expect(hybridUnwrapKey(
+                wrapped,
+                hybridKeys.pqSecretKey,
+                hybridKeys.rsaPrivateKey,
+                wrongRecipientAad
+            )).rejects.toThrow();
         });
     });
 
@@ -436,6 +536,40 @@ describe('pqCryptoService', () => {
             
             // Should return same ciphertext since it's already v4
             expect(migrated).toBe(ciphertext);
+        });
+
+        it('should verify AAD before returning already-v4 data unchanged', async () => {
+            const hybridKeys = await generateHybridKeyPair();
+            const aad = buildSharedKeyWrapAad({
+                collectionId: 'col-a',
+                senderUserId: 'user-owner',
+                recipientUserId: 'user-member',
+                keyVersion: 1,
+            });
+            const ciphertext = await hybridEncrypt(
+                'test',
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                aad
+            );
+
+            await expect(migrateToHybrid(
+                ciphertext,
+                hybridKeys.rsaPrivateKey,
+                hybridKeys.pqSecretKey,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                `${aad}:wrong`
+            )).rejects.toThrow();
+
+            await expect(migrateToHybrid(
+                ciphertext,
+                hybridKeys.rsaPrivateKey,
+                hybridKeys.pqSecretKey,
+                hybridKeys.pqPublicKey,
+                hybridKeys.rsaPublicKey,
+                aad
+            )).resolves.toBe(ciphertext);
         });
     });
 

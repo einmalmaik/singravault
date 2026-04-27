@@ -5,8 +5,20 @@ const migrationSource = readFileSync(
   'supabase/migrations/20260423193000_harden_vault_reset_recovery.sql',
   'utf-8',
 );
+const reservedMigrationSource = readFileSync(
+  'supabase/migrations/20260423120000_reset_user_vault_state_rpc.sql',
+  'utf-8',
+);
 
 describe('vault reset RPC contract', () => {
+  it('keeps the earlier no-argument reset migration non-destructive and ungranted', () => {
+    expect(reservedMigrationSource).toContain("RAISE EXCEPTION 'RESET_REQUIRES_HARDENED_MIGRATION';");
+    expect(reservedMigrationSource).toContain('REVOKE ALL ON FUNCTION public.reset_user_vault_state() FROM authenticated;');
+    expect(reservedMigrationSource).not.toContain('GRANT EXECUTE ON FUNCTION public.reset_user_vault_state() TO authenticated');
+    expect(reservedMigrationSource).not.toContain('DELETE FROM public.vault_items');
+    expect(reservedMigrationSource).not.toContain('DELETE FROM storage.objects');
+  });
+
   it('requires fresh reauthentication before issuing a reset challenge', () => {
     expect(migrationSource).toContain('CREATE OR REPLACE FUNCTION public.require_recent_reauthentication');
     expect(migrationSource).toContain("_iat_text := _jwt ->> 'iat';");

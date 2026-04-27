@@ -66,6 +66,21 @@ const HYBRID_KDF_INFO_PREFIX = new TextEncoder().encode('Singra Vault-HybridKDF-
 /** HKDF info string for standard-compliant hybrid key combination (v2) */
 const HYBRID_KDF_INFO_V2 = new TextEncoder().encode('Singra Vault-HybridKDF-v2:');
 
+export interface SharedKeyWrapAadInput {
+    collectionId: string;
+    senderUserId: string;
+    recipientUserId: string;
+    keyVersion: string | number;
+}
+
+export function buildSharedKeyWrapAad(input: SharedKeyWrapAadInput): string {
+    const collectionId = requireNonEmptyAadPart(input.collectionId, 'collectionId');
+    const senderUserId = requireNonEmptyAadPart(input.senderUserId, 'senderUserId');
+    const recipientUserId = requireNonEmptyAadPart(input.recipientUserId, 'recipientUserId');
+    const keyVersion = requireNonEmptyAadPart(String(input.keyVersion), 'keyVersion');
+    return `sv:shared-key:v1:${collectionId}:${senderUserId}:${recipientUserId}:${keyVersion}`;
+}
+
 // ============ Key Generation ============
 
 /**
@@ -283,9 +298,9 @@ export async function hybridWrapKey(
     sharedKeyJwk: string,
     pqPublicKey: string,
     rsaPublicKey: string,
-    aad?: string
+    aad: string
 ): Promise<string> {
-    return hybridEncrypt(sharedKeyJwk, pqPublicKey, rsaPublicKey, aad);
+    return hybridEncrypt(sharedKeyJwk, pqPublicKey, rsaPublicKey, requireAad(aad, 'hybridWrapKey'));
 }
 
 /**
@@ -301,9 +316,9 @@ export async function hybridUnwrapKey(
     wrappedKey: string,
     pqSecretKey: string,
     rsaPrivateKey: string,
-    aad?: string
+    aad: string
 ): Promise<string> {
-    return hybridDecrypt(wrappedKey, pqSecretKey, rsaPrivateKey, aad);
+    return hybridDecrypt(wrappedKey, pqSecretKey, rsaPrivateKey, requireAad(aad, 'hybridUnwrapKey'));
 }
 
 // ============ Migration Helpers ============
@@ -364,13 +379,26 @@ export async function migrateToHybrid(
     rsaPrivateKey: string,
     pqSecretKey: string | null,
     pqPublicKey: string,
-    rsaPublicKey: string
+    rsaPublicKey: string,
+    aad?: string,
 ): Promise<string> {
     const combined = base64ToUint8Array(legacyCiphertext);
     const version = combined[0];
 
     // Already current standard — no migration needed
     if (version === VERSION_HYBRID_STANDARD_V2) {
+        if (aad) {
+            if (!pqSecretKey) {
+                throw new Error('PQ secret key is required to verify current hybrid ciphertext AAD.');
+            }
+            await decryptHybridCiphertext(
+                legacyCiphertext,
+                pqSecretKey,
+                rsaPrivateKey,
+                false,
+                aad,
+            );
+        }
         return legacyCiphertext;
     }
 
@@ -386,6 +414,7 @@ export async function migrateToHybrid(
             pqSecretKey,
             rsaPrivateKey,
             true, // allowLegacyFormats for internal re-encryption
+            aad,
         );
     } else if (version === VERSION_RSA_ONLY) {
         plaintext = await legacyRsaDecrypt(combined.slice(1), rsaPrivateKey);
@@ -399,13 +428,14 @@ export async function migrateToHybrid(
             pqSecretKey,
             rsaPrivateKey,
             true,
+            aad,
         );
     } else {
         // Very old format without version byte - assume raw RSA ciphertext
         plaintext = await legacyRsaDecrypt(combined, rsaPrivateKey);
     }
 
-    return hybridEncrypt(plaintext, pqPublicKey, rsaPublicKey);
+    return hybridEncrypt(plaintext, pqPublicKey, rsaPublicKey, aad);
 }
 
 // ============ Utility Functions ============
@@ -664,6 +694,24 @@ function parseHybridCiphertext(combined: Uint8Array): ParsedHybridCiphertext {
     }
 
     return { pqCiphertext, rsaCiphertext, iv, aesCiphertext };
+}
+
+function requireAad(aad: string, operation: string): string {
+    if (typeof aad !== 'string' || aad.trim().length === 0) {
+        throw new Error(`${operation} requires non-empty AAD for wrapped-key context binding.`);
+    }
+    return aad;
+}
+
+function requireNonEmptyAadPart(value: string, label: string): string {
+    const normalized = value.trim();
+    if (!normalized) {
+        throw new Error(`Missing AAD component: ${label}`);
+    }
+    if (normalized.includes(':')) {
+        throw new Error(`AAD component must not contain ':': ${label}`);
+    }
+    return normalized;
 }
 
 function asBufferSource(bytes: Uint8Array): BufferSource {

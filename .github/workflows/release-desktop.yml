@@ -73,6 +73,12 @@ jobs:
       - name: Install core dependencies
         run: npm ci
 
+      - name: Repository secret guardrails
+        run: npm run security:repo-guard
+
+      - name: Release artifact guardrails
+        run: npm run release:check-artifacts
+
       - name: Validate official desktop configuration
         run: node scripts/validate-official-desktop-config.mjs
 

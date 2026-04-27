@@ -511,6 +511,40 @@ describe("Integration: Core Cryptographic Pipeline", () => {
       expect(decrypted).toEqual(item);
     });
 
+    it("should fail closed when shared item AAD is wrong", async () => {
+      const sharedKey = await generateSharedKey();
+      const item: VaultItemData = {
+        title: "Shared Login",
+        username: "team-user",
+        password: "shared-pw-123",
+      };
+
+      const encrypted = await encryptWithSharedKey(item, sharedKey, "vault-item-a");
+
+      await expect(decryptWithSharedKey(encrypted, sharedKey, "vault-item-b"))
+        .rejects.toThrow("Shared item decryption failed with the required AAD context.");
+    });
+
+    it("should only allow legacy no-AAD shared item fallback when explicitly requested", async () => {
+      const sharedKey = await generateSharedKey();
+      const item: VaultItemData = {
+        title: "Legacy Shared Login",
+        username: "team-user",
+        password: "shared-pw-123",
+      };
+
+      const encrypted = await encryptWithSharedKey(item, sharedKey);
+
+      await expect(decryptWithSharedKey(encrypted, sharedKey, "vault-item-legacy"))
+        .rejects.toThrow("Shared item decryption failed with the required AAD context.");
+
+      await expect(decryptWithSharedKey(
+        encrypted,
+        sharedKey,
+        "vault-item-legacy",
+        { allowLegacyNoAadFallback: true },
+      )).resolves.toEqual(item);
+    });
 
   });
 

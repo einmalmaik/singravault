@@ -1000,12 +1000,9 @@ export async function decryptRSA(
  *          Format v1: `kdfVersion:salt:encryptedData`
  *          Format v2: `pq-v2:kdfVersion:salt:encryptedRsaKey:encryptedPqKey`
  */
-// TODO(security): Set default to 2 (hybrid PQ+RSA key wrapping) once pqCryptoService
-// is validated in production. Track: SINGRA-PQ-DEFAULT
-// Current: version 1 (RSA-only) for stability during rollout.
 export async function generateUserKeyPair(
     masterPassword: string,
-    version: 1 | 2 = 1
+    version: 1 | 2 = 2
 ): Promise<{
     publicKey: string;
     encryptedPrivateKey: string;
@@ -1221,23 +1218,33 @@ export async function encryptWithSharedKey(
     return encrypt(json, key, aad);
 }
 
+export interface SharedKeyDecryptOptions {
+    /**
+     * Allows reading pre-AAD shared item ciphertexts during explicit migration
+     * only. Runtime reads must fail closed when AAD decryption fails.
+     */
+    allowLegacyNoAadFallback?: boolean;
+}
+
 /**
  * Decrypts vault item data with a shared key
  * 
- * SECURITY: When aad is provided, tries decryption with AAD first.
- * Falls back to decryption without AAD for backward compatibility with
- * existing shared items encrypted before the AAD fix.
+ * SECURITY: When aad is provided, decryption is bound to that context and
+ * fails closed by default. Legacy no-AAD data may only be read by explicit
+ * migration callers that pass allowLegacyNoAadFallback.
  * 
  * @param encryptedData - Base64-encoded encrypted data
  * @param sharedKey - JWK string of the shared AES key
  * @param aad - Optional Additional Authenticated Data (e.g. entry ID)
+ * @param options - Legacy migration controls
  * @returns Decrypted vault item data
- * @throws Error if decryption fails with both AAD and no-AAD attempts
+ * @throws Error if decryption fails
  */
 export async function decryptWithSharedKey(
     encryptedData: string,
     sharedKey: string,
-    aad?: string
+    aad?: string,
+    options: SharedKeyDecryptOptions = {},
 ): Promise<VaultItemData> {
     // Import Shared Key
     const keyJwk = JSON.parse(sharedKey);
@@ -1256,9 +1263,11 @@ export async function decryptWithSharedKey(
             // Try with AAD first (new swap-protected format)
             json = await decrypt(encryptedData, key, aad);
         } catch {
+            if (!options.allowLegacyNoAadFallback) {
+                throw new Error('Shared item decryption failed with the required AAD context.');
+            }
             // Backward compat: entry was encrypted without AAD
             // WARNING: Legacy entries are vulnerable to ciphertext-swap attacks
-            console.warn(`Legacy shared entry without AAD detected: ${aad}`);
             _legacyDecryptCount++;
             json = await decrypt(encryptedData, key);
         }

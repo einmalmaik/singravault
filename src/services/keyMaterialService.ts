@@ -68,7 +68,7 @@ export async function ensureUserRsaKeyMaterial(
         );
     }
 
-    const userKeyPair = await generateUserKeyPair(masterPassword);
+    const userKeyPair = await generateUserKeyPair(masterPassword, 1);
     let encryptedPrivateKey = userKeyPair.encryptedPrivateKey;
     if (userKey) {
         // Decrypt the legacy-format key, then re-wrap under the UserKey.
