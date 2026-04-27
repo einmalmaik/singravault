@@ -804,6 +804,11 @@
           "title": "Disable Two-Factor Authentication",
           "description": "Enter the current code from your authenticator app to disable 2FA.",
           "backupCodeNotAllowed": "Backup codes cannot be used to disable 2FA. Please use your authenticator app.",
+          "rateLimitedSeconds_one": "Too many attempts. Please try again in {{count}} second.",
+          "rateLimitedSeconds_other": "Too many attempts. Please try again in {{count}} seconds.",
+          "rateLimitedMinutes_one": "Too many attempts. Please try again in {{count}} minute.",
+          "rateLimitedMinutes_other": "Too many attempts. Please try again in {{count}} minutes.",
+          "rateLimitedLater": "Too many attempts. Please wait a moment and try again later.",
           "success": "Two-factor authentication has been disabled."
         },
         "vault": {

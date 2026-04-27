@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { TwoFactorSettings } from "../TwoFactorSettings";
 
 // ============ Mocks ============
@@ -37,6 +37,7 @@ vi.mock("@/contexts/AuthContext", () => ({
 const mockGet2FAStatus = vi.fn();
 const mockInitializeTwoFactorSetup = vi.fn();
 const mockEnableTwoFactor = vi.fn();
+const mockDisableTwoFactor = vi.fn();
 
 vi.mock("@/services/twoFactorService", () => ({
   get2FAStatus: (...args: unknown[]) => mockGet2FAStatus(...args),
@@ -46,7 +47,7 @@ vi.mock("@/services/twoFactorService", () => ({
   generateBackupCodes: vi.fn().mockReturnValue(["CODE-0001", "CODE-0002", "CODE-0003", "CODE-0004", "CODE-0005"]),
   initializeTwoFactorSetup: (...args: unknown[]) => mockInitializeTwoFactorSetup(...args),
   enableTwoFactor: (...args: unknown[]) => mockEnableTwoFactor(...args),
-  disableTwoFactor: vi.fn().mockResolvedValue({ success: true }),
+  disableTwoFactor: (...args: unknown[]) => mockDisableTwoFactor(...args),
   setVaultTwoFactor: vi.fn().mockResolvedValue({ success: true }),
   regenerateBackupCodes: vi.fn().mockResolvedValue({ success: true, codes: ["NEW-0001", "NEW-0002"] }),
 }));
@@ -68,6 +69,7 @@ describe("TwoFactorSettings", () => {
     vi.clearAllMocks();
     mockInitializeTwoFactorSetup.mockResolvedValue({ success: true });
     mockEnableTwoFactor.mockResolvedValue({ success: true });
+    mockDisableTwoFactor.mockResolvedValue({ success: true });
   });
 
   it("should show loading state initially", () => {
@@ -191,6 +193,36 @@ describe("TwoFactorSettings", () => {
     await waitFor(() => {
       const text = document.body.textContent;
       expect(text).toContain("settings.security.twoFactor.backupCodesRemaining");
+    });
+  });
+
+  it("should show a visible rate-limit message when disabling 2FA is throttled", async () => {
+    mockGet2FAStatus.mockResolvedValue({
+      isEnabled: true,
+      vaultTwoFactorEnabled: false,
+      backupCodesRemaining: 5,
+    });
+    mockDisableTwoFactor.mockResolvedValue({
+      success: false,
+      error: "Zu viele Versuche. Bitte versuche es in 2 Minuten erneut.",
+    });
+
+    render(<TwoFactorSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText("settings.security.twoFactor.disable")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("settings.security.twoFactor.disable"));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText("000000"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "settings.security.twoFactor.disable" }));
+
+    await waitFor(() => {
+      expect(mockDisableTwoFactor).toHaveBeenCalledWith("user-1", "123456");
+      expect(screen.getByText("Zu viele Versuche. Bitte versuche es in 2 Minuten erneut.")).toBeInTheDocument();
     });
   });
 });

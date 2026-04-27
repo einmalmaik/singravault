@@ -122,6 +122,8 @@ vi.mock("@/services/vaultQuarantineRecoveryService", () => ({
 // Mock offline vault service
 const mockGetOfflineCredentials = vi.fn();
 const mockSaveOfflineCredentials = vi.fn();
+const mockGetOfflineVaultTwoFactorRequirement = vi.fn();
+const mockSaveOfflineVaultTwoFactorRequirement = vi.fn();
 const mockLoadVaultSnapshot = vi.fn();
 const mockFetchRemoteOfflineSnapshot = vi.fn();
 const mockGetOfflineSnapshot = vi.fn();
@@ -129,15 +131,18 @@ const mockGetTrustedOfflineSnapshot = vi.fn();
 const mockIsRecentLocalVaultMutation = vi.fn();
 const mockSaveTrustedOfflineSnapshot = vi.fn();
 const mockClearOfflineVaultData = vi.fn();
+const mockIsAppOnline = vi.fn(() => true);
 vi.mock("@/services/offlineVaultService", () => ({
-  isAppOnline: vi.fn(() => true),
+  isAppOnline: () => mockIsAppOnline(),
   isLikelyOfflineError: vi.fn(() => false),
   fetchRemoteOfflineSnapshot: (...args: unknown[]) => mockFetchRemoteOfflineSnapshot(...args),
   getOfflineSnapshot: (...args: unknown[]) => mockGetOfflineSnapshot(...args),
   getOfflineCredentials: (...args: unknown[]) => mockGetOfflineCredentials(...args),
+  getOfflineVaultTwoFactorRequirement: (...args: unknown[]) => mockGetOfflineVaultTwoFactorRequirement(...args),
   getTrustedOfflineSnapshot: (...args: unknown[]) => mockGetTrustedOfflineSnapshot(...args),
   isRecentLocalVaultMutation: (...args: unknown[]) => mockIsRecentLocalVaultMutation(...args),
   saveOfflineCredentials: (...args: unknown[]) => mockSaveOfflineCredentials(...args),
+  saveOfflineVaultTwoFactorRequirement: (...args: unknown[]) => mockSaveOfflineVaultTwoFactorRequirement(...args),
   saveTrustedOfflineSnapshot: (...args: unknown[]) => mockSaveTrustedOfflineSnapshot(...args),
   loadVaultSnapshot: (...args: unknown[]) => mockLoadVaultSnapshot(...args),
   clearOfflineVaultData: (...args: unknown[]) => mockClearOfflineVaultData(...args),
@@ -216,6 +221,9 @@ describe("VaultContext", () => {
     // Default auth mock
     mockUseAuth.mockReturnValue({ user: mockUser, authReady: true });
     mockGetOfflineCredentials.mockResolvedValue(null);
+    mockGetOfflineVaultTwoFactorRequirement.mockResolvedValue(null);
+    mockSaveOfflineVaultTwoFactorRequirement.mockResolvedValue(undefined);
+    mockIsAppOnline.mockReturnValue(true);
     mockSaveOfflineCredentials.mockResolvedValue(undefined);
     mockFetchRemoteOfflineSnapshot.mockResolvedValue({
       userId: mockUser.id,
@@ -316,6 +324,44 @@ describe("VaultContext", () => {
       });
 
       expect(result.current.isSetupRequired).toBe(true);
+    });
+
+    it("does not offer master-password setup while offline without a trusted local snapshot", async () => {
+      mockIsAppOnline.mockReturnValue(false);
+      mockGetOfflineCredentials.mockResolvedValue(null);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.isSetupRequired).toBe(false);
+      expect(result.current.isLocked).toBe(true);
+      expect(mockSupabase.from).not.toHaveBeenCalledWith("profiles");
+    });
+
+    it("uses cached master-password state when the online profile check fails", async () => {
+      mockGetOfflineCredentials.mockResolvedValue({
+        salt: "cached-salt",
+        verifier: "cached-verifier",
+        kdfVersion: 2,
+        encryptedUserKey: "cached-user-key",
+      });
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock(null)),
+        }),
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.isSetupRequired).toBe(false);
+      expect(result.current.isLocked).toBe(true);
     });
 
     it("uses the local setup path only for the dedicated Tauri dev user", async () => {
@@ -534,6 +580,59 @@ describe("VaultContext", () => {
       expect(setupResult?.error).toBeInstanceOf(Error);
       expect(setupResult?.error?.message).toBe("No user logged in");
     });
+
+    it("rejects setup when cached master-password credentials already exist", async () => {
+      mockGetOfflineCredentials.mockResolvedValue({
+        salt: "cached-salt",
+        verifier: "cached-verifier",
+        kdfVersion: 2,
+        encryptedUserKey: "cached-user-key",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let setupResult: { error: Error | null } | undefined;
+      await act(async () => {
+        setupResult = await result.current.setupMasterPassword("SecurePassword123!");
+      });
+
+      expect(setupResult?.error?.message).toBe("Master password is already set for this account.");
+      expect(mockGenerateSalt).not.toHaveBeenCalled();
+    });
+
+    it("rejects setup when the remote profile already has an encryption salt", async () => {
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let setupResult: { error: Error | null } | undefined;
+      await act(async () => {
+        setupResult = await result.current.setupMasterPassword("SecurePassword123!");
+      });
+
+      expect(setupResult?.error?.message).toBe("Master password is already set for this account.");
+      expect(mockGenerateSalt).not.toHaveBeenCalled();
+      expect(result.current.isSetupRequired).toBe(false);
+    });
   });
 
   describe("unlock", () => {
@@ -631,6 +730,67 @@ describe("VaultContext", () => {
       });
 
       expect(result.current.isLocked).toBe(false);
+      expect(mockSaveOfflineVaultTwoFactorRequirement).toHaveBeenCalledWith(mockUser.id, true);
+    });
+
+    it("allows offline master-password unlock when cached vault 2FA state says it is not required", async () => {
+      mockIsAppOnline.mockReturnValue(false);
+      mockGetOfflineVaultTwoFactorRequirement.mockResolvedValue(false);
+      mockGetOfflineCredentials.mockResolvedValue({
+        salt: "existing-salt",
+        verifier: "existing-verifier",
+        kdfVersion: 2,
+        encryptedUserKey: null,
+      });
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(false);
+      expect(mockGetTwoFactorRequirement).not.toHaveBeenCalled();
+    });
+
+    it("blocks offline master-password unlock when vault 2FA state is unknown", async () => {
+      mockIsAppOnline.mockReturnValue(false);
+      mockGetOfflineVaultTwoFactorRequirement.mockResolvedValue(null);
+      mockGetOfflineCredentials.mockResolvedValue({
+        salt: "existing-salt",
+        verifier: "existing-verifier",
+        kdfVersion: 2,
+        encryptedUserKey: null,
+      });
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA status is not cached");
+      expect(result.current.isLocked).toBe(true);
+      expect(mockGetTwoFactorRequirement).not.toHaveBeenCalled();
     });
 
     it("keeps the vault locked when master-password 2FA verification fails", async () => {
@@ -1065,6 +1225,24 @@ describe("VaultContext", () => {
   });
 
   describe("unlockWithPasskey", () => {
+    it("fails fast offline because passkey unlock requires a server WebAuthn challenge", async () => {
+      mockIsAppOnline.mockReturnValue(false);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey();
+      });
+
+      expect(unlockResult?.error?.message).toContain("Passkey unlock requires an online WebAuthn challenge");
+      expect(mockAuthenticatePasskey).not.toHaveBeenCalled();
+    });
+
     it("should return explicit NO_PRF error for non-unlock-capable passkeys", async () => {
       mockAuthenticatePasskey.mockResolvedValue({ success: false, error: "NO_PRF" });
 

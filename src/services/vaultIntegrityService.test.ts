@@ -155,6 +155,35 @@ describe("vaultIntegrityService", () => {
     ]);
   });
 
+  it("keeps a trusted selective category re-baseline healthy on the next full verification", async () => {
+    const {
+      persistTrustedMutationIntegrityBaseline,
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+
+    await verifyVaultSnapshotIntegrity("user-1", {
+      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
+      categories: [{ id: "cat-1", name: "enc-old", icon: null, color: "enc-blue" }],
+    }, key);
+
+    await persistTrustedMutationIntegrityBaseline("user-1", {
+      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
+      categories: [{ id: "cat-1", name: "enc-new", icon: null, color: "enc-blue" }],
+    }, key, {
+      categoryIds: ["cat-1"],
+    });
+
+    const result = await verifyVaultSnapshotIntegrity("user-1", {
+      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
+      categories: [{ id: "cat-1", name: "enc-new", icon: null, color: "enc-blue" }],
+    }, key);
+
+    expect(result.mode).toBe("healthy");
+    expect(result.quarantinedItems).toEqual([]);
+  });
+
   it("quarantines missing and unknown items against a stored V2 baseline", async () => {
     const {
       verifyVaultSnapshotIntegrity,
