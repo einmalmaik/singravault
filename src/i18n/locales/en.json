@@ -309,7 +309,8 @@
           "Vault reset is a destructive recovery operation guarded by a short-lived one-time server challenge. It does not restore old vault contents.",
           "Emergency Access stores the grantor vault key hybrid-wrapped for the trustee. Current paths require ML-KEM-768 + RSA-OAEP and block new legacy RSA-only encrypted_master_key writes.",
           "Trustees receive access only after invite acceptance, setup, request, and wait period. RLS exposes grantor vault ciphertext only when status=granted, granted_at is set, and PQ key material exists.",
-          "The feature remains documented as an alternative access path: a compromised trustee account plus available trustee private keys can open the grantor vault after a successful Emergency Access flow."
+          "The feature remains documented as an alternative access path: a compromised trustee account plus available trustee private keys can open the grantor vault after a successful Emergency Access flow.",
+          "Hybrid/PQ key wrapping strengthens the trustee key path against future cryptographic attacks, but it does not solve trust-boundary issues. It does not protect against compromised trustee accounts, trustee devices, or unlocked clients."
         ]
       },
       "cryptography": {
@@ -338,6 +339,18 @@
           "writeClipboard() schedules auto-clear after 30s.",
           "Only clears if clipboard still equals last written value (won't clobber user content).",
           "Limitation: clipboard APIs can be restricted by browser permissions/focus."
+        ]
+      },
+      "xssSameOrigin": {
+        "title": "XSS and same-origin model",
+        "summary": "Client-side encryption protects stored ciphertexts, but a compromised same-origin app context is not a hard secret boundary.",
+        "bullets": [
+          "Untrusted vault data such as titles, usernames, URLs, notes, categories, TOTP fields, search results, error messages, and filenames is rendered as text. There is no production Markdown/HTML renderer for vault contents.",
+          "Same-origin JavaScript from stored XSS, reflected XSS, DOM-XSS, supply-chain compromise, or compromised browser extensions can misuse normal app functions in an unlocked context. It can read an unlocked vault, invoke crypto operations, query IndexedDB/offline data, manipulate sync, and trigger clipboard, export, and download flows.",
+          "Non-extractable WebCrypto CryptoKeys reduce key-export risk, but they do not stop compromised app JavaScript from invoking allowed encrypt/decrypt operations.",
+          "URL navigation is limited to allowed schemes and internal redirects. javascript:, data:, and open redirects are not accepted as navigation targets.",
+          "File attachments are not rendered inline as HTML, SVG, XML, or PDF. Plaintext files are written only as local downloads after decryption; download filenames are normalized and stripped of control characters, path separators, bidi controls, and reserved Windows names.",
+          "Production CSP, safe-sink rules, and React text rendering are defense in depth. Trusted Types has been tested but is deferred until runtime compatibility is safe. These measures do not replace correct output encoding or dependency/build-chain integrity."
         ]
       },
       "rls": {
@@ -406,22 +419,27 @@
       },
       "headers": {
         "title": "Browser hardening (headers/CSP)",
-        "summary": "Vite serves CSP + security headers (prod stricter than dev).",
+        "summary": "Production and development CSP are separated; production is much tighter than Vite dev/HMR.",
         "bullets": [
-          "Prod CSP: script-src 'self' (no inline/eval) + frame-ancestors 'none'.",
-          "X-Frame-Options=DENY, X-Content-Type-Options=nosniff, strict Referrer/Permissions-Policy.",
-          "Limitation: CSP is defense-in-depth, not a standalone XSS solution."
+          "Production Web/PWA sets CSP through the Vercel header and an additional build-time meta CSP: default-src 'self', script-src 'self' 'wasm-unsafe-eval', object-src 'none', base-uri 'self', form-action 'self', frame-ancestors 'none'.",
+          "Production script-src contains no 'unsafe-inline' and no general 'unsafe-eval'. 'wasm-unsafe-eval' remains required for WASM-based crypto/KDF dependencies.",
+          "Production connect-src is limited to the app itself, Supabase project URLs/WebSockets, and the HIBP API. img-src allows 'self', data:, and blob: for local previews; worker-src allows 'self' and blob: for service-worker/worker flows.",
+          "Trusted Types was tested in the production browser build, but is not enforced: current service-worker, Helmet, and library paths produce runtime errors under require-trusted-types-for 'script'. The target rule remains: clean up safe sinks first, then reintroduce Trusted Types as report-only or a pilot.",
+          "Development CSP remains separate and allows localhost/ws/unsafe-inline/unsafe-eval for Vite/HMR. These development exceptions must not be copied into production deployments.",
+          "Tauri has its own production CSP without localhost/ws development sources; devCsp remains separate for local desktop development."
         ]
       },
       "limitations": {
         "title": "Limits & threat model",
         "summary": "Transparency: what risks remain (as with any web password manager).",
         "bullets": [
-          "If delivered client code is compromised (supply chain/XSS), it can steal secrets during unlock.",
-          "Malware on the device or a compromised browser can read the vault while unlocked.",
+          "Browser/PWA storage is not a hard secret boundary against compromised same-origin JavaScript. IndexedDB, Cache API, non-extractable CryptoKeys, and app services can be misused through allowed APIs from a compromised app context.",
+          "If delivered client code is compromised (supply chain/XSS), it can steal secrets during unlock or read the unlocked vault through normal app functions.",
+          "Malware on the device, a compromised browser, or a compromised unlocked Tauri process can read the vault while unlocked.",
           "Metadata trade-offs: IDs, timestamps, and ownership links remain structural metadata. Core vault metadata such as item title/URL and category name/icon/color is encrypted; other product areas may still need plaintext names.",
           "File rollback protection is detection, not an absolute guarantee: without a local checkpoint or external audit system, a server can serve an old valid ciphertext state to a new device.",
-          "File-size padding is not implemented for attachments yet; ciphertext size, chunk count, and access patterns remain visible."
+          "File-size padding is not implemented for attachments yet; ciphertext size, chunk count, and access patterns remain visible.",
+          "There is no external security-audit evidence. Focused XSS/Emergency/build checks can be evidenced; the complete Premium test run remains a separate follow-up because of existing Duress and React double-identity test-infrastructure issues."
         ]
       }
     },

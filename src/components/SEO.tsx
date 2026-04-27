@@ -10,6 +10,8 @@
 
 import { Helmet } from 'react-helmet-async';
 
+import { serializeJsonLd } from '@/lib/jsonLd';
+
 const SITE_NAME = 'Singra Vault';
 const BASE_URL = 'https://singravault.mauntingstudios.de';
 const DEFAULT_OG_IMAGE = '/singra-icon.png';
@@ -102,7 +104,7 @@ export function SEO({
             {/* Structured Data (JSON-LD) */}
             {structuredData && (
                 <script type="application/ld+json">
-                    {JSON.stringify(structuredData)}
+                    {serializeJsonLd(structuredData)}
                 </script>
             )}
         </Helmet>

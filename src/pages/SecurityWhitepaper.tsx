@@ -62,7 +62,7 @@ interface WhitepaperSection {
     evidence: string[];
 }
 
-const SECURITY_WHITEPAPER_LAST_UPDATED = '27.04.2026';
+const SECURITY_WHITEPAPER_LAST_UPDATED = '28.04.2026';
 
 function asStringArray(value: unknown): string[] {
     if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
@@ -151,6 +151,26 @@ export default function SecurityWhitepaper() {
                     t('securityWhitepaper.sections.clipboard.bullets', { returnObjects: true }),
                 ),
                 evidence: ['src/services/clipboardService.ts'],
+            },
+            {
+                id: 'xss-same-origin',
+                tags: ['client', 'hardening', 'limitations'],
+                icon: <Shield className="h-5 w-5 text-primary" />,
+                title: t('securityWhitepaper.sections.xssSameOrigin.title'),
+                summary: t('securityWhitepaper.sections.xssSameOrigin.summary'),
+                bullets: asStringArray(t('securityWhitepaper.sections.xssSameOrigin.bullets', { returnObjects: true })),
+                evidence: [
+                    'src/platform/openExternalUrl.ts',
+                    'src/services/postAuthRedirectService.ts',
+                    'src/services/returnNavigationState.ts',
+                    'src/services/exportFileService.ts',
+                    '@singra/premium/src/services/fileAttachmentService.ts',
+                    'vite.config.ts',
+                    'vercel.json',
+                    'src-tauri/tauri.conf.json',
+                    'docs/xss-same-origin-hardening-2026-04-28.md',
+                    'OWASP XSS / DOM-XSS / CSP Cheat Sheets, MDN CSP, MDN Trusted Types, React dangerouslySetInnerHTML documentation, Tauri CSP documentation',
+                ],
             },
             {
                 id: 'rls',

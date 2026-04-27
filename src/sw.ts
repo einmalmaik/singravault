@@ -49,7 +49,7 @@ self.addEventListener("message", (event) => {
         icon: "/singra-icon.png",
         badge: "/singra-icon.png",
         tag: "support-reply",
-        data: { url: url || "/vault" },
+        data: { url: resolveSameOriginClientPath(url) },
       }),
     );
   }
@@ -57,7 +57,7 @@ self.addEventListener("message", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || "/vault";
+  const targetUrl = resolveSameOriginClientPath(event.notification.data?.url);
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
@@ -70,3 +70,19 @@ self.addEventListener("notificationclick", (event) => {
     }),
   );
 });
+
+function resolveSameOriginClientPath(value: unknown): string {
+  if (typeof value !== "string" || !value) {
+    return "/vault";
+  }
+
+  try {
+    const parsed = new URL(value, self.location.origin);
+    if (parsed.origin !== self.location.origin) {
+      return "/vault";
+    }
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "/vault";
+  }
+}

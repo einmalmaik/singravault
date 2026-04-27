@@ -7,7 +7,7 @@ import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
 import { VitePWA } from "vite-plugin-pwa";
 
-function getSecurityHeaders(mode: string) {
+function buildContentSecurityPolicy(mode: string, delivery: "header" | "meta" = "header") {
   const dev = mode === "development";
   const scriptSrc = dev
     ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
@@ -16,27 +16,55 @@ function getSecurityHeaders(mode: string) {
   const connectSrc = dev
     ? "connect-src 'self' ws: wss: http: https:"
     : "connect-src 'self' https://*.supabase.co https://api.pwnedpasswords.com wss://*.supabase.co";
+  const imgSrc = dev
+    ? "img-src 'self' data: blob: https:"
+    : "img-src 'self' data: blob:";
+  const fontSrc = dev
+    ? "font-src 'self' data: https:"
+    : "font-src 'self' data:";
+
+  return [
+    "default-src 'self'",
+    scriptSrc,
+    "style-src 'self' 'unsafe-inline'",
+    imgSrc,
+    fontSrc,
+    workerSrc,
+    connectSrc,
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    ...(delivery === "header" ? ["frame-ancestors 'none'"] : []),
+  ].join("; ");
+}
+
+function getSecurityHeaders(mode: string) {
+  const dev = mode === "development";
 
   return {
-    "Content-Security-Policy": [
-      "default-src 'self'",
-      scriptSrc,
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https:",
-      "font-src 'self' data: https:",
-      workerSrc,
-      connectSrc,
-      "object-src 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-      "frame-ancestors 'none'",
-    ].join("; "),
+    "Content-Security-Policy": buildContentSecurityPolicy(mode),
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()",
     "X-Permitted-Cross-Domain-Policies": "none",
     ...(dev ? { "Cache-Control": "no-store" } : {}),
+  };
+}
+
+function cspMetaPlugin(mode: string) {
+  return {
+    name: "singra-csp-meta",
+    transformIndexHtml() {
+      return [{
+        tag: "meta",
+        attrs: {
+          "http-equiv": "Content-Security-Policy",
+          content: buildContentSecurityPolicy(mode, "meta"),
+        },
+        injectTo: "head-prepend" as const,
+      }];
+    },
   };
 }
 
@@ -204,6 +232,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       wasm(),
       topLevelAwait(),
+      cspMetaPlugin(mode),
       react(),
       isDev && componentTagger(),
       shouldUsePremiumSource && premiumResolvePlugin(),

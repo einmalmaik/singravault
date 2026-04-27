@@ -15,12 +15,44 @@ export interface ExportFilePayload {
   content: Blob | string | Uint8Array | ArrayBuffer;
 }
 
+const WINDOWS_RESERVED_FILE_BASENAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+function removeControlCharacters(value: string): string {
+  return [...value].filter((char) => {
+    const codePoint = char.codePointAt(0) ?? 0;
+    return codePoint > 0x1f && codePoint !== 0x7f;
+  }).join("");
+}
+
 export async function saveExportFile(payload: ExportFilePayload): Promise<boolean> {
+  const safePayload = {
+    ...payload,
+    name: sanitizeExportFileName(payload.name),
+  };
+
   if (isTauriRuntime()) {
-    return saveExportFileInDesktopShell(payload);
+    return saveExportFileInDesktopShell(safePayload);
   }
 
-  return saveExportFileInBrowser(payload);
+  return saveExportFileInBrowser(safePayload);
+}
+
+export function sanitizeExportFileName(name: string): string {
+  const normalized = removeControlCharacters(name.normalize("NFKC"))
+    .replace(/[<>:"/\\|?*\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const withoutTrailingDots = normalized.replace(/[. ]+$/g, "");
+  const safeName = withoutTrailingDots && withoutTrailingDots !== "." && withoutTrailingDots !== ".."
+    ? withoutTrailingDots
+    : "singra-vault-export";
+
+  const nonReservedName = WINDOWS_RESERVED_FILE_BASENAME.test(safeName)
+    ? `_${safeName}`
+    : safeName;
+
+  return nonReservedName.slice(0, 180);
 }
 
 async function saveExportFileInDesktopShell(payload: ExportFilePayload): Promise<boolean> {

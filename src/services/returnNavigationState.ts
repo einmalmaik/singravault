@@ -34,11 +34,11 @@ export function resolveReturnPath(
 
   const candidate = state as ReturnNavigationState;
   if (typeof candidate.returnTo === 'string' && candidate.returnTo.length > 0) {
-    return candidate.returnTo;
+    return normalizeInAppReturnPath(candidate.returnTo) ?? fallbackPath;
   }
 
   if (typeof candidate.desktopBackTo === 'string' && candidate.desktopBackTo.length > 0) {
-    return candidate.desktopBackTo;
+    return normalizeInAppReturnPath(candidate.desktopBackTo) ?? fallbackPath;
   }
 
   return fallbackPath;
@@ -46,4 +46,16 @@ export function resolveReturnPath(
 
 export function getSettingsReturnFallbackPath(): string {
   return isDesktopAppShell() ? '/vault/settings' : '/settings';
+}
+
+function normalizeInAppReturnPath(candidate: string): string | null {
+  if (!candidate.startsWith('/') || candidate.startsWith('//')) {
+    return null;
+  }
+
+  if (candidate === '/auth' || candidate.startsWith('/auth?') || candidate.startsWith('/auth#')) {
+    return null;
+  }
+
+  return candidate;
 }

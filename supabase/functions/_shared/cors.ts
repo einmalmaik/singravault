@@ -35,6 +35,10 @@ const productionOrigins = configuredOrigin
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(isConfiguredOriginSafe);
+const securityResponseHeaders = {
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-store",
+};
 
 const allowPreviewOrigins = readEnv("ALLOW_PREVIEW_ORIGINS")
     .trim()
@@ -101,6 +105,7 @@ export function getCorsHeaders(req: Request): Record<string, string> {
         if (!isServerRequest) {
             // Deny CORS for browser requests without Origin
             return {
+                ...securityResponseHeaders,
                 "Access-Control-Allow-Origin": "null",
                 "Access-Control-Allow-Headers": "none",
                 "Access-Control-Allow-Methods": "none",
@@ -109,6 +114,7 @@ export function getCorsHeaders(req: Request): Record<string, string> {
 
         // Allow server-to-server requests but with restricted CORS
         return {
+            ...securityResponseHeaders,
             "Access-Control-Allow-Origin": productionOrigins[0],
             "Access-Control-Allow-Headers":
                 "authorization, x-client-info, apikey, content-type",
@@ -121,6 +127,7 @@ export function getCorsHeaders(req: Request): Record<string, string> {
     const allowed = isAllowedOrigin(origin) ? origin : "null";
 
     return {
+        ...securityResponseHeaders,
         "Access-Control-Allow-Origin": allowed,
         "Access-Control-Allow-Headers":
             "authorization, x-client-info, apikey, content-type",
@@ -131,6 +138,7 @@ export function getCorsHeaders(req: Request): Record<string, string> {
 
 /** Static CORS headers (legacy — prefer getCorsHeaders for dynamic origin matching). */
 export const corsHeaders: Record<string, string> = {
+    ...securityResponseHeaders,
     "Access-Control-Allow-Origin": productionOrigins[0] || "https://singravault.mauntingstudios.de",
     "Access-Control-Allow-Headers":
         "authorization, x-client-info, apikey, content-type",

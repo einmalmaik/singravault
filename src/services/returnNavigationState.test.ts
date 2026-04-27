@@ -34,6 +34,12 @@ describe('returnNavigationState', () => {
     expect(resolveReturnPath(null, '/settings')).toBe('/settings');
   });
 
+  it('rejects external-looking and auth return targets', () => {
+    expect(resolveReturnPath({ returnTo: 'https://evil.example' }, '/settings')).toBe('/settings');
+    expect(resolveReturnPath({ returnTo: '//evil.example' }, '/settings')).toBe('/settings');
+    expect(resolveReturnPath({ returnTo: '/auth?redirect=/vault' }, '/settings')).toBe('/settings');
+  });
+
   it('uses the web fallback when no desktop runtime is present', () => {
     expect(getSettingsReturnFallbackPath()).toBe('/settings');
   });

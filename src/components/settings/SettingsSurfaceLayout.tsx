@@ -73,7 +73,10 @@ export function SettingsSurfaceLayout({
       return;
     }
 
-    const targetId = decodeURIComponent(location.hash.slice(1));
+    const targetId = safeDecodeHashId(location.hash);
+    if (!targetId) {
+      return;
+    }
     const target = document.getElementById(targetId);
     if (!target) {
       return;
@@ -218,6 +221,14 @@ export function SettingsSurfaceLayout({
       </main>
     </div>
   );
+}
+
+function safeDecodeHashId(hash: string): string | null {
+  try {
+    return decodeURIComponent(hash.slice(1));
+  } catch {
+    return null;
+  }
 }
 
 function getSettingsTabLabel(
