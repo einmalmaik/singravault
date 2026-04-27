@@ -12,6 +12,25 @@ import {
   verifyOpaqueSessionBinding,
 } from "@/services/opaqueService";
 
+type AuthRegisterStartResponse = {
+  registrationId: string;
+  registrationResponse: string;
+};
+
+type AuthRegisterFinishResponse = {
+  success: boolean;
+};
+
+type AuthOpaqueStartResponse = {
+  loginId: string;
+  loginResponse: string;
+};
+
+type AuthOpaqueFinishResponse = {
+  session: Session;
+  opaqueSessionBinding: string;
+};
+
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const supabasePublishableKey =
   process.env.VITE_SUPABASE_ANON_KEY ||
@@ -52,10 +71,13 @@ describeIfSupabase("OPAQUE registration flow", () => {
     try {
       const { clientRegistrationState, registrationRequest } = await startRegistration(password);
 
-      const startResponse = await invokePublicAuthFunction("auth-register", {
-        email,
-        registrationRequest,
-      });
+      const startResponse = await invokePublicAuthFunction<AuthRegisterStartResponse>(
+        "auth-register",
+        {
+          email,
+          registrationRequest,
+        },
+      );
       expect(startResponse.status).toBe(200);
       expect(startResponse.json.registrationId).toBeTypeOf("string");
       expect(startResponse.json.registrationResponse).toBeTypeOf("string");
@@ -66,12 +88,15 @@ describeIfSupabase("OPAQUE registration flow", () => {
         password,
       );
 
-      const finishResponse = await invokePublicAuthFunction("auth-register", {
-        action: "finish",
-        email,
-        registrationId: startResponse.json.registrationId,
-        registrationRecord: finishedRegistration.registrationRecord,
-      });
+      const finishResponse = await invokePublicAuthFunction<AuthRegisterFinishResponse>(
+        "auth-register",
+        {
+          action: "finish",
+          email,
+          registrationId: startResponse.json.registrationId,
+          registrationRecord: finishedRegistration.registrationRecord,
+        },
+      );
       expect(finishResponse.status).toBe(200);
       expect(finishResponse.json.success).toBe(true);
 
@@ -119,11 +144,14 @@ describeIfSupabase("OPAQUE registration flow", () => {
       expect(verifyResult.data.user?.email_confirmed_at).toBeTruthy();
 
       const { clientLoginState, startLoginRequest } = await startLogin(password);
-      const loginStartResponse = await invokePublicAuthFunction("auth-opaque", {
-        action: "login-start",
-        userIdentifier: email,
-        startLoginRequest,
-      });
+      const loginStartResponse = await invokePublicAuthFunction<AuthOpaqueStartResponse>(
+        "auth-opaque",
+        {
+          action: "login-start",
+          userIdentifier: email,
+          startLoginRequest,
+        },
+      );
       expect(loginStartResponse.status).toBe(200);
       expect(loginStartResponse.json.loginId).toBeTypeOf("string");
       expect(loginStartResponse.json.loginResponse).toBeTypeOf("string");
@@ -133,13 +161,16 @@ describeIfSupabase("OPAQUE registration flow", () => {
         loginStartResponse.json.loginResponse,
         password,
       );
-      const loginFinishResponse = await invokePublicAuthFunction("auth-opaque", {
-        action: "login-finish",
-        userIdentifier: email,
-        finishLoginRequest: finishedLogin.finishLoginRequest,
-        loginId: loginStartResponse.json.loginId,
-        skipCookie: true,
-      });
+      const loginFinishResponse = await invokePublicAuthFunction<AuthOpaqueFinishResponse>(
+        "auth-opaque",
+        {
+          action: "login-finish",
+          userIdentifier: email,
+          finishLoginRequest: finishedLogin.finishLoginRequest,
+          loginId: loginStartResponse.json.loginId,
+          skipCookie: true,
+        },
+      );
       expect(loginFinishResponse.status).toBe(200);
       expect(loginFinishResponse.json.session?.access_token).toBeTypeOf("string");
       expect(loginFinishResponse.json.session?.refresh_token).toBeTypeOf("string");
@@ -147,7 +178,7 @@ describeIfSupabase("OPAQUE registration flow", () => {
 
       await verifyOpaqueSessionBinding(
         finishedLogin.sessionKey,
-        loginFinishResponse.json.session as Session,
+        loginFinishResponse.json.session,
         loginFinishResponse.json.opaqueSessionBinding,
       );
     } finally {
@@ -158,10 +189,10 @@ describeIfSupabase("OPAQUE registration flow", () => {
   }, 30000);
 });
 
-async function invokePublicAuthFunction(
+async function invokePublicAuthFunction<T extends object>(
   functionName: "auth-register" | "auth-opaque",
   body: Record<string, unknown>,
-): Promise<{ status: number; json: Record<string, any> }> {
+): Promise<{ status: number; json: T }> {
   const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
     method: "POST",
     headers: {
@@ -173,6 +204,6 @@ async function invokePublicAuthFunction(
 
   return {
     status: response.status,
-    json: (await response.json().catch(() => ({}))) as Record<string, any>,
+    json: (await response.json().catch(() => ({}))) as T,
   };
 }

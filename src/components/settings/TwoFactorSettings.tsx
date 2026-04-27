@@ -160,7 +160,7 @@ export function TwoFactorSettings() {
             setSetupStep('backup');
             await loadStatus();
         } else {
-            setError(formatTwoFactorDisableError(result, t));
+            setError(formatTwoFactorOperationError(result, t));
         }
 
         setVerifying(false);
@@ -632,7 +632,7 @@ export function TwoFactorSettings() {
     );
 }
 
-function formatTwoFactorDisableError(
+function formatTwoFactorOperationError(
     result: TwoFactorOperationResult,
     t: ReturnType<typeof useTranslation>['t'],
 ): string {
