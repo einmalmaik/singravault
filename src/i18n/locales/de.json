@@ -50,15 +50,15 @@
   "landing": {
     "hero": {
       "title": "Deine Passwörter.",
-      "titleHighlight": "Deine Kontrolle.",
-      "subtitle": "Der sichere Open-Source Passwortmanager mit Ende-zu-Ende-Verschlüsselung. Deine Daten gehören nur dir.",
+      "titleHighlight": "Nur für dich.",
+      "subtitle": "Open Source. Ende-zu-Ende verschlüsselt. Zero-Knowledge by design.",
       "cta": "Jetzt kostenlos starten",
       "ctaSecondary": "Mehr erfahren",
-      "description": "AES-256-GCM Verschlüsselung. Argon2id Schlüsselableitung. Zero-Knowledge Architektur. Deine Passwörter verlassen dein Gerät niemals unverschlüsselt."
+      "description": "Singra Vault schützt deine Tresor-Daten lokal auf deinem Gerät, bevor sie synchronisiert werden. Der App-Passwortlogin läuft über OPAQUE; OAuth bleibt ein separater Anmeldeweg."
     },
     "security": {
       "title": "Höchste Sicherheitsstandards",
-      "subtitle": "Wir gehen über den Industriestandard hinaus - mit Post-Quantum-Schutz, Panik-Passwort und Manipulationserkennung.",
+      "subtitle": "Wir kombinieren starke Kryptografie mit lokaler Integrit?tspr?fung, Passkey-Entsperrung und transparent dokumentierten Grenzen.",
       "zeroKnowledge": {
         "title": "Zero-Knowledge Architektur",
         "description": "Wir können deine Passwörter niemals sehen. Die Entschlüsselung findet nur auf deinem Gerät statt."
@@ -76,8 +76,8 @@
         "description": "Alle Daten werden VOR dem Senden an den Server verschlüsselt."
       },
       "postQuantum": {
-        "title": "Post-Quantum-Verschlüsselung",
-        "description": "Security Standard v1 erzwingt ML-KEM-768 + RSA-4096 Hybrid-Schlüsselaustausch für Notfallzugriff und geteilte Sammlungen (NIST FIPS 203)."
+        "title": "Post-Quantum-Schutz für Sharing-Schlüssel",
+        "description": "Security Standard v1 nutzt ML-KEM-768 + RSA-4096 für das Wrapping von Sharing- und Notfallzugriffs-Schlüsseln. Tresor-Inhalte bleiben AES-256-GCM-verschlüsselt."
       },
       "passkeyUnlock": {
         "title": "Passkey Tresor-Entsperrung",
@@ -89,7 +89,7 @@
       },
       "vaultIntegrity": {
         "title": "Tresor-Integritätsprüfung",
-        "description": "Merkle-Tree basierte Manipulationserkennung stellt sicher, dass niemand deine Tresor-Daten serverseitig verändert hat."
+        "description": "Lokale Digest-Baselines und vertrauenswürdige Snapshots isolieren manipulierte Einträge. Wiederherstellung ist nur aus einer früheren lokalen Vertrauenskopie möglich."
       }
     },
     "features": {
@@ -130,7 +130,7 @@
     "comparison": {
       "badge": "Ehrlicher Vergleich",
       "title": "Warum Singra Vault?",
-      "subtitle": "Ein faktenbasierter Vergleich mit führenden Passwortmanagern. Alle Daten aus offiziellen Quellen verifiziert (Feb. 2026).",
+      "subtitle": "Ein faktenbasierter Vergleich mit f?hrenden Passwortmanagern. Alle Daten stammen aus offiziellen Quellen und wurden am 23. April 2026 gepr?ft.",
       "featureLabel": "Funktion",
       "features": {
         "openSource": "Open Source",
@@ -138,7 +138,7 @@
         "zeroKnowledge": "Zero-Knowledge",
         "free": "Kostenloser Plan verfügbar",
         "kdf": "Schlüsselableitung (KDF)",
-        "postQuantum": "Post-Quantum-Schlüsselschutz (Sharing/Notfall)",
+        "postQuantum": "Post-Quantum-Schutz für Sharing-Schlüssel",
         "passkeyUnlock": "Passkey Tresor-Entsperrung",
         "duressPassword": "Panik-/Zwangspasswort",
         "vaultIntegrity": "Tresor-Integritätsprüfung",
@@ -153,7 +153,8 @@
         "partial": "Teilweise / nur Premium",
         "unavailable": "Nicht verfügbar"
       },
-      "disclaimer": "Alle Informationen basieren auf öffentlich zugänglicher Dokumentation der jeweiligen Anbieter, verifiziert im Februar 2026. Verfügbarkeit kann sich ändern. Bitwarden: bitwarden.com/help | 1Password: 1password.com | LastPass: lastpass.com"
+      "disclaimer": "Alle Informationen basieren auf offizieller ?ffentlicher Dokumentation der jeweiligen Anbieter. Preise, Funktionsumfang und Browser-Unterst?tzung k?nnen sich jederzeit ?ndern.",
+      "verifiedAt": "Stand: {{date}}"
     },
     "pwa": {
       "badge": "Progressive Web App",
@@ -235,6 +236,7 @@
     },
     "tags": {
       "crypto": "Krypto",
+      "auth": "Auth",
       "client": "Client",
       "rls": "RLS",
       "storage": "Storage",
@@ -248,6 +250,7 @@
       "title": "Kurzfakten",
       "subtitle": "Was du sofort wissen solltest",
       "items": [
+        "App-eigener Passwort-Login läuft ausschließlich über OPAQUE; es gibt keinen Legacy-Passwort-Fallback.",
         "Tresor-Inhalte werden clientseitig verschlüsselt, bevor sie gespeichert/gesendet werden.",
         "Key Derivation: Argon2id mit KDF-Versionen v1 (64 MiB) und v2 (128 MiB).",
         "AES-GCM CryptoKeys sind nicht-extrahierbar; Roh-Bytes werden nach Import best-effort genullt.",
@@ -262,6 +265,18 @@
           "Vault Items werden als encrypted_data gespeichert; Titel/URL-Metadaten werden bewusst nicht im Klartext gespeichert (Platzhalter + null).",
           "Import/Erstellen verschlüsselt Daten vor dem DB-Write; der Server sieht dabei nie den Klartext der Tresor-Einträge.",
           "Hinweis: Einige strukturelle Metadaten (z.B. Kategorien/Tags/Namen von Collections) sind weiterhin Klartext-DB-Felder."
+        ]
+      },
+      "authentication": {
+        "title": "Authentifizierung & OPAQUE",
+        "summary": "OAuth/Social Login ist ein separater Pfad; app-eigene Passwort-Logins verwenden ausschließlich OPAQUE.",
+        "bullets": [
+          "Beim App-eigenen Passwort-Login wird das Passwort lokal in OPAQUE verarbeitet. An die Edge Function gehen nur OPAQUE-Protokollnachrichten, kein Passwort, Passwort-Hash oder passwortäquivalenter Wert.",
+          "OPAQUE-Fehler brechen den Login ab. auth-session blockiert direkte Passwort-POSTs serverseitig mit LEGACY_PASSWORD_LOGIN_DISABLED.",
+          "Registrierung, Passwort-Reset und Passwortänderung erzeugen OPAQUE-Registration-Records clientseitig; GoTrue-Passwortverifier werden entfernt und DB-seitig blockiert, damit Supabase-Passwortgrants OPAQUE nicht umgehen können.",
+          "Passwort-Reset und Passwortänderung teilen dieselbe Sicherheitslogik: E-Mail-Code, bei aktiver Account-2FA zusätzlicher TOTP- oder Recovery-Code, danach OPAQUE-Re-Registration. OAuth/Social Login nutzt diesen Pfad nicht.",
+          "Der OPAQUE Server Static Public Key wird im Client gegen VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY geprüft. Fehlt der Pin oder passt er nicht, entsteht keine App-Session.",
+          "Die Supabase-App-Session wird erst nach erfolgreichem OPAQUE-Finish erstellt und zusätzlich mit einem HMAC über den OPAQUE sessionKey an Access Token und User-ID gebunden."
         ]
       },
       "cryptography": {
@@ -302,12 +317,14 @@
         ]
       },
       "attachments": {
-        "title": "File Attachments",
-        "summary": "Datei-Inhalte und -Metadaten werden clientseitig verschlüsselt; DB/RLS schützt Owner-Zugriff.",
+        "title": "Datei-Anhänge",
+        "summary": "Datei-Inhalte, Dateinamen, Typen und Metadaten werden vor dem Upload clientseitig Ende-zu-Ende verschlüsselt.",
         "bullets": [
-          "Upload speichert verschlüsselten Content in Supabase Storage (application/octet-stream).",
-          "Datei-Metadaten (Name/MIME) werden zusätzlich als encrypted_metadata gespeichert; Klartext-Spalten sind als Platzhalter gedacht.",
-          "DB-RLS Policies erzwingen Zugriff nur für auth.uid() = user_id."
+          "Jede Datei erhält einen zufälligen File-Key; jeder Chunk wird mit AES-256-GCM, eigener Nonce und AAD verschlüsselt.",
+          "Das verschlüsselte Manifest enthält Dateiname, Endung, MIME-Type, Originalgröße, Chunk-Liste, Hashes und Preview-Info. Klartext-Spalten bleiben nur opaque Platzhalter.",
+          "Storage-Pfade enthalten keine Dateinamen oder Endungen. Sichtbar bleiben technische Metadaten wie Owner-Zuordnung, Upload-Zeitpunkt, Anzahl/Größe der Ciphertext-Chunks und Zugriffsmuster.",
+          "Downloads schreiben entschlüsselte Chunks streamend über File System Access oder Tauri-Datei-IO, wenn verfügbar; ältere Browser nutzen einen dokumentierten Blob-Fallback.",
+          "Rollback wird durch versionierte Manifeste, Manifest-Root, Chunk-AAD und lokale Last-Seen-Checkpoints erkannt, sofern ein vertrauenswürdiger vorheriger Zustand vorhanden ist."
         ]
       },
       "sharing": {
@@ -316,7 +333,7 @@
         "bullets": [
           "Shared Collections haben owner/member + permission (view/edit) in shared_collection_members.",
           "Emergency Access steuert Trustee-Zugriff über Status und grantor/trustee Zuordnungen.",
-          "Asymmetrische Kryptografie (RSA-OAEP 4096) wird für Sharing-/Notfallflüsse im Crypto-Service bereitgestellt."
+          "Sharing-/Notfall-Schlüssel werden clientseitig asymmetrisch gewrappt; aktuelle Pfade nutzen ML-KEM-768 + RSA-OAEP 4096 für das Key-Wrapping."
         ]
       },
       "offline": {
@@ -328,13 +345,27 @@
           "Limitierung: Browser-Speicher kann vom Nutzer gelöscht werden; Integrität hängt von lokaler Baseline ab."
         ]
       },
-      "integrity": {
-        "title": "Manipulationserkennung (Integrity Root)",
-        "summary": "HMAC-Merkle-Tree über (itemId | encrypted_data); Root wird clientseitig gespeichert.",
+      "categories": {
+        "title": "Kategoriesystem & Löschverhalten",
+        "summary": "Kategorienamen, Farbe und Symbol werden verschlüsselt gespeichert; Einträge tragen ihre Kategorie zusätzlich im verschlüsselten Item-Payload.",
         "bullets": [
-          "Schützt gegen kompromittierten Server, der Items löscht/ersetzt/replayed.",
-          "IntegrityKey ist vom EncryptionKey getrennt abgeleitet (Domain Separation).",
-          "Limitierungen sind explizit dokumentiert (z.B. kein Schutz gegen stale reads ohne zusätzliche Mechanismen)."
+          "Die Kategoriezuordnung wird beim Erstellen/Bearbeiten eines Eintrags in encrypted_data als categoryId gespeichert. Die alte Klartextspalte category_id wird nur noch als Legacy-/Migrationsfallback gelesen und danach bereinigt.",
+          "Beim Löschen einer Kategorie ermittelt loadItemsInCategory() zuerst alle betroffenen Einträge, indem es deren verschlüsselten Payload lokal entschlüsselt. Daraus weiß der Client, welche Einträge zu dieser Kategorie gehören.",
+          "Der Dialog bietet zwei Pfade: Nur Kategorie löschen entkategorisiert die Einträge und verschlüsselt sie neu; Kategorie und Einträge löschen entfernt zusätzlich die betroffenen Item-Zeilen.",
+          "applyOfflineCategoryDeletion() schreibt Kategorieentfernung und Item-Änderungen in einem lokalen Snapshot-Update. Dadurch kann die UI nicht zwischen altem und neuem Kategoriezustand flackern.",
+          "Kategoriesymbole kommen aus einer festen Emoji-Allowlist. Freie SVG-Eingaben sind blockiert, damit Kategorie-Icons kein XSS- oder HTML-Injektionspfad werden."
+        ]
+      },
+      "integrity": {
+        "title": "Manipulationserkennung & Quarantäne",
+        "summary": "Der Client speichert eine verschlüsselte lokale Integritäts-Baseline und einen vertrauenswürdigen Snapshot. Verdächtige Einträge werden isoliert, Kategorien blockieren den normalen Zugriff.",
+        "bullets": [
+          "Der aktuelle Tresorstand wird lokal als kanonischer Snapshot aus verschlüsselten Item- und Kategorie-Daten geprüft; der Server erhält dabei keinen Klartext.",
+          "Item-Drift führt zu Quarantäne statt stiller Anzeige: veränderte Inhalte, fehlende Einträge und unbekannte Server-Einträge werden getrennt ausgewiesen.",
+          "Die Baseline enthält getrennte Digests für Items und Kategorien. Item-Drift kann quarantänisiert werden, Kategorie-Drift blockiert den normalen Zugriff, weil Kategorien Struktur und Sichtbarkeit des Tresors beeinflussen.",
+          "Legitime lokale Änderungen rufen refreshIntegrityBaseline() mit den betroffenen Item-/Kategorie-IDs auf. Nur diese IDs dürfen die Baseline aktualisieren; zufällige Datenbankänderungen werden nicht vertraut.",
+          "Wiederherstellung ist nur aus einer bereits vorhandenen vertrauenswürdigen lokalen Kopie möglich. Ohne solche Kopie gibt es keinen kryptografischen Wiederherstellungspfad.",
+          "Manipulierte Kategorien oder unlesbare lokale Baselines blockieren den normalen Zugriff. Dann bleiben nur Safe Mode, lokaler Export oder ein Tresor-Reset."
         ]
       },
       "headers": {
@@ -352,7 +383,9 @@
         "bullets": [
           "Wenn der ausgelieferte Client-Code kompromittiert ist (Supply Chain/XSS), kann er beim Unlock Secrets abgreifen.",
           "Malware auf dem Gerät oder kompromittierter Browser kann den Vault im entsperrten Zustand auslesen.",
-          "Metadaten-Trade-offs: Einige Tabellenfelder sind Klartext (z.B. categories.name, tags.name, shared_collections.name)."
+          "Metadaten-Trade-offs: IDs, Zeitstempel und Besitz-Zuordnungen bleiben strukturelle Metadaten. Zentrale Tresor-Metadaten wie Item-Titel/URL und Kategoriename/Icon/Farbe werden verschlüsselt gespeichert; andere Produktbereiche können weiterhin Klartextnamen benötigen.",
+          "Datei-Rollback-Schutz ist Detektion, keine absolute Garantie: Ohne lokalen Checkpoint oder externes Audit-System kann ein Server alte gültige Ciphertext-Zustände an ein neues Gerät ausliefern.",
+          "Dateigrößen-Padding ist für Datei-Anhänge noch nicht implementiert; Ciphertext-Größe, Chunk-Anzahl und Zugriffsmuster bleiben sichtbar."
         ]
       }
     },
@@ -366,7 +399,7 @@
         "nist80063b": "NIST SP 800-63B (Memorized Secrets)"
       }
     },
-    "lastUpdated": "Zuletzt aktualisiert: {{date}}"
+    "lastUpdated": "Inhaltlich gepr?ft am: {{date}}"
   },
   "privacy": {
     "title": "Datenschutzerklärung",
@@ -427,9 +460,14 @@
     }
   },
   "auth": {
+    "success": "Erfolgreich angemeldet.",
     "login": {
       "title": "Willkommen zurück",
-      "subtitle": "Melde dich an, um auf deinen Tresor zuzugreifen",
+      "titleFirstVisit": "Willkommen bei Singra Vault",
+      "titleReturning": "Willkommen zurück",
+      "subtitle": "Melde dich an, um deinen Tresor zu öffnen.",
+      "subtitleFirstVisit": "Erstelle deinen sicheren Tresor oder melde dich an.",
+      "subtitleReturning": "Melde dich an, um deinen Tresor zu öffnen.",
       "email": "E-Mail",
       "password": "Passwort",
       "submit": "Anmelden",
@@ -476,7 +514,8 @@
     "providers": {
       "google": "Google",
       "discord": "Discord",
-      "github": "GitHub"
+      "github": "GitHub",
+      "lastUsed": "Zuletzt benutzt"
     },
     "errors": {
       "invalidCredentials": "Ungültige E-Mail oder Passwort",
@@ -490,6 +529,17 @@
       "passwordNoLowercase": "Mindestens ein Kleinbuchstabe erforderlich",
       "passwordNoDigit": "Mindestens eine Ziffer erforderlich",
       "passwordNoSymbol": "Mindestens ein Sonderzeichen erforderlich"
+    },
+    "errorCodes": {
+      "ACCOUNT_ALREADY_EXISTS": "Es existiert bereits ein Konto mit dieser E-Mail-Adresse.",
+      "OPAQUE_RECORD_CONFLICT": "Es existiert bereits ein Konto mit dieser E-Mail-Adresse.",
+      "OPAQUE_REGISTRATION_FAILED": "Die Registrierung ist fehlgeschlagen. Bitte versuche es erneut.",
+      "AUTH_EMAIL_ALREADY_IN_USE": "Es existiert bereits ein Konto mit dieser E-Mail-Adresse.",
+      "AUTH_INVALID_OR_EXPIRED_CODE": "Der Code ist ungültig oder abgelaufen.",
+      "TOO_MANY_ATTEMPTS": "Zu viele Versuche. Bitte warte kurz und versuche es erneut.",
+      "AUTH_REQUIRED": "Bitte melde dich erneut an.",
+      "FORBIDDEN": "Du hast keine Berechtigung für diese Aktion.",
+      "SERVER_ERROR": "Serverfehler. Bitte versuche es erneut."
     },
     "twoFactor": {
       "title": "Zwei-Faktor-Authentifizierung",
@@ -506,6 +556,9 @@
   "vault": {
     "title": "Mein Tresor",
     "loadError": "Tresor-Einträge konnten nicht geladen werden.",
+    "offlineSaved": "Offline gespeichert. Wird bei Internet automatisch synchronisiert.",
+    "offlineDeleteQueued": "Offline gelöscht. Löschung wird bei Internet synchronisiert.",
+    "syncedAfterOffline": "{{count}} Offline-Änderungen synchronisiert.",
     "empty": {
       "title": "Dein Tresor ist leer",
       "description": "Füge deinen ersten Eintrag hinzu, um loszulegen.",
@@ -598,6 +651,35 @@
         "addTotp": "2FA hinzufügen",
         "currentCode": "Aktueller Code"
       }
+    },
+    "integrity": {
+      "quarantineTitle": "Einträge in Quarantäne",
+      "quarantineDescription": "Diese Einträge wurden isoliert, weil ihre Vertrauensbasis nicht mehr stimmt. Sie werden nicht normal entschlüsselt.",
+      "quarantineRecoveryDescription": "Diese Einträge bleiben isoliert, bis du sie aus einer vertrauenswürdigen lokalen Kopie wiederherstellst, bewusst löschst oder die Löschung akzeptierst.",
+      "quarantineItemTitle": "Manipulierter Eintrag",
+      "quarantineBadge": "Quarantäne",
+      "untrustedEntryLabel": "Nicht vertrauenswürdig",
+      "onlyQuarantinedTitle": "Derzeit sind nur Einträge in Quarantäne vorhanden",
+      "onlyQuarantinedDescription": "Normale Einträge sind aktuell nicht verfügbar. Prüfe die Quarantäne-Hinweise und löse die betroffenen Einträge gezielt auf.",
+      "reasonCiphertextChanged": "Verschlüsselter Inhalt wurde verändert.",
+      "reasonMissingOnServer": "Der Eintrag fehlt im aktuellen Tresorstand.",
+      "reasonUnknownOnServer": "Ein unbekannter Eintrag wurde ohne vertrauenswürdige Baseline gefunden.",
+      "reasonUnknown": "Der Eintrag konnte nicht mehr als vertrauenswürdig bestätigt werden.",
+      "restoreAction": "Wiederherstellen",
+      "restoreSuccess": "Die letzte vertrauenswürdige lokale Version wurde wiederhergestellt.",
+      "deleteEntry": "Endgültig löschen",
+      "deleteSuccess": "Der Quarantäne-Eintrag wurde entfernt.",
+      "acceptMissingAction": "Löschung akzeptieren",
+      "acceptMissingSuccess": "Die Löschung wurde akzeptiert und die lokale Vertrauensbasis aktualisiert.",
+      "noTrustedLocalCopy": "Auf diesem Gerät ist keine vertrauenswürdige lokale Kopie für eine Wiederherstellung verfügbar.",
+      "confirmDeleteTitle": "Eintrag endgültig löschen?",
+      "confirmDeleteDescription": "Der verdächtige Eintrag wird aus dem aktuellen Tresorstand entfernt. Diese Aktion kann nicht rückgängig gemacht werden.",
+      "confirmAcceptMissingTitle": "Löschung akzeptieren?",
+      "confirmAcceptMissingDescription": "Der fehlende Eintrag wird aus der vertrauenswürdigen lokalen Baseline entfernt. Danach ist keine Wiederherstellung mehr möglich, solange keine andere lokale Kopie existiert.",
+      "safeModeDescription": "Safe Mode arbeitet ausschließlich mit dem letzten vertrauenswürdigen lokalen Snapshot. Änderungen sind deaktiviert.",
+      "safeModeNotice": "Safe Mode ist schreibgeschützt. Prüfe deine Einträge und exportiere sie bei Bedarf, bevor du den Tresor zurücksetzt.",
+      "resetChallengeExpired": "Die Sicherheitsbestätigung für den Tresor-Reset ist abgelaufen. Bitte versuche es erneut.",
+      "resetFailed": "Der Tresor konnte nicht zurückgesetzt werden."
     }
   },
   "generator": {
@@ -624,6 +706,14 @@
   },
   "settings": {
     "title": "Einstellungen",
+    "tabs": {
+      "general": "Allgemein",
+      "security": "Sicherheit",
+      "billingSupport": "Abo & Support",
+      "data": "Daten",
+      "dataLegal": "Daten & Rechtliches",
+      "sharingEmergency": "Freigabe & Notfall"
+    },
     "accountPage": {
       "title": "Konto-Einstellungen"
     },
@@ -650,7 +740,15 @@
       "deleteConfirm": "Konto endgültig löschen",
       "deleteSuccess": "Konto gelöscht",
       "deleteSuccessDesc": "Dein Konto und alle Daten wurden gelöscht.",
-      "deleteFailed": "Konto konnte nicht gelöscht werden."
+      "deleteFailed": "Konto konnte nicht gelöscht werden.",
+      "deleteVaultWarningTitle": "{{count}} Tresor-Einträge vorhanden",
+      "deleteVaultWarningDesc": "Exportiere deine Daten vor der Löschung, wenn du sie behalten möchtest. Die Kontolöschung ist unwiderruflich.",
+      "exportBeforeDelete": "Tresor vor Löschung exportieren",
+      "deleteTwoFactorLabel": "Zwei-Faktor-Code bestätigen",
+      "deleteTotpPlaceholder": "6-stelliger Authenticator-Code",
+      "deleteBackupCodePlaceholder": "Backup-Code",
+      "deleteUseBackupCode": "Backup-Code verwenden",
+      "deleteTwoFactorInvalid": "Der Zwei-Faktor-Code ist ungültig oder abgelaufen."
     },
     "password": {
       "title": "Passwort ändern",
@@ -665,7 +763,16 @@
       "updateSuccess": "Passwort erfolgreich aktualisiert.",
       "updateFailed": "Passwort konnte nicht aktualisiert werden.",
       "minLength": "Passwort muss mindestens 12 Zeichen lang sein.",
-      "weakPassword": "Bitte wähle ein stärkeres Passwort."
+      "weakPassword": "Bitte wähle ein stärkeres Passwort.",
+      "requestEmailCode": "E-Mail-Code senden",
+      "resendEmailCode": "Code erneut senden",
+      "emailCode": "E-Mail-Code",
+      "emailCodeSent": "Wenn dein Konto ein App-Passwort nutzt, wurde ein Code an deine Konto-E-Mail gesendet.",
+      "emailCodeVerified": "E-Mail-Code bestätigt. Du kannst jetzt ein neues Account-Passwort setzen.",
+      "twoFactorVerified": "Zwei-Faktor-Authentifizierung bestätigt.",
+      "codeInvalid": "Der Code ist ungültig oder abgelaufen.",
+      "authorizationRequired": "Bitte bestätige zuerst den E-Mail-Code.",
+      "socialOnlyDescription": "Dieses Konto nutzt Social Login. Ein App-eigenes Passwort ist für diesen Auth-Pfad nicht eingerichtet."
     },
     "accountDataExport": {
       "title": "DSGVO-Datenexport",
@@ -754,8 +861,8 @@
       "title": "Daten",
       "description": "Exportiere oder importiere deine Tresor-Daten.",
       "export": "Daten exportieren",
-      "exportDesc": "Exportiere alle deine Passwörter und Einträge als JSON-Datei.",
-      "exportButton": "Als JSON exportieren",
+      "exportDesc": "Exportiert deine Tresor-Einträge als unverschlüsselte JSON-Datei. Enthält Passwörter, Notizen und Authenticator-Secrets, falls solche Einträge vorhanden sind.",
+      "exportButton": "Unverschlüsseltes JSON exportieren",
       "exportSuccess": "{{count}} Einträge erfolgreich exportiert.",
       "exportFailed": "Export fehlgeschlagen.",
       "import": "Daten importieren",
@@ -1134,7 +1241,9 @@
     "deleted": "Anhang gelöscht",
     "deleteError": "Fehler beim Löschen",
     "fileTooLarge": "Datei zu groß. Maximum: {{size}}",
-    "storageLimitReached": "Speicherlimit erreicht. Belegt: {{used}} / {{limit}}"
+    "storageLimitReached": "Speicherlimit erreicht. Belegt: {{used}} / {{limit}}",
+    "pendingUploadFailed": "{{count}} Dateianhang/Dateianhänge konnten nicht hochgeladen werden. Der Eintrag wurde ohne diese Anhänge gespeichert.",
+    "pendingUploadRequiresOnline": "Dateianhänge wurden nicht hochgeladen, weil der Eintrag offline gespeichert wurde. Bitte füge sie nach der Synchronisierung erneut hinzu."
   },
   "categories": {
     "add": "Kategorie hinzufügen",
@@ -1143,6 +1252,7 @@
     "name": "Name",
     "namePlaceholder": "z.B. Soziale Medien",
     "icon": "Symbol",
+    "noIcon": "Kein Symbol",
     "emojiPlaceholder": "Emoji eingeben oder auswählen",
     "svgHint": "Füge einen SVG-Code ein (max. 24x24px empfohlen)",
     "svgDisabled": "SVG-Icons sind aus Sicherheitsgründen deaktiviert.",
@@ -1151,10 +1261,15 @@
     "created": "Kategorie erstellt",
     "updated": "Kategorie aktualisiert",
     "deleted": "Kategorie gelöscht",
+    "deletedOnlyCategory": "Kategorie gelöscht. {{count}} Einträge bleiben ohne Kategorie.",
+    "deletedWithItems": "Kategorie und {{count}} Einträge gelöscht.",
     "saveFailed": "Kategorie konnte nicht gespeichert werden",
     "deleteFailed": "Kategorie konnte nicht gelöscht werden",
     "deleteConfirmTitle": "Kategorie löschen?",
     "deleteConfirmDesc": "Die Kategorie wird gelöscht. Einträge in dieser Kategorie werden nicht gelöscht, aber haben keine Kategorie mehr.",
+    "deleteWithItemsDesc": "Diese Kategorie enthält {{count}} Einträge. Du kannst nur die Kategorie löschen oder die Einträge mitlöschen.",
+    "deleteCategoryOnly": "Nur Kategorie löschen",
+    "deleteCategoryAndItems": "Kategorie und Einträge löschen",
     "empty": "Keine Kategorien vorhanden",
     "addFirst": "Erste Kategorie erstellen"
   },
@@ -1282,7 +1397,7 @@
       "core_features": "Alle Grundfunktionen",
       "argon2id_encryption": "Argon2id 128 MiB Verschlüsselung",
       "clipboard_auto_clear": "Zwischenablage Auto-Löschen (30s)",
-      "post_quantum": "Post-Quantum-Schlüsselschutz (ML-KEM-768, Sharing/Notfall)",
+      "post_quantum": "Post-Quantum-Schutz für Sharing-Schlüssel (ML-KEM-768)",
       "duress_password": "Panik-/Zwangspasswort",
       "file_attachments": "1 GB Datei-Anhänge",
       "builtin_authenticator": "Integrierter Authenticator",
@@ -1351,12 +1466,14 @@
     "failed": "Re-Authentifizierung fehlgeschlagen. Bitte versuche es erneut.",
     "accountDeleteContext": "Bitte bestätige deine Identität, bevor du dein Konto löschst.",
     "subscriptionCancelContext": "Bitte bestätige deine Identität, bevor du dein Abonnement kündigst.",
+    "vaultResetContext": "Bitte bestätige deine Identität, bevor du deinen Tresor unwiderruflich zurücksetzt.",
     "confirmationLabel": "Gib {{keyword}} ein",
     "confirmationPlaceholder": "{{keyword}} eingeben",
     "confirmationHint": "Bei Social-Login ohne Konto-Passwort bestätigst du diese Aktion mit einem Sicherheitswort.",
     "confirmationMismatch": "Bitte gib exakt {{keyword}} ein.",
     "confirmationKeywordDefault": "BESTÄTIGEN",
-    "cancelKeyword": "KÜNDIGEN"
+    "cancelKeyword": "KÜNDIGEN",
+    "resetKeyword": "ZURÜCKSETZEN"
   },
   "passkey": {
     "title": "Passkeys",
@@ -1389,9 +1506,9 @@
     "unlockFailed": "Passkey-Entsperrung fehlgeschlagen. Bitte verwende dein Master-Passwort."
   },
   "postQuantum": {
-    "title": "Post-Quantum-Verschlüsselung",
-    "description": "Security Standard v1 erzwingt hybriden Post-Quantum-Schlüsselschutz (ML-KEM-768 + RSA-4096) für Sharing- und Notfall-Schlüsselaustausch.",
-    "infoText": "Security Standard v1 kombiniert ML-KEM-768 und RSA-4096 in einem hybriden Schlüsselpfad, um 'Harvest now, decrypt later' Risiken zu senken.",
+    "title": "Post-Quantum-Schutz für Sharing-Schlüssel",
+    "description": "Security Standard v1 schützt Sharing- und Notfallzugriffs-Schlüssel mit ML-KEM-768 + RSA-4096. Er ändert nicht die AES-256-GCM-Verschlüsselung deiner Tresor-Einträge.",
+    "infoText": "Der Post-Quantum-Pfad gilt für Key-Wrapping und Key-Exchange in geteilten Sammlungen und Notfallzugriff. Vault-Payloads bleiben klassisch symmetrisch mit AES-256-GCM geschützt.",
     "status": "Status",
     "enabled": "Aktiviert",
     "disabled": "Nicht aktiviert",
@@ -1401,20 +1518,20 @@
     "enforcedAt": "Erzwungen am",
     "legacyDisabledAt": "Legacy deaktiviert am",
     "notSet": "Nicht gesetzt",
-    "enableTitle": "Post-Quantum aktivieren",
-    "enableDescription": "Hybrides Schlüsselmaterial wird automatisch eingerichtet, sobald Sharing- oder Notfallzugriff es benötigt.",
-    "enableButton": "Post-Quantum aktivieren",
+    "enableTitle": "Post-Quantum-Sharing-Schlüssel aktivieren",
+    "enableDescription": "Hybrides Schlüsselmaterial wird automatisch eingerichtet, sobald ein Sharing- oder Notfallzugriffs-Schlüssel gewrappt werden muss.",
+    "enableButton": "Sharing-Schlüsselschutz aktivieren",
     "enabling": "Aktiviere...",
-    "enableSuccess": "Post-Quantum-Verschlüsselung wurde erfolgreich aktiviert!",
+    "enableSuccess": "Post-Quantum-Schutz für Sharing-Schlüssel wurde erfolgreich aktiviert!",
     "enableFailed": "Aktivierung fehlgeschlagen. Bitte versuche es erneut.",
     "keyVersion": "Schlüsselversion",
     "algorithm": "Algorithmus",
-    "algorithmValue": "ML-KEM-768 + RSA-4096 Hybrid",
+    "algorithmValue": "ML-KEM-768 + RSA-4096 für Key-Wrapping",
     "nistStandard": "NIST FIPS 203 (August 2024)",
     "securityLevel": "Sicherheitsstufe",
     "securityLevelValue": "Kategorie 3 (~AES-192)",
-    "quantumSafe": "Quantensicher",
-    "premiumRequired": "Post-Quantum-Verschlüsselung erfordert ein Premium- oder Familien-Abonnement.",
+    "quantumSafe": "Post-Quantum-Key-Wrapping",
+    "premiumRequired": "Post-Quantum-Schutz für Sharing-Schlüssel erfordert ein Premium- oder Familien-Abonnement.",
     "learnMore": "Mehr erfahren",
     "upgradeNow": "Jetzt upgraden"
   },

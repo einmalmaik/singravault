@@ -22,7 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { TwoFactorVerificationModal } from '@/components/auth/TwoFactorVerificationModal';
-import { get2FAStatus, verifyTwoFactorForLogin } from '@/services/twoFactorService';
+import { verifyTwoFactorCode } from '@/services/twoFactorService';
 
 export function VaultUnlock() {
     const { t } = useTranslation();
@@ -37,53 +37,57 @@ export function VaultUnlock() {
 
     // Vault 2FA state
     const [show2FAModal, setShow2FAModal] = useState(false);
-    const [pendingPassword, setPendingPassword] = useState('');
+    const [pendingTwoFactor, setPendingTwoFactor] = useState<{
+        resolve: (verified: boolean) => void;
+    } | null>(null);
+
+    const requestVaultTwoFactor = (): Promise<boolean> => new Promise((resolve) => {
+        setPendingTwoFactor({ resolve });
+        setShow2FAModal(true);
+    });
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
         if (!password || !user) return;
 
-        setLoading(true);
-
-        // First, check if vault 2FA is enabled
-        try {
-            const status = await get2FAStatus(user.id);
-            if (status && status.vaultTwoFactorEnabled) {
-                // Vault 2FA is enabled - validate master password first (without unlocking)
-                setPendingPassword(password);
-                setShow2FAModal(true);
-                setLoading(false);
-                return;
-            }
-        } catch (err) {
-            console.error('Error checking vault 2FA status:', err);
-            // Continue without 2FA if check fails
-        }
-
-        // No vault 2FA - proceed with normal unlock
         await performUnlock(password);
     };
 
     const performUnlock = async (masterPassword: string) => {
         setLoading(true);
-        const { error } = await unlock(masterPassword);
+        const { error } = await unlock(masterPassword, {
+            verifyTwoFactor: requestVaultTwoFactor,
+        });
         setLoading(false);
 
         if (error) {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
-                description: t('auth.errors.invalidCredentials'),
+                description: error.message || t('auth.unlock.invalidMasterPassword', 'Invalid master password'),
             });
             setPassword('');
-            setPendingPassword('');
         }
     };
 
     const handlePasskeyUnlock = async () => {
+        if (!webAuthnAvailable) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t(
+                    'passkey.webAuthnUnavailable',
+                    'Passkey-Entsperrung ist in diesem Browser oder für diese App-Oberfläche nicht verfügbar.',
+                ),
+            });
+            return;
+        }
+
         setPasskeyLoading(true);
-        const { error } = await unlockWithPasskey();
+        const { error } = await unlockWithPasskey({
+            verifyTwoFactor: requestVaultTwoFactor,
+        });
         setPasskeyLoading(false);
 
         if (error) {
@@ -99,16 +103,20 @@ export function VaultUnlock() {
     };
 
     const handle2FAVerify = async (code: string, isBackupCode: boolean): Promise<boolean> => {
-        if (!user || !pendingPassword) return false;
+        if (!user || !pendingTwoFactor) return false;
 
         try {
-            const isValid = await verifyTwoFactorForLogin(user.id, code, isBackupCode);
+            const result = await verifyTwoFactorCode({
+                userId: user.id,
+                context: 'vault_unlock',
+                code,
+                method: isBackupCode ? 'backup_code' : 'totp',
+            });
 
-            if (isValid) {
+            if (result.success) {
                 setShow2FAModal(false);
-                // Now unlock with the stored password
-                await performUnlock(pendingPassword);
-                setPendingPassword('');
+                pendingTwoFactor.resolve(true);
+                setPendingTwoFactor(null);
                 return true;
             }
             return false;
@@ -120,7 +128,8 @@ export function VaultUnlock() {
 
     const handle2FACancel = () => {
         setShow2FAModal(false);
-        setPendingPassword('');
+        pendingTwoFactor?.resolve(false);
+        setPendingTwoFactor(null);
         setPassword('');
     };
 
@@ -128,7 +137,7 @@ export function VaultUnlock() {
         await signOut();
     };
 
-    const showPasskeyOption = webAuthnAvailable && hasPasskeyUnlock;
+    const showPasskeyOption = hasPasskeyUnlock;
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">

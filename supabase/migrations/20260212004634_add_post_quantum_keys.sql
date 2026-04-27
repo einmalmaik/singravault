@@ -2,7 +2,7 @@
 -- Migration: Add Post-Quantum Key Storage
 -- Date: 2026-02-12
 -- Description: Adds columns for ML-KEM-768 post-quantum keys
---              to support hybrid encryption (PQ + RSA-4096)
+--              to support hybrid key wrapping (PQ + RSA-4096)
 -- ============================================================
 
 -- 1. Add PQ keys to profiles table (for user's own PQ key pair)
@@ -23,15 +23,15 @@ ALTER TABLE emergency_access
 ADD COLUMN IF NOT EXISTS trustee_pq_public_key TEXT,
 ADD COLUMN IF NOT EXISTS pq_encrypted_master_key TEXT;
 
-COMMENT ON COLUMN emergency_access.trustee_pq_public_key IS 'Trustee ML-KEM-768 public key for hybrid encryption';
-COMMENT ON COLUMN emergency_access.pq_encrypted_master_key IS 'Master key encrypted with hybrid PQ+RSA (version byte prefix)';
+COMMENT ON COLUMN emergency_access.trustee_pq_public_key IS 'Trustee ML-KEM-768 public key for hybrid key wrapping';
+COMMENT ON COLUMN emergency_access.pq_encrypted_master_key IS 'Emergency-access key wrapped with hybrid PQ+RSA (version byte prefix)';
 
 -- 3. Add PQ wrapped key to collection_keys table
 -- This stores the hybrid-wrapped collection key for each member
 ALTER TABLE collection_keys
 ADD COLUMN IF NOT EXISTS pq_wrapped_key TEXT;
 
-COMMENT ON COLUMN collection_keys.pq_wrapped_key IS 'Collection key wrapped with hybrid PQ+RSA encryption';
+COMMENT ON COLUMN collection_keys.pq_wrapped_key IS 'Collection key wrapped with hybrid PQ+RSA key wrapping';
 
 -- 4. Create index for efficient PQ key lookups
 CREATE INDEX IF NOT EXISTS idx_profiles_pq_key_version 

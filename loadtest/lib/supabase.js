@@ -161,17 +161,10 @@ export function isStatusAllowed(response, allowedStatuses) {
 }
 
 export function authPasswordLogin(email, password, tags = {}) {
-  return http.post(
-    authUrl('token?grant_type=password'),
-    JSON.stringify({ email, password }),
-    {
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        'Content-Type': 'application/json',
-      },
-      tags,
-      timeout: HTTP_TIMEOUT,
-    },
+  void password;
+  void tags;
+  throw new Error(
+    `Direct password-grant login is disabled for ${email}. Use an OPAQUE-capable login harness instead.`,
   );
 }
 

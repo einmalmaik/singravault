@@ -1,20 +1,15 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Comparison Table Section
  *
  * Compares Singra Vault with other password managers.
  * All competitor data is based on publicly available information
- * from official documentation (verified Feb 2026).
- *
- * Sources:
- * - Bitwarden: bitwarden.com/help/kdf-algorithms/, bitwarden.com/pricing/
- * - 1Password: 1password.com/pricing, support.1password.com
- * - LastPass: lastpass.com/pricing, support.lastpass.com
+ * from official documentation (verified Apr 23, 2026).
  */
 
 import { useTranslation } from 'react-i18next';
-import { Check, X, Minus, Shield } from 'lucide-react';
+import { Check, X, Minus, Shield, ExternalLink } from 'lucide-react';
 import {
     Table,
     TableBody,
@@ -29,6 +24,8 @@ type FeatureStatus = 'yes' | 'no' | 'partial';
 
 interface Competitor {
     name: string;
+    verifiedAt: string;
+    sourceUrls: string[];
     features: Record<string, FeatureStatus>;
     details: Record<string, string>;
 }
@@ -36,6 +33,11 @@ interface Competitor {
 const competitors: Competitor[] = [
     {
         name: 'Singra Vault',
+        verifiedAt: '2026-04-23',
+        sourceUrls: [
+            'https://singravault.mauntingstudios.de/',
+            'https://singravault.mauntingstudios.de/security',
+        ],
         features: {
             openSource: 'yes',
             e2ee: 'yes',
@@ -54,15 +56,21 @@ const competitors: Competitor[] = [
         },
         details: {
             kdf: 'Argon2id 128 MiB',
-            postQuantum: 'Security Standard v1 (ML-KEM-768 + RSA-4096 hybrid for sharing/emergency)',
+            postQuantum: 'ML-KEM-768 + RSA-4096 for sharing/emergency key wrapping',
             clipboardClear: '30s',
-            pricing: '€0 / €1,65/mo',
+            pricing: '€0 / €1,65 pro Monat',
             loginProtocol: 'OPAQUE (IETF PAKE)',
             deviceKey: '256-bit HKDF',
         },
     },
     {
         name: 'Bitwarden',
+        verifiedAt: '2026-04-23',
+        sourceUrls: [
+            'https://bitwarden.com/products/personal/',
+            'https://bitwarden.com/help/kdf-algorithms/',
+            'https://bitwarden.com/help/login-with-passkeys/',
+        ],
         features: {
             openSource: 'yes',
             e2ee: 'yes',
@@ -81,13 +89,18 @@ const competitors: Competitor[] = [
         },
         details: {
             kdf: 'PBKDF2 600K / Argon2id 64 MiB',
-            clipboardClear: '10–300s',
-            pricing: '$0 / <$1/mo',
+            clipboardClear: '10-300s',
+            pricing: '$0 / $10 pro Jahr',
             loginProtocol: 'Passwort über TLS',
         },
     },
     {
         name: '1Password',
+        verifiedAt: '2026-04-23',
+        sourceUrls: [
+            'https://1password.com/affiliate/individual-families',
+            'https://support.1password.com/passkeys/',
+        ],
         features: {
             openSource: 'no',
             e2ee: 'yes',
@@ -107,13 +120,18 @@ const competitors: Competitor[] = [
         details: {
             kdf: 'PBKDF2 + Secret Key',
             clipboardClear: '90s',
-            pricing: '$2.99/mo',
+            pricing: '$2.99 pro Monat',
             loginProtocol: 'SRP',
             deviceKey: '128-bit Secret Key',
         },
     },
     {
         name: 'LastPass',
+        verifiedAt: '2026-04-23',
+        sourceUrls: [
+            'https://www.lastpass.com/pricing',
+            'https://www.lastpass.com/features/passkeys',
+        ],
         features: {
             openSource: 'no',
             e2ee: 'yes',
@@ -132,7 +150,7 @@ const competitors: Competitor[] = [
         },
         details: {
             kdf: 'PBKDF2 600K',
-            pricing: '$3/mo',
+            pricing: '$3.00 pro Monat',
             loginProtocol: 'Passwort über TLS',
         },
     },
@@ -227,7 +245,6 @@ export function Comparison() {
                     </Table>
                 </ScrollReveal>
 
-                {/* Legend */}
                 <ScrollReveal delay={200} className="flex justify-center gap-6 mt-6 text-sm text-muted-foreground">
                     <div className="flex items-center gap-2">
                         <Check className="w-4 h-4 text-success" />
@@ -246,8 +263,33 @@ export function Comparison() {
                 <p className="text-center text-xs text-muted-foreground mt-4 max-w-2xl mx-auto">
                     {t('landing.comparison.disclaimer')}
                 </p>
+
+                <div className="mt-4 flex flex-col gap-2 text-xs text-muted-foreground">
+                    {competitors.map((competitor) => (
+                        <div key={competitor.name} className="rounded-lg border border-border/35 bg-card/20 px-3 py-2">
+                            <span className="font-medium text-foreground/80">{competitor.name}</span>{' '}
+                            <span>{t('landing.comparison.verifiedAt', {
+                                defaultValue: 'Stand: {{date}}',
+                                date: competitor.verifiedAt,
+                            })}</span>
+                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                                {competitor.sourceUrls.map((url) => (
+                                    <a
+                                        key={url}
+                                        href={url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 hover:text-foreground"
+                                    >
+                                        <ExternalLink className="h-3 w-3" />
+                                        {url.replace(/^https?:\/\//, '')}
+                                    </a>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
         </section>
     );
 }
-

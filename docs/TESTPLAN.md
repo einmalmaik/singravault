@@ -241,7 +241,7 @@ Testet alle 9 DB-abhängigen Funktionen mit gemocktem Supabase.
 |---|---|---|
 | 1–3 | `getAttachments()` | Gibt Liste zurück; Entschlüsselt Metadaten wenn decryptFn vorhanden; Leere Liste bei keinen Anhängen |
 | 4–5 | `getStorageUsage()` | Gibt {used, limit} zurück; limit = 1073741824 |
-| 6–9 | `uploadAttachment()` | Verschlüsselt Datei + Metadaten; Speichert in Supabase Storage; Erstellt DB-Eintrag; Fehler bei zu großer Datei (>100MB) |
+| 6–9 | `uploadAttachment()` | Verschlüsselt Datei + Metadaten; Speichert in Supabase Storage; Erstellt DB-Eintrag; Fehler bei zu großer Datei (>1GB) |
 | 10–12 | `downloadAttachment()` | Lädt herunter + entschlüsselt; Erstellt Blob + triggert Download; Fehler bei fehlender Datei |
 | 13–14 | `deleteAttachment()` | Löscht aus Storage + DB; Fehler bei ungültiger ID |
 
@@ -259,9 +259,9 @@ Testet alle 9 DB-abhängigen Funktionen mit gemocktem Supabase.
 | 12 | `rejectAccess()` | Setzt Status auf rejected |
 | 13 | `approveAccess()` | Setzt Status auf approved |
 | 14–15 | `acceptInviteWithPQ()` | Akzeptiert mit RSA + PQ Public Keys; Speichert pq_public_key |
-| 16–17 | `setHybridEncryptedMasterKey()` | Verschlüsselt Master-Key hybrid; Speichert pq_encrypted + rsa_encrypted |
-| 18 | `decryptHybridMasterKey()` | Entschlüsselt hybrid verschlüsselten Key |
-| 19 | `hasPQEncryption()` | `true` wenn pq_encrypted_master_key vorhanden; `false` sonst |
+| 16–17 | `setHybridEncryptedMasterKey()` | Wrappt Notfallzugriffs-Key hybrid; Speichert pq_encrypted + rsa_encrypted |
+| 18 | `decryptHybridMasterKey()` | Entwrappt hybrid gewrappten Notfallzugriffs-Key |
+| 19 | `hasPQEncryption()` | `true` wenn PQ-gewrappter Notfallzugriffs-Key vorhanden; `false` sonst |
 
 ---
 
@@ -453,7 +453,7 @@ Erweitert die bestehenden Marker-Tests um die DB-abhängigen Funktionen.
 | 2 | Initial State: `user=null, session=null, loading=true` | Korrekte Anfangswerte ✅ |
 | 3 | `signUp()` ruft `supabase.auth.signUp()` auf | Korrekte Parameter ✅ |
 | 4 | `signUp()` gibt Error zurück bei Fehler | Error propagiert ✅ |
-| 5 | `signIn()` ruft `supabase.auth.signInWithPassword()` auf | Korrekte Parameter ✅ |
+| 5 | App-Passwort-Login nutzt OPAQUE statt `supabase.auth.signInWithPassword()` | Nur OPAQUE-Protokollnachrichten werden gesendet ✅ |
 | 6 | `signIn()` gibt Error zurück bei Fehler | Error propagiert ✅ |
 | 7 | `signInWithOAuth()` mit google | Provider korrekt ✅ |
 | 8 | `signInWithOAuth()` mit discord | Provider korrekt ✅ |

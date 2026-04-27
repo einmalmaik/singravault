@@ -31,8 +31,13 @@ const mockFormatTOTPCode = vi.fn((code: string) => `${code.slice(0, 3)} ${code.s
 
 vi.mock("@/services/totpService", () => ({
   generateTOTP: (...args: unknown[]) => mockGenerateTOTP(...args),
-  getTimeRemaining: () => mockGetTimeRemaining(),
+  getTimeRemaining: (...args: unknown[]) => mockGetTimeRemaining(...args),
   formatTOTPCode: (code: string) => mockFormatTOTPCode(code),
+  normalizeTOTPConfig: (config = {}) => ({
+    algorithm: (config as { algorithm?: string }).algorithm || "SHA1",
+    digits: (config as { digits?: 6 | 8 }).digits || 6,
+    period: (config as { period?: number }).period || 30,
+  }),
 }));
 
 // ============ Tests ============
@@ -71,5 +76,22 @@ describe("TOTPDisplay", () => {
     render(<TOTPDisplay secret="JBSWY3DPEHPK3PXP" />);
     expect(mockFormatTOTPCode).toHaveBeenCalledWith("123456");
     expect(screen.getByText("123 456")).toBeInTheDocument();
+  });
+
+  it("should pass stored TOTP parameters to code generation and countdown", () => {
+    render(
+      <TOTPDisplay
+        secret="JBSWY3DPEHPK3PXP"
+        algorithm="SHA512"
+        digits={8}
+        period={60}
+      />,
+    );
+
+    expect(mockGenerateTOTP).toHaveBeenCalledWith("JBSWY3DPEHPK3PXP", {
+      algorithm: "SHA512",
+      digits: 8,
+      period: 60,
+    });
   });
 });

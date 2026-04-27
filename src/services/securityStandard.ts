@@ -6,7 +6,7 @@
 /**
  * Product-wide security standard version.
  *
- * Keep this constant centralized so all hybrid/PQ provisioning and
- * runtime enforcement paths stay in sync.
+ * Keep this constant centralized so all hybrid/PQ sharing-key provisioning
+ * and runtime enforcement paths stay in sync.
  */
 export const SECURITY_STANDARD_VERSION = 1;

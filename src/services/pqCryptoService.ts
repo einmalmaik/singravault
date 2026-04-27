@@ -1,15 +1,16 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 /**
- * @fileoverview Post-Quantum Cryptography Service for Singra Vault.
+ * @fileoverview Post-Quantum key-wrapping service for Singra Vault sharing flows.
  *
- * Implements hybrid encryption combining:
+ * Implements hybrid key wrapping combining:
  * - ML-KEM-768 (FIPS 203) for post-quantum key encapsulation
  * - RSA-4096-OAEP for classical encryption
  *
- * This protects against "harvest now, decrypt later" attacks where
- * adversaries collect encrypted data today to decrypt with future
- * quantum computers.
+ * In the product threat model this protects sharing and emergency-access
+ * keys against "harvest now, decrypt later" attacks. It is not the
+ * encryption layer for vault item payloads, which remain AES-256-GCM
+ * encrypted with user-derived symmetric keys.
  *
  * SECURITY STANDARD V1:
  * - New ciphertexts are written with version byte 0x04 (HKDF-v2).
@@ -44,6 +45,11 @@ const VERSION_HYBRID_STANDARD_V2 = 0x04;
 
 /** ML-KEM-768 ciphertext size in bytes */
 const ML_KEM_768_CIPHERTEXT_SIZE = 1088;
+const RSA_4096_CIPHERTEXT_SIZE = 512;
+const AES_GCM_IV_SIZE = 12;
+const AES_GCM_TAG_SIZE = 16;
+const HYBRID_CIPHERTEXT_MIN_SIZE =
+    1 + ML_KEM_768_CIPHERTEXT_SIZE + RSA_4096_CIPHERTEXT_SIZE + AES_GCM_IV_SIZE + AES_GCM_TAG_SIZE;
 
 /** ML-KEM-768 public key size in bytes */
 const ML_KEM_768_PUBLIC_KEY_SIZE = 1184;
@@ -59,6 +65,21 @@ const HYBRID_KDF_INFO_PREFIX = new TextEncoder().encode('Singra Vault-HybridKDF-
 
 /** HKDF info string for standard-compliant hybrid key combination (v2) */
 const HYBRID_KDF_INFO_V2 = new TextEncoder().encode('Singra Vault-HybridKDF-v2:');
+
+export interface SharedKeyWrapAadInput {
+    collectionId: string;
+    senderUserId: string;
+    recipientUserId: string;
+    keyVersion: string | number;
+}
+
+export function buildSharedKeyWrapAad(input: SharedKeyWrapAadInput): string {
+    const collectionId = requireNonEmptyAadPart(input.collectionId, 'collectionId');
+    const senderUserId = requireNonEmptyAadPart(input.senderUserId, 'senderUserId');
+    const recipientUserId = requireNonEmptyAadPart(input.recipientUserId, 'recipientUserId');
+    const keyVersion = requireNonEmptyAadPart(String(input.keyVersion), 'keyVersion');
+    return `sv:shared-key:v1:${collectionId}:${senderUserId}:${recipientUserId}:${keyVersion}`;
+}
 
 // ============ Key Generation ============
 
@@ -112,19 +133,19 @@ export async function generateHybridKeyPair(): Promise<HybridKeyPair> {
     };
 }
 
-// ============ Hybrid Encryption ============
+// ============ Hybrid Key Wrapping ============
 
 /**
- * Encrypts data using hybrid ML-KEM-768 + RSA-4096-OAEP encryption.
+ * Encrypts key material using hybrid ML-KEM-768 + RSA-4096-OAEP encryption.
  * 
- * The plaintext is encrypted with a randomly generated AES-256 key.
+ * The supplied key material is encrypted with a randomly generated AES-256 key.
  * This AES key is then encapsulated/encrypted with both:
- * 1. ML-KEM-768 (post-quantum secure)
+ * 1. ML-KEM-768 (post-quantum KEM)
  * 2. RSA-4096-OAEP (classically secure)
  * 
  * Format: version(1) || pq_ciphertext(1088) || rsa_ciphertext(512) || iv(12) || aes_ciphertext(variable)
  * 
- * @param plaintext - Data to encrypt
+ * @param plaintext - Serialized key material to wrap
  * @param pqPublicKey - Base64-encoded ML-KEM-768 public key
  * @param rsaPublicKey - JWK string of RSA-4096 public key
  * @param aad - Optional additional authenticated data for AES-GCM context binding
@@ -157,7 +178,7 @@ export async function hybridEncrypt(
     const rsaCiphertext = await crypto.subtle.encrypt(
         { name: 'RSA-OAEP' },
         rsaPubKey,
-        aesKeyBytes as any
+        asBufferSource(aesKeyBytes)
     );
 
     const rsaCiphertextBytes = new Uint8Array(rsaCiphertext);
@@ -172,7 +193,7 @@ export async function hybridEncrypt(
     // 5. Encrypt plaintext with combined AES key
     const aesKey = await crypto.subtle.importKey(
         'raw',
-        combinedKey as any,
+        asBufferSource(combinedKey),
         { name: 'AES-GCM', length: 256 },
         false,
         ['encrypt']
@@ -217,7 +238,7 @@ export async function hybridEncrypt(
 }
 
 /**
- * Decrypts hybrid ML-KEM-768 + RSA-4096-OAEP encrypted data.
+ * Decrypts hybrid ML-KEM-768 + RSA-4096-OAEP wrapped key material.
  * 
  * @param ciphertextBase64 - Base64-encoded hybrid ciphertext
  * @param pqSecretKey - Base64-encoded ML-KEM-768 secret key
@@ -237,7 +258,7 @@ export async function hybridDecrypt(
 
 /**
  * Legacy RSA-only decryption for backward compatibility.
- * Used when decrypting data encrypted before PQ upgrade.
+ * Used when decrypting key material wrapped before the PQ upgrade.
  */
 async function legacyRsaDecrypt(
     ciphertext: Uint8Array,
@@ -255,7 +276,7 @@ async function legacyRsaDecrypt(
     const plaintextBytes = await crypto.subtle.decrypt(
         { name: 'RSA-OAEP' },
         rsaPrivKey,
-        ciphertext as any
+        asBufferSource(ciphertext)
     );
     
     return new TextDecoder().decode(plaintextBytes);
@@ -277,9 +298,9 @@ export async function hybridWrapKey(
     sharedKeyJwk: string,
     pqPublicKey: string,
     rsaPublicKey: string,
-    aad?: string
+    aad: string
 ): Promise<string> {
-    return hybridEncrypt(sharedKeyJwk, pqPublicKey, rsaPublicKey, aad);
+    return hybridEncrypt(sharedKeyJwk, pqPublicKey, rsaPublicKey, requireAad(aad, 'hybridWrapKey'));
 }
 
 /**
@@ -295,19 +316,19 @@ export async function hybridUnwrapKey(
     wrappedKey: string,
     pqSecretKey: string,
     rsaPrivateKey: string,
-    aad?: string
+    aad: string
 ): Promise<string> {
-    return hybridDecrypt(wrappedKey, pqSecretKey, rsaPrivateKey, aad);
+    return hybridDecrypt(wrappedKey, pqSecretKey, rsaPrivateKey, requireAad(aad, 'hybridUnwrapKey'));
 }
 
 // ============ Migration Helpers ============
 
 /**
- * Checks if a ciphertext uses any hybrid (post-quantum) encryption version.
+ * Checks if wrapped key material uses any hybrid (post-quantum) encryption version.
  * Recognizes legacy hybrid (0x02), standard v1 (0x03), and standard v2 (0x04).
  * 
  * @param ciphertextBase64 - Base64-encoded ciphertext
- * @returns true if any hybrid encryption version, false if legacy RSA-only or unknown
+ * @returns true if any hybrid wrapped-key version, false if legacy RSA-only or unknown
  */
 export function isHybridEncrypted(ciphertextBase64: string): boolean {
     try {
@@ -338,8 +359,8 @@ export function isCurrentStandardEncrypted(ciphertextBase64: string): boolean {
 }
 
 /**
- * Re-encrypts legacy RSA-only or older hybrid data with current hybrid encryption (v2).
- * Used during migration to post-quantum security.
+ * Re-wraps legacy RSA-only or older hybrid key material with current hybrid key wrapping (v2).
+ * Used during migration to post-quantum protection for sharing and emergency keys.
  * 
  * - Version 0x04: already current, returned unchanged.
  * - Version 0x03: decrypted with legacy HKDF-v1, re-encrypted with HKDF-v2.
@@ -358,13 +379,26 @@ export async function migrateToHybrid(
     rsaPrivateKey: string,
     pqSecretKey: string | null,
     pqPublicKey: string,
-    rsaPublicKey: string
+    rsaPublicKey: string,
+    aad?: string,
 ): Promise<string> {
     const combined = base64ToUint8Array(legacyCiphertext);
     const version = combined[0];
 
     // Already current standard — no migration needed
     if (version === VERSION_HYBRID_STANDARD_V2) {
+        if (aad) {
+            if (!pqSecretKey) {
+                throw new Error('PQ secret key is required to verify current hybrid ciphertext AAD.');
+            }
+            await decryptHybridCiphertext(
+                legacyCiphertext,
+                pqSecretKey,
+                rsaPrivateKey,
+                false,
+                aad,
+            );
+        }
         return legacyCiphertext;
     }
 
@@ -380,6 +414,7 @@ export async function migrateToHybrid(
             pqSecretKey,
             rsaPrivateKey,
             true, // allowLegacyFormats for internal re-encryption
+            aad,
         );
     } else if (version === VERSION_RSA_ONLY) {
         plaintext = await legacyRsaDecrypt(combined.slice(1), rsaPrivateKey);
@@ -393,13 +428,14 @@ export async function migrateToHybrid(
             pqSecretKey,
             rsaPrivateKey,
             true,
+            aad,
         );
     } else {
         // Very old format without version byte - assume raw RSA ciphertext
         plaintext = await legacyRsaDecrypt(combined, rsaPrivateKey);
     }
 
-    return hybridEncrypt(plaintext, pqPublicKey, rsaPublicKey);
+    return hybridEncrypt(plaintext, pqPublicKey, rsaPublicKey, aad);
 }
 
 // ============ Utility Functions ============
@@ -442,7 +478,7 @@ async function deriveHybridCombinedKey(
 ): Promise<Uint8Array> {
     const baseKey = await crypto.subtle.importKey(
         'raw',
-        pqSharedSecret as any,
+        asBufferSource(pqSharedSecret),
         'HKDF',
         false,
         ['deriveBits'],
@@ -454,8 +490,8 @@ async function deriveHybridCombinedKey(
             {
                 name: 'HKDF',
                 hash: 'SHA-256',
-                salt: aesKeyBytes as any,
-                info: info as any,
+                salt: asBufferSource(aesKeyBytes),
+                info: asBufferSource(info),
             },
             baseKey,
             256,
@@ -485,7 +521,7 @@ async function deriveHybridCombinedKeyV2(
 
     const baseKey = await crypto.subtle.importKey(
         'raw',
-        ikm as any,
+        asBufferSource(ikm),
         'HKDF',
         false,
         ['deriveBits'],
@@ -497,8 +533,8 @@ async function deriveHybridCombinedKeyV2(
             {
                 name: 'HKDF',
                 hash: 'SHA-256',
-                salt: new Uint8Array(32) as any, // zero-byte salt (NIST-recommended)
-                info: info as any,
+                salt: asBufferSource(new Uint8Array(32)), // zero-byte salt (NIST-recommended)
+                info: asBufferSource(info),
             },
             baseKey,
             256,
@@ -574,7 +610,7 @@ async function decryptHybridCiphertext(
     const aesKeyBytes = new Uint8Array(await crypto.subtle.decrypt(
         { name: 'RSA-OAEP' },
         rsaPrivKey,
-        rsaCiphertext as any
+        asBufferSource(rsaCiphertext)
     ));
 
     // Select KDF based on version
@@ -597,7 +633,7 @@ async function decryptHybridCiphertext(
     // Decrypt plaintext with combined AES key.
     const aesKey = await crypto.subtle.importKey(
         'raw',
-        combinedKey as any,
+        asBufferSource(combinedKey),
         { name: 'AES-GCM', length: 256 },
         false,
         ['decrypt']
@@ -605,14 +641,14 @@ async function decryptHybridCiphertext(
 
     try {
         const aadBytes = aad ? new TextEncoder().encode(aad) : undefined;
-        const gcmParams: AesGcmParams = { name: 'AES-GCM', iv: iv as any, tagLength: 128 };
+        const gcmParams: AesGcmParams = { name: 'AES-GCM', iv: asBufferSource(iv), tagLength: 128 };
         if (aadBytes) {
             gcmParams.additionalData = aadBytes;
         }
         const plaintextBytes = await crypto.subtle.decrypt(
             gcmParams,
             aesKey,
-            aesCiphertext as any
+            asBufferSource(aesCiphertext)
         );
 
         return new TextDecoder().decode(plaintextBytes);
@@ -624,20 +660,62 @@ async function decryptHybridCiphertext(
 }
 
 function parseHybridCiphertext(combined: Uint8Array): ParsedHybridCiphertext {
+    const version = combined[0];
+    if (
+        combined.length < HYBRID_CIPHERTEXT_MIN_SIZE ||
+        (
+            version !== VERSION_HYBRID_LEGACY &&
+            version !== VERSION_HYBRID_STANDARD_V1 &&
+            version !== VERSION_HYBRID_STANDARD_V2
+        )
+    ) {
+        throw new Error('Invalid hybrid ciphertext format.');
+    }
+
     let offset = 1;
 
     const pqCiphertext = combined.slice(offset, offset + ML_KEM_768_CIPHERTEXT_SIZE);
     offset += ML_KEM_768_CIPHERTEXT_SIZE;
 
-    const rsaCiphertext = combined.slice(offset, offset + 512);
-    offset += 512;
+    const rsaCiphertext = combined.slice(offset, offset + RSA_4096_CIPHERTEXT_SIZE);
+    offset += RSA_4096_CIPHERTEXT_SIZE;
 
-    const iv = combined.slice(offset, offset + 12);
-    offset += 12;
+    const iv = combined.slice(offset, offset + AES_GCM_IV_SIZE);
+    offset += AES_GCM_IV_SIZE;
 
     const aesCiphertext = combined.slice(offset);
+    if (
+        pqCiphertext.length !== ML_KEM_768_CIPHERTEXT_SIZE ||
+        rsaCiphertext.length !== RSA_4096_CIPHERTEXT_SIZE ||
+        iv.length !== AES_GCM_IV_SIZE ||
+        aesCiphertext.length < AES_GCM_TAG_SIZE
+    ) {
+        throw new Error('Invalid hybrid ciphertext format.');
+    }
 
     return { pqCiphertext, rsaCiphertext, iv, aesCiphertext };
+}
+
+function requireAad(aad: string, operation: string): string {
+    if (typeof aad !== 'string' || aad.trim().length === 0) {
+        throw new Error(`${operation} requires non-empty AAD for wrapped-key context binding.`);
+    }
+    return aad;
+}
+
+function requireNonEmptyAadPart(value: string, label: string): string {
+    const normalized = value.trim();
+    if (!normalized) {
+        throw new Error(`Missing AAD component: ${label}`);
+    }
+    if (normalized.includes(':')) {
+        throw new Error(`AAD component must not contain ':': ${label}`);
+    }
+    return normalized;
+}
+
+function asBufferSource(bytes: Uint8Array): BufferSource {
+    return bytes as unknown as BufferSource;
 }
 
 // ============ Type Definitions ============

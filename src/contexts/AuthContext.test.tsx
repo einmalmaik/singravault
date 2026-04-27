@@ -63,6 +63,8 @@ beforeEach(() => {
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "test-publishable-key");
     sessionStorage.clear();
     localStorage.clear();
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    window.history.replaceState(null, "", "/");
 
     // Default: auth state listener returns unsubscribe fn and captures callback
     mockSupabase.auth.onAuthStateChange.mockImplementation((callback) => {
@@ -148,6 +150,43 @@ describe("AuthContext", () => {
             // BFF fetch was attempted (not iframe in jsdom)
             expect(result.current.authReady).toBe(true);
         });
+
+        it("uses the Tauri dev bypass only when explicitly requested", async () => {
+            Object.defineProperty(window, "__TAURI_INTERNALS__", {
+                value: {},
+                configurable: true,
+            });
+            window.history.replaceState(null, "", "/?tauriDevAuth=1");
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.user?.email).toBe("tauri-dev@singra.local");
+            expect(result.current.authMode).toBe("offline");
+            expect(mockSupabase.auth.onAuthStateChange).not.toHaveBeenCalled();
+        });
+
+        it("does not keep the Tauri dev bypass after it is disabled by query param", async () => {
+            Object.defineProperty(window, "__TAURI_INTERNALS__", {
+                value: {},
+                configurable: true,
+            });
+            localStorage.setItem("singra:tauri-dev-auth-bypass", "1");
+            window.history.replaceState(null, "", "/?tauriDevAuth=0");
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.authMode).toBe("unauthenticated");
+            expect(localStorage.getItem("singra:tauri-dev-auth-bypass")).toBeNull();
+        });
     });
 
     // NOTE: signUp, signIn, signInWithOAuth were removed from AuthContext
@@ -194,6 +233,27 @@ describe("AuthContext", () => {
             );
 
             consoleError.mockRestore();
+        });
+
+        it("disables the Tauri dev bypass on explicit signOut", async () => {
+            Object.defineProperty(window, "__TAURI_INTERNALS__", {
+                value: {},
+                configurable: true,
+            });
+            window.history.replaceState(null, "", "/?tauriDevAuth=1");
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => expect(result.current.authMode).toBe("offline"));
+
+            await act(async () => {
+                await result.current.signOut();
+            });
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.authMode).toBe("unauthenticated");
+            expect(localStorage.getItem("singra:tauri-dev-auth-bypass")).toBeNull();
+            expect(mockSupabase.auth.signOut).not.toHaveBeenCalled();
         });
     });
 

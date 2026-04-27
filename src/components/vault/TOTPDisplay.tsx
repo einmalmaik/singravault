@@ -12,27 +12,48 @@ import { Copy, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { generateTOTP, getTimeRemaining, formatTOTPCode } from '@/services/totpService';
+import {
+    formatTOTPCode,
+    generateTOTP,
+    getTimeRemaining,
+    normalizeTOTPConfig,
+    type TOTPAlgorithm,
+    type TOTPDigits,
+} from '@/services/totpService';
 import { writeClipboard } from '@/services/clipboardService';
 import { cn } from '@/lib/utils';
 
 interface TOTPDisplayProps {
     secret: string;
+    algorithm?: TOTPAlgorithm;
+    digits?: TOTPDigits;
+    period?: number;
     className?: string;
 }
 
-export function TOTPDisplay({ secret, className }: TOTPDisplayProps) {
+export function TOTPDisplay({
+    secret,
+    algorithm,
+    digits,
+    period,
+    className,
+}: TOTPDisplayProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
+    const config = normalizeTOTPConfig({ algorithm, digits, period }) ?? {
+        algorithm: 'SHA1' as const,
+        digits: 6 as const,
+        period: 30,
+    };
 
     const [code, setCode] = useState('------');
-    const [timeRemaining, setTimeRemaining] = useState(30);
+    const [timeRemaining, setTimeRemaining] = useState(config.period);
     const [isRefreshing, setIsRefreshing] = useState(false);
 
     // Generate and refresh TOTP code
     useEffect(() => {
         const updateCode = () => {
-            const newCode = generateTOTP(secret);
+            const newCode = generateTOTP(secret, config);
             setCode(newCode);
             setIsRefreshing(true);
             setTimeout(() => setIsRefreshing(false), 300);
@@ -43,17 +64,17 @@ export function TOTPDisplay({ secret, className }: TOTPDisplayProps) {
 
         // Update countdown every second
         const interval = setInterval(() => {
-            const remaining = getTimeRemaining();
+            const remaining = getTimeRemaining(config.period);
             setTimeRemaining(remaining);
 
             // Regenerate code when timer resets
-            if (remaining === 30) {
+            if (remaining === config.period) {
                 updateCode();
             }
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [secret]);
+    }, [secret, config.algorithm, config.digits, config.period]);
 
     const copyCode = async () => {
         try {
@@ -71,7 +92,7 @@ export function TOTPDisplay({ secret, className }: TOTPDisplayProps) {
         }
     };
 
-    const progressPercent = (timeRemaining / 30) * 100;
+    const progressPercent = (timeRemaining / config.period) * 100;
     const isLow = timeRemaining <= 5;
 
     return (

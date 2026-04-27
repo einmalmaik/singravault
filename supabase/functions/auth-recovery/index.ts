@@ -1,25 +1,55 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import {
+    authRateLimitResponse,
+    checkAuthRateLimit,
+    getTrustedClientIp,
+    recordAuthRateLimitFailure,
+    resetAuthRateLimit,
+    type AuthRateLimitFailureResult,
+    type AuthRateLimitState,
+} from "../_shared/authRateLimit.ts";
+import {
+    isValidOpaqueIdentifier,
+    normalizeOpaqueIdentifier,
+    sha256Hex,
+} from "../_shared/opaqueAuth.ts";
+import {
+    twoFactorFailureResponse,
+    verifyTwoFactorServer,
+} from "../_shared/twoFactor.ts";
+import { AUTH_ERROR_CODES } from "../_shared/authErrors.ts";
+
+type ResetPurpose = "forgot" | "change";
+
+interface AuthUser {
+    id: string;
+    email: string | null;
+    app_metadata?: Record<string, unknown>;
+}
+
+interface ResetChallenge {
+    id: string;
+    user_id: string;
+    email: string;
+    purpose: ResetPurpose;
+    two_factor_required: boolean;
+    two_factor_verified_at: string | null;
+    authorized_at: string | null;
+}
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-const resendApiKey = Deno.env.get("RESEND_API_KEY")!;
+const resendApiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+const recoveryCodePepper = Deno.env.get("AUTH_RECOVERY_CODE_PEPPER") ?? "";
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-function createSupabaseAuthClient() {
-    return createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-        },
-    });
-}
+const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+const RESET_TOKEN_TTL_MS = 15 * 60 * 1000;
+const REQUEST_MIN_RESPONSE_MS = 500;
+const VERIFY_MIN_RESPONSE_MS = 300;
 
-/**
- * Generates a cryptographically secure 8-digit numeric code.
- */
 function generateCode(): string {
     const bytes = new Uint8Array(4);
     crypto.getRandomValues(bytes);
@@ -27,76 +57,59 @@ function generateCode(): string {
     return String(num % 100_000_000).padStart(8, "0");
 }
 
-/**
- * SHA-256 hash of a string, returned as hex.
- */
-async function hashCode(code: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(code);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+function generateResetToken(): string {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    let binary = "";
+    bytes.forEach((byte) => {
+        binary += String.fromCharCode(byte);
+    });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-/**
- * Reads the reset-password email HTML template and replaces the code placeholder.
- */
-function buildEmailHtml(code: string): string {
-    // Inline template based on src/email-templates/reset-password.html
+function buildEmailHtml(params: { code: string; purpose: ResetPurpose }): string {
+    const intro = params.purpose === "change"
+        ? "Du hast eine Änderung deines Singra Vault Kontopassworts angefordert."
+        : "Du hast eine Anfrage zum Zurücksetzen deines Singra Vault Kontopassworts gestellt.";
+
     return `<!DOCTYPE html>
 <html lang="de">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Passwort zurücksetzen - Singra Vault</title>
+<title>Singra Vault Sicherheitscode</title>
 <style>
 body,table,td{margin:0;padding:0}
-img{border:0;display:block}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;line-height:1.6;color:#1a1a2e;background-color:#f4f4f8}
 .wrapper{max-width:600px;margin:0 auto;padding:40px 20px}
 .card{background:#ffffff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08);overflow:hidden}
-.header{background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);padding:32px;text-align:center}
-.logo{display:inline-flex;align-items:center;gap:12px;color:#ffffff;font-size:24px;font-weight:700;text-decoration:none}
+.header{background:#18202f;padding:32px;text-align:center;color:#ffffff;font-size:24px;font-weight:700}
 .content{padding:40px 32px}
 h1{margin:0 0 16px;font-size:24px;font-weight:700;color:#1a1a2e}
 p{margin:0 0 16px;color:#4a4a68}
+.code{display:inline-block;background:#f4f4f8;padding:16px 32px;border-radius:12px;border:2px dashed #6366f1;letter-spacing:4px;font-size:32px;font-weight:700;color:#1a1a2e;font-family:monospace}
 .warning-box{background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:16px;margin:16px 0}
 .warning-box p{color:#92400e;margin:0}
-.divider{height:1px;background:#e2e2ea;margin:24px 0}
 .note{font-size:14px;color:#6b6b80}
 .footer{padding:24px 32px;background:#f8f8fc;text-align:center;font-size:12px;color:#6b6b80}
-.footer a{color:#6366f1;text-decoration:none}
-@media(prefers-color-scheme:dark){body{background-color:#0f0f1a;color:#e4e4e7}.card{background:#1a1a2e}h1{color:#ffffff}p{color:#a1a1aa}.footer{background:#0f0f1a}}
+@media(prefers-color-scheme:dark){body{background-color:#0f0f1a;color:#e4e4e7}.card{background:#1a1a2e}h1{color:#ffffff}p{color:#a1a1aa}.footer{background:#0f0f1a}.code{color:#1a1a2e}}
 </style>
 </head>
 <body>
 <div class="wrapper">
 <div class="card">
-<div class="header">
-<a href="https://singra.de" class="logo">
-<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-<span>Singra Vault</span>
-</a>
-</div>
+<div class="header">Singra Vault</div>
 <div class="content">
-<h1>Passwort zurücksetzen 🔐</h1>
-<p>Du hast eine Anfrage zum Zurücksetzen deines Passworts gestellt. Verwende den folgenden 8-stelligen Code in der App, um ein neues Passwort zu vergeben:</p>
-<div style="text-align:center;margin:32px 0;">
-<div style="display:inline-block;background:#f4f4f8;padding:16px 32px;border-radius:12px;border:2px dashed #6366f1;letter-spacing:4px;font-size:32px;font-weight:700;color:#1a1a2e;font-family:monospace;">
-${code}
-</div>
-</div>
+<h1>Sicherheitscode</h1>
+<p>${intro} Verwende den folgenden 8-stelligen Code in der App:</p>
+<div style="text-align:center;margin:32px 0;"><div class="code">${params.code}</div></div>
 <div class="warning-box">
-<p><strong>⚠️ Wichtig:</strong> Das Zurücksetzen des Kontopassworts ändert NICHT dein Master-Passwort. Deine verschlüsselten Vault-Daten bleiben sicher.</p>
+<p><strong>Wichtig:</strong> Das Zurücksetzen des Kontopassworts entschlüsselt keine Vault-Daten und ersetzt nicht dein Master-Passwort.</p>
 </div>
-<div class="divider"></div>
-<p class="note">Wenn du diese Anfrage nicht gestellt hast, ignoriere diese E-Mail. Dein Konto bleibt sicher.</p>
-<p class="note">Dieser Code ist 1 Stunde gültig.</p>
+<p class="note">Wenn du diese Anfrage nicht gestellt hast, ignoriere diese E-Mail. Der Code ist 10 Minuten gültig.</p>
 </div>
 <div class="footer">
-<p>&copy; 2026 Singra Vault. Alle Rechte vorbehalten.</p>
-<p><a href="https://singra.de/privacy">Datenschutz</a> | <a href="https://singra.de/terms">AGB</a> | <a href="https://singra.de/support">Support</a></p>
-<p class="note">Diese E-Mail wurde automatisch gesendet von noreply@mauntingstudios.de</p>
+<p>&copy; 2026 Singra Vault. Diese E-Mail wurde automatisch gesendet.</p>
 </div>
 </div>
 </div>
@@ -106,188 +119,578 @@ ${code}
 
 serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
+    const headers = new Headers({ ...corsHeaders, "Content-Type": "application/json" });
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+    if (req.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers });
+    }
 
     try {
         const body = await req.json();
-        const { email, action, code: verifyCode } = body;
+        const action = typeof body.action === "string" ? body.action : "request-email-code";
 
-        // === ACTION: verify — Nutzer gibt 8-stelligen Code ein ===
-        if (action === "verify") {
-            if (!email || !verifyCode) {
-                return new Response(JSON.stringify({ error: "Missing email or code" }), {
-                    status: 400,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
-
-            const codeHash = await hashCode(verifyCode);
-
-            // Prüfe Token in DB
-            const { data: tokens, error: tokenError } = await supabaseAdmin
-                .from("recovery_tokens")
-                .select("*")
-                .eq("email", email.toLowerCase().trim())
-                .eq("token_hash", codeHash)
-                .gt("expires_at", new Date().toISOString())
-                .limit(1);
-
-            if (tokenError || !tokens || tokens.length === 0) {
-                // Konstante Antwortzeit
-                await new Promise(r => setTimeout(r, 300));
-                return new Response(JSON.stringify({ error: "Invalid or expired code" }), {
-                    status: 400,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
-
-            // Token ist gültig → lösche ihn (single use)
-            await supabaseAdmin
-                .from("recovery_tokens")
-                .delete()
-                .eq("id", tokens[0].id);
-
-            // Erstelle eine Session via generateLink + verifyOtp (wie beim Login)
-            const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-                type: "magiclink",
-                email: email.toLowerCase().trim(),
-            });
-
-            if (linkError || !linkData) {
-                console.error("generateLink failed:", linkError);
-                return new Response(JSON.stringify({ error: "Session creation failed" }), {
-                    status: 500,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
-
-            const tokenHash = linkData.properties?.hashed_token;
-            if (!tokenHash) {
-                return new Response(JSON.stringify({ error: "No hashed_token" }), {
-                    status: 500,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
-
-            const authClient = createSupabaseAuthClient();
-            const { data: sessionData, error: verifyError } = await authClient.auth.verifyOtp({
-                token_hash: tokenHash,
-                type: "magiclink",
-            });
-
-            if (verifyError || !sessionData?.session) {
-                console.error("verifyOtp failed:", verifyError);
-                return new Response(JSON.stringify({ error: "Session verification failed" }), {
-                    status: 500,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" },
-                });
-            }
-
-            return new Response(JSON.stringify({
-                success: true,
-                session: {
-                    access_token: sessionData.session.access_token,
-                    refresh_token: sessionData.session.refresh_token,
-                },
-            }), {
-                status: 200,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+        if (action === "verify" || action === "verify-email-code") {
+            return await handleVerifyEmailCode(req, body, corsHeaders);
         }
 
-        // === ACTION: default — Passwort-Reset anfordern ===
-        if (!email) {
-            return new Response(JSON.stringify({ error: "Invalid email" }), {
-                status: 400,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+        if (action === "verify-two-factor") {
+            return await handleVerifyTwoFactor(req, body, headers);
         }
 
-        const startTime = Date.now();
-        const normalizedEmail = email.toLowerCase().trim();
-
-        // Prüfe ob User existiert
-        const { data: users, error: rpcError } = await supabaseAdmin.rpc("get_user_id_by_email", {
-            p_email: normalizedEmail,
-        });
-        const userExists = !rpcError && users && users.length > 0;
-
-        if (userExists) {
-            // Eigenen Rate Limit: max 1 Token pro 60s pro E-Mail
-            const { data: recentTokens } = await supabaseAdmin
-                .from("recovery_tokens")
-                .select("created_at")
-                .eq("email", normalizedEmail)
-                .gt("created_at", new Date(Date.now() - 60_000).toISOString())
-                .limit(1);
-
-            if (recentTokens && recentTokens.length > 0) {
-                // Bereits ein Token in den letzten 60s gesendet — still succeed (anti-enumeration)
-                console.log("Rate limited: recovery token already sent recently for", normalizedEmail);
-            } else {
-                // Alte abgelaufene Tokens löschen
-                await supabaseAdmin
-                    .from("recovery_tokens")
-                    .delete()
-                    .eq("email", normalizedEmail);
-
-                // 8-stelligen Code generieren und hashen
-                const code = generateCode();
-                const codeHash = await hashCode(code);
-                const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 Stunde
-
-                // Token in DB speichern
-                const { error: insertError } = await supabaseAdmin
-                    .from("recovery_tokens")
-                    .insert({
-                        email: normalizedEmail,
-                        token_hash: codeHash,
-                        expires_at: expiresAt,
-                    });
-
-                if (insertError) {
-                    console.error("Failed to insert recovery token:", insertError);
-                } else {
-                    // E-Mail via Resend senden
-                    const emailHtml = buildEmailHtml(code);
-                    const resendRes = await fetch("https://api.resend.com/emails", {
-                        method: "POST",
-                        headers: {
-                            "Authorization": `Bearer ${resendApiKey}`,
-                            "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                            from: "Singra Vault <noreply@mauntingstudios.de>",
-                            to: [normalizedEmail],
-                            subject: "Passwort zurücksetzen – Singra Vault 🔐",
-                            html: emailHtml,
-                        }),
-                    });
-
-                    if (!resendRes.ok) {
-                        const errText = await resendRes.text();
-                        console.error("Resend API error:", errText);
-                    } else {
-                        console.log("Recovery email sent via Resend to:", normalizedEmail);
-                    }
-                }
-            }
-        }
-
-        // Konstante Antwortzeit (anti-timing-attack)
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 500) await new Promise(r => setTimeout(r, 500 - elapsed));
-
-        // IMMER Erfolg, um User-Enumeration auszuschließen
-        return new Response(JSON.stringify({ success: true }), {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-    } catch (err: any) {
+        return await handleRequestEmailCode(req, body, corsHeaders);
+    } catch (err: unknown) {
         console.error("Auth Recovery Error:", err);
         return new Response(JSON.stringify({ error: "Internal Server Error" }), {
+            status: 500,
+            headers,
+        });
+    }
+});
+
+async function handleRequestEmailCode(
+    req: Request,
+    body: Record<string, unknown>,
+    corsHeaders: Record<string, string>,
+): Promise<Response> {
+    const startTime = Date.now();
+    const purpose = parsePurpose(body.purpose);
+    const context = await resolveRequestContext(req, body, purpose);
+
+    if (context.response) {
+        return context.response;
+    }
+
+    const email = context.email;
+    const requestRateLimit = await checkAuthRateLimit({
+        supabaseAdmin,
+        req,
+        action: "recovery_request",
+        account: { kind: "email", value: email },
+    });
+    if (!requestRateLimit.allowed) {
+        return authRateLimitResponse(
+            requestRateLimit,
+            new Headers({ ...corsHeaders, "Content-Type": "application/json" }),
+        );
+    }
+
+    await recordAuthRateLimitFailure(requestRateLimit);
+
+    if (context.userId) {
+        await maybeIssueEmailCode(email, purpose);
+    }
+
+    await delayUntilMinimum(startTime, REQUEST_MIN_RESPONSE_MS);
+    return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+}
+
+async function handleVerifyEmailCode(
+    req: Request,
+    body: Record<string, unknown>,
+    corsHeaders: Record<string, string>,
+): Promise<Response> {
+    const startTime = Date.now();
+    const purpose = parsePurpose(body.purpose);
+    const code = typeof body.code === "string" ? body.code.trim() : "";
+    const context = await resolveRequestContext(req, body, purpose);
+
+    if (context.response) {
+        return context.response;
+    }
+
+    if (!/^\d{8}$/.test(code)) {
+        return new Response(JSON.stringify({
+            error: "Invalid or expired code",
+            code: AUTH_ERROR_CODES.AUTH_INVALID_OR_EXPIRED_CODE,
+        }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+    }
+
+    const recoveryRateLimit = await checkAuthRateLimit({
+        supabaseAdmin,
+        req,
+        action: "recovery_verify",
+        account: { kind: "email", value: context.email },
+    });
+    if (!recoveryRateLimit.allowed) {
+        return authRateLimitResponse(
+            recoveryRateLimit,
+            new Headers({ ...corsHeaders, "Content-Type": "application/json" }),
+        );
+    }
+
+    const consumedToken = await consumeEmailCode(context.email, purpose, code);
+    if (!consumedToken) {
+        return await invalidRecoveryAttemptResponse(
+            recoveryRateLimit,
+            startTime,
+            corsHeaders,
+            "Invalid or expired code",
+            AUTH_ERROR_CODES.AUTH_INVALID_OR_EXPIRED_CODE,
+        );
+    }
+
+    if (!context.userId) {
+        return await invalidRecoveryAttemptResponse(
+            recoveryRateLimit,
+            startTime,
+            corsHeaders,
+            "Invalid or expired code",
+            AUTH_ERROR_CODES.AUTH_INVALID_OR_EXPIRED_CODE,
+        );
+    }
+
+    const twoFactorRequired = await isTwoFactorEnabled(context.userId);
+    const resetToken = generateResetToken();
+    const resetTokenHash = await sha256Hex(resetToken);
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
+
+    await supabaseAdmin
+        .from("password_reset_challenges")
+        .delete()
+        .eq("user_id", context.userId);
+
+    const { error: challengeError } = await supabaseAdmin
+        .from("password_reset_challenges")
+        .insert({
+            user_id: context.userId,
+            email: context.email,
+            token_hash: resetTokenHash,
+            purpose,
+            email_verified_at: nowIso,
+            two_factor_required: twoFactorRequired,
+            two_factor_verified_at: null,
+            authorized_at: twoFactorRequired ? null : nowIso,
+            expires_at: expiresAt,
+            ip_address: getTrustedClientIp(req),
+            user_agent: req.headers.get("user-agent") || "unknown",
+        });
+
+    if (challengeError) {
+        console.error("Failed to create password reset challenge:", challengeError);
+        return new Response(JSON.stringify({ error: "Reset challenge creation failed" }), {
             status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
     }
-});
+
+    await resetAuthRateLimit(recoveryRateLimit);
+
+    return new Response(JSON.stringify({
+        success: true,
+        resetToken,
+        expiresAt,
+        requires2FA: twoFactorRequired,
+        nextState: twoFactorRequired ? "TWO_FACTOR_REQUIRED" : "NEW_PASSWORD_ALLOWED",
+    }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+}
+
+async function handleVerifyTwoFactor(
+    req: Request,
+    body: Record<string, unknown>,
+    headers: Headers,
+): Promise<Response> {
+    const resetToken = typeof body.resetToken === "string" ? body.resetToken.trim() : "";
+    const code = typeof body.code === "string" ? body.code.trim() : "";
+    const isBackupCode = Boolean(body.isBackupCode);
+    if (!resetToken || !code) {
+        return new Response(JSON.stringify({ error: "Invalid request payload" }), { status: 400, headers });
+    }
+
+    const challenge = await findActiveResetChallenge(resetToken);
+    if (!challenge) {
+        await delay(VERIFY_MIN_RESPONSE_MS);
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
+    }
+
+    if (!challenge.two_factor_required) {
+        return new Response(JSON.stringify({
+            success: true,
+            nextState: "NEW_PASSWORD_ALLOWED",
+        }), { status: 200, headers });
+    }
+
+    const secondFactor = await verifyTwoFactorServer({
+        supabaseAdmin,
+        req,
+        userId: challenge.user_id,
+        purpose: challenge.purpose === "change" ? "password_change" : "password_reset",
+        method: isBackupCode ? "backup_code" : "totp",
+        code,
+        challengeId: challenge.id,
+    });
+    if (!secondFactor.ok) {
+        return twoFactorFailureResponse(secondFactor, headers);
+    }
+
+    const nowIso = new Date().toISOString();
+    const { data: updatedChallenge, error: updateError } = await supabaseAdmin
+        .from("password_reset_challenges")
+        .update({
+            two_factor_verified_at: nowIso,
+            authorized_at: nowIso,
+        })
+        .eq("id", challenge.id)
+        .is("used_at", null)
+        .gt("expires_at", nowIso)
+        .select("id")
+        .maybeSingle();
+
+    if (updateError || !updatedChallenge) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
+    }
+
+    return new Response(JSON.stringify({
+        success: true,
+        nextState: "NEW_PASSWORD_ALLOWED",
+    }), { status: 200, headers });
+}
+
+async function resolveRequestContext(
+    req: Request,
+    body: Record<string, unknown>,
+    purpose: ResetPurpose,
+): Promise<{ email: string; userId: string | null; response?: Response }> {
+    if (purpose === "change") {
+        const authUser = await getAuthenticatedUser(req);
+        if (!authUser?.email) {
+            return {
+                email: "unknown",
+                userId: null,
+                response: new Response(JSON.stringify({ error: "Authentication required" }), {
+                    status: 401,
+                    headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
+                }),
+            };
+        }
+
+        const email = normalizeOpaqueIdentifier(authUser.email);
+        if (!await canUseAppPasswordReset(authUser.id, authUser)) {
+            return {
+                email,
+                userId: null,
+                response: new Response(JSON.stringify({ error: "App-password credentials are not configured for this account" }), {
+                    status: 403,
+                    headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
+                }),
+            };
+        }
+
+        return { email, userId: authUser.id };
+    }
+
+    const email = normalizeOpaqueIdentifier(body.email);
+    if (!isValidOpaqueIdentifier(email)) {
+        return {
+            email: "unknown",
+            userId: null,
+            response: new Response(JSON.stringify({ error: "Invalid email" }), {
+                status: 400,
+                headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
+            }),
+        };
+    }
+
+    const user = await findAppPasswordUserByEmail(email);
+    return { email, userId: user?.id ?? null };
+}
+
+async function maybeIssueEmailCode(email: string, purpose: ResetPurpose): Promise<void> {
+    const { data: recentTokens } = await supabaseAdmin
+        .from("recovery_tokens")
+        .select("created_at")
+        .eq("email", email)
+        .eq("purpose", purpose)
+        .is("used_at", null)
+        .gt("created_at", new Date(Date.now() - 60_000).toISOString())
+        .limit(1);
+
+    if (recentTokens && recentTokens.length > 0) {
+        return;
+    }
+
+    await supabaseAdmin
+        .from("recovery_tokens")
+        .delete()
+        .eq("email", email)
+        .eq("purpose", purpose);
+
+    const code = generateCode();
+    const codeHash = await hashRecoveryEmailCode(email, purpose, code);
+    const expiresAt = new Date(Date.now() + EMAIL_CODE_TTL_MS).toISOString();
+
+    const { error: insertError } = await supabaseAdmin
+        .from("recovery_tokens")
+        .insert({
+            email,
+            token_hash: codeHash,
+            purpose,
+            expires_at: expiresAt,
+        });
+
+    if (insertError) {
+        console.error("Failed to insert recovery token:", insertError);
+        return;
+    }
+
+    await sendRecoveryEmail(email, code, purpose);
+}
+
+async function sendRecoveryEmail(email: string, code: string, purpose: ResetPurpose): Promise<void> {
+    if (!resendApiKey) {
+        console.error("RESEND_API_KEY missing; cannot send recovery email.");
+        return;
+    }
+
+    const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${resendApiKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            from: "Singra Vault <noreply@mauntingstudios.de>",
+            to: [email],
+            subject: purpose === "change"
+                ? "Sicherheitscode zum Ändern deines Singra Vault Passworts"
+                : "Sicherheitscode zum Zurücksetzen deines Singra Vault Passworts",
+            html: buildEmailHtml({ code, purpose }),
+        }),
+    });
+
+    if (!response.ok) {
+        console.error("Resend API error:", await response.text());
+    }
+}
+
+async function consumeEmailCode(email: string, purpose: ResetPurpose, code: string): Promise<boolean> {
+    const codeHash = recoveryCodePepper
+        ? await hashRecoveryEmailCode(email, purpose, code)
+        : "";
+    if (codeHash && await consumeEmailCodeByHash(email, purpose, codeHash)) {
+        return true;
+    }
+
+    const legacyCodeHash = await sha256Hex(code);
+    return await consumeEmailCodeByHash(email, purpose, legacyCodeHash);
+}
+
+async function consumeEmailCodeByHash(email: string, purpose: ResetPurpose, tokenHash: string): Promise<boolean> {
+    const { data, error } = await supabaseAdmin
+        .from("recovery_tokens")
+        .update({ used_at: new Date().toISOString() })
+        .eq("email", email)
+        .eq("purpose", purpose)
+        .eq("token_hash", tokenHash)
+        .is("used_at", null)
+        .gt("expires_at", new Date().toISOString())
+        .select("id")
+        .maybeSingle();
+
+    return !error && Boolean(data);
+}
+
+async function hashRecoveryEmailCode(email: string, purpose: ResetPurpose, code: string): Promise<string> {
+    if (!recoveryCodePepper) {
+        throw new Error("AUTH_RECOVERY_CODE_PEPPER is required for recovery code hashing");
+    }
+
+    const key = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(recoveryCodePepper),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+    );
+    const message = `${purpose}\0${normalizeOpaqueIdentifier(email)}\0${code}`;
+    const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+    const hex = Array.from(new Uint8Array(signature))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+    return `hmac-sha256:v1:${hex}`;
+}
+
+async function findAppPasswordUserByEmail(email: string): Promise<AuthUser | null> {
+    const { data: users, error } = await supabaseAdmin.rpc("get_user_id_by_email", {
+        p_email: email,
+    });
+    if (error || !users || users.length === 0) {
+        return null;
+    }
+
+    const userId = users[0].id as string;
+    const { data: adminUserData, error: adminUserError } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (adminUserError || !adminUserData.user) {
+        return null;
+    }
+
+    const authUser = adminUserData.user as AuthUser;
+    return await canUseAppPasswordReset(userId, authUser) ? authUser : null;
+}
+
+async function canUseAppPasswordReset(userId: string, authUser: AuthUser): Promise<boolean> {
+    const { data: opaqueRecord } = await supabaseAdmin
+        .from("user_opaque_records")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+    if (opaqueRecord) {
+        return true;
+    }
+
+    const providers = getAuthProviders(authUser.app_metadata);
+    if (providers.includes("email")) {
+        return true;
+    }
+
+    // Older email/password accounts may not carry complete provider metadata.
+    return providers.length === 0 && Boolean(authUser.email);
+}
+
+async function getAuthenticatedUser(req: Request): Promise<AuthUser | null> {
+    const token = parseBearerToken(req.headers.get("Authorization"));
+    if (!token) {
+        return null;
+    }
+
+    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !data.user) {
+        return null;
+    }
+
+    return data.user as AuthUser;
+}
+
+async function findActiveResetChallenge(resetToken: string): Promise<ResetChallenge | null> {
+    const resetTokenHash = await sha256Hex(resetToken);
+    const { data: challenge, error } = await supabaseAdmin
+        .from("password_reset_challenges")
+        .select("id, user_id, email, purpose, two_factor_required, two_factor_verified_at, authorized_at")
+        .eq("token_hash", resetTokenHash)
+        .is("used_at", null)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+    if (error || !challenge) {
+        return null;
+    }
+
+    return challenge as ResetChallenge;
+}
+
+async function isTwoFactorEnabled(userId: string): Promise<boolean> {
+    const { data: user2fa } = await supabaseAdmin
+        .from("user_2fa")
+        .select("is_enabled")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+    return Boolean(user2fa?.is_enabled);
+}
+
+function parsePurpose(value: unknown): ResetPurpose {
+    return value === "change" ? "change" : "forgot";
+}
+
+function parseBearerToken(authHeader: string | null): string | null {
+    if (!authHeader) {
+        return null;
+    }
+
+    if (authHeader.startsWith("Bearer ")) {
+        const token = authHeader.slice("Bearer ".length).trim();
+        return token || null;
+    }
+
+    const token = authHeader.trim();
+    return token || null;
+}
+
+function getAuthProviders(appMetadata: Record<string, unknown> | null | undefined): string[] {
+    if (!appMetadata || typeof appMetadata !== "object") {
+        return [];
+    }
+
+    const providersField = appMetadata.providers;
+    if (Array.isArray(providersField)) {
+        return providersField
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => value.trim().toLowerCase())
+            .filter((value) => value.length > 0);
+    }
+
+    const providerField = appMetadata.provider;
+    if (typeof providerField === "string" && providerField.trim()) {
+        return [providerField.trim().toLowerCase()];
+    }
+
+    return [];
+}
+
+async function invalidRecoveryAttemptResponse(
+    rateLimitState: AuthRateLimitState,
+    startTime: number,
+    corsHeaders: Record<string, string>,
+    message: string,
+    code?: string,
+): Promise<Response> {
+    const failure = await recordAuthRateLimitFailure(rateLimitState);
+    await delayUntilMinimum(startTime, VERIFY_MIN_RESPONSE_MS);
+    if (failure.lockedUntil) {
+        return authRateLimitResponse(
+            toLockedState(failure),
+            new Headers({ ...corsHeaders, "Content-Type": "application/json" }),
+        );
+    }
+
+    return new Response(JSON.stringify({ error: message, ...(code ? { code } : {}) }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+}
+
+async function invalidSecondFactorAttemptResponse(
+    rateLimitState: AuthRateLimitState,
+    startTime: number,
+    headers: Headers,
+    message: string,
+): Promise<Response> {
+    const failure = await recordAuthRateLimitFailure(rateLimitState);
+    await delayUntilMinimum(startTime, VERIFY_MIN_RESPONSE_MS);
+    if (failure.lockedUntil) {
+        return authRateLimitResponse(toLockedState(failure), headers);
+    }
+
+    return new Response(JSON.stringify({ error: message }), { status: 401, headers });
+}
+
+function toLockedState(failure: AuthRateLimitFailureResult) {
+    return {
+        status: 429 as const,
+        error: "Too many attempts",
+        attemptsRemaining: failure.attemptsRemaining,
+        lockedUntil: failure.lockedUntil,
+        retryAfterSeconds: failure.retryAfterSeconds,
+    };
+}
+
+async function delayUntilMinimum(startTime: number, minimumMs: number): Promise<void> {
+    const remaining = minimumMs - (Date.now() - startTime);
+    if (remaining > 0) {
+        await delay(remaining);
+    }
+}
+
+async function delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+}

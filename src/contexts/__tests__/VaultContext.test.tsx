@@ -1,5 +1,5 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Tests for VaultContext
  *
@@ -47,6 +47,7 @@ const mockDecrypt = vi.fn();
 const mockEncryptVaultItem = vi.fn();
 const mockDecryptVaultItem = vi.fn();
 const mockAttemptKdfUpgrade = vi.fn();
+const mockUnwrapUserKeyBytes = vi.fn();
 
 vi.mock("@/services/cryptoService", () => ({
   deriveKey: (...args: unknown[]) => mockDeriveKey(...args),
@@ -75,18 +76,83 @@ vi.mock("@/services/cryptoService", () => ({
   unwrapUserKey: vi.fn(() => Promise.resolve(
     { type: 'secret', extractable: false, usages: ['encrypt', 'decrypt'] }
   )),
+  unwrapUserKeyBytes: (...args: unknown[]) => mockUnwrapUserKeyBytes(...args),
   rewrapUserKey: vi.fn(() => Promise.resolve('mock-rewrapped-user-key')),
   decryptPrivateKeyLegacy: vi.fn(() => Promise.resolve('mock-plain-private-key')),
   wrapPrivateKeyWithUserKey: vi.fn(() => Promise.resolve('mock-wrapped-private-key')),
   CURRENT_KDF_VERSION: 2,
 }));
 
+const mockRestoreQuarantinedItemFromTrustedSnapshot = vi.fn();
+const mockDeleteQuarantinedItemFromVault = vi.fn();
+vi.mock("@/services/vaultQuarantineRecoveryService", () => ({
+  indexTrustedSnapshotItems: (snapshot: { items: Array<{ id: string }> } | null) => {
+    if (!snapshot) return {};
+    return Object.fromEntries(snapshot.items.map((item) => [item.id, item]));
+  },
+  buildQuarantineResolutionMap: (
+    items: Array<{ id: string; reason: string }>,
+    trustedItemsById: Record<string, unknown>,
+    runtimeStateById: Record<string, { isBusy: boolean; lastError: string | null }> = {},
+  ) =>
+    Object.fromEntries(
+      items.map((item) => {
+        const runtimeState = runtimeStateById[item.id] ?? { isBusy: false, lastError: null };
+        const hasTrustedLocalCopy = Boolean(trustedItemsById[item.id]);
+        return [
+          item.id,
+          {
+            reason: item.reason,
+            canRestore: hasTrustedLocalCopy && item.reason !== "unknown_on_server",
+            canDelete: item.reason === "ciphertext_changed" || item.reason === "unknown_on_server",
+            canAcceptMissing: item.reason === "missing_on_server",
+            hasTrustedLocalCopy,
+            isBusy: runtimeState.isBusy,
+            lastError: runtimeState.lastError,
+          },
+        ];
+      }),
+    ),
+  restoreQuarantinedItemFromTrustedSnapshot: (...args: unknown[]) =>
+    mockRestoreQuarantinedItemFromTrustedSnapshot(...args),
+  deleteQuarantinedItemFromVault: (...args: unknown[]) =>
+    mockDeleteQuarantinedItemFromVault(...args),
+}));
+
 // Mock offline vault service
+const mockGetOfflineCredentials = vi.fn();
+const mockSaveOfflineCredentials = vi.fn();
+const mockLoadVaultSnapshot = vi.fn();
+const mockFetchRemoteOfflineSnapshot = vi.fn();
+const mockGetOfflineSnapshot = vi.fn();
+const mockGetTrustedOfflineSnapshot = vi.fn();
+const mockIsRecentLocalVaultMutation = vi.fn();
+const mockSaveTrustedOfflineSnapshot = vi.fn();
+const mockClearOfflineVaultData = vi.fn();
 vi.mock("@/services/offlineVaultService", () => ({
   isAppOnline: vi.fn(() => true),
   isLikelyOfflineError: vi.fn(() => false),
-  getOfflineCredentials: vi.fn(() => Promise.resolve(null)),
-  saveOfflineCredentials: vi.fn(() => Promise.resolve()),
+  fetchRemoteOfflineSnapshot: (...args: unknown[]) => mockFetchRemoteOfflineSnapshot(...args),
+  getOfflineSnapshot: (...args: unknown[]) => mockGetOfflineSnapshot(...args),
+  getOfflineCredentials: (...args: unknown[]) => mockGetOfflineCredentials(...args),
+  getTrustedOfflineSnapshot: (...args: unknown[]) => mockGetTrustedOfflineSnapshot(...args),
+  isRecentLocalVaultMutation: (...args: unknown[]) => mockIsRecentLocalVaultMutation(...args),
+  saveOfflineCredentials: (...args: unknown[]) => mockSaveOfflineCredentials(...args),
+  saveTrustedOfflineSnapshot: (...args: unknown[]) => mockSaveTrustedOfflineSnapshot(...args),
+  loadVaultSnapshot: (...args: unknown[]) => mockLoadVaultSnapshot(...args),
+  clearOfflineVaultData: (...args: unknown[]) => mockClearOfflineVaultData(...args),
+}));
+
+// Mock device key service
+const mockGenerateDeviceKey = vi.fn(() => new Uint8Array(32).fill(5));
+const mockStoreDeviceKey = vi.fn();
+const mockLoadDeviceKey = vi.fn();
+const mockCheckHasDeviceKey = vi.fn();
+vi.mock("@/services/deviceKeyService", () => ({
+  generateDeviceKey: () => mockGenerateDeviceKey(),
+  storeDeviceKey: (...args: unknown[]) => mockStoreDeviceKey(...args),
+  getDeviceKey: (...args: unknown[]) => mockLoadDeviceKey(...args),
+  hasDeviceKey: (...args: unknown[]) => mockCheckHasDeviceKey(...args),
 }));
 
 // Mock passkey service
@@ -108,12 +174,35 @@ vi.mock("@/services/rateLimiterService", () => ({
   resetUnlockAttempts: () => mockResetUnlockAttempts(),
 }));
 
+const mockGetTwoFactorRequirement = vi.fn();
+vi.mock("@/services/twoFactorService", () => ({
+  getTwoFactorRequirement: (...args: unknown[]) => mockGetTwoFactorRequirement(...args),
+}));
+
 // ============ Test Helpers ============
 
 function createWrapper() {
   return function Wrapper({ children }: { children: ReactNode }) {
     return <VaultProvider>{children}</VaultProvider>;
   };
+}
+
+function createSelectQueryMock(
+  profileData: Record<string, unknown> | null = null,
+  limitData: unknown[] = [],
+) {
+  const query = {
+    eq: vi.fn(),
+    single: vi.fn().mockResolvedValue({ data: profileData, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: profileData, error: null }),
+    limit: vi.fn().mockResolvedValue({ data: limitData, error: null }),
+    order: vi.fn(),
+  };
+
+  query.eq.mockReturnValue(query);
+  query.order.mockReturnValue(query);
+
+  return query;
 }
 
 // ============ Test Suite ============
@@ -126,23 +215,51 @@ describe("VaultContext", () => {
 
     // Default auth mock
     mockUseAuth.mockReturnValue({ user: mockUser, authReady: true });
+    mockGetOfflineCredentials.mockResolvedValue(null);
+    mockSaveOfflineCredentials.mockResolvedValue(undefined);
+    mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+      userId: mockUser.id,
+      vaultId: "vault-123",
+      items: [],
+      categories: [],
+      lastSyncedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    mockGetOfflineSnapshot.mockResolvedValue(null);
+    mockGetTrustedOfflineSnapshot.mockResolvedValue(null);
+    mockIsRecentLocalVaultMutation.mockReturnValue(false);
+    mockSaveTrustedOfflineSnapshot.mockResolvedValue(undefined);
+    mockClearOfflineVaultData.mockResolvedValue(undefined);
+    mockStoreDeviceKey.mockResolvedValue(undefined);
+    mockLoadDeviceKey.mockResolvedValue(null);
+    mockCheckHasDeviceKey.mockResolvedValue(false);
+    mockLoadVaultSnapshot.mockResolvedValue({
+      snapshot: {
+        items: [],
+        categories: [],
+      },
+      source: "cache",
+    });
     mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
     mockImportMasterKey.mockResolvedValue({} as CryptoKey);
-    mockAuthenticatePasskey.mockResolvedValue({ success: true, encryptionKey: {} as CryptoKey });
+    mockAuthenticatePasskey.mockResolvedValue({
+      success: true,
+      encryptionKey: {} as CryptoKey,
+      keySource: "vault-key",
+    });
     mockListPasskeys.mockResolvedValue([]);
+    mockRestoreQuarantinedItemFromTrustedSnapshot.mockResolvedValue({ syncedOnline: true });
+    mockDeleteQuarantinedItemFromVault.mockResolvedValue({ syncedOnline: true });
     mockGetUnlockCooldown.mockReturnValue(null);
+    mockUnwrapUserKeyBytes.mockResolvedValue(new Uint8Array(32));
+    mockGetTwoFactorRequirement.mockResolvedValue({
+      context: "vault_unlock",
+      required: false,
+      status: "loaded",
+    });
 
     // Default Supabase profile response - no vault setup yet
-    // Support chained .eq() calls with proper mock structure
-    const mockEqChain = {
-      eq: vi.fn().mockReturnValue({
-        single: vi.fn().mockResolvedValue({ data: null, error: null }),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      }),
-      single: vi.fn().mockResolvedValue({ data: null, error: null }),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-    };
+    const mockEqChain = createSelectQueryMock(null, []);
 
     mockSupabase.from.mockReturnValue({
       select: vi.fn().mockReturnValue({
@@ -181,6 +298,16 @@ describe("VaultContext", () => {
       expect(result.current.isDuressMode).toBe(false);
     });
 
+    it("should expose refreshIntegrityBaseline through the provider value", async () => {
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.refreshIntegrityBaseline).toEqual(expect.any(Function));
+    });
+
     it("should detect setup is required when no profile exists", async () => {
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
 
@@ -191,32 +318,38 @@ describe("VaultContext", () => {
       expect(result.current.isSetupRequired).toBe(true);
     });
 
+    it("uses the local setup path only for the dedicated Tauri dev user", async () => {
+      mockUseAuth.mockReturnValue({
+        user: { id: "00000000-0000-4000-8000-000000000001", email: "tauri-dev@singra.local" },
+        authReady: true,
+      });
+      mockGetOfflineCredentials.mockResolvedValue({
+        salt: "dev-salt",
+        verifier: "dev-verifier",
+        kdfVersion: 2,
+        encryptedUserKey: "dev-encrypted-user-key",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.isSetupRequired).toBe(false);
+      expect(mockGetOfflineCredentials).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000001");
+      expect(mockSupabase.from).not.toHaveBeenCalled();
+    });
+
     it("should load existing vault setup from profile", async () => {
       // Mock existing profile with vault setup
       mockSupabase.from.mockReturnValue({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "test-salt-123",
-                master_password_verifier: "test-verifier-456",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            maybeSingle: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "test-salt-123",
-                master_password_verifier: "test-verifier-456",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            limit: vi.fn().mockResolvedValue({
-              data: [],
-              error: null,
-            }),
-          }),
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "test-salt-123",
+            master_password_verifier: "test-verifier-456",
+            kdf_version: 2,
+          })),
         }),
       });
 
@@ -237,14 +370,14 @@ describe("VaultContext", () => {
 
       // Start: user present but authReady=false (INITIAL_SESSION window).
       // Case B guard fires: early return WITHOUT setting isLoading=false.
-      // isLoading stays true — spinner shown, no stale-defaults flash (Bug 4 fix).
+      // isLoading stays true â€” spinner shown, no stale-defaults flash (Bug 4 fix).
       mockUseAuth.mockReturnValue({ user: mockUser, authReady: false });
 
       const { result, rerender } = renderHook(() => useVault(), {
         wrapper: createWrapper(),
       });
 
-      // isLoading must remain TRUE — setup is pending, not yet aborted.
+      // isLoading must remain TRUE â€” setup is pending, not yet aborted.
       // Supabase must NOT be called yet (auth not ready).
       await waitFor(() => {
         expect(result.current.isLoading).toBe(true);
@@ -256,7 +389,7 @@ describe("VaultContext", () => {
       rerender();
 
       // With the dep-array fix, the useEffect re-runs and calls checkSetup().
-      // The default mock returns no profile → isSetupRequired becomes true.
+      // The default mock returns no profile â†’ isSetupRequired becomes true.
       await waitFor(() => {
         expect(result.current.isSetupRequired).toBe(true);
       });
@@ -277,12 +410,12 @@ describe("VaultContext", () => {
         wrapper: createWrapper(),
       });
 
-      // Spin for 100ms — isLoading must remain true the entire time.
+      // Spin for 100ms â€” isLoading must remain true the entire time.
       // (waitFor with negation: give it time and confirm it never went false.)
       await new Promise((r) => setTimeout(r, 100));
       expect(result.current.isLoading).toBe(true);
 
-      // hasPasskeyUnlock must NOT have been cleared — user exists, data unknown.
+      // hasPasskeyUnlock must NOT have been cleared â€” user exists, data unknown.
       // (Only cleared when user is definitively absent.)
       expect(result.current.isLoading).toBe(true);
     });
@@ -300,7 +433,7 @@ describe("VaultContext", () => {
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);
       });
-      // Supabase must never have been touched — no user, no fetch.
+      // Supabase must never have been touched â€” no user, no fetch.
       expect(mockSupabase.from).not.toHaveBeenCalledWith("profiles");
     });
 
@@ -313,23 +446,16 @@ describe("VaultContext", () => {
 
       mockSupabase.from.mockImplementation(() => ({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn((_column: string, value: string) => ({
-            single: vi.fn().mockResolvedValue({ data: null, error: null }),
-            maybeSingle: vi.fn().mockResolvedValue(
-              value === mockUser.id
-                ? {
-                    data: {
-                      encryption_salt: "first-user-salt",
-                      master_password_verifier: "first-user-verifier",
-                      kdf_version: 2,
-                      encrypted_user_key: "first-user-usk",
-                    },
-                    error: null,
-                  }
-                : { data: null, error: null },
-            ),
-            limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-          })),
+          eq: vi.fn((_column: string, value: string) => createSelectQueryMock(
+            value === mockUser.id
+              ? {
+                  encryption_salt: "first-user-salt",
+                  master_password_verifier: "first-user-verifier",
+                  kdf_version: 2,
+                  encrypted_user_key: "first-user-usk",
+                }
+              : null,
+          )),
         }),
         insert: vi.fn().mockReturnValue({
           select: vi.fn().mockResolvedValue({ data: [{ id: "vault-123" }], error: null }),
@@ -415,28 +541,11 @@ describe("VaultContext", () => {
       // Mock existing profile
       mockSupabase.from.mockReturnValue({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "existing-salt",
-                master_password_verifier: "existing-verifier",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            maybeSingle: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "existing-salt",
-                master_password_verifier: "existing-verifier",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            limit: vi.fn().mockResolvedValue({
-              data: [],
-              error: null,
-            }),
-          }),
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+          })),
         }),
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({ data: null, error: null }),
@@ -445,7 +554,7 @@ describe("VaultContext", () => {
     });
 
     it("should unlock vault with correct password", async () => {
-      // Profile mock without encrypted_user_key → takes PRE-USK migration path
+      // Profile mock without encrypted_user_key -> takes PRE-USK migration path
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
@@ -470,6 +579,294 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(false);
     });
 
+    it("blocks master-password unlock when vault 2FA is required but no verifier callback is supplied", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA verification required");
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("unlocks with master password only after vault 2FA verification succeeds", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlock("CorrectPassword!", {
+          verifyTwoFactor: async () => true,
+        });
+      });
+
+      expect(result.current.isLocked).toBe(false);
+    });
+
+    it("keeps the vault locked when master-password 2FA verification fails", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!", {
+          verifyTwoFactor: async () => false,
+        });
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA verification failed");
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("tauri dev unlock verifies the local snapshot without server reads", async () => {
+      const devUserId = "00000000-0000-4000-8000-000000000001";
+      mockUseAuth.mockReturnValue({
+        user: { id: devUserId, email: "tauri-dev@singra.local" },
+        authReady: true,
+      });
+      mockGetOfflineCredentials.mockResolvedValue({
+        salt: "dev-salt",
+        verifier: "dev-verifier",
+        kdfVersion: 2,
+        encryptedUserKey: "dev-encrypted-user-key",
+      });
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockDecrypt.mockResolvedValue("QA Kategorie");
+      mockLoadVaultSnapshot.mockResolvedValue({
+        snapshot: {
+          userId: devUserId,
+          vaultId: "00000000-0000-4000-8000-000000000002",
+          items: [],
+          categories: [
+            {
+              id: "cat-1",
+              user_id: devUserId,
+              name: "enc:cat:v1:category-cipher",
+              icon: null,
+              color: "enc:cat:v1:color-cipher",
+              parent_id: null,
+              sort_order: null,
+              created_at: "2026-04-22T10:00:00.000Z",
+              updated_at: "2026-04-22T11:00:00.000Z",
+            },
+          ],
+          lastSyncedAt: null,
+          updatedAt: "2026-04-22T11:00:00.000Z",
+        },
+        source: "cache",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(false);
+      expect(result.current.integrityMode).toBe("healthy");
+      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(devUserId);
+      expect(mockFetchRemoteOfflineSnapshot).not.toHaveBeenCalled();
+      expect(mockSupabase.from).not.toHaveBeenCalled();
+    });
+
+    it("keeps unlock digest-based and accepts deferred unreadable item quarantine", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+        userId: mockUser.id,
+        vaultId: "vault-123",
+        items: [
+          {
+            id: "item-bad",
+            vault_id: "vault-123",
+            title: "Encrypted Item",
+            website_url: null,
+            icon_url: null,
+            item_type: "password",
+            is_favorite: false,
+            category_id: null,
+            created_at: "2026-04-22T10:00:00.000Z",
+            updated_at: "2026-04-22T10:00:00.000Z",
+            encrypted_data: "cipher-bad",
+          },
+        ],
+        categories: [],
+        lastSyncedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      mockDecryptVaultItem.mockRejectedValue(new Error("OperationError"));
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(false);
+      expect(mockDecryptVaultItem).not.toHaveBeenCalled();
+      expect(result.current.integrityMode).toBe("healthy");
+
+      act(() => {
+        result.current.reportUnreadableItems([
+          {
+            id: "item-bad",
+            reason: "ciphertext_changed",
+            updatedAt: "2026-04-22T10:00:00.000Z",
+          },
+        ]);
+      });
+
+      expect(result.current.integrityMode).toBe("quarantine");
+      expect(result.current.quarantinedItems).toEqual([
+        expect.objectContaining({
+          id: "item-bad",
+          reason: "ciphertext_changed",
+        }),
+      ]);
+    });
+
+    it("removes runtime unreadable quarantine entries immediately after delete succeeds", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlock("CorrectPassword!");
+      });
+
+      act(() => {
+        result.current.reportUnreadableItems([
+          {
+            id: "item-bad",
+            reason: "ciphertext_changed",
+            updatedAt: "2026-04-22T10:00:00.000Z",
+          },
+        ]);
+      });
+
+      expect(result.current.quarantinedItems).toEqual([
+        expect.objectContaining({ id: "item-bad" }),
+      ]);
+
+      await act(async () => {
+        await result.current.deleteQuarantinedItem("item-bad");
+      });
+
+      expect(mockDeleteQuarantinedItemFromVault).toHaveBeenCalledWith(mockUser.id, "item-bad");
+      expect(result.current.quarantinedItems).toEqual([]);
+      expect(result.current.integrityMode).toBe("healthy");
+    });
+
+    it("blocks unlock when encrypted categories can no longer be decrypted", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+        userId: mockUser.id,
+        vaultId: "vault-123",
+        items: [],
+        categories: [
+          {
+            id: "cat-bad",
+            user_id: mockUser.id,
+            name: "enc:cat:v1:broken",
+            icon: null,
+            color: null,
+            parent_id: null,
+            sort_order: null,
+            created_at: "2026-04-22T10:00:00.000Z",
+            updated_at: "2026-04-22T10:00:00.000Z",
+          },
+        ],
+        lastSyncedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      mockDecrypt.mockRejectedValue(new Error("OperationError"));
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error?.message).toContain("Integritätsprüfung");
+      expect(result.current.isLocked).toBe(true);
+      expect(result.current.integrityMode).toBe("blocked");
+      expect(result.current.integrityBlockedReason).toBe("category_structure_mismatch");
+    });
+
     it("should return error with incorrect password", async () => {
       mockDeriveKey.mockResolvedValue({} as CryptoKey);
       mockVerifyKey.mockResolvedValue(false);
@@ -489,6 +886,182 @@ describe("VaultContext", () => {
       expect(unlockResult?.error?.message).toBe("Invalid master password");
       expect(result.current.isLocked).toBe(true);
     });
+
+    it("should unlock and migrate an empty legacy vault without a verifier", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockCreateVerificationHash.mockResolvedValue("migrated-verifier");
+
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: null,
+            kdf_version: 1,
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(false);
+      expect(mockVerifyKey).not.toHaveBeenCalled();
+      expect(mockCreateVerificationHash).toHaveBeenCalled();
+      expect(mockSaveOfflineCredentials).toHaveBeenCalledWith(
+        mockUser.id,
+        "existing-salt",
+        "migrated-verifier",
+        1,
+        "mock-migrated-user-key",
+      );
+    });
+  });
+
+  describe("refreshIntegrityBaseline", () => {
+    it("should re-baseline decryptable trusted changes instead of blocking them", async () => {
+      mockGenerateSalt.mockReturnValue("fresh-salt");
+      mockCreateVerificationHash.mockResolvedValue("fresh-verifier");
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.setupMasterPassword("CorrectPassword!");
+      });
+
+      const trustedSnapshot = {
+        userId: mockUser.id,
+        vaultId: "vault-123",
+        items: [
+          {
+            id: "item-1",
+            vault_id: "vault-123",
+            title: "Encrypted Item",
+            website_url: null,
+            icon_url: null,
+            item_type: "password",
+            is_favorite: false,
+            category_id: "cat-1",
+            created_at: "2026-04-22T10:00:00.000Z",
+            updated_at: "2026-04-22T11:00:00.000Z",
+            encrypted_data: "cipher-updated",
+          },
+        ],
+        categories: [
+          {
+            id: "cat-1",
+            user_id: mockUser.id,
+            name: "enc:cat:v1:rotated",
+            icon: null,
+            color: null,
+            parent_id: null,
+            sort_order: null,
+            created_at: "2026-04-22T10:00:00.000Z",
+            updated_at: "2026-04-22T11:00:00.000Z",
+          },
+        ],
+        lastSyncedAt: "2026-04-22T11:00:00.000Z",
+        updatedAt: "2026-04-22T11:00:00.000Z",
+      };
+
+      mockLoadVaultSnapshot.mockResolvedValue({
+        snapshot: trustedSnapshot,
+        source: "cache",
+      });
+      mockDecryptVaultItem.mockResolvedValue({ id: "item-1" });
+      mockDecrypt.mockResolvedValue("decrypted-category");
+
+      await act(async () => {
+        await result.current.refreshIntegrityBaseline({
+          itemIds: ["item-1"],
+          categoryIds: ["cat-1"],
+        });
+      });
+
+      expect(result.current.isLocked).toBe(false);
+      expect(result.current.integrityMode).toBe("healthy");
+      expect(result.current.integrityBlockedReason).toBeNull();
+      expect(result.current.quarantinedItems).toEqual([]);
+      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(mockUser.id);
+      expect(mockSaveTrustedOfflineSnapshot).toHaveBeenLastCalledWith(trustedSnapshot);
+    });
+
+    it("uses the local mutation overlay for trusted category re-baselining", async () => {
+      mockGenerateSalt.mockReturnValue("fresh-salt");
+      mockCreateVerificationHash.mockResolvedValue("fresh-verifier");
+      mockEncrypt.mockImplementation(async (plaintext: unknown) => String(plaintext));
+      mockDecrypt.mockImplementation(async (payload: unknown) => {
+        const value = String(payload);
+        return value.startsWith("{") ? value : "decrypted-category";
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.setupMasterPassword("CorrectPassword!");
+      });
+
+      const mergedSnapshot = {
+        userId: mockUser.id,
+        vaultId: "vault-123",
+        items: [],
+        categories: [
+          {
+            id: "cat-1",
+            user_id: mockUser.id,
+            name: "enc:cat:v1:local-cipher",
+            icon: null,
+            color: "enc:cat:v1:local-color",
+            parent_id: null,
+            sort_order: null,
+            created_at: "2026-04-22T10:00:00.000Z",
+            updated_at: "2026-04-22T11:00:00.000Z",
+          },
+        ],
+        lastSyncedAt: "2026-04-22T11:00:00.000Z",
+        updatedAt: "2026-04-22T11:00:00.000Z",
+      };
+
+      mockLoadVaultSnapshot.mockClear();
+      mockSaveTrustedOfflineSnapshot.mockClear();
+      mockLoadVaultSnapshot.mockResolvedValue({
+        snapshot: mergedSnapshot,
+        source: "cache",
+      });
+
+      await act(async () => {
+        await result.current.refreshIntegrityBaseline({
+          categoryIds: ["cat-1"],
+        });
+      });
+
+      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(mockUser.id);
+      expect(mockSaveTrustedOfflineSnapshot).toHaveBeenLastCalledWith(mergedSnapshot);
+      expect(result.current.isLocked).toBe(false);
+      expect(result.current.integrityMode).toBe("healthy");
+      expect(result.current.integrityBlockedReason).toBeNull();
+    });
+
   });
 
   describe("unlockWithPasskey", () => {
@@ -542,9 +1115,105 @@ describe("VaultContext", () => {
 
       expect(mockRecordFailedAttempt).toHaveBeenCalledTimes(1);
     });
+
+    it("blocks passkey unlock when vault 2FA is required but no verifier callback is supplied", async () => {
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey();
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA verification required");
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("blocks passkey unlock when vault 2FA verification fails", async () => {
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey({
+          verifyTwoFactor: async () => false,
+        });
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA verification failed");
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("allows passkey unlock only after vault 2FA verification succeeds", async () => {
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "loaded",
+        reason: "vault_2fa_enabled",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlockWithPasskey({
+          verifyTwoFactor: async () => true,
+        });
+      });
+
+      expect(result.current.isLocked).toBe(false);
+    });
+
+    it("fails closed when vault 2FA status cannot be loaded", async () => {
+      mockGetTwoFactorRequirement.mockResolvedValue({
+        context: "vault_unlock",
+        required: true,
+        status: "unavailable",
+        reason: "status_unavailable",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey({
+          verifyTwoFactor: async () => true,
+        });
+      });
+
+      expect(unlockResult?.error?.message).toContain("2FA status unavailable");
+      expect(result.current.isLocked).toBe(true);
+    });
   });
 
-  describe("getRawKeyForPasskey", () => {
+  describe("getPasskeyWrappingMaterial", () => {
     it("should reject wrong master password and wipe derived raw key bytes", async () => {
       const rawBytes = new Uint8Array(32).fill(7);
       mockDeriveRawKey.mockResolvedValue(rawBytes);
@@ -552,33 +1221,16 @@ describe("VaultContext", () => {
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
       mockVerifyKey
         .mockResolvedValueOnce(true)  // unlock()
-        .mockResolvedValueOnce(false); // getRawKeyForPasskey()
+        .mockResolvedValueOnce(false); // getPasskeyWrappingMaterial()
 
       // Mock existing profile with vault setup
       mockSupabase.from.mockReturnValue({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "existing-salt",
-                master_password_verifier: "existing-verifier",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            maybeSingle: vi.fn().mockResolvedValue({
-              data: {
-                encryption_salt: "existing-salt",
-                master_password_verifier: "existing-verifier",
-                kdf_version: 2,
-              },
-              error: null,
-            }),
-            limit: vi.fn().mockResolvedValue({
-              data: [],
-              error: null,
-            }),
-          }),
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+          })),
         }),
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockResolvedValue({ data: null, error: null }),
@@ -597,7 +1249,7 @@ describe("VaultContext", () => {
 
       let rawKey: Uint8Array | null = null;
       await act(async () => {
-        rawKey = await result.current.getRawKeyForPasskey("WrongPassword!");
+        rawKey = await result.current.getPasskeyWrappingMaterial("WrongPassword!");
       });
 
       expect(rawKey).toBeNull();
@@ -633,6 +1285,154 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
       expect(result.current.isDuressMode).toBe(false);
     });
+
+    it("should keep unlock metadata after manual lock so the vault can be unlocked again", async () => {
+      mockGenerateSalt.mockReturnValue("salt");
+      mockDeriveKey.mockResolvedValue({} as CryptoKey);
+      mockCreateVerificationHash.mockResolvedValue("verifier");
+      mockVerifyKey.mockResolvedValue(true);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.setupMasterPassword("CorrectPassword!");
+      });
+
+      act(() => {
+        result.current.lock();
+      });
+
+      expect(result.current.isLocked).toBe(true);
+
+      let unlockResult:
+        | {
+            error: Error | null;
+          }
+        | undefined;
+
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(false);
+    });
+
+    it("should wipe the in-memory device key on lock and reload it for the next unlock", async () => {
+      const firstDeviceKey = new Uint8Array(32).fill(7);
+      const secondDeviceKey = new Uint8Array(32).fill(9);
+
+      mockCheckHasDeviceKey.mockResolvedValue(true);
+      mockLoadDeviceKey
+        .mockResolvedValueOnce(firstDeviceKey)
+        .mockResolvedValueOnce(secondDeviceKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(mockDeriveRawKey).toHaveBeenCalledWith(
+        "CorrectPassword!",
+        "existing-salt",
+        2,
+        firstDeviceKey,
+      );
+
+      act(() => {
+        result.current.lock();
+      });
+
+      expect(result.current.isLocked).toBe(true);
+      expect(Array.from(firstDeviceKey).every((value) => value === 0)).toBe(true);
+
+      await act(async () => {
+        await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(mockLoadDeviceKey).toHaveBeenCalledTimes(2);
+      expect(mockDeriveRawKey).toHaveBeenLastCalledWith(
+        "CorrectPassword!",
+        "existing-salt",
+        2,
+        secondDeviceKey,
+      );
+      expect(result.current.isLocked).toBe(false);
+    });
+
+    it("should surface a missing device key after lock instead of treating it as a wrong password", async () => {
+      const firstDeviceKey = new Uint8Array(32).fill(7);
+
+      mockCheckHasDeviceKey.mockResolvedValue(true);
+      mockLoadDeviceKey
+        .mockResolvedValueOnce(firstDeviceKey)
+        .mockResolvedValueOnce(null);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlock("CorrectPassword!");
+      });
+
+      act(() => {
+        result.current.lock();
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error?.message).toBe(
+        "Device key is unavailable on this device. Restore the device key or use a recovery method.",
+      );
+      expect(mockDeriveRawKey).toHaveBeenCalledTimes(1);
+      expect(mockRecordFailedAttempt).not.toHaveBeenCalled();
+      expect(result.current.isLocked).toBe(true);
+    });
   });
 
   describe("Encryption helpers", () => {
@@ -662,7 +1462,7 @@ describe("VaultContext", () => {
       });
 
       expect(encrypted).toBe("encrypted-data-xyz");
-      expect(mockEncrypt).toHaveBeenCalledWith("plaintext", expect.anything());
+      expect(mockEncrypt).toHaveBeenCalledWith("plaintext", expect.anything(), undefined);
     });
 
     it("should decrypt data when vault is unlocked", async () => {
@@ -684,7 +1484,7 @@ describe("VaultContext", () => {
       });
 
       expect(decrypted).toBe("decrypted-plaintext");
-      expect(mockDecrypt).toHaveBeenCalledWith("encrypted-data", expect.anything());
+      expect(mockDecrypt).toHaveBeenCalledWith("encrypted-data", expect.anything(), undefined);
     });
 
     it("should throw error when trying to encrypt with locked vault", async () => {
@@ -739,11 +1539,11 @@ describe("VaultContext", () => {
 
       let encrypted: string | undefined;
       await act(async () => {
-        encrypted = await result.current.encryptItem(itemData);
+        encrypted = await result.current.encryptItem(itemData, "item-1");
       });
 
       expect(encrypted).toBe("encrypted-item-json");
-      expect(mockEncryptVaultItem).toHaveBeenCalledWith(itemData, expect.anything(), undefined);
+      expect(mockEncryptVaultItem).toHaveBeenCalledWith(itemData, expect.anything(), "item-1");
     });
 
     it("should decrypt vault item when unlocked", async () => {
@@ -767,11 +1567,11 @@ describe("VaultContext", () => {
 
       let decrypted: unknown;
       await act(async () => {
-        decrypted = await result.current.decryptItem("encrypted-item-data");
+        decrypted = await result.current.decryptItem("encrypted-item-data", "item-1");
       });
 
       expect(decrypted).toEqual(decryptedItem);
-      expect(mockDecryptVaultItem).toHaveBeenCalledWith("encrypted-item-data", expect.anything(), undefined);
+      expect(mockDecryptVaultItem).toHaveBeenCalledWith("encrypted-item-data", expect.anything(), "item-1");
     });
   });
 
@@ -825,6 +1625,44 @@ describe("VaultContext", () => {
 
       expect(result.current.webAuthnAvailable).toBe(false);
       expect(result.current.hasPasskeyUnlock).toBe(false);
+    });
+
+    it("loads registered passkey unlock status even when the local WebAuthn probe is false", async () => {
+      mockListPasskeys.mockResolvedValue([
+        {
+          id: "passkey-1",
+          credential_id: "credential-1",
+          device_name: "Windows Hello",
+          prf_enabled: true,
+          created_at: "2026-04-22T10:00:00.000Z",
+          last_used_at: null,
+          rp_id: "127.0.0.1",
+        },
+      ]);
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            encrypted_user_key: "encrypted-user-key",
+            kdf_version: 2,
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await waitFor(() => {
+        expect(result.current.hasPasskeyUnlock).toBe(true);
+      });
+      expect(result.current.webAuthnAvailable).toBe(false);
     });
   });
 });

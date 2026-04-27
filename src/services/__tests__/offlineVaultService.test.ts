@@ -247,6 +247,8 @@ type MutationInput = Parameters<OfflineService["enqueueOfflineMutation"]>[0];
 
 const USER_ID = "user-abc-123";
 const VAULT_ID = "vault-def-456";
+const TAURI_DEV_USER_ID = "00000000-0000-4000-8000-000000000001";
+const TAURI_DEV_VAULT_ID = "00000000-0000-4000-8000-000000000002";
 
 function makeItemRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -323,6 +325,32 @@ describe("Snapshot round-trip", () => {
     const loaded = await svc.getOfflineSnapshot(USER_ID);
 
     expect(loaded).toEqual(snapshot);
+  });
+
+  it("keeps note plaintext out of offline snapshots when callers provide encrypted_data rows", async () => {
+    const privateNote = "offline snapshot must not contain this note";
+    const snapshot = {
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      items: [
+        makeItemRow({
+          item_type: "note",
+          encrypted_data: "sv-vault-item-v1:ciphertext-without-note-plaintext",
+        }),
+      ],
+      categories: [],
+      lastSyncedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    await svc.saveOfflineSnapshot(snapshot);
+    const loaded = await svc.getOfflineSnapshot(USER_ID);
+
+    expect(JSON.stringify(loaded)).not.toContain(privateNote);
+    expect(loaded?.items[0]).toMatchObject({
+      item_type: "note",
+      encrypted_data: "sv-vault-item-v1:ciphertext-without-note-plaintext",
+    });
   });
 
   it("getOfflineSnapshot returns null when nothing is saved", async () => {
@@ -472,6 +500,37 @@ describe("Category row mutations", () => {
     const snapshot = await svc.getOfflineSnapshot(USER_ID);
     expect(snapshot!.categories).toHaveLength(0);
   });
+
+  it("applyOfflineCategoryDeletion updates items and removes the category in one cached snapshot", async () => {
+    await svc.upsertOfflineCategoryRow(USER_ID, makeCategoryRow() as CategoryRow);
+    await svc.upsertOfflineItemRow(USER_ID, makeItemRow({ id: "item-1", category_id: "cat-1" }) as VaultItemRow);
+    await svc.upsertOfflineItemRow(USER_ID, makeItemRow({ id: "item-2", category_id: "cat-1" }) as VaultItemRow);
+
+    await svc.applyOfflineCategoryDeletion(USER_ID, "cat-1", {
+      updatedItems: [
+        makeItemRow({ id: "item-1", category_id: null, encrypted_data: "updated-ciphertext" }) as VaultItemRow,
+      ],
+      deletedItemIds: ["item-2"],
+    });
+
+    const snapshot = await svc.getOfflineSnapshot(USER_ID);
+    expect(snapshot!.categories).toHaveLength(0);
+    expect(snapshot!.items.map((item) => item.id)).toEqual(["item-1"]);
+    expect(snapshot!.items[0].category_id).toBeNull();
+    expect(snapshot!.items[0].encrypted_data).toBe("updated-ciphertext");
+    expect(svc.isRecentLocalVaultMutation(USER_ID, {
+      itemIds: ["item-1", "item-2"],
+      categoryIds: ["cat-1"],
+    })).toBe(true);
+  });
+
+  it("tracks recently changed local category rows in memory", async () => {
+    await svc.upsertOfflineCategoryRow(USER_ID, makeCategoryRow() as CategoryRow);
+
+    expect(svc.isRecentLocalVaultMutation(USER_ID, { categoryIds: ["cat-1"] })).toBe(true);
+    expect(svc.isRecentLocalVaultMutation(USER_ID, { categoryIds: ["cat-other"] })).toBe(false);
+    expect(svc.isRecentLocalVaultMutation(USER_ID, {})).toBe(false);
+  });
 });
 
 // ============================================================================
@@ -493,6 +552,17 @@ describe("Mutation queue", () => {
     expect(mutations).toHaveLength(1);
     expect(mutations[0].type).toBe("upsert_item");
     expect(mutations[0].id).toBe(id);
+  });
+
+  it("tauri dev user: does not queue local-only mutations", async () => {
+    const id = await svc.enqueueOfflineMutation({
+      userId: TAURI_DEV_USER_ID,
+      type: "upsert_category",
+      payload: { id: "cat-1", user_id: TAURI_DEV_USER_ID, name: "enc:cat:v1:dev" },
+    } as MutationInput);
+
+    expect(typeof id).toBe("string");
+    await expect(svc.getOfflineMutations(TAURI_DEV_USER_ID)).resolves.toEqual([]);
   });
 
   it("getOfflineMutations returns entries sorted by createdAt", async () => {
@@ -667,6 +737,84 @@ describe("loadVaultSnapshot", () => {
     expect(snapshot.userId).toBe(USER_ID);
   });
 
+  it("tauri dev user: stays local and does not fetch remote data", async () => {
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+
+    const { snapshot, source } = await svc.loadVaultSnapshot(TAURI_DEV_USER_ID);
+
+    expect(source).toBe("empty");
+    expect(snapshot.userId).toBe(TAURI_DEV_USER_ID);
+    expect(snapshot.vaultId).toBe(TAURI_DEV_VAULT_ID);
+    expect(mockSupabase.from).not.toHaveBeenCalled();
+  });
+
+  it("online: overlays a fresh local category mutation onto a stale remote snapshot", async () => {
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+
+    await svc.upsertOfflineCategoryRow(
+      USER_ID,
+      makeCategoryRow({ name: "enc:cat:v1:local-write" }) as CategoryRow,
+    );
+
+    const vaultChain = createChainable({ data: { id: VAULT_ID }, error: null });
+    const catChain = createChainable({
+      data: [makeCategoryRow({ id: "cat-existing", name: "enc:cat:v1:existing" })],
+      error: null,
+    });
+    const itemChain = createChainable({ data: [makeItemRow()], error: null });
+    mockSupabase._setChains([vaultChain, catChain, itemChain]);
+
+    const { snapshot, source } = await svc.loadVaultSnapshot(USER_ID);
+
+    expect(source).toBe("cache");
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.categories.map((category) => category.id).sort()).toEqual(["cat-1", "cat-existing"]);
+    expect(snapshot.categories.find((category) => category.id === "cat-1")?.name).toBe("enc:cat:v1:local-write");
+  });
+
+  it("online: overlays a fresh local category delete onto a stale remote snapshot", async () => {
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+
+    await svc.upsertOfflineCategoryRow(USER_ID, makeCategoryRow() as CategoryRow);
+    await svc.removeOfflineCategoryRow(USER_ID, "cat-1");
+
+    const vaultChain = createChainable({ data: { id: VAULT_ID }, error: null });
+    const catChain = createChainable({
+      data: [makeCategoryRow(), makeCategoryRow({ id: "cat-existing" })],
+      error: null,
+    });
+    const itemChain = createChainable({ data: [], error: null });
+    mockSupabase._setChains([vaultChain, catChain, itemChain]);
+
+    const { snapshot, source } = await svc.loadVaultSnapshot(USER_ID);
+
+    expect(source).toBe("cache");
+    expect(snapshot.categories.map((category) => category.id)).toEqual(["cat-existing"]);
+  });
+
+  it("online: keeps cached snapshot authoritative while offline mutations are pending", async () => {
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+
+    await svc.upsertOfflineCategoryRow(USER_ID, makeCategoryRow() as CategoryRow);
+    await svc.enqueueOfflineMutation({
+      userId: USER_ID,
+      type: "upsert_category",
+      payload: {
+        id: "cat-1",
+        user_id: USER_ID,
+        name: "enc:cat:v1:name",
+        icon: null,
+        color: null,
+      },
+    });
+
+    const { snapshot, source } = await svc.loadVaultSnapshot(USER_ID);
+
+    expect(source).toBe("cache");
+    expect(snapshot.categories.map((category) => category.id)).toEqual(["cat-1"]);
+    expect(mockSupabase.from).not.toHaveBeenCalled();
+  });
+
   it("offline with cache: returns source 'cache'", async () => {
     // Pre-seed cache
     const cached = {
@@ -696,6 +844,13 @@ describe("loadVaultSnapshot", () => {
 describe("syncOfflineMutations", () => {
   beforeEach(() => {
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+  });
+
+  it("tauri dev user: skips remote sync entirely", async () => {
+    const result = await svc.syncOfflineMutations(TAURI_DEV_USER_ID);
+
+    expect(result).toEqual({ processed: 0, remaining: 0, errors: 0 });
+    expect(mockSupabase.from).not.toHaveBeenCalled();
   });
 
   it("replays upsert_item and delete_item mutations to Supabase", async () => {

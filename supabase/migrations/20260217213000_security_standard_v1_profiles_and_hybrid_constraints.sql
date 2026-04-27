@@ -7,7 +7,7 @@ ALTER TABLE public.profiles
 ADD COLUMN IF NOT EXISTS legacy_crypto_disabled_at TIMESTAMPTZ NULL;
 
 COMMENT ON COLUMN public.profiles.security_standard_version IS
-'Security standard version applied to this account. v1 enforces hybrid ML-KEM-768 + RSA-4096 key exchange.';
+'Security standard version applied to this account. v1 enforces hybrid ML-KEM-768 + RSA-4096 key exchange for sharing/emergency keys.';
 
 COMMENT ON COLUMN public.profiles.legacy_crypto_disabled_at IS
 'UTC timestamp when legacy RSA-only crypto paths were disabled for this account.';

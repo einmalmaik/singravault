@@ -1,6 +1,5 @@
-// @ts-nocheck — RPC type inference broken for DB functions with params
-// Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+﻿// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 â€” see LICENSE
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 
@@ -21,15 +20,38 @@ import { createClient } from "@supabase/supabase-js";
 // Create a Supabase client with service role for testing
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const hasSupabaseTestEnv = Boolean(supabaseUrl && supabaseServiceKey);
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = createClient(
+  supabaseUrl || "http://localhost:54321",
+  supabaseServiceKey || "test-service-role-key",
+);
+const describeIfSupabase = hasSupabaseTestEnv ? describe : describe.skip;
 
-// Test user credentials
+// Test user data
 const TEST_USER_EMAIL = `test-2fa-${Date.now()}@example.com`;
-const TEST_USER_PASSWORD = "TestPassword123!@#";
 const TEST_TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"; // Base32 TOTP secret
 
-describe("2FA Setup Flow Integration Tests", () => {
+async function signInTestUserWithMagicLink(
+  client: ReturnType<typeof createClient>,
+  email: string,
+) {
+  const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+    type: "magiclink",
+    email,
+  });
+  expect(linkError).toBeNull();
+
+  const tokenHash = linkData.properties?.hashed_token;
+  expect(tokenHash).toBeTruthy();
+
+  return await client.auth.verifyOtp({
+    token_hash: tokenHash!,
+    type: "magiclink",
+  });
+}
+
+describeIfSupabase("2FA Setup Flow Integration Tests", () => {
   let testUserId: string | null = null;
   let testUserClient: ReturnType<typeof createClient> | null = null;
 
@@ -70,7 +92,6 @@ describe("2FA Setup Flow Integration Tests", () => {
       // Create a new user account
       const { data, error } = await supabase.auth.admin.createUser({
         email: TEST_USER_EMAIL,
-        password: TEST_USER_PASSWORD,
         email_confirm: true,
       });
 
@@ -84,11 +105,11 @@ describe("2FA Setup Flow Integration Tests", () => {
       const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
       testUserClient = createClient(supabaseUrl, anonKey);
       
-      // Sign in as the test user
-      const { data: signInData, error: signInError } = await testUserClient.auth.signInWithPassword({
-        email: TEST_USER_EMAIL,
-        password: TEST_USER_PASSWORD,
-      });
+      // Create a test session without using the disabled app-password grant.
+      const { data: signInData, error: signInError } = await signInTestUserWithMagicLink(
+        testUserClient,
+        TEST_USER_EMAIL,
+      );
 
       expect(signInError).toBeNull();
       expect(signInData.user).toBeTruthy();
@@ -182,7 +203,6 @@ describe("2FA Setup Flow Integration Tests", () => {
       const secondUserEmail = `test-2fa-second-${Date.now()}@example.com`;
       const { data: secondUserData, error: createError } = await supabase.auth.admin.createUser({
         email: secondUserEmail,
-        password: TEST_USER_PASSWORD,
         email_confirm: true,
       });
 

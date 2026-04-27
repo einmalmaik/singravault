@@ -474,11 +474,11 @@ Schützt gegen kompromittierte Server oder Supabase-Admins die verschlüsselte D
 
 ## Phase 5: Zukunftssicherung (langfristig) — ✅ KOMPLETT (12.02.2026)
 
-### 5.1 Post-Quantum-Hybridverschlüsselung — ✅ ERLEDIGT
+### 5.1 Post-Quantum-Key-Wrapping für Sharing/Notfallzugriff — ✅ ERLEDIGT
 
 **Implementierung (12.02.2026):**
 
-Schützt gegen "Harvest now, decrypt later" Angriffe mit ML-KEM-768 + RSA-4096 Hybrid-Verschlüsselung.
+Schützt Sharing- und Notfallzugriffs-Schlüssel gegen "Harvest now, decrypt later" Angriffe mit ML-KEM-768 + RSA-4096 Hybrid-Key-Wrapping. Dieser Schutz gilt nicht für jeden Vault-Item-Ciphertext; Vault Items bleiben AES-256-GCM-verschlüsselt.
 
 **Library:** `@noble/post-quantum` (Paul Miller's noble-Serie)
 - FIPS 203 konform (ML-KEM, nicht altes Kyber)
@@ -493,18 +493,18 @@ Version 0x01: Legacy RSA-only (Rückwärtskompatibilität)
 Version 0x02: Hybrid ML-KEM-768 + RSA-4096
 ```
 
-**Encryption Flow (v2):**
-1. Generiere zufälligen AES-256-Key (32 bytes)
+**Wrapping Flow (aktuelles Format 0x04):**
+1. Generiere zufälligen AES-256-Wrapping-Key (32 bytes)
 2. Encapsulate mit ML-KEM-768 → `(ct_pq, ss_pq)`
-3. Encrypt AES-Key mit RSA-OAEP → `ct_rsa`
-4. XOR: `combined_key = aes_key XOR pq_shared_secret`
-5. Encrypt plaintext mit combined_key via AES-256-GCM
-6. Speichere: `0x02 || ct_pq || ct_rsa || iv || aes_ct`
+3. Encrypt AES-Wrapping-Key mit RSA-OAEP → `ct_rsa`
+4. HKDF-SHA-256: `combined_key = HKDF(ss_pq || aes_key, info = "Singra Vault-HybridKDF-v2:" || ct_rsa)`
+5. Wrappe den Sharing-/Notfall-Schlüssel mit `combined_key` via AES-256-GCM
+6. Speichere: `0x04 || ct_pq || ct_rsa || iv || aes_ct`
 
 **Sicherheitsgarantien:**
-- **Dual-Layer:** Beide Algorithmen müssen kompromittiert werden
-- **Rückwärtskompatibel:** Legacy v1 (RSA-only) wird weiterhin entschlüsselt
-- **Automatische Migration:** `migrateToHybrid()` re-encryptet legacy data
+- **Dual-Layer für Key-Wrapping:** Beide Algorithmen müssen kompromittiert werden, um den gewrappten Sharing-/Notfall-Schlüssel zu rekonstruieren.
+- **Begrenzter Scope:** PQ schützt Key-Exchange/Key-Wrapping; Vault-Payloads bleiben AES-256-GCM.
+- **Automatische Migration:** `migrateToHybrid()` re-wrappt legacy key material.
 
 **Feature-Gating:**
 - `post_quantum_encryption` in FEATURE_MATRIX
@@ -512,7 +512,7 @@ Version 0x02: Hybrid ML-KEM-768 + RSA-4096
 - Nicht verfügbar für: Free
 
 **Dateien:**
-- `src/services/pqCryptoService.ts` — Hybrid-Encryption-Service
+- `src/services/pqCryptoService.ts` — Hybrid-Key-Wrapping-Service
 - `src/services/pqCryptoService.test.ts` — 15 Unit-Tests
 - `src/services/emergencyAccessService.ts` — PQ-Integration
 - `src/services/collectionService.ts` — PQ-Integration
@@ -529,7 +529,7 @@ pq_key_version INTEGER         -- NULL=keine PQ-Keys, 1=ML-KEM-768
 
 -- emergency_access
 trustee_pq_public_key TEXT,    -- Trustee's ML-KEM-768 public key
-pq_encrypted_master_key TEXT   -- Hybrid-encrypted master key
+pq_encrypted_master_key TEXT   -- Hybrid-wrapped emergency-access key
 
 -- collection_keys
 pq_wrapped_key TEXT            -- Hybrid-wrapped collection key
@@ -590,17 +590,15 @@ ALTER TABLE profiles ADD COLUMN duress_kdf_version INTEGER;
 
 ---
 
-### 5.3 OPAQUE-Protokoll für Server-Auth (Langfrist-Vision) — ❌ ZURÜCKGESTELLT
+### 5.3 OPAQUE-Protokoll für App-Passwort-Login — ✅ IMPLEMENTIERT
 
-**Status:** Zurückgestellt für zukünftige Versionen.
+**Status:** Seit 2026-04-24 ist OPAQUE der einzige erlaubte App-Passwort-Loginpfad.
 
-**Warum:** Aktuell wird das Supabase-Auth-Passwort (für Login) getrennt vom Master-Passwort verwaltet. Mit OPAQUE könnte das Master-Passwort gleichzeitig zur Server-Authentifizierung UND zur Vault-Verschlüsselung genutzt werden — ohne dass der Server jemals das Passwort sieht (auch nicht als Hash).
+**Warum:** App-eigene Passwort-Logins dürfen kein Passwort, keinen Passwort-Hash und keinen passwortäquivalenten Wert an den Server senden. Der Client verwendet OPAQUE; Edge Functions erhalten nur OPAQUE-Protokollnachrichten.
 
-**Status:** OPAQUE ist noch kein IETF-Standard (Draft), aber bereits in der Praxis bei Signal und WhatsApp im Einsatz.
+**Abgrenzung:** OAuth/Social Login bleibt ein separater Pfad. Vault-Entsperrung/Masterpasswort bleibt ein separater lokaler Vault-KDF-Pfad.
 
-**Komplexität:** Hoch. Erfordert Server-seitige Änderungen (nicht nur Edge Functions).
-
-**Entscheidung:** Phase 5 gilt als abgeschlossen. OPAQUE bleibt als Langfrist-Vision dokumentiert, wird aber nicht aktiv verfolgt.
+**Durchsetzung:** Es gibt keinen Legacy-Fallback. `auth-session` blockiert direkte Passwort-POSTs, und die Migration entfernt GoTrue-Passwortverifier, damit Supabase-Passwortgrants OPAQUE nicht umgehen können.
 
 ---
 
@@ -619,7 +617,7 @@ ALTER TABLE profiles ADD COLUMN duress_kdf_version INTEGER;
 | Feature | Bitwarden Free | 1Password | Singra Vault (nach Plan) |
 |---|---|---|---|
 | KDF | PBKDF2 (default) | PBKDF2 650k | Argon2id 128 MiB |
-| Post-Quantum | Nein | Nein | ✅ Hybrid ML-KEM-768 + RSA-4096 |
+| Post-Quantum für Sharing-Keys | Nein | Nein | ✅ ML-KEM-768 + RSA-4096 Key-Wrapping |
 | Hardware-Key Unlock | Nur Premium | Ja | ✅ Ja (WebAuthn PRF) |
 | Duress-Passwort | Nein | Nein | ✅ Ja (Premium) |
 | Vault-Integrity | Nein | Nein | Merkle-Tree |

@@ -1,5 +1,5 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Sidebar Component
  * 
@@ -44,7 +44,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { CategoryIcon } from './CategoryIcon';
-import { CategoryDialog } from './CategoryDialog';
+import { CategoryDialog, type CategoryChangeEvent } from './CategoryDialog';
 import {
     isAppOnline,
     loadVaultSnapshot,
@@ -81,7 +81,18 @@ export function VaultSidebar({
     const { t } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
-    const { lock, encryptData, decryptData, decryptItem, encryptItem, isDuressMode } = useVault();
+    const {
+        lock,
+        encryptData,
+        decryptData,
+        decryptItem,
+        encryptItem,
+        isDuressMode,
+        lastIntegrityResult,
+        refreshIntegrityBaseline,
+        verifyIntegrity,
+        vaultDataVersion,
+    } = useVault();
     const { user } = useAuth();
     const [collapsed, setCollapsed] = useState(false);
 
@@ -94,25 +105,57 @@ export function VaultSidebar({
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
     const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
     const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
+    const fetchRequestIdRef = useRef(0);
+    const quarantinedItemIdsRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         failedDecryptPayloadByItemIdRef.current.clear();
         loggedDecryptFailuresRef.current.clear();
     }, [user?.id, isDuressMode]);
 
+    useEffect(() => {
+        quarantinedItemIdsRef.current = new Set((lastIntegrityResult?.quarantinedItems ?? []).map((item) => item.id));
+    }, [lastIntegrityResult]);
+
     // Fetch categories
     const fetchCategories = useCallback(async () => {
         if (!user) return;
 
+        const requestId = fetchRequestIdRef.current + 1;
+        fetchRequestIdRef.current = requestId;
+
         try {
             const { snapshot, source } = await loadVaultSnapshot(user.id);
-            const canPersistMigrations = source === 'remote' && isAppOnline();
+            const integrityResult = await verifyIntegrity(snapshot, { source });
+            if (integrityResult?.mode === 'blocked') {
+                if (fetchRequestIdRef.current === requestId) {
+                    setCategories([]);
+                }
+                return;
+            }
+            const canPersistMigrations = integrityResult?.mode === 'healthy'
+                && integrityResult.isFirstCheck
+                && source === 'remote'
+                && isAppOnline();
             const counts: Record<string, number> = {};
+            let integrityBaselineDirty = false;
+            const trustedItemIds = new Set<string>();
+            const trustedCategoryIds = new Set<string>();
 
             await Promise.all(
                 snapshot.items.map(async (item) => {
                     const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
                     if (cachedFailedPayload === item.encrypted_data) {
+                        if (item.category_id) {
+                            counts[item.category_id] = (counts[item.category_id] || 0) + 1;
+                        }
+                        return;
+                    }
+
+                    if (quarantinedItemIdsRef.current.has(item.id)) {
+                        if (quarantinedItemIdsRef.current.size >= 2) {
+                            return;
+                        }
                         if (item.category_id) {
                             counts[item.category_id] = (counts[item.category_id] || 0) + 1;
                         }
@@ -177,6 +220,8 @@ export function VaultSidebar({
                                 category_id: null,
                                 updated_at: new Date().toISOString(),
                             }, snapshot.vaultId);
+                            integrityBaselineDirty = true;
+                            trustedItemIds.add(item.id);
                         }
 
                         if (resolvedCategoryId) {
@@ -189,7 +234,7 @@ export function VaultSidebar({
                             loggedDecryptFailuresRef.current.add(logKey);
                             console.debug(
                                 isDuressMode
-                                    ? 'Failed to decrypt vault item for category counts (Duress Mode — expected):'
+                                    ? 'Failed to decrypt vault item for category counts (Duress Mode - expected):'
                                     : 'Failed to decrypt vault item for category counts (key mismatch or corrupt):',
                                 item.id
                             );
@@ -216,11 +261,11 @@ export function VaultSidebar({
                         } catch (err) {
                             console.debug(
                                 isDuressMode
-                                    ? 'Failed to decrypt category name (Duress Mode — expected):'
+                                    ? 'Failed to decrypt category name (Duress Mode - expected):'
                                     : 'Failed to decrypt category name (key mismatch or corrupt):',
                                 cat.id
                             );
-                            resolvedName = 'Encrypted Category';
+                            resolvedName = 'Beschädigte Kategorie';
                         }
                     } else if (canPersistMigrations) {
                         try {
@@ -241,7 +286,7 @@ export function VaultSidebar({
                         } catch (err) {
                             console.debug(
                                 isDuressMode
-                                    ? 'Failed to decrypt category icon (Duress Mode — expected):'
+                                    ? 'Failed to decrypt category icon (Duress Mode - expected):'
                                     : 'Failed to decrypt category icon (key mismatch or corrupt):',
                                 cat.id
                             );
@@ -266,7 +311,7 @@ export function VaultSidebar({
                         } catch (err) {
                             console.debug(
                                 isDuressMode
-                                    ? 'Failed to decrypt category color (Duress Mode — expected):'
+                                    ? 'Failed to decrypt category color (Duress Mode - expected):'
                                     : 'Failed to decrypt category color (key mismatch or corrupt):',
                                 cat.id
                             );
@@ -293,6 +338,8 @@ export function VaultSidebar({
                             color: migratedColor,
                             updated_at: new Date().toISOString(),
                         });
+                        integrityBaselineDirty = true;
+                        trustedCategoryIds.add(cat.id);
                     }
 
                     return {
@@ -305,13 +352,33 @@ export function VaultSidebar({
                 }),
             );
 
-            setCategories(resolvedCategories);
+            if (integrityBaselineDirty && canPersistMigrations) {
+                await refreshIntegrityBaseline({
+                    itemIds: trustedItemIds,
+                    categoryIds: trustedCategoryIds,
+                });
+            }
+
+            if (fetchRequestIdRef.current === requestId) {
+                setCategories(resolvedCategories);
+            }
         } catch (err) {
             console.error('Error fetching categories:', err);
         } finally {
-            setLoading(false);
+            if (fetchRequestIdRef.current === requestId) {
+                setLoading(false);
+            }
         }
-    }, [user, encryptData, decryptData, decryptItem, encryptItem, isDuressMode]);
+    }, [
+        user,
+        decryptData,
+        decryptItem,
+        encryptData,
+        encryptItem,
+        isDuressMode,
+        refreshIntegrityBaseline,
+        verifyIntegrity,
+    ]);
 
     useEffect(() => {
         if (compactMode) {
@@ -321,7 +388,7 @@ export function VaultSidebar({
 
     useEffect(() => {
         fetchCategories();
-    }, [fetchCategories, t]);
+    }, [fetchCategories, t, vaultDataVersion]);
 
     const handleAddCategory = () => {
         setEditingCategory(null);
@@ -333,7 +400,10 @@ export function VaultSidebar({
         setDialogOpen(true);
     };
 
-    const handleCategoryChange = () => {
+    const handleCategoryChange = (event?: CategoryChangeEvent) => {
+        if (event?.type === 'deleted' && selectedCategory === event.categoryId) {
+            onSelectCategory(null);
+        }
         fetchCategories();
     };
 

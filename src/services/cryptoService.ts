@@ -30,7 +30,9 @@ export const CURRENT_KDF_VERSION = 2;
  * KDF parameter sets indexed by version number.
  *
  *   v1: Original (64 MiB) - ~300 ms on modern devices
- *   v2: Enhanced (128 MiB) - ~500-600 ms on modern devices, OWASP 2025 recommended
+ *   v2: Enhanced (128 MiB) - ~500-600 ms on modern devices.
+ *       This exceeds OWASP's current Argon2id minimum baseline and stays well
+ *       below RFC 9106's high-memory 2 GiB profile for practical client unlocks.
  *
  * IMPORTANT: Once a version is released, its parameters MUST NEVER be changed.
  * Only add new versions.
@@ -46,6 +48,26 @@ const TAG_LENGTH = 128; // 128 bits authentication tag
 
 /** Constant used in v3 verification hashes (no plaintext stored in DB) */
 const VERIFICATION_CONSTANT_V3 = 'SINGRA_VAULT_VERIFY_V3';
+
+/**
+ * Versioned envelope for vault item payloads stored in vault_items.encrypted_data.
+ *
+ * v1 payload format: `sv-vault-v1:<base64(IV || ciphertext || authTag)>`
+ * Algorithm: AES-256-GCM with a 96-bit random IV and a 128-bit tag.
+ *
+ * Keep this prefix stable forever. If the vault item algorithm changes later,
+ * add a new prefix/parser branch instead of changing the v1 behavior.
+ */
+export const VAULT_ITEM_ENVELOPE_V1_PREFIX = 'sv-vault-v1:';
+const VAULT_ITEM_ENVELOPE_PREFIX = 'sv-vault-';
+const VAULT_ITEM_ENVELOPE_SPEC = {
+    currentPrefix: VAULT_ITEM_ENVELOPE_V1_PREFIX,
+    familyPrefix: VAULT_ITEM_ENVELOPE_PREFIX,
+    subject: 'vault item',
+} satisfies VersionedCipherEnvelopeSpec;
+
+/** New encrypted_user_key envelopes store raw key bytes, not a wipe-resistant JS string. */
+const USER_KEY_ENVELOPE_V2_PREFIX = 'usk-wrap-v2:';
 
 /** Internal counter for legacy (no-AAD) decryption fallbacks (Phase 1 monitoring) */
 let _legacyDecryptCount = 0;
@@ -104,8 +126,7 @@ export async function deriveRawKey(
     } else if (result instanceof ArrayBuffer) {
         argon2Bytes = new Uint8Array(result);
     } else if (typeof result === 'string') {
-        // SECURITY: Hex string conversion with immediate cleanup
-        // Use SecureBuffer to minimize heap exposure
+        // Test/legacy shim support. Real hash-wasm binary output is Uint8Array.
         const hex = result;
         argon2Bytes = new Uint8Array(hex.length / 2);
 
@@ -114,24 +135,13 @@ export async function deriveRawKey(
             argon2Bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
         }
 
-        // Attempt to clear the hex string from memory
-        // Note: JavaScript strings are immutable, but this helps GC
-        try {
-            // Force the string out of any internal caches
-            if (typeof (hex as any).fill === 'function') {
-                (hex as any).fill(0);
-            }
-        } catch {
-            // Best effort - strings are immutable in JS
-        }
+        // JS strings are immutable; avoid this path for real key material.
+    } else if (Array.isArray(result)) {
+        argon2Bytes = new Uint8Array(result);
+    } else if (ArrayBuffer.isView(result)) {
+        argon2Bytes = new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
     } else {
-        // Fallback: try to construct Uint8Array
-        try {
-            // @ts-ignore
-            argon2Bytes = new Uint8Array(result);
-        } catch {
-            throw new Error('argon2id returned unsupported type');
-        }
+        throw new Error('argon2id returned unsupported type');
     }
 
     // If a Device Key is provided, strengthen via HKDF-Expand.
@@ -233,27 +243,55 @@ export async function encrypt(
     key: CryptoKey,
     aad?: string
 ): Promise<string> {
-    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
     const plaintextBytes = new TextEncoder().encode(plaintext);
+    try {
+        return await encryptBytes(plaintextBytes, key, aad);
+    } finally {
+        plaintextBytes.fill(0);
+    }
+}
+
+/**
+ * Encrypts binary data using AES-256-GCM.
+ *
+ * Use this for key material to avoid creating immutable JS strings that cannot
+ * be wiped from memory. The caller still owns and must clear plaintextBytes.
+ */
+export async function encryptBytes(
+    plaintextBytes: Uint8Array,
+    key: CryptoKey,
+    aad?: string,
+): Promise<string> {
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
     const additionalData = aad ? new TextEncoder().encode(aad) : undefined;
+    let ciphertextBytes: Uint8Array | null = null;
+    let combined: Uint8Array | null = null;
 
-    const ciphertext = await crypto.subtle.encrypt(
-        {
-            name: 'AES-GCM',
-            iv: iv,
-            tagLength: TAG_LENGTH,
-            ...(additionalData && { additionalData }),
-        },
-        key,
-        plaintextBytes
-    );
+    try {
+        const ciphertext = await crypto.subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: TAG_LENGTH,
+                ...(additionalData && { additionalData }),
+            },
+            key,
+            plaintextBytes
+        );
 
-    // Combine IV + ciphertext (includes auth tag)
-    const combined = new Uint8Array(iv.length + ciphertext.byteLength);
-    combined.set(iv, 0);
-    combined.set(new Uint8Array(ciphertext), iv.length);
+        ciphertextBytes = new Uint8Array(ciphertext);
+        // Combine IV + ciphertext (includes auth tag)
+        combined = new Uint8Array(iv.length + ciphertextBytes.byteLength);
+        combined.set(iv, 0);
+        combined.set(ciphertextBytes, iv.length);
 
-    return uint8ArrayToBase64(combined);
+        return uint8ArrayToBase64(combined);
+    } finally {
+        iv.fill(0);
+        additionalData?.fill(0);
+        ciphertextBytes?.fill(0);
+        combined?.fill(0);
+    }
 }
 
 /**
@@ -272,25 +310,55 @@ export async function decrypt(
     key: CryptoKey,
     aad?: string
 ): Promise<string> {
+    let plaintextBytes: Uint8Array | null = null;
+    try {
+        plaintextBytes = await decryptBytes(encryptedBase64, key, aad);
+        return new TextDecoder().decode(plaintextBytes);
+    } finally {
+        plaintextBytes?.fill(0);
+    }
+}
+
+/**
+ * Decrypts AES-256-GCM data and returns plaintext bytes.
+ *
+ * The returned buffer contains secret material and must be wiped by the caller.
+ */
+export async function decryptBytes(
+    encryptedBase64: string,
+    key: CryptoKey,
+    aad?: string,
+): Promise<Uint8Array> {
     const combined = base64ToUint8Array(encryptedBase64);
+    if (combined.length <= IV_LENGTH) {
+        combined.fill(0);
+        throw new Error('Invalid encrypted data');
+    }
 
     // Extract IV and ciphertext
     const iv = combined.slice(0, IV_LENGTH);
     const ciphertext = combined.slice(IV_LENGTH);
     const additionalData = aad ? new TextEncoder().encode(aad) : undefined;
 
-    const plaintextBytes = await crypto.subtle.decrypt(
-        {
-            name: 'AES-GCM',
-            iv: iv,
-            tagLength: TAG_LENGTH,
-            ...(additionalData && { additionalData }),
-        },
-        key,
-        ciphertext
-    );
+    try {
+        const plaintextBytes = await crypto.subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: TAG_LENGTH,
+                ...(additionalData && { additionalData }),
+            },
+            key,
+            ciphertext
+        );
 
-    return new TextDecoder().decode(plaintextBytes);
+        return new Uint8Array(plaintextBytes);
+    } finally {
+        combined.fill(0);
+        iv.fill(0);
+        ciphertext.fill(0);
+        additionalData?.fill(0);
+    }
 }
 
 /**
@@ -304,25 +372,25 @@ export async function decrypt(
  * @param data - Object containing sensitive vault item fields
  * @param key - CryptoKey derived from master password
  * @param entryId - Vault item UUID. Used as AAD to bind ciphertext to entry.
- * @returns Base64-encoded encrypted JSON
+ * @returns Versioned encrypted JSON envelope
  */
 export async function encryptVaultItem(
     data: VaultItemData,
     key: CryptoKey,
-    entryId?: string
+    entryId: string
 ): Promise<string> {
     const json = JSON.stringify(data);
-    return encrypt(json, key, entryId);
+    return formatVaultItemEnvelopeV1(await encrypt(json, key, entryId));
 }
 
 /**
  * Decrypts a vault item's sensitive data.
  *
- * SECURITY: When entryId is provided, tries decryption with AAD first.
- * Falls back to decryption without AAD for backward compatibility with
- * entries encrypted before the AAD fix was introduced.
+ * SECURITY: Versioned envelopes dispatch explicitly by prefix. Unknown
+ * sv-vault-* versions fail closed so future formats cannot be misread as
+ * legacy base64. Unversioned payloads are treated as legacy AES-GCM.
  * 
- * @param encryptedData - Base64-encoded encrypted JSON from database
+ * @param encryptedData - Versioned envelope or legacy base64 encrypted JSON
  * @param key - CryptoKey derived from master password
  * @param entryId - Vault item UUID. Must match the AAD used during encryption.
  * @returns Decrypted vault item data object
@@ -331,26 +399,78 @@ export async function encryptVaultItem(
 export async function decryptVaultItem(
     encryptedData: string,
     key: CryptoKey,
-    entryId?: string
+    entryId: string,
+    options: { allowLegacyNoAadFallback?: boolean } = {},
 ): Promise<VaultItemData> {
     let json: string;
-    let isLegacy = false;
-    if (entryId) {
+    const envelope = parseVaultItemEnvelope(encryptedData);
+
+    if (envelope.version === 1) {
+        json = await decrypt(envelope.payload, key, entryId);
+    } else if (entryId) {
         try {
-            // Try with AAD first (new format, swap-protected)
-            json = await decrypt(encryptedData, key, entryId);
+            // Legacy payloads written after the AAD rollout have no explicit
+            // version marker but are still bound to the entry ID.
+            json = await decrypt(envelope.payload, key, entryId);
         } catch {
-            // Backward compat: entry was encrypted without AAD (legacy format)
-            // WARNING: Legacy entries are vulnerable to ciphertext-swap attacks
+            // Older legacy payloads predate AAD and can be swapped between
+            // rows by a server-side attacker. Only explicit migration paths may
+            // read them so they can be rewritten as versioned, AAD-bound items.
+            if (!options.allowLegacyNoAadFallback) {
+                throw new Error('Legacy vault item without AAD requires migration.');
+            }
             console.warn(`Legacy entry without AAD detected: ${entryId}`);
             _legacyDecryptCount++;
-            isLegacy = true;
-            json = await decrypt(encryptedData, key);
+            json = await decrypt(envelope.payload, key);
         }
     } else {
-        json = await decrypt(encryptedData, key);
+        json = await decrypt(envelope.payload, key);
     }
     return JSON.parse(json) as VaultItemData;
+}
+
+type VersionedCipherEnvelope =
+    | { version: 1; payload: string }
+    | { version: 'legacy'; payload: string };
+
+interface VersionedCipherEnvelopeSpec {
+    currentPrefix: string;
+    familyPrefix: string;
+    subject: string;
+}
+
+function formatVaultItemEnvelopeV1(encryptedBase64: string): string {
+    return formatVersionedCipherEnvelope(VAULT_ITEM_ENVELOPE_SPEC, encryptedBase64);
+}
+
+function parseVaultItemEnvelope(encryptedData: string): VersionedCipherEnvelope {
+    return parseVersionedCipherEnvelope(VAULT_ITEM_ENVELOPE_SPEC, encryptedData);
+}
+
+function formatVersionedCipherEnvelope(
+    spec: VersionedCipherEnvelopeSpec,
+    encryptedBase64: string,
+): string {
+    return `${spec.currentPrefix}${encryptedBase64}`;
+}
+
+function parseVersionedCipherEnvelope(
+    spec: VersionedCipherEnvelopeSpec,
+    encryptedData: string,
+): VersionedCipherEnvelope {
+    if (encryptedData.startsWith(spec.currentPrefix)) {
+        const payload = encryptedData.slice(spec.currentPrefix.length);
+        if (!payload) {
+            throw new Error(`Invalid ${spec.subject} encryption envelope`);
+        }
+        return { version: 1, payload };
+    }
+
+    if (encryptedData.startsWith(spec.familyPrefix)) {
+        throw new Error(`Unsupported ${spec.subject} encryption envelope version`);
+    }
+
+    return { version: 'legacy', payload: encryptedData };
 }
 
 /**
@@ -612,9 +732,12 @@ export async function reEncryptVault(
     const itemUpdates: Array<{ id: string; encrypted_data: string }> = [];
     for (const item of items) {
         try {
-            // SECURITY: Pass item.id as AAD to bind ciphertext to entry ID.
-            // reEncryptString handles legacy (no-AAD) → new (with-AAD) migration.
-            const newEncrypted = await reEncryptString(item.encrypted_data, oldKey, newKey, item.id);
+            // decryptVaultItem accepts unversioned legacy rows; encryptVaultItem
+            // always writes the current versioned, AAD-bound vault-item envelope.
+            const plaintext = await decryptVaultItem(item.encrypted_data, oldKey, item.id, {
+                allowLegacyNoAadFallback: true,
+            });
+            const newEncrypted = await encryptVaultItem(plaintext, newKey, item.id);
             itemUpdates.push({ id: item.id, encrypted_data: newEncrypted });
         } catch (err) {
             // If a single item fails, abort the entire operation.
@@ -736,6 +859,11 @@ export interface VaultItemData {
     password?: string;
     notes?: string;
     totpSecret?: string;
+    totpIssuer?: string;
+    totpLabel?: string;
+    totpAlgorithm?: 'SHA1' | 'SHA256' | 'SHA512';
+    totpDigits?: 6 | 8;
+    totpPeriod?: number;
     customFields?: Record<string, string>;
     /** Internal marker for duress/decoy items (never exposed to UI) */
     _duress?: boolean;
@@ -764,6 +892,8 @@ export function clearReferences(data: VaultItemData): void {
     if (data.password) data.password = '';
     if (data.notes) data.notes = '';
     if (data.totpSecret) data.totpSecret = '';
+    if (data.totpIssuer) data.totpIssuer = '';
+    if (data.totpLabel) data.totpLabel = '';
     if (data.customFields) {
         Object.keys(data.customFields).forEach(key => {
             data.customFields![key] = '';
@@ -860,22 +990,19 @@ export async function decryptRSA(
 // ==========================================
 
 /**
- * Generates a user's hybrid key pair for shared collections
- * Supports both RSA-4096 (legacy) and hybrid PQ+RSA (v2) modes
+ * Generates a user's asymmetric key material for shared collections.
+ * Supports both RSA-4096 (legacy) and hybrid PQ+RSA (v2) key-wrapping modes.
  * Private keys are encrypted with the master password
  *
  * @param masterPassword - User's master password
- * @param version - Key pair version: 1 (RSA-only) or 2 (hybrid PQ+RSA)
+ * @param version - Key pair version: 1 (RSA-only wrapping) or 2 (hybrid PQ+RSA wrapping)
  * @returns Object with public key (JWK) and encrypted private key
  *          Format v1: `kdfVersion:salt:encryptedData`
  *          Format v2: `pq-v2:kdfVersion:salt:encryptedRsaKey:encryptedPqKey`
  */
-// TODO(security): Set default to 2 (hybrid PQ+RSA) once pqCryptoService
-// is validated in production. Track: SINGRA-PQ-DEFAULT
-// Current: version 1 (RSA-only) for stability during rollout.
 export async function generateUserKeyPair(
     masterPassword: string,
-    version: 1 | 2 = 1
+    version: 1 | 2 = 2
 ): Promise<{
     publicKey: string;
     encryptedPrivateKey: string;
@@ -910,7 +1037,7 @@ export async function generateUserKeyPair(
         return { publicKey, encryptedPrivateKey: encryptedPrivateKeyWithSalt };
     }
 
-    // Version 2: Hybrid PQ+RSA mode (NIST-approved post-quantum)
+    // Version 2: Hybrid PQ+RSA key-wrapping mode for sharing/emergency keys (NIST-approved post-quantum KEM)
     // Import PQ crypto service for ML-KEM-768
     const { generatePQKeyPair } = await import('./pqCryptoService');
 
@@ -957,7 +1084,7 @@ export async function generateUserKeyPair(
 }
 
 /**
- * Migrates an existing RSA-only key pair to hybrid PQ+RSA
+ * Migrates existing RSA-only wrapping key material to hybrid PQ+RSA wrapping key material.
  *
  * @param encryptedPrivateKey - Existing encrypted RSA private key
  * @param masterPassword - User's master password
@@ -1091,23 +1218,33 @@ export async function encryptWithSharedKey(
     return encrypt(json, key, aad);
 }
 
+export interface SharedKeyDecryptOptions {
+    /**
+     * Allows reading pre-AAD shared item ciphertexts during explicit migration
+     * only. Runtime reads must fail closed when AAD decryption fails.
+     */
+    allowLegacyNoAadFallback?: boolean;
+}
+
 /**
  * Decrypts vault item data with a shared key
  * 
- * SECURITY: When aad is provided, tries decryption with AAD first.
- * Falls back to decryption without AAD for backward compatibility with
- * existing shared items encrypted before the AAD fix.
+ * SECURITY: When aad is provided, decryption is bound to that context and
+ * fails closed by default. Legacy no-AAD data may only be read by explicit
+ * migration callers that pass allowLegacyNoAadFallback.
  * 
  * @param encryptedData - Base64-encoded encrypted data
  * @param sharedKey - JWK string of the shared AES key
  * @param aad - Optional Additional Authenticated Data (e.g. entry ID)
+ * @param options - Legacy migration controls
  * @returns Decrypted vault item data
- * @throws Error if decryption fails with both AAD and no-AAD attempts
+ * @throws Error if decryption fails
  */
 export async function decryptWithSharedKey(
     encryptedData: string,
     sharedKey: string,
-    aad?: string
+    aad?: string,
+    options: SharedKeyDecryptOptions = {},
 ): Promise<VaultItemData> {
     // Import Shared Key
     const keyJwk = JSON.parse(sharedKey);
@@ -1126,9 +1263,11 @@ export async function decryptWithSharedKey(
             // Try with AAD first (new swap-protected format)
             json = await decrypt(encryptedData, key, aad);
         } catch {
+            if (!options.allowLegacyNoAadFallback) {
+                throw new Error('Shared item decryption failed with the required AAD context.');
+            }
             // Backward compat: entry was encrypted without AAD
             // WARNING: Legacy entries are vulnerable to ciphertext-swap attacks
-            console.warn(`Legacy shared entry without AAD detected: ${aad}`);
             _legacyDecryptCount++;
             json = await decrypt(encryptedData, key);
         }
@@ -1279,7 +1418,7 @@ export async function createEncryptedUserKey(kdfOutputBytes: Uint8Array): Promis
     try {
         wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
         const wrapKey = await importMasterKey(wrapKeyBytes);
-        const encryptedUserKey = await encrypt(uint8ArrayToBase64(userKeyBytes), wrapKey);
+        const encryptedUserKey = `${USER_KEY_ENVELOPE_V2_PREFIX}${await encryptBytes(userKeyBytes, wrapKey)}`;
         const userKey = await importMasterKey(userKeyBytes);
         return { encryptedUserKey, userKey };
     } finally {
@@ -1305,7 +1444,7 @@ export async function migrateToUserKey(kdfOutputBytes: Uint8Array): Promise<User
         userKeyBytes = await deriveInitialUserKeyBytes(kdfOutputBytes);
         wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
         const wrapKey = await importMasterKey(wrapKeyBytes);
-        const encryptedUserKey = await encrypt(uint8ArrayToBase64(userKeyBytes), wrapKey);
+        const encryptedUserKey = `${USER_KEY_ENVELOPE_V2_PREFIX}${await encryptBytes(userKeyBytes, wrapKey)}`;
         const userKey = await importMasterKey(userKeyBytes);
         return { encryptedUserKey, userKey };
     } finally {
@@ -1326,17 +1465,41 @@ export async function unwrapUserKey(
     encryptedUserKey: string,
     kdfOutputBytes: Uint8Array,
 ): Promise<CryptoKey> {
+    const userKeyBytes = await unwrapUserKeyBytes(encryptedUserKey, kdfOutputBytes);
+    try {
+        return await importMasterKey(userKeyBytes);
+    } finally {
+        userKeyBytes.fill(0);
+    }
+}
+
+/**
+ * Decrypts the stored encryptedUserKey and returns the raw UserKey bytes.
+ * Intended for migration and passkey wrapping flows that need the vault key
+ * material before importing it as a CryptoKey.
+ *
+ * @param encryptedUserKey - Value from profiles.encrypted_user_key
+ * @param kdfOutputBytes   - Raw 32 bytes from Argon2id (caller must wipe after use)
+ * @throws If the KDF output is wrong or the data is tampered
+ */
+export async function unwrapUserKeyBytes(
+    encryptedUserKey: string,
+    kdfOutputBytes: Uint8Array,
+): Promise<Uint8Array> {
     let wrapKeyBytes: Uint8Array | null = null;
-    let userKeyBytes: Uint8Array | null = null;
     try {
         wrapKeyBytes = await deriveWrapKey(kdfOutputBytes);
         const wrapKey = await importMasterKey(wrapKeyBytes);
+        if (encryptedUserKey.startsWith(USER_KEY_ENVELOPE_V2_PREFIX)) {
+            return await decryptBytes(encryptedUserKey.slice(USER_KEY_ENVELOPE_V2_PREFIX.length), wrapKey);
+        }
+
+        // Legacy wrappers encrypted a base64 string. Keep read compatibility,
+        // but new writes use byte envelopes above so the UserKey is wipeable.
         const userKeyBase64 = await decrypt(encryptedUserKey, wrapKey);
-        userKeyBytes = base64ToUint8Array(userKeyBase64);
-        return await importMasterKey(userKeyBytes);
+        return base64ToUint8Array(userKeyBase64);
     } finally {
         wrapKeyBytes?.fill(0);
-        userKeyBytes?.fill(0);
     }
 }
 
@@ -1355,20 +1518,17 @@ export async function rewrapUserKey(
     oldKdfOutputBytes: Uint8Array,
     newKdfOutputBytes: Uint8Array,
 ): Promise<string> {
-    let oldWrapKeyBytes: Uint8Array | null = null;
     let newWrapKeyBytes: Uint8Array | null = null;
+    let userKeyBytes: Uint8Array | null = null;
     try {
-        oldWrapKeyBytes = await deriveWrapKey(oldKdfOutputBytes);
-        const oldWrapKey = await importMasterKey(oldWrapKeyBytes);
-        // Note: userKeyBase64 is a JS string — cannot be securely wiped.
-        const userKeyBase64 = await decrypt(encryptedUserKey, oldWrapKey);
+        userKeyBytes = await unwrapUserKeyBytes(encryptedUserKey, oldKdfOutputBytes);
 
         newWrapKeyBytes = await deriveWrapKey(newKdfOutputBytes);
         const newWrapKey = await importMasterKey(newWrapKeyBytes);
-        return await encrypt(userKeyBase64, newWrapKey);
+        return `${USER_KEY_ENVELOPE_V2_PREFIX}${await encryptBytes(userKeyBytes, newWrapKey)}`;
     } finally {
-        oldWrapKeyBytes?.fill(0);
         newWrapKeyBytes?.fill(0);
+        userKeyBytes?.fill(0);
     }
 }
 

@@ -22,6 +22,29 @@ export interface TwoFactorStatus {
     backupCodesRemaining: number;
 }
 
+export type TwoFactorContext =
+    | 'account_login'
+    | 'account_security_change'
+    | 'vault_unlock'
+    | 'password_reset'
+    | 'critical_action'
+    | 'disable_2fa';
+
+export type TwoFactorVerificationMethod = 'totp' | 'backup_code';
+
+export interface TwoFactorRequirement {
+    context: TwoFactorContext;
+    required: boolean;
+    status: 'loaded' | 'unavailable';
+    reason?: 'account_2fa_enabled' | 'vault_2fa_enabled' | 'status_unavailable';
+}
+
+interface TwoFactorStatusLoadResult {
+    status: 'loaded' | 'unavailable';
+    data: Pick<TwoFactorStatus, 'isEnabled' | 'vaultTwoFactorEnabled' | 'lastVerifiedAt'> | null;
+    error?: unknown;
+}
+
 export interface SetupData {
     secret: string;
     qrCodeUri: string;
@@ -306,6 +329,111 @@ export async function get2FAStatus(userId: string): Promise<TwoFactorStatus | nu
     };
 }
 
+async function loadTwoFactorStatus(userId: string): Promise<TwoFactorStatusLoadResult> {
+    const { data, error } = await supabase
+        .from('user_2fa')
+        .select('is_enabled, vault_2fa_enabled, last_verified_at')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (error) {
+        return { status: 'unavailable', data: null, error };
+    }
+
+    if (!data) {
+        return { status: 'loaded', data: null };
+    }
+
+    return {
+        status: 'loaded',
+        data: {
+            isEnabled: Boolean(data.is_enabled),
+            vaultTwoFactorEnabled: Boolean(data.vault_2fa_enabled),
+            lastVerifiedAt: data.last_verified_at,
+        },
+    };
+}
+
+async function invokeAuth2FA<T = Record<string, unknown>>(body: Record<string, unknown>): Promise<{
+    data: T | null;
+    error: { message?: string } | null;
+}> {
+    const { data, error } = await supabase.functions.invoke<T>('auth-2fa', { body });
+    return { data: data ?? null, error };
+}
+
+export async function getTwoFactorRequirement(input: {
+    userId: string;
+    context: TwoFactorContext;
+}): Promise<TwoFactorRequirement> {
+    try {
+        const { data, error } = await invokeAuth2FA<{
+            required?: boolean;
+            status?: 'loaded' | 'unavailable';
+            reason?: TwoFactorRequirement['reason'];
+        }>({
+            action: 'requirement',
+            context: input.context,
+        });
+
+        if (!error && data) {
+            return {
+                context: input.context,
+                required: data.status === 'unavailable' ? true : Boolean(data.required),
+                status: data.status === 'unavailable' ? 'unavailable' : 'loaded',
+                reason: data.status === 'unavailable' ? 'status_unavailable' : data.reason,
+            };
+        }
+    } catch {
+        // Fall through to fail-closed for unlock-sensitive contexts.
+    }
+
+    if (input.context === 'vault_unlock') {
+        return {
+            context: input.context,
+            required: true,
+            status: 'unavailable',
+            reason: 'status_unavailable',
+        };
+    }
+
+    const loaded = await loadTwoFactorStatus(input.userId);
+
+    if (loaded.status === 'unavailable') {
+        return {
+            context: input.context,
+            required: true,
+            status: 'unavailable',
+            reason: 'status_unavailable',
+        };
+    }
+
+    const status = loaded.data;
+    if (!status?.isEnabled) {
+        return {
+            context: input.context,
+            required: false,
+            status: 'loaded',
+        };
+    }
+
+    if (input.context === 'vault_unlock') {
+        return {
+            context: input.context,
+            required: status.vaultTwoFactorEnabled,
+            status: 'loaded',
+            reason: status.vaultTwoFactorEnabled ? 'vault_2fa_enabled' : undefined,
+        };
+    }
+
+    return {
+        context: input.context,
+        required: true,
+        status: 'loaded',
+        reason: 'account_2fa_enabled',
+    };
+}
+
 /**
  * Gets the TOTP secret for a user (for verification)
  * @param userId - User ID
@@ -493,32 +621,19 @@ export async function disableTwoFactor(
     userId: string,
     code: string
 ): Promise<{ success: boolean; error?: string }> {
-    // Get the secret
-    const secret = await getTOTPSecret(userId);
-    if (!secret) {
-        return { success: false, error: '2FA is not enabled.' };
-    }
+    void userId;
+    const { data, error } = await invokeAuth2FA<{ success?: boolean; error?: string }>({
+        action: 'disable-2fa',
+        code,
+        method: 'totp',
+    });
 
-    // Verify the code (backup codes NOT allowed for disabling)
-    if (!verifyTOTPCode(secret, code)) {
+    if (error || !data?.success) {
         return {
             success: false,
-            error: 'Invalid code. Backup codes cannot be used to disable 2FA.',
+            error: data?.error || error?.message || 'Invalid code. Backup codes cannot be used to disable 2FA.',
         };
     }
-
-    // Delete 2FA settings
-    const { error: deleteError } = await supabase
-        .from('user_2fa')
-        .delete()
-        .eq('user_id', userId);
-
-    if (deleteError) {
-        return { success: false, error: deleteError.message };
-    }
-
-    // Delete all backup codes
-    await supabase.from('backup_codes').delete().eq('user_id', userId);
 
     return { success: true };
 }
@@ -599,24 +714,110 @@ export async function verifyTwoFactorForLogin(
     code: string,
     isBackupCode: boolean
 ): Promise<boolean> {
-    if (isBackupCode) {
-        return await verifyAndConsumeBackupCode(userId, code);
+    const result = await verifyTwoFactorCode({
+        userId,
+        context: 'account_login',
+        code,
+        method: isBackupCode ? 'backup_code' : 'totp',
+    });
+
+    return result.success;
+}
+
+export async function verifyTwoFactorCode(input: {
+    userId: string;
+    context: TwoFactorContext;
+    code: string;
+    method: TwoFactorVerificationMethod;
+}): Promise<{ success: boolean; error?: string }> {
+    const normalizedCode = input.code.trim();
+    if (!normalizedCode) {
+        return { success: false, error: 'Invalid verification code.' };
     }
 
-    const secret = await getTOTPSecret(userId);
+    if (input.context === 'vault_unlock' || input.context === 'disable_2fa' || input.context === 'critical_action') {
+        const result = await verifyTwoFactorChallenge(input);
+        return { success: result.success, error: result.error };
+    }
+
+    if (input.method === 'backup_code') {
+        if (input.context === 'disable_2fa') {
+            return { success: false, error: 'Backup codes cannot be used for this action.' };
+        }
+
+        return {
+            success: await verifyAndConsumeBackupCode(input.userId, normalizedCode),
+        };
+    }
+
+    const secret = await getTOTPSecret(input.userId);
     if (!secret) {
-        return false;
+        return { success: false, error: '2FA is not enabled.' };
     }
 
-    const isValid = verifyTOTPCode(secret, code);
+    const isValid = verifyTOTPCode(secret, normalizedCode);
 
     if (isValid) {
         // Update last verified timestamp
         await supabase
             .from('user_2fa')
             .update({ last_verified_at: new Date().toISOString() })
-            .eq('user_id', userId);
+            .eq('user_id', input.userId);
     }
 
-    return isValid;
+    return { success: isValid };
+}
+
+export async function verifyTwoFactorChallenge(input: {
+    context: TwoFactorContext;
+    code: string;
+    method: TwoFactorVerificationMethod;
+}): Promise<{ success: boolean; challengeId?: string; error?: string }> {
+    const normalizedCode = input.code.trim();
+    if (!normalizedCode) {
+        return { success: false, error: 'Invalid verification code.' };
+    }
+
+    try {
+        const challenge = await invokeAuth2FA<{
+            required?: boolean;
+            challengeId?: string;
+            error?: string;
+        }>({
+            action: 'create-challenge',
+            context: input.context,
+        });
+
+        if (challenge.error) {
+            return { success: false, error: challenge.error.message || 'Invalid verification code.' };
+        }
+
+        if (challenge.data?.required === false) {
+            return { success: true };
+        }
+
+        const challengeId = challenge.data?.challengeId;
+        if (!challengeId) {
+            return { success: false, error: 'Invalid verification code.' };
+        }
+
+        const verified = await invokeAuth2FA<{ success?: boolean; verified?: boolean; error?: string }>({
+            action: 'verify-challenge',
+            context: input.context,
+            challengeId,
+            code: normalizedCode,
+            method: input.method,
+        });
+
+        if (verified.error || !verified.data?.success || !verified.data?.verified) {
+            return {
+                success: false,
+                error: verified.data?.error || verified.error?.message || 'Invalid verification code.',
+            };
+        }
+
+        return { success: true, challengeId };
+    } catch {
+        return { success: false, error: 'Invalid verification code.' };
+    }
 }

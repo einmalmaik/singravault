@@ -50,15 +50,15 @@
   "landing": {
     "hero": {
       "title": "Your Passwords.",
-      "titleHighlight": "Your Control.",
-      "subtitle": "The secure open-source password manager with end-to-end encryption. Your data belongs only to you.",
+      "titleHighlight": "Only for you.",
+      "subtitle": "Open source. End-to-end encrypted. Zero-knowledge by design.",
       "cta": "Get started for free",
       "ctaSecondary": "Learn more",
-      "description": "AES-256-GCM encryption. Argon2id key derivation. Zero-knowledge architecture. Your passwords never leave your device unencrypted."
+      "description": "Singra Vault protects your vault data locally on your device before it is synchronized. App-password login uses OPAQUE; OAuth remains a separate sign-in path."
     },
     "security": {
       "title": "Highest Security Standards",
-      "subtitle": "We go beyond industry standard encryption - with post-quantum protection, duress passwords, and tamper detection.",
+      "subtitle": "We combine strong cryptography with local integrity checks, passkey unlock, and clearly documented limits.",
       "zeroKnowledge": {
         "title": "Zero-Knowledge Architecture",
         "description": "We can never see your passwords. Decryption happens only on your device."
@@ -76,8 +76,8 @@
         "description": "All data is encrypted BEFORE being sent to the server."
       },
       "postQuantum": {
-        "title": "Post-Quantum Encryption",
-        "description": "Security Standard v1 enforces ML-KEM-768 + RSA-4096 hybrid key exchange for Emergency Access and Shared Collections (NIST FIPS 203)."
+        "title": "Post-Quantum Protection for Sharing Keys",
+        "description": "Security Standard v1 uses ML-KEM-768 + RSA-4096 to wrap sharing and emergency-access keys. Vault contents remain encrypted with AES-256-GCM."
       },
       "passkeyUnlock": {
         "title": "Passkey Vault Unlock",
@@ -89,7 +89,7 @@
       },
       "vaultIntegrity": {
         "title": "Vault Integrity Verification",
-        "description": "Merkle-tree based tamper detection ensures no one has modified your vault data server-side."
+        "description": "Local digest baselines and trusted snapshots isolate tampered items. Recovery is only possible from an earlier trusted local copy."
       }
     },
     "features": {
@@ -130,7 +130,7 @@
     "comparison": {
       "badge": "Honest Comparison",
       "title": "Why Singra Vault?",
-      "subtitle": "A fact-based comparison with leading password managers. All data verified from official sources (Feb 2026).",
+      "subtitle": "A fact-based comparison with leading password managers. All data comes from official sources and was reviewed on April 23, 2026.",
       "featureLabel": "Feature",
       "features": {
         "openSource": "Open Source",
@@ -138,7 +138,7 @@
         "zeroKnowledge": "Zero-Knowledge",
         "free": "Free Tier Available",
         "kdf": "Key Derivation (KDF)",
-        "postQuantum": "Post-Quantum Key Protection (Sharing/Emergency)",
+        "postQuantum": "Post-Quantum Protection for Sharing Keys",
         "passkeyUnlock": "Passkey Vault Unlock",
         "duressPassword": "Panic / Duress Password",
         "vaultIntegrity": "Vault Integrity Check",
@@ -153,7 +153,8 @@
         "partial": "Partial / Premium only",
         "unavailable": "Not available"
       },
-      "disclaimer": "All information is based on publicly available documentation from the respective providers, verified in February 2026. Feature availability may change. Bitwarden: bitwarden.com/help | 1Password: 1password.com | LastPass: lastpass.com"
+      "disclaimer": "All information is based on official public documentation from the respective vendors. Pricing, feature scope, and browser support may change at any time.",
+      "verifiedAt": "Verified: {{date}}"
     },
     "pwa": {
       "badge": "Progressive Web App",
@@ -235,6 +236,7 @@
     },
     "tags": {
       "crypto": "Crypto",
+      "auth": "Auth",
       "client": "Client",
       "rls": "RLS",
       "storage": "Storage",
@@ -248,6 +250,7 @@
       "title": "Quick facts",
       "subtitle": "What to know at a glance",
       "items": [
+        "App-owned password login runs only through OPAQUE; there is no legacy password fallback.",
         "Vault item contents are encrypted client-side before storage/transmission.",
         "Key derivation: Argon2id with KDF versions v1 (64 MiB) and v2 (128 MiB).",
         "AES-GCM CryptoKeys are non-extractable; raw bytes are best-effort zeroed after import.",
@@ -262,6 +265,18 @@
           "Vault items are stored as encrypted_data; title/URL metadata is intentionally not stored in plaintext (placeholder + null).",
           "Create/import encrypts before writing to the database; the server never receives vault-item plaintext.",
           "Note: Some structural metadata (e.g., category/tag/collection names) remains plaintext DB fields."
+        ]
+      },
+      "authentication": {
+        "title": "Authentication & OPAQUE",
+        "summary": "OAuth/social login is a separate path; app-owned password login uses OPAQUE only.",
+        "bullets": [
+          "For app-owned password login, the password is processed locally by OPAQUE. Edge Functions receive only OPAQUE protocol messages, never a password, password hash, or password-equivalent value.",
+          "OPAQUE failures abort login. auth-session blocks direct password POSTs server-side with LEGACY_PASSWORD_LOGIN_DISABLED.",
+          "Signup, password reset, and password change create OPAQUE registration records client-side; GoTrue password verifiers are removed and blocked at the database layer so Supabase password grants cannot bypass OPAQUE.",
+          "Password reset and password change share the same security logic: email code, additional TOTP or recovery code when account 2FA is active, then OPAQUE re-registration. OAuth/social login does not use this path.",
+          "The OPAQUE server static public key is pinned in the client via VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY. If the pin is missing or mismatched, no app session is created.",
+          "The Supabase app session is created only after successful OPAQUE finish and is additionally bound to the OPAQUE sessionKey with an HMAC over access token and user ID."
         ]
       },
       "cryptography": {
@@ -303,11 +318,13 @@
       },
       "attachments": {
         "title": "File attachments",
-        "summary": "File contents and metadata are encrypted client-side; DB/RLS restricts access to the owner.",
+        "summary": "File contents, names, types, and metadata are end-to-end encrypted client-side before upload.",
         "bullets": [
-          "Upload stores encrypted content in Supabase Storage (application/octet-stream).",
-          "File metadata (name/MIME) is stored additionally as encrypted_metadata; plaintext columns are intended as opaque placeholders.",
-          "DB RLS policies enforce access only for auth.uid() = user_id."
+          "Every file gets a random file key; every chunk is encrypted with AES-256-GCM, a unique nonce, and AAD.",
+          "The encrypted manifest contains file name, extension, MIME type, original size, chunk list, hashes, and preview information. Plaintext columns remain opaque placeholders only.",
+          "Storage paths contain no filenames or extensions. Technical metadata remains visible: owner binding, upload time, number/size of ciphertext chunks, and access patterns.",
+          "Downloads stream decrypted chunks through File System Access or Tauri file I/O when available; older browsers use a documented Blob fallback.",
+          "Rollback is detected through versioned manifests, a manifest root, chunk AAD, and local last-seen checkpoints when a trusted previous state exists."
         ]
       },
       "sharing": {
@@ -316,7 +333,7 @@
         "bullets": [
           "Shared collections use owner/member + permission (view/edit) in shared_collection_members.",
           "Emergency access controls trustee access via status and grantor/trustee linkage.",
-          "Asymmetric crypto (RSA-OAEP 4096) is provided in the crypto service for sharing/emergency flows."
+          "Sharing/emergency keys are wrapped client-side with asymmetric cryptography; current paths use ML-KEM-768 + RSA-OAEP 4096 for key wrapping."
         ]
       },
       "offline": {
@@ -328,13 +345,27 @@
           "Limitation: browser storage can be wiped; integrity depends on a local baseline."
         ]
       },
-      "integrity": {
-        "title": "Tamper detection (integrity root)",
-        "summary": "HMAC Merkle tree over (itemId | encrypted_data); root is stored client-side.",
+      "categories": {
+        "title": "Category system & delete behavior",
+        "summary": "Category name, color, and icon are stored encrypted; items also carry their category inside the encrypted item payload.",
         "bullets": [
-          "Protects against a compromised server that deletes/replaces/replays ciphertext.",
-          "Integrity key is derived separately from the encryption key (domain separation).",
-          "Limitations are explicitly documented (e.g., no protection against stale reads without additional mechanisms)."
+          "When an item is created or edited, the category assignment is stored in encrypted_data as categoryId. The old plaintext category_id column is read only as a legacy/migration fallback and then cleaned up.",
+          "When a category is deleted, loadItemsInCategory() first finds affected items by decrypting each local item payload. That is how the client knows which items belong to that category.",
+          "The dialog exposes two paths: deleting only the category re-encrypts affected items with categoryId=null; deleting category and items also removes those item rows.",
+          "applyOfflineCategoryDeletion() writes category removal and item changes in one local snapshot update. That prevents the UI from alternating between old and new category state.",
+          "Category icons come from a fixed emoji allowlist. Free SVG input is blocked so category icons cannot become an XSS or HTML injection path."
+        ]
+      },
+      "integrity": {
+        "title": "Tamper detection & quarantine",
+        "summary": "The client stores an encrypted local integrity baseline and a trusted snapshot. Suspicious items are isolated, while category drift blocks normal access.",
+        "bullets": [
+          "The current vault state is checked locally as a canonical snapshot over encrypted item and category data; the server never receives plaintext for this check.",
+          "Item drift leads to quarantine instead of silent rendering: changed ciphertext, missing items, and unknown server items are surfaced separately.",
+          "The baseline stores separate digests for items and categories. Item drift can be quarantined; category drift blocks normal access because categories affect vault structure and visibility.",
+          "Legitimate local changes call refreshIntegrityBaseline() with the affected item/category IDs. Only those IDs may update the baseline; arbitrary database changes are not trusted.",
+          "Recovery is only possible from an already trusted local copy. Without such a copy there is no cryptographic recovery path.",
+          "Tampered categories or unreadable local baselines block normal access. In that case only Safe Mode, local export, or a vault reset remain."
         ]
       },
       "headers": {
@@ -352,7 +383,9 @@
         "bullets": [
           "If delivered client code is compromised (supply chain/XSS), it can steal secrets during unlock.",
           "Malware on the device or a compromised browser can read the vault while unlocked.",
-          "Metadata trade-offs: some table fields are plaintext (e.g., categories.name, tags.name, shared_collections.name)."
+          "Metadata trade-offs: IDs, timestamps, and ownership links remain structural metadata. Core vault metadata such as item title/URL and category name/icon/color is encrypted; other product areas may still need plaintext names.",
+          "File rollback protection is detection, not an absolute guarantee: without a local checkpoint or external audit system, a server can serve an old valid ciphertext state to a new device.",
+          "File-size padding is not implemented for attachments yet; ciphertext size, chunk count, and access patterns remain visible."
         ]
       }
     },
@@ -366,7 +399,7 @@
         "nist80063b": "NIST SP 800-63B (Memorized Secrets)"
       }
     },
-    "lastUpdated": "Last updated: {{date}}"
+    "lastUpdated": "Content reviewed on: {{date}}"
   },
   "privacy": {
     "title": "Privacy Policy",
@@ -427,9 +460,14 @@
     }
   },
   "auth": {
+    "success": "Signed in successfully.",
     "login": {
       "title": "Welcome back",
-      "subtitle": "Sign in to access your vault",
+      "titleFirstVisit": "Welcome to Singra Vault",
+      "titleReturning": "Welcome back",
+      "subtitle": "Sign in to open your vault.",
+      "subtitleFirstVisit": "Create your secure vault or sign in.",
+      "subtitleReturning": "Sign in to open your vault.",
       "email": "Email",
       "password": "Password",
       "submit": "Sign in",
@@ -476,7 +514,8 @@
     "providers": {
       "google": "Google",
       "discord": "Discord",
-      "github": "GitHub"
+      "github": "GitHub",
+      "lastUsed": "Last used"
     },
     "errors": {
       "invalidCredentials": "Invalid email or password",
@@ -490,6 +529,17 @@
       "passwordNoLowercase": "At least one lowercase letter required",
       "passwordNoDigit": "At least one digit required",
       "passwordNoSymbol": "At least one special character required"
+    },
+    "errorCodes": {
+      "ACCOUNT_ALREADY_EXISTS": "An account with this email address already exists.",
+      "OPAQUE_RECORD_CONFLICT": "An account with this email address already exists.",
+      "OPAQUE_REGISTRATION_FAILED": "Registration failed. Please try again.",
+      "AUTH_EMAIL_ALREADY_IN_USE": "An account with this email address already exists.",
+      "AUTH_INVALID_OR_EXPIRED_CODE": "The code is invalid or expired.",
+      "TOO_MANY_ATTEMPTS": "Too many attempts. Please wait and try again.",
+      "AUTH_REQUIRED": "Please sign in again.",
+      "FORBIDDEN": "You do not have permission for this action.",
+      "SERVER_ERROR": "Server error. Please try again."
     },
     "twoFactor": {
       "title": "Two-Factor Authentication",
@@ -506,6 +556,9 @@
   "vault": {
     "title": "My Vault",
     "loadError": "Failed to load vault items.",
+    "offlineSaved": "Saved offline. Will sync automatically when internet is available.",
+    "offlineDeleteQueued": "Deleted offline. The deletion will sync when internet is available.",
+    "syncedAfterOffline": "{{count}} offline changes synchronized.",
     "copied": "Copied",
     "copiedPassword": "Password has been copied.",
     "copiedUsername": "Username has been copied.",
@@ -573,6 +626,35 @@
         "addTotp": "Add 2FA",
         "currentCode": "Current Code"
       }
+    },
+    "integrity": {
+      "quarantineTitle": "Items in quarantine",
+      "quarantineDescription": "These items were isolated because their trust basis no longer matches. They are not decrypted as normal vault entries.",
+      "quarantineRecoveryDescription": "These items remain isolated until you restore them from a trusted local copy, delete them deliberately, or accept the deletion.",
+      "quarantineItemTitle": "Tampered item",
+      "quarantineBadge": "Quarantine",
+      "untrustedEntryLabel": "Not trustworthy",
+      "onlyQuarantinedTitle": "Only quarantined items are currently available",
+      "onlyQuarantinedDescription": "Normal entries are currently unavailable. Review the quarantine notices and resolve the affected items deliberately.",
+      "reasonCiphertextChanged": "Encrypted content was modified.",
+      "reasonMissingOnServer": "The item is missing from the current vault state.",
+      "reasonUnknownOnServer": "An unknown item was found without a trusted baseline.",
+      "reasonUnknown": "This item could no longer be confirmed as trustworthy.",
+      "restoreAction": "Restore",
+      "restoreSuccess": "The last trusted local version was restored.",
+      "deleteEntry": "Delete permanently",
+      "deleteSuccess": "The quarantined item was removed.",
+      "acceptMissingAction": "Accept deletion",
+      "acceptMissingSuccess": "The deletion was accepted and the local trust baseline was updated.",
+      "noTrustedLocalCopy": "No trusted local copy is available on this device for recovery.",
+      "confirmDeleteTitle": "Delete item permanently?",
+      "confirmDeleteDescription": "The suspicious item will be removed from the current vault state. This action cannot be undone.",
+      "confirmAcceptMissingTitle": "Accept deletion?",
+      "confirmAcceptMissingDescription": "The missing item will be removed from the trusted local baseline. Recovery will no longer be possible unless another local copy exists.",
+      "safeModeDescription": "Safe Mode works exclusively with the last trusted local snapshot. Changes are disabled.",
+      "safeModeNotice": "Safe Mode is read-only. Review and export your items if needed before resetting the vault.",
+      "resetChallengeExpired": "The vault reset confirmation expired. Please try again.",
+      "resetFailed": "The vault could not be reset."
     }
   },
   "generator": {
@@ -601,6 +683,14 @@
   },
   "settings": {
     "title": "Settings",
+    "tabs": {
+      "general": "General",
+      "security": "Security",
+      "billingSupport": "Billing & Support",
+      "data": "Data",
+      "dataLegal": "Data & Legal",
+      "sharingEmergency": "Sharing & Emergency"
+    },
     "accountPage": {
       "title": "Account Settings"
     },
@@ -627,7 +717,15 @@
       "deleteConfirm": "Delete Account Forever",
       "deleteSuccess": "Account Deleted",
       "deleteSuccessDesc": "Your account and all data have been deleted.",
-      "deleteFailed": "Failed to delete account."
+      "deleteFailed": "Failed to delete account.",
+      "deleteVaultWarningTitle": "{{count}} vault items found",
+      "deleteVaultWarningDesc": "Export your data before deletion if you want to keep it. Account deletion is irreversible.",
+      "exportBeforeDelete": "Export vault before deletion",
+      "deleteTwoFactorLabel": "Confirm two-factor code",
+      "deleteTotpPlaceholder": "6-digit authenticator code",
+      "deleteBackupCodePlaceholder": "Backup code",
+      "deleteUseBackupCode": "Use backup code",
+      "deleteTwoFactorInvalid": "The two-factor code is invalid or expired."
     },
     "password": {
       "title": "Change Password",
@@ -642,7 +740,16 @@
       "updateSuccess": "Password updated successfully.",
       "updateFailed": "Failed to update password.",
       "minLength": "Password must be at least 12 characters long.",
-      "weakPassword": "Please choose a stronger password."
+      "weakPassword": "Please choose a stronger password.",
+      "requestEmailCode": "Send email code",
+      "resendEmailCode": "Resend code",
+      "emailCode": "Email code",
+      "emailCodeSent": "If your account uses an app password, a code was sent to your account email.",
+      "emailCodeVerified": "Email code confirmed. You can now set a new account password.",
+      "twoFactorVerified": "Two-factor authentication confirmed.",
+      "codeInvalid": "The code is invalid or expired.",
+      "authorizationRequired": "Confirm the email code first.",
+      "socialOnlyDescription": "This account uses social login. An app-owned password is not configured for this auth path."
     },
     "accountDataExport": {
       "title": "GDPR Data Export",
@@ -731,8 +838,8 @@
       "title": "Data",
       "description": "Export or import your vault data.",
       "export": "Export Data",
-      "exportDesc": "Export all your passwords and entries as a JSON file.",
-      "exportButton": "Export as JSON",
+      "exportDesc": "Exports your vault entries as an unencrypted JSON file. Includes passwords, notes, and Authenticator secrets when those entries exist.",
+      "exportButton": "Export unencrypted JSON",
       "exportSuccess": "{{count}} entries exported successfully.",
       "exportFailed": "Export failed.",
       "import": "Import Data",
@@ -1111,7 +1218,9 @@
     "deleted": "Attachment deleted",
     "deleteError": "Failed to delete attachment",
     "fileTooLarge": "File too large. Maximum: {{size}}",
-    "storageLimitReached": "Storage limit reached. Used: {{used}} / {{limit}}"
+    "storageLimitReached": "Storage limit reached. Used: {{used}} / {{limit}}",
+    "pendingUploadFailed": "{{count}} attachment(s) could not be uploaded. The entry was saved without those attachments.",
+    "pendingUploadRequiresOnline": "Attachments were not uploaded because the entry was saved offline. Please add them again after sync."
   },
   "categories": {
     "add": "Add Category",
@@ -1120,6 +1229,7 @@
     "name": "Name",
     "namePlaceholder": "e.g. Social Media",
     "icon": "Icon",
+    "noIcon": "No icon",
     "emojiPlaceholder": "Enter or select an emoji",
     "svgHint": "Paste SVG code (24x24px recommended)",
     "svgDisabled": "SVG icons are disabled for security reasons.",
@@ -1128,10 +1238,15 @@
     "created": "Category created",
     "updated": "Category updated",
     "deleted": "Category deleted",
+    "deletedOnlyCategory": "Category deleted. {{count}} items remain without a category.",
+    "deletedWithItems": "Category and {{count}} items deleted.",
     "saveFailed": "Failed to save category",
     "deleteFailed": "Failed to delete category",
     "deleteConfirmTitle": "Delete category?",
     "deleteConfirmDesc": "The category will be deleted. Items in this category won't be deleted, but will no longer have a category.",
+    "deleteWithItemsDesc": "This category contains {{count}} items. You can delete only the category or delete the items too.",
+    "deleteCategoryOnly": "Delete category only",
+    "deleteCategoryAndItems": "Delete category and items",
     "empty": "No categories yet",
     "addFirst": "Create your first category",
     "selectPlaceholder": "Select Category",
@@ -1261,7 +1376,7 @@
       "core_features": "All Core Features",
       "argon2id_encryption": "Argon2id 128 MiB Encryption",
       "clipboard_auto_clear": "Clipboard Auto-Clear (30s)",
-      "post_quantum": "Post-Quantum Key Protection (ML-KEM-768, sharing/emergency)",
+      "post_quantum": "Post-Quantum Protection for Sharing Keys (ML-KEM-768)",
       "duress_password": "Panic / Duress Password",
       "file_attachments": "1 GB File Attachments",
       "builtin_authenticator": "Built-in Authenticator",
@@ -1330,12 +1445,14 @@
     "failed": "Re-authentication failed. Please try again.",
     "accountDeleteContext": "Please confirm your identity before deleting your account.",
     "subscriptionCancelContext": "Please confirm your identity before canceling your subscription.",
+    "vaultResetContext": "Please confirm your identity before irreversibly resetting your vault.",
     "confirmationLabel": "Type {{keyword}}",
     "confirmationPlaceholder": "Enter {{keyword}}",
     "confirmationHint": "For social-login accounts without an account password, confirm this action with the safety keyword.",
     "confirmationMismatch": "Please enter exactly {{keyword}}.",
     "confirmationKeywordDefault": "CONFIRM",
-    "cancelKeyword": "CANCEL"
+    "cancelKeyword": "CANCEL",
+    "resetKeyword": "RESET"
   },
   "passkey": {
     "title": "Passkeys",
@@ -1368,9 +1485,9 @@
     "unlockFailed": "Passkey unlock failed. Please try your master password."
   },
   "postQuantum": {
-    "title": "Post-Quantum Encryption",
-    "description": "Security Standard v1 enforces hybrid post-quantum key protection (ML-KEM-768 + RSA-4096) for shared and emergency key exchange.",
-    "infoText": "Security Standard v1 combines ML-KEM-768 and RSA-4096 in one hybrid key path to reduce 'harvest now, decrypt later' risk while keeping compatibility for vault payload encryption.",
+    "title": "Post-Quantum Protection for Sharing Keys",
+    "description": "Security Standard v1 protects sharing and emergency-access keys with ML-KEM-768 + RSA-4096. It does not change AES-256-GCM encryption for your vault items.",
+    "infoText": "The post-quantum path applies to key wrapping and key exchange for Shared Collections and Emergency Access. Vault payloads remain protected with conventional symmetric AES-256-GCM.",
     "status": "Status",
     "enabled": "Enabled",
     "disabled": "Not enabled",
@@ -1380,20 +1497,20 @@
     "enforcedAt": "Enforced at",
     "legacyDisabledAt": "Legacy disabled at",
     "notSet": "Not set",
-    "enableTitle": "Enable Post-Quantum",
-    "enableDescription": "Hybrid key material is provisioned automatically when sharing or emergency access requires it.",
-    "enableButton": "Enable Post-Quantum",
+    "enableTitle": "Enable Post-Quantum Sharing Keys",
+    "enableDescription": "Hybrid key material is provisioned automatically when a sharing or emergency-access key needs to be wrapped.",
+    "enableButton": "Enable Sharing Key Protection",
     "enabling": "Enabling...",
-    "enableSuccess": "Post-quantum encryption has been enabled successfully!",
+    "enableSuccess": "Post-quantum protection for sharing keys has been enabled successfully!",
     "enableFailed": "Activation failed. Please try again.",
     "keyVersion": "Key version",
     "algorithm": "Algorithm",
-    "algorithmValue": "ML-KEM-768 + RSA-4096 Hybrid",
+    "algorithmValue": "ML-KEM-768 + RSA-4096 for key wrapping",
     "nistStandard": "NIST FIPS 203 (August 2024)",
     "securityLevel": "Security level",
     "securityLevelValue": "Category 3 (~AES-192)",
-    "quantumSafe": "Quantum-safe",
-    "premiumRequired": "Post-quantum encryption requires a Premium or Families subscription.",
+    "quantumSafe": "Post-quantum key wrapping",
+    "premiumRequired": "Post-quantum protection for sharing keys requires a Premium or Families subscription.",
     "learnMore": "Learn more",
     "upgradeNow": "Upgrade now"
   },

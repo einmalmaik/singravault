@@ -1,158 +1,95 @@
-# Zero-Knowledge Verifikation & Vergleich mit Bitwarden, 1Password, Proton Pass
+# Zero-Knowledge Verification & Password-Manager Comparison
 
-**Datum:** 2026-02-26  
-**Scope:** Vollständige Prüfung der Zero-Knowledge-Architektur + Branchenvergleich
+**Date:** 2026-04-26
+**Scope:** Current code-backed verification of Singra Vault's vault-data zero-knowledge model and authentication boundaries.
 
----
+## Part 1: Singra Vault Verification
 
-## Teil 1: Zero-Knowledge Verifikation — Singra Vault
+### What The Server Sees
 
-### Was der Server sieht
-
-| Datenpunkt | Gespeichert auf Server | Plaintext? |
+| Data point | Stored/processed on server | Plaintext? |
 |---|---|---|
-| Master-Passwort | ❌ Nie | — |
-| Vault-Einträge (`encrypted_data`) | ✅ | ❌ AES-256-GCM verschlüsselt |
-| Encryption Salt | ✅ | Ja (ist öffentlich, ohne Passwort nutzlos) |
-| Master-Password-Verifier (V3) | ✅ | Nein (verschlüsselte Konstante, kein Hash des Passworts) |
-| TOTP Secrets (2FA) | ✅ | ❌ PGP-AES-256 verschlüsselt (server-seitig) |
-| Dateianhänge | ✅ | ❌ Client-seitig AES-256-GCM verschlüsselt |
-| Argon2id Hash (Login) | ✅ | Nein (irreversibel, nicht zum Vault-Entschlüsseln nutzbar) |
+| App-login password | No | No |
+| OPAQUE protocol messages | Yes, during signup/login/reset | Public protocol messages, not password-equivalent values |
+| OPAQUE registration record | Yes, `user_opaque_records.registration_record` | No app password or app-password hash |
+| Vault master password / vault key | No | No |
+| Vault items (`encrypted_data`) | Yes | No, AES-256-GCM ciphertext |
+| Encryption salt | Yes | Public salt, not useful without the master password |
+| Master-password verifier | Yes | Encrypted verifier value, not an auth password hash |
+| TOTP secrets | Yes | Server-side encrypted; needed for server-side 2FA verification |
+| File attachments | Yes | Client-side encrypted chunks plus encrypted manifest; server sees only opaque paths, ciphertext, owner binding, timestamps, chunk/object counts, and ciphertext sizes |
 
-### Prüfungsergebnisse
+### Edge Function Review
 
-#### ✅ Edge Functions berühren KEINE Vault-Daten
+Relevant auth functions after the OPAQUE cutover:
 
-Geprüfte Edge Functions:
-- `auth-session` — Nur Auth-Logik, kein Zugriff auf `encrypted_data`
-- `auth-register` — Erstellt User + Argon2id-Hash, keine Vault-Daten
-- `auth-reset-password` — Setzt nur den Argon2id-Hash neu
-- `auth-recovery` — Sendet Recovery-Code per E-Mail
-- `stripe-webhook` — Nur Subscription-Management
-- `invite-family-member` / `accept-family-invitation` — Nur Mitgliedschaft
-- `invite-emergency-access` — Nur Einladungslogik
-- `admin-support` / `support-*` — Nur Ticketsystem
-- `webauthn` — Challenge/Response, keine Vault-Daten
+- `auth-opaque`: OPAQUE login and authenticated OPAQUE record registration; creates a Supabase session only after successful OPAQUE finish.
+- `auth-register`: OPAQUE-only signup start/finish; receives no app password.
+- `auth-reset-password`: OPAQUE-only password reset/change start/finish; receives no new app password and refuses tokens that have not passed email-code plus required 2FA authorization.
+- `auth-session`: session hydration/logout and OAuth sync only; direct password POSTs are blocked with `LEGACY_PASSWORD_LOGIN_DISABLED`.
+- `auth-recovery`: shared forgot-password/password-change email-code delivery and verification, plus required TOTP/recovery-code verification; the new password is enrolled later through OPAQUE.
 
-**Ergebnis:** Keine einzige Edge Function liest, schreibt oder verarbeitet `encrypted_data`.
+None of these functions reads, writes, or decrypts vault item `encrypted_data`.
 
-#### ✅ Entschlüsselung ausschließlich im Browser
+### Password-Leak Check
 
-- `cryptoService.ts` → `decryptData()` läuft nur im Browser (Web Crypto API)
-- `pqCryptoService.ts` → Hybrid-Entschlüsselung nur im Browser
-- `VaultContext.tsx` → CryptoKey wird nur im Memory gehalten, nie persistiert
-- `collectionService.ts` → Shared-Collection-Entschlüsselung client-seitig
+- App-owned password login sends only OPAQUE messages to Edge Functions.
+- Signup, password reset, and password change perform OPAQUE registration client-side; the server stores the resulting OPAQUE record.
+- There is no `auth-session` password verification path, no Argon2id server hash for app-password login, and no allowed fallback to Supabase `signInWithPassword`.
+- GoTrue password verifiers are removed by migration/RPC and direct verifier writes are cleared by a database trigger so direct Supabase password grants or `updateUser({ password })` cannot bypass OPAQUE.
 
-#### ✅ Kein Passwort-Leak in Logs/Requests
+### Admin Access
 
-- Keine `console.log` mit Passwörtern, Keys oder Hashes gefunden
-- Edge Functions loggen nur generische Fehlermeldungen ("Internal Server Error")
-- Auth-Requests senden Passwort nur an `auth-session` (für Argon2id-Verifikation), danach wird es verworfen
+With database/service-role access an admin can read ciphertext, salts, OPAQUE records, and structural metadata, but cannot derive the app login password or vault decryption key from the current login path. Vault decryption still depends on client-side key derivation from the vault/master password.
 
-#### ✅ Admin-Zugriff unmöglich
+### Premium File Attachments
 
-Selbst mit vollem Datenbankzugriff (Service Role Key) kann ein Admin:
-- `encrypted_data` lesen → nur Ciphertext, ohne Master-Passwort nicht entschlüsselbar
-- `encryption_salt` lesen → nutzlos ohne Master-Passwort
-- `master_password_verifier` lesen → V3-Format ist eine verschlüsselte Konstante, nicht umkehrbar
-- `argon2_hash` lesen → irreversibel, und selbst wenn gebrochen: der Argon2-Hash ist **nicht** der Vault-Schlüssel
+Premium file attachments use a chunked E2EE format (`sv-file-manifest-v1`). The client generates a random AES-256-GCM file key per file, wraps that file key with the locally unlocked vault/UserKey, encrypts every file chunk locally with its own nonce and AAD, and uploads only ciphertext chunks to the private `vault-attachments` bucket. The manifest is also encrypted and authenticated client-side; it contains the original filename, extension, MIME type, original size, last-modified time, chunk list, ciphertext hashes, revision data, and preview metadata.
 
-**Kritischer Punkt:** Der Argon2id-Hash in `user_security` dient **nur** der Server-Authentifizierung. Der Vault-Schlüssel wird separat via `deriveKey()` im Client abgeleitet. Selbst wenn ein Admin den Argon2-Hash bricht, hat er **nicht** den AES-256-GCM Key.
+The server does not need the original filename, MIME type, extension, EXIF/PDF/text metadata, thumbnails, previews, or plaintext content. The remaining visible metadata is technical: owner/user binding, vault item binding, upload/update timestamps, opaque storage path prefix, ciphertext object sizes, chunk count, approximate storage usage, and access timing. File size is not padded yet, so object sizes reveal an approximate plaintext size.
 
-#### ⚠️ Einzige Einschränkung: TOTP Secrets
+Downloads prefer a streaming plaintext writer. In browsers with the File System Access API, decrypted chunks are written to the selected file handle one by one and then zeroed best-effort. In Tauri/Desktop, decrypted chunks are written to a temporary `.singra-partial` file and atomically renamed after success; the partial file is removed on handled errors. Browsers without a writable file API still use a documented Blob fallback, which may hold the full plaintext in memory and is not the preferred path for very large files.
 
-Die TOTP-Secrets für 2FA sind server-seitig verschlüsselt (PGP-AES-256 via `pgp_sym_encrypt`). Ein Admin mit Zugriff auf den `totp_encryption_key` in `private.app_secrets` könnte theoretisch TOTP-Secrets entschlüsseln. Dies betrifft aber **nicht** die Vault-Daten — nur die 2FA-Codes. Dies ist eine bewusste Architekturentscheidung, da TOTP-Verifikation server-seitig erfolgen muss.
+Upload currently uses own encrypted chunk objects rather than Supabase TUS resumable uploads. This keeps the cryptographic unit of authentication aligned with the manifest: each object is an independently authenticated ciphertext chunk, and the attachment row becomes visible only after the encrypted manifest is committed. Supabase TUS can be evaluated later as a transport for encrypted objects, but it must not replace client-side E2EE or expose names/MIME/extensions.
 
----
+### Important Limitation: 2FA Secrets
 
-## Teil 2: Vergleich mit der Branche
+TOTP secrets for 2FA are server-side encrypted and decrypted server-side for verification. An attacker with both database access and the TOTP encryption key could verify or recover TOTP secrets. This does not decrypt vault data, but it is intentionally outside the vault-data zero-knowledge boundary.
 
-### Verschlüsselungsarchitektur
+## Part 2: Industry Comparison
 
-| Feature | **Singra Vault** | **Bitwarden** | **1Password** | **Proton Pass** |
+| Feature | Singra Vault | Bitwarden | 1Password | Proton Pass |
 |---|---|---|---|---|
-| **Verschlüsselung** | AES-256-GCM | AES-256-CBC | AES-256-GCM | AES-256-GCM |
-| **KDF** | Argon2id (64 MiB, 3 iter) | Argon2id (64 MiB, 3 iter) oder PBKDF2 (600k iter) | Argon2id | bcrypt + HKDF |
-| **Zero-Knowledge** | ✅ | ✅ | ✅ | ✅ |
-| **Open Source** | ✅ Client + Server | ✅ Client + Server | ❌ Server proprietär | ✅ Client + Server |
-| **Post-Quantum** | ✅ ML-KEM-768 Hybrid | ❌ Nicht verfügbar | ❌ Nicht verfügbar | ❌ Nicht verfügbar |
-| **AAD (Authenticated Associated Data)** | ✅ Item-ID gebunden | ❌ | ✅ | Unklar |
-| **Duress/Panik-Modus** | ✅ Fake-Vault bei Zwang | ❌ | ❌ | ❌ |
-| **Emergency Access** | ✅ Mit Cooldown + PQ-Verschlüsselung | ✅ (einfacher) | ❌ | ❌ |
-| **Vault-Integrität (Merkle)** | ✅ Client-seitig | ❌ | ❌ | ❌ |
+| Vault encryption | AES-256-GCM | AES-256-CBC | AES-256-GCM | AES-256-GCM |
+| Vault KDF | Argon2id | Argon2id or PBKDF2 | Argon2id | bcrypt + HKDF |
+| Password leaves client for app login | No, OPAQUE | No, KDF-derived auth material | No, SRP + Secret Key model | No, per public docs |
+| Open source | Source available | Client + server | Client apps partly/proprietary server | Client apps |
+| Post-quantum protection for sharing keys | ML-KEM-768 + RSA-4096 wrapping paths | Not generally documented | Not generally documented | Not generally documented |
+| Vault integrity checks | Client-side integrity baseline | Not equivalent | Not equivalent | Not equivalent |
 
-### KDF-Parameter im Detail
+This comparison is high-level and should be rechecked before publication because vendor documentation and pricing/features change.
 
-| Manager | KDF | Memory | Iterations | Parallelism |
-|---|---|---|---|---|
-| **Singra Vault** (Client) | Argon2id | 128 MiB | 3 | 1 |
-| **Singra Vault** (Server) | Argon2id | 64 MiB | 3 | 1 |
-| **Bitwarden** (Default) | Argon2id | 64 MiB | 3 | 4 |
-| **Bitwarden** (Legacy) | PBKDF2-SHA256 | — | 600.000 | — |
-| **1Password** | Argon2id | Nicht öffentlich dokumentiert | — | — |
+## Remaining Gaps
 
-**Bewertung:** Die Client-seitige KDF von Singra (128 MiB) ist stärker als Bitwardens Default (64 MiB). Server-seitig sind wir gleichauf (64 MiB). Bitwarden hat `parallelism: 4`, wir `parallelism: 1` — in der Praxis ist der Unterschied marginal.
+- Singra Vault still needs an independent external security audit.
+- The web delivery model remains sensitive to compromised shipped JavaScript, XSS, malicious extensions, or device malware.
+- Existing accounts without an OPAQUE record cannot be safely auto-migrated without the password entering the server. They must use the OPAQUE reset flow.
+- Metadata such as user IDs, timestamps, ownership links, and some product-level names remains structural plaintext.
+- File attachment rollback protection is detection-oriented. Manifests are versioned, carry a manifest root and previous-manifest hash field, and chunks are bound through AAD to user, item, file, revision, manifest root, index, and chunk count. The client stores a local last-seen revision/hash checkpoint and blocks older/conflicting manifests when that checkpoint exists. Without a trustworthy local checkpoint or an external transparency/audit system, a fully malicious server can still replay an older valid ciphertext state to a fresh device.
 
-### Wo Singra Vault **stärker** ist
+## Conclusion
 
-1. **Post-Quantum Kryptographie (PQ):** Singra bietet als einziger Passwortmanager hybride ML-KEM-768 + RSA-4096 Verschlüsselung. Bitwarden, 1Password und Proton Pass bieten Stand 2026 keine PQ-Unterstützung.
+The public claim is technically aligned with the current implementation for app-owned password login, password reset, and password change: the app password is handled locally by OPAQUE and does not leave the client. OAuth/social login is separate, and vault unlock/master-password handling is separate. Legacy password login/reset is not an allowed compatibility path.
 
-2. **AES-256-GCM statt CBC:** Bitwarden nutzt AES-CBC (Cipher Block Chaining), was anfälliger für Padding-Oracle-Angriffe ist. Singra nutzt AES-GCM (Galois/Counter Mode) mit integrierter Authentifizierung.
+**References:**
 
-3. **AAD (Additional Authenticated Data):** Singra bindet die Item-ID als AAD in die Verschlüsselung ein. Das verhindert, dass ein Angreifer verschlüsselte Blöcke zwischen Items vertauschen kann (Ciphertext-Substitution).
-
-4. **Duress-Modus:** Einzigartig — ein Fake-Vault wird bei Eingabe des Duress-Passworts angezeigt. Kein anderer Major-Passwortmanager bietet dieses Feature.
-
-5. **Vault-Integritätsprüfung:** Client-seitiger Merkle-Tree über alle Vault-Items erkennt Manipulation, Löschung oder Hinzufügung durch den Server.
-
-6. **Stärkere Client-KDF:** 128 MiB vs. Bitwarden's 64 MiB Default.
-
-### Wo Singra Vault **gleichauf** ist
-
-- Zero-Knowledge Architektur (alle vier Manager)
-- Open-Source (Client + Server, wie Bitwarden und Proton Pass)
-- TOTP/2FA-Support
-- File Attachments (verschlüsselt)
-
-### Wo die Konkurrenz **stärker** ist
-
-1. **Audit-Historie:** Bitwarden und 1Password haben jahrelange unabhängige Security-Audits (Cure53, NCC Group). Singra hat noch keinen externen Audit.
-
-2. **Parallelism in KDF:** Bitwarden nutzt `parallelism: 4`, was auf Multi-Core-CPUs die Brute-Force-Kosten erhöht.
-
-3. **Secret Key (1Password):** 1Password verwendet einen zusätzlichen 128-bit Secret Key, der zusammen mit dem Master-Passwort die Verschlüsselung ableitet. Dieser wird nie an den Server gesendet. Das schützt selbst bei einem kompromittierten Server + schwachem Passwort.
-
-4. **SRP (1Password):** 1Password nutzt Secure Remote Password (SRP) für die Authentifizierung, bei der das Passwort nie den Client verlässt — nicht einmal als Hash. Singra sendet das Passwort an die `auth-session` Edge Function für die Argon2id-Verifikation.
-
----
-
-## Teil 3: Empfehlungen
-
-### Kurzfristig (kein Code-Change nötig)
-
-- ✅ Zero-Knowledge ist bestätigt und intakt
-- ✅ Kein Admin-Zugriff auf Vault-Daten möglich
-
-### Mittelfristig (Verbesserungspotential)
-
-| Priorität | Maßnahme | Vorbild |
-|---|---|---|
-| MITTEL | SRP-Protokoll statt Passwort-über-TLS für Login | 1Password |
-| MITTEL | Secret Key zusätzlich zum Master-Passwort | 1Password |
-| MITTEL | `parallelism: 4` für Argon2id | Bitwarden |
-| NIEDRIG | Unabhängiger Security-Audit beauftragen | Bitwarden (Cure53) |
-
----
-
-## Fazit
-
-**Singra Vault ist kryptographisch mindestens auf dem Niveau von Bitwarden und in mehreren Bereichen darüber hinaus** (PQ-Krypto, AES-GCM, AAD, Duress-Modus, Vault-Integrität). Die Zero-Knowledge-Architektur ist sauber implementiert — weder Admins noch der Server können Vault-Daten entschlüsseln.
-
-Die größte Lücke gegenüber 1Password ist das Fehlen eines Secret Keys und SRP. Gegenüber Bitwarden ist Singra in der reinen Kryptographie stärker (GCM > CBC, PQ-Support, stärkere KDF), aber Bitwarden hat den Vorteil jahrelanger externer Audits.
-
-**Quellen:**
+- [RFC 9807: The OPAQUE Asymmetric PAKE Protocol](https://www.rfc-editor.org/rfc/rfc9807.html)
+- [Serenity OPAQUE documentation](https://opaque-auth.com/docs/)
 - [Bitwarden KDF Algorithms](https://bitwarden.com/help/kdf-algorithms/)
-- [Bitwarden Zero-Knowledge Whitepaper](https://bitwarden.com/resources/zero-knowledge-encryption-white-paper/)
-- [Bitwarden Encryption Protocols](https://bitwarden.com/pdf/help-what-encryption-is-used.pdf)
-- [IACR 2026/058 — Comparative Security Analysis of Password Managers](https://eprint.iacr.org/2026/058)
-- [Proton Pass vs Bitwarden — Security.org](https://www.security.org/password-manager/proton-pass-vs-bitwarden/)
+- [Bitwarden Zero-Knowledge Encryption White Paper](https://bitwarden.com/resources/zero-knowledge-encryption-white-paper/)
+- [Supabase Storage resumable uploads](https://supabase.com/docs/guides/storage/uploads/resumable-uploads)
+- [WHATWG Streams](https://streams.spec.whatwg.org/)
+- [File System Access API](https://developer.chrome.com/docs/capabilities/web-apis/file-system-access)
+- [Web Cryptography API](https://www.w3.org/TR/webcrypto-2/)
+- [NIST SP 800-38D: GCM and GMAC](https://csrc.nist.gov/pubs/sp/800/38/d/final)
+- [The Update Framework security model](https://theupdateframework.io/docs/security/)

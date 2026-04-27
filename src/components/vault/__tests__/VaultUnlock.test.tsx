@@ -25,7 +25,7 @@ const mockUnlock = vi.fn().mockResolvedValue({ error: null });
 const mockUnlockWithPasskey = vi.fn().mockResolvedValue({ error: null });
 const mockVaultContext = {
   unlock: (...args: unknown[]) => mockUnlock(...args),
-  unlockWithPasskey: () => mockUnlockWithPasskey(),
+  unlockWithPasskey: (...args: unknown[]) => mockUnlockWithPasskey(...args),
   pendingSessionRestore: false,
   webAuthnAvailable: false,
   hasPasskeyUnlock: false,
@@ -43,15 +43,35 @@ vi.mock("@/contexts/AuthContext", () => ({
   }),
 }));
 
-const mockGet2FAStatus = vi.fn().mockResolvedValue(null);
+const mockVerifyTwoFactorCode = vi.fn().mockResolvedValue({ success: true });
 vi.mock("@/services/twoFactorService", () => ({
-  get2FAStatus: (...args: unknown[]) => mockGet2FAStatus(...args),
-  verifyTwoFactorForLogin: vi.fn(),
+  verifyTwoFactorCode: (...args: unknown[]) => mockVerifyTwoFactorCode(...args),
 }));
 
 vi.mock("@/components/auth/TwoFactorVerificationModal", () => ({
-  TwoFactorVerificationModal: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="2fa-modal">2FA Modal</div> : null,
+  TwoFactorVerificationModal: ({
+    open,
+    onVerify,
+    onCancel,
+  }: {
+    open: boolean;
+    onVerify: (code: string, isBackupCode: boolean) => Promise<boolean>;
+    onCancel: () => void;
+  }) =>
+    open ? (
+      <div data-testid="2fa-modal">
+        2FA Modal
+        <button type="button" onClick={() => void onVerify("123456", false)}>
+          verify-totp
+        </button>
+        <button type="button" onClick={() => void onVerify("BACKUP-1", true)}>
+          verify-backup
+        </button>
+        <button type="button" onClick={onCancel}>
+          cancel-2fa
+        </button>
+      </div>
+    ) : null,
 }));
 
 // ============ Tests ============
@@ -62,8 +82,9 @@ describe("VaultUnlock", () => {
     mockVaultContext.pendingSessionRestore = false;
     mockVaultContext.webAuthnAvailable = false;
     mockVaultContext.hasPasskeyUnlock = false;
-    mockGet2FAStatus.mockResolvedValue(null);
+    mockVerifyTwoFactorCode.mockResolvedValue({ success: true });
     mockUnlock.mockResolvedValue({ error: null });
+    mockUnlockWithPasskey.mockResolvedValue({ error: null });
   });
 
   it("should render password input and unlock button", () => {
@@ -73,7 +94,7 @@ describe("VaultUnlock", () => {
     expect(screen.getByRole("button", { name: /auth\.unlock\.submit/i })).toBeInTheDocument();
   });
 
-  it("should call unlock with entered password on submit", async () => {
+  it("should call unlock with entered password and a 2FA callback on submit", async () => {
     render(<VaultUnlock />);
 
     const input = screen.getByLabelText("auth.unlock.password");
@@ -83,25 +104,28 @@ describe("VaultUnlock", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(mockUnlock).toHaveBeenCalledWith("MyMasterPassword!");
+      expect(mockUnlock).toHaveBeenCalledWith(
+        "MyMasterPassword!",
+        expect.objectContaining({ verifyTwoFactor: expect.any(Function) }),
+      );
     });
   });
 
-  it("should show passkey button only when webAuthn available and hasPasskeyUnlock", () => {
+  it("should show passkey button when passkey unlock credentials exist", () => {
     mockVaultContext.webAuthnAvailable = false;
     mockVaultContext.hasPasskeyUnlock = false;
     const { rerender } = render(<VaultUnlock />);
 
     expect(screen.queryByText("Unlock with Passkey")).not.toBeInTheDocument();
 
-    mockVaultContext.webAuthnAvailable = true;
+    mockVaultContext.webAuthnAvailable = false;
     mockVaultContext.hasPasskeyUnlock = true;
     rerender(<VaultUnlock />);
 
     expect(screen.getByText("Unlock with Passkey")).toBeInTheDocument();
   });
 
-  it("should call unlockWithPasskey when passkey button clicked", async () => {
+  it("should call unlockWithPasskey with a 2FA callback when passkey button clicked", async () => {
     mockVaultContext.webAuthnAvailable = true;
     mockVaultContext.hasPasskeyUnlock = true;
     render(<VaultUnlock />);
@@ -109,12 +133,17 @@ describe("VaultUnlock", () => {
     fireEvent.click(screen.getByText("Unlock with Passkey"));
 
     await waitFor(() => {
-      expect(mockUnlockWithPasskey).toHaveBeenCalled();
+      expect(mockUnlockWithPasskey).toHaveBeenCalledWith(
+        expect.objectContaining({ verifyTwoFactor: expect.any(Function) }),
+      );
     });
   });
 
-  it("should show 2FA modal when vault 2FA is active", async () => {
-    mockGet2FAStatus.mockResolvedValue({ vaultTwoFactorEnabled: true });
+  it("should show 2FA modal when the vault context requires it", async () => {
+    mockUnlock.mockImplementationOnce(async (_password, options) => {
+      await options.verifyTwoFactor();
+      return { error: null };
+    });
     render(<VaultUnlock />);
 
     const input = screen.getByLabelText("auth.unlock.password");
@@ -125,6 +154,79 @@ describe("VaultUnlock", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("2fa-modal")).toBeInTheDocument();
+    });
+  });
+
+  it("should verify vault 2FA through the central service", async () => {
+    mockUnlock.mockImplementationOnce(async (_password, options) => {
+      const verified = await options.verifyTwoFactor();
+      return verified ? { error: null } : { error: new Error("Vault 2FA verification failed.") };
+    });
+    render(<VaultUnlock />);
+
+    const input = screen.getByLabelText("auth.unlock.password");
+    fireEvent.change(input, { target: { value: "password123" } });
+    fireEvent.submit(input.closest("form")!);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("2fa-modal")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("verify-totp"));
+
+    await waitFor(() => {
+      expect(mockVerifyTwoFactorCode).toHaveBeenCalledWith({
+        userId: "user-1",
+        context: "vault_unlock",
+        code: "123456",
+        method: "totp",
+      });
+    });
+  });
+
+  it("should not finish passkey unlock until central vault 2FA succeeds", async () => {
+    mockVaultContext.webAuthnAvailable = true;
+    mockVaultContext.hasPasskeyUnlock = true;
+    mockUnlockWithPasskey.mockImplementationOnce(async (options) => {
+      const verified = await options.verifyTwoFactor();
+      return verified ? { error: null } : { error: new Error("Vault 2FA verification failed.") };
+    });
+    render(<VaultUnlock />);
+
+    fireEvent.click(screen.getByText("Unlock with Passkey"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("2fa-modal")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("verify-backup"));
+
+    await waitFor(() => {
+      expect(mockVerifyTwoFactorCode).toHaveBeenCalledWith({
+        userId: "user-1",
+        context: "vault_unlock",
+        code: "BACKUP-1",
+        method: "backup_code",
+      });
+    });
+  });
+
+  it("should show the actual vault unlock error instead of generic auth credentials text", async () => {
+    mockUnlock.mockResolvedValue({ error: new Error("Vault not set up") });
+    render(<VaultUnlock />);
+
+    const input = screen.getByLabelText("auth.unlock.password");
+    fireEvent.change(input, { target: { value: "MyMasterPassword!" } });
+
+    const form = input.closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Vault not set up",
+        }),
+      );
     });
   });
 

@@ -44,33 +44,40 @@ async function readUsersFile(usersPath) {
     .filter(Boolean)
     .map((line) => {
       const firstComma = line.indexOf(',');
-      if (firstComma === -1) {
-        throw new Error(`Invalid line in users file (expected email,password): ${line}`);
+      const email = (firstComma === -1 ? line : line.slice(0, firstComma)).trim();
+      if (!email) {
+        throw new Error(`Invalid line in users file (empty email): ${line}`);
       }
-      const email = line.slice(0, firstComma).trim();
-      const password = line.slice(firstComma + 1).trim();
-      if (!email || !password) {
-        throw new Error(`Invalid line in users file (empty values): ${line}`);
-      }
-      return { email, password };
+      return { email };
     });
 }
 
-async function signInWithRetry(client, email, password, maxRetries, baseDelayMs) {
+async function createSessionWithRetry(adminClient, authClient, email, maxRetries, baseDelayMs) {
   let attempt = 0;
   let lastError = null;
 
   while (attempt <= maxRetries) {
-    const { data, error } = await client.auth.signInWithPassword({
+    const linkResult = await adminClient.auth.admin.generateLink({
+      type: 'magiclink',
       email,
-      password,
     });
 
-    if (!error && data.session?.access_token) {
-      return { token: data.session.access_token, error: null };
+    const tokenHash = linkResult.data.properties?.hashed_token;
+    if (linkResult.error || !tokenHash) {
+      lastError = linkResult.error?.message || 'Missing magic link token';
+    } else {
+      const { data, error } = await authClient.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: 'magiclink',
+      });
+
+      if (!error && data.session?.access_token) {
+        return { token: data.session.access_token, error: null };
+      }
+
+      lastError = error?.message || 'Missing access token';
     }
 
-    lastError = error?.message || 'Missing access token';
     const isRateLimited = String(lastError).toLowerCase().includes('rate limit');
     if (!isRateLimited || attempt === maxRetries) {
       return { token: null, error: lastError };
@@ -88,6 +95,7 @@ async function signInWithRetry(client, email, password, maxRetries, baseDelayMs)
 async function main() {
   const supabaseUrl = requiredEnvAny(['SUPABASE_URL', 'VITE_SUPABASE_URL']);
   const anonKey = requiredEnvAny(['SUPABASE_ANON_KEY', 'VITE_SUPABASE_PUBLISHABLE_KEY']);
+  const serviceRoleKey = requiredEnvAny(['SUPABASE_SERVICE_ROLE_KEY']);
   const batchSize = intEnv('TOKEN_GEN_BATCH_SIZE', 20);
   const maxRetries = intEnv('TOKEN_GEN_MAX_RETRIES', 5);
   const baseDelayMs = intEnv('TOKEN_GEN_RETRY_BASE_MS', 300);
@@ -106,7 +114,15 @@ async function main() {
     throw new Error(`No users found in ${usersPath}`);
   }
 
-  const client = createClient(supabaseUrl, anonKey, {
+  const authClient = createClient(supabaseUrl, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -120,11 +136,11 @@ async function main() {
   for (let offset = 0; offset < users.length; offset += batchSize) {
     const chunk = users.slice(offset, offset + batchSize);
     const results = await Promise.all(
-      chunk.map(async ({ email, password }) => {
-        const result = await signInWithRetry(
-          client,
+      chunk.map(async ({ email }) => {
+        const result = await createSessionWithRetry(
+          adminClient,
+          authClient,
           email,
-          password,
           maxRetries,
           baseDelayMs,
         );

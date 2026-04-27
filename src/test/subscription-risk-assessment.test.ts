@@ -1,11 +1,9 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
-import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 
-const TEST_PASSWORD = `RiskTest_${randomUUID()}_Aa1!`;
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey =
   process.env.VITE_SUPABASE_ANON_KEY ||
@@ -13,8 +11,13 @@ const supabaseAnonKey =
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const hasSupabaseTestEnv = Boolean(supabaseUrl && supabaseAnonKey && supabaseServiceKey);
 
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+const supabaseAdmin = createClient(
+  supabaseUrl || "http://localhost:54321",
+  supabaseServiceKey || "test-service-role-key",
+);
+const describeIfSupabase = hasSupabaseTestEnv ? describe : describe.skip;
 
 async function createAndSignInTestUser() {
   const email = `risk-subscription-${Date.now()}-${Math.random()
@@ -23,7 +26,6 @@ async function createAndSignInTestUser() {
 
   const createUserResult = await supabaseAdmin.auth.admin.createUser({
     email,
-    password: TEST_PASSWORD,
     email_confirm: true,
   });
 
@@ -36,19 +38,29 @@ async function createAndSignInTestUser() {
   }
 
   const userClient = createClient(supabaseUrl, supabaseAnonKey);
-  const signInResult = await userClient.auth.signInWithPassword({
+  const linkResult = await supabaseAdmin.auth.admin.generateLink({
+    type: "magiclink",
     email,
-    password: TEST_PASSWORD,
+  });
+  const tokenHash = linkResult.data.properties?.hashed_token;
+
+  if (linkResult.error || !tokenHash) {
+    throw new Error(`magic link generation failed: ${linkResult.error?.message || "missing token"}`);
+  }
+
+  const signInResult = await userClient.auth.verifyOtp({
+    token_hash: tokenHash,
+    type: "magiclink",
   });
 
   if (signInResult.error) {
-    throw new Error(`signIn failed: ${signInResult.error.message}`);
+    throw new Error(`test session creation failed: ${signInResult.error.message}`);
   }
 
   return { userClient, userId: createUserResult.data.user.id };
 }
 
-describe("Subscription risk assessment", () => {
+describeIfSupabase("Subscription risk assessment", () => {
   it("allows parallel checkout session creation for the same user and plan (duplicate-flow risk)", async () => {
     const { userClient, userId } = await createAndSignInTestUser();
 

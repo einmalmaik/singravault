@@ -179,7 +179,7 @@ describe("ensureHybridKeyMaterial()", () => {
       createdPq: true,
     });
 
-    expect(mockCryptoService.generateUserKeyPair).toHaveBeenCalledWith("MasterPassword123!");
+    expect(mockCryptoService.generateUserKeyPair).toHaveBeenCalledWith("MasterPassword123!", 1);
     expect(mockPqService.generatePQKeyPair).toHaveBeenCalledTimes(1);
     expect(mockCryptoService.deriveKey).toHaveBeenCalledWith("MasterPassword123!", "pq-salt", 2);
     expect(mockCryptoService.encrypt).toHaveBeenCalledWith("pq-secret", expect.anything());

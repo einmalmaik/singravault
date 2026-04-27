@@ -8,8 +8,10 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
+import type { Session } from '@supabase/supabase-js';
 import { refreshCurrentSession } from '@/services/authSessionManager';
 import { runtimeConfig } from '@/config/runtimeConfig';
+import * as opaqueClient from '@/services/opaqueService';
 
 const DEFAULT_SENSITIVE_ACTION_MAX_AGE_SECONDS = 300;
 const PASSWORD_AUTH_PROVIDER = 'email';
@@ -67,41 +69,83 @@ export async function reauthenticateWithAccountPassword(
         return { success: false, error: 'AUTH_REQUIRED' };
     }
 
-    const requestBody: ReauthRequestBody = {
-        email: user.email,
-        password,
-    };
-
     const inIframe = isInIframe();
-    if (inIframe) {
-        requestBody.skipCookie = true;
-    }
 
     try {
+        opaqueClient.assertOpaqueServerKeyPinConfigured();
         const apiUrl = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
-        const response = await fetch(`${apiUrl}/auth-session`, {
+        const userIdentifier = opaqueClient.normalizeOpaqueIdentifier(user.email);
+        const { clientLoginState, startLoginRequest } = await opaqueClient.startLogin(password);
+
+        const startResponse = await fetch(`${apiUrl}/auth-opaque`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`,
             },
             credentials: inIframe ? 'omit' : 'include',
-            body: JSON.stringify(requestBody),
+            body: JSON.stringify({
+                action: 'login-start',
+                userIdentifier,
+                startLoginRequest,
+            }),
         });
 
-        if (response.status === 401) {
+        if (startResponse.status === 401) {
             return { success: false, error: 'INVALID_CREDENTIALS' };
         }
 
-        if (response.status === 403) {
+        if (startResponse.status === 403) {
             return { success: false, error: 'AUTH_REQUIRED' };
         }
 
-        if (!response.ok) {
+        if (!startResponse.ok) {
             return { success: false, error: 'REAUTH_FAILED' };
         }
 
-        const payload = await response.json().catch(() => null) as ReauthResponseBody | null;
+        const { loginResponse, loginId } = await startResponse.json() as {
+            loginResponse?: string;
+            loginId?: string;
+        };
+        if (!loginResponse || !loginId) {
+            return { success: false, error: 'REAUTH_FAILED' };
+        }
+
+        const { finishLoginRequest, sessionKey } = await opaqueClient.finishLogin(
+            clientLoginState,
+            loginResponse,
+            password,
+        );
+
+        const finishResponse = await fetch(`${apiUrl}/auth-opaque`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${runtimeConfig.supabasePublishableKey}`,
+            },
+            credentials: inIframe ? 'omit' : 'include',
+            body: JSON.stringify({
+                action: 'login-finish',
+                userIdentifier,
+                finishLoginRequest,
+                loginId,
+                skipCookie: inIframe,
+            }),
+        });
+
+        if (finishResponse.status === 401) {
+            return { success: false, error: 'INVALID_CREDENTIALS' };
+        }
+
+        if (finishResponse.status === 403) {
+            return { success: false, error: 'AUTH_REQUIRED' };
+        }
+
+        if (!finishResponse.ok) {
+            return { success: false, error: 'REAUTH_FAILED' };
+        }
+
+        const payload = await finishResponse.json().catch(() => null) as ReauthResponseBody | null;
         if (payload?.requires2FA) {
             return { success: false, error: 'TWO_FACTOR_REQUIRED' };
         }
@@ -109,6 +153,8 @@ export async function reauthenticateWithAccountPassword(
         if (!payload?.session?.access_token) {
             return { success: false, error: 'REAUTH_FAILED' };
         }
+
+        await opaqueClient.verifyOpaqueSessionBinding(sessionKey, payload.session as Session, payload.opaqueSessionBinding);
 
         const { error: setSessionError } = await supabase.auth.setSession({
             access_token: payload.session.access_token,
@@ -251,16 +297,14 @@ export interface SensitiveActionReauthResult {
     error?: SensitiveActionReauthErrorCode;
 }
 
-interface ReauthRequestBody {
-    email: string;
-    password: string;
-    skipCookie?: boolean;
-}
-
 interface ReauthResponseBody {
     requires2FA?: boolean;
+    opaqueSessionBinding?: unknown;
     session?: {
         access_token?: string;
         refresh_token?: string;
+        user?: {
+            id?: string;
+        };
     };
 }

@@ -109,6 +109,8 @@ import {
   disableTwoFactor,
   setVaultTwoFactor,
   regenerateBackupCodes,
+  getTwoFactorRequirement,
+  verifyTwoFactorCode,
   verifyTwoFactorForLogin,
   hashBackupCode,
 } from "../twoFactorService";
@@ -163,6 +165,7 @@ function setupFromChain(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSupabase.functions.invoke.mockReset();
   // Default: validate returns 0 (valid)
   mockValidate.mockReturnValue(0);
 });
@@ -443,58 +446,105 @@ describe("verifyAndConsumeBackupCode", () => {
 describe("disableTwoFactor", () => {
   it("succeeds with valid TOTP code", async () => {
     // getTOTPSecret → RPC
-    mockSupabase.rpc.mockResolvedValueOnce({
-      data: TEST_SECRET,
+    mockSupabase.functions.invoke.mockResolvedValueOnce({
+      data: { success: true },
       error: null,
     });
-
-    mockValidate.mockReturnValue(0); // valid
-
-    setupFromChain([
-      // 1. user_2fa delete
-      { table: "user_2fa", data: null, error: null },
-      // 2. backup_codes delete
-      { table: "backup_codes", data: null, error: null },
-    ]);
 
     const result = await disableTwoFactor(TEST_USER_ID, TEST_CODE);
     expect(result).toEqual({ success: true });
+    expect(mockSupabase.functions.invoke).toHaveBeenCalledWith("auth-2fa", {
+      body: {
+        action: "disable-2fa",
+        code: TEST_CODE,
+        method: "totp",
+      },
+    });
   });
 
   it("returns error with wrong code", async () => {
-    mockSupabase.rpc.mockResolvedValueOnce({
-      data: TEST_SECRET,
+    mockSupabase.functions.invoke.mockResolvedValueOnce({
+      data: { error: "Invalid or expired verification code" },
       error: null,
     });
-
-    mockValidate.mockReturnValue(null); // invalid
 
     const result = await disableTwoFactor(TEST_USER_ID, "000000");
 
     expect(result).toEqual({
       success: false,
-      error: "Invalid code. Backup codes cannot be used to disable 2FA.",
+      error: "Invalid or expired verification code",
     });
   });
 
-  it("deletes user_2fa and backup_codes on success", async () => {
-    mockSupabase.rpc.mockResolvedValueOnce({
-      data: TEST_SECRET,
+  it("does not delete 2FA tables from the client on success", async () => {
+    mockSupabase.functions.invoke.mockResolvedValueOnce({
+      data: { success: true },
       error: null,
     });
 
-    mockValidate.mockReturnValue(0);
-
-    const chains = setupFromChain([
-      { table: "user_2fa", data: null, error: null },
-      { table: "backup_codes", data: null, error: null },
-    ]);
-
     await disableTwoFactor(TEST_USER_ID, TEST_CODE);
 
-    // Both chains should have had .delete() called
-    expect(chains[0].chain.delete).toHaveBeenCalled();
-    expect(chains[1].chain.delete).toHaveBeenCalled();
+    expect(mockSupabase.from).not.toHaveBeenCalledWith("user_2fa");
+    expect(mockSupabase.from).not.toHaveBeenCalledWith("backup_codes");
+  });
+});
+
+describe("getTwoFactorRequirement", () => {
+  it("requires vault 2FA only when account 2FA and vault 2FA are enabled", async () => {
+    mockSupabase.functions.invoke.mockResolvedValueOnce({
+      data: { required: true, status: "loaded", reason: "vault_2fa_enabled" },
+      error: null,
+    });
+
+    const result = await getTwoFactorRequirement({
+      userId: TEST_USER_ID,
+      context: "vault_unlock",
+    });
+
+    expect(result).toEqual({
+      context: "vault_unlock",
+      required: true,
+      status: "loaded",
+      reason: "vault_2fa_enabled",
+    });
+  });
+
+  it("does not require vault 2FA when only account 2FA is enabled", async () => {
+    mockSupabase.functions.invoke.mockResolvedValueOnce({
+      data: { required: false, status: "loaded" },
+      error: null,
+    });
+
+    const result = await getTwoFactorRequirement({
+      userId: TEST_USER_ID,
+      context: "vault_unlock",
+    });
+
+    expect(result).toEqual({
+      context: "vault_unlock",
+      required: false,
+      status: "loaded",
+      reason: undefined,
+    });
+  });
+
+  it("fails closed when the 2FA status cannot be loaded", async () => {
+    mockSupabase.functions.invoke.mockResolvedValueOnce({
+      data: { required: true, status: "unavailable", reason: "status_unavailable" },
+      error: null,
+    });
+
+    const result = await getTwoFactorRequirement({
+      userId: TEST_USER_ID,
+      context: "vault_unlock",
+    });
+
+    expect(result).toEqual({
+      context: "vault_unlock",
+      required: true,
+      status: "unavailable",
+      reason: "status_unavailable",
+    });
   });
 });
 
@@ -652,5 +702,59 @@ describe("verifyTwoFactorForLogin", () => {
     const updateArg = chains[0].chain.update.mock.calls[0][0];
     expect(updateArg).toHaveProperty("last_verified_at");
     expect(typeof updateArg.last_verified_at).toBe("string");
+  });
+});
+
+describe("verifyTwoFactorCode server contexts", () => {
+  it("verifies vault unlock through auth-2fa challenge flow", async () => {
+    mockSupabase.functions.invoke
+      .mockResolvedValueOnce({
+        data: { required: true, challengeId: "challenge-1" },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { success: true, verified: true },
+        error: null,
+      });
+
+    const result = await verifyTwoFactorCode({
+      userId: TEST_USER_ID,
+      context: "vault_unlock",
+      code: TEST_CODE,
+      method: "totp",
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(mockSupabase.functions.invoke).toHaveBeenNthCalledWith(1, "auth-2fa", {
+      body: {
+        action: "create-challenge",
+        context: "vault_unlock",
+      },
+    });
+    expect(mockSupabase.functions.invoke).toHaveBeenNthCalledWith(2, "auth-2fa", {
+      body: {
+        action: "verify-challenge",
+        context: "vault_unlock",
+        challengeId: "challenge-1",
+        code: TEST_CODE,
+        method: "totp",
+      },
+    });
+  });
+
+  it("fails closed when vault unlock challenge creation fails", async () => {
+    mockSupabase.functions.invoke.mockResolvedValueOnce({
+      data: null,
+      error: { message: "rate limited" },
+    });
+
+    const result = await verifyTwoFactorCode({
+      userId: TEST_USER_ID,
+      context: "vault_unlock",
+      code: TEST_CODE,
+      method: "totp",
+    });
+
+    expect(result).toEqual({ success: false, error: "rate limited" });
   });
 });

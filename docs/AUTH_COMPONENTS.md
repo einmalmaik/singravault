@@ -1,200 +1,81 @@
-# Auth-Komponenten — Authentifizierung & Vault Setup
+# Auth Components — Authentication & Vault Setup
 
-> **Dateien:**  
+> **Files:**
 > `src/pages/Auth.tsx`  
 > `src/components/vault/VaultUnlock.tsx`  
 > `src/components/vault/MasterPasswordSetup.tsx`  
 > `src/components/auth/TwoFactorVerificationModal.tsx`
 
----
+## Auth Page
 
-## Auth — Login & Signup Seite
+`src/pages/Auth.tsx` owns user-facing login, signup, recovery, password reset, and OAuth entry points.
 
-> **Datei:** `src/pages/Auth.tsx`
+### App-Owned Password Login
 
-Hauptseite für Authentifizierung mit Login, Signup und OAuth.
+The app-password path uses OPAQUE only:
 
-### State
-| State | Typ | Zweck |
-|---|---|---|
-| `mode` | `'login' \| 'signup'` | Aktiver Modus |
-| `showPassword` | `boolean` | Passwort sichtbar? |
-| `loading` | `boolean` | Lädt gerade? |
-| `show2FAModal` | `boolean` | 2FA-Modal aktiv? |
-| `pending2FAUserId` | `string \| null` | User-ID für 2FA-Check |
-| `loginFormData` | `LoginFormData` | Formular-Daten |
-| `signupFormData` | `SignupFormData` | Formular-Daten |
+1. Normalize the identifier with `normalizeOpaqueIdentifier(email)`.
+2. `opaqueService.startLogin(password)` creates a blinded OPAQUE request locally.
+3. `auth-opaque` `login-start` returns `loginResponse` and `loginId`.
+4. `opaqueService.finishLogin(...)` derives the OPAQUE `sessionKey` locally and validates the pinned server static public key.
+5. `auth-opaque` `login-finish` verifies the OPAQUE proof, enforces 2FA through the shared server-side 2FA validator if needed, and creates the Supabase session.
+6. The client verifies `opaqueSessionBinding` before applying the session.
 
-### Formular-Validierung (Zod)
+Failure in any OPAQUE step aborts login. There is no legacy password fallback.
 
-**Login:**
-```typescript
-z.object({
-    email: z.string().email('Ungültige E-Mail'),
-    password: z.string().min(1, 'Passwort erforderlich'),
-})
-```
+### Signup
 
-**Signup:**
-```typescript
-z.object({
-    email: z.string().email('Ungültige E-Mail'),
-    password: z.string().min(8, 'Mindestens 8 Zeichen'),
-    confirmPassword: z.string(),
-}).refine(data => data.password === data.confirmPassword)
-```
+Signup is OPAQUE registration:
 
-### Redirect (useEffect)
-Bereits angemeldeter User → automatischer Redirect zu `/vault`.
+1. Password quality is checked locally.
+2. The client starts OPAQUE registration and sends only `registrationRequest`.
+3. `auth-register` returns `registrationResponse` and a short-lived registration id.
+4. The client finishes OPAQUE registration and sends `registrationRecord`.
+5. The server stores the OPAQUE record and removes GoTrue password verifiers.
+6. The user verifies the signup OTP, then logs in through OPAQUE.
 
-### `handleLogin(data)`
+The app password is not sent to `auth-register`.
 
-**Ablauf:**
-1. `signIn(email, password)` via `AuthContext`
-2. Bei Erfolg: Prüft 2FA-Status via `get2FAStatus(userId)`
-3. **2FA aktiviert:**
-   - Speichert `pending2FAUserId`
-   - Zeigt `TwoFactorVerificationModal`
-   - **Meldet den User ab** (`signOut()`) — Login vollendet erst nach 2FA
-4. **Kein 2FA:** Login abgeschlossen, Redirect via Auth-Listener
+### Password Reset And Password Change
 
-> **Sicherheit:** Bei 2FA wird der User nach dem Password-Check sofort abgemeldet. Erst nach erfolgreicher 2FA-Verifizierung wird er erneut angemeldet. Dies verhindert, dass ein partiell authentifizierter User Zugriff erhält.
+Forgot-password and authenticated password-change use the same reset authorization and OPAQUE re-enrollment logic:
 
-### `handleSignup(data)`
+1. `accountPasswordResetService` requests an email code through `auth-recovery`.
+2. `auth-recovery` verifies the one-time email code without issuing an app session.
+3. If account 2FA is enabled, `auth-recovery` requires a TOTP code or recovery code through the shared server-side 2FA validator before authorizing the reset token.
+4. The client starts OPAQUE registration for the new password.
+5. `auth-reset-password` `opaque-reset-start` returns a registration response only for an authorized reset token.
+6. The client finishes OPAQUE registration locally.
+7. `auth-reset-password` `opaque-reset-finish` calls `finish_opaque_password_reset(...)`, which atomically stores the new OPAQUE record, removes GoTrue password verifiers, revokes sessions, and clears reset state.
 
-**Ablauf:** `signUp(email, password)` → Toast mit Bestätigungshinweis
+The new app password is never sent to the server. Email reset codes are stored as versioned HMAC-SHA-256 values bound to purpose, normalized email, and code via `AUTH_RECOVERY_CODE_PEPPER`; short-lived legacy SHA-256 records are accepted only until their normal expiry.
 
-### `handleOAuth(provider)`
+Authenticated password-change does not let the user edit the email address; the server reads it from the current session. OAuth/social-only accounts do not enter this app-password flow.
 
-**Ablauf:** `signInWithOAuth(provider)` für `'google' | 'discord' | 'github'`
+Direct Supabase recovery/signup/magiclink/email-change callbacks are not accepted as app sessions. The Supabase client has `detectSessionInUrl: false`; `Auth.tsx` only applies expected OAuth callbacks and routes account recovery through `auth-recovery` plus `auth-reset-password`.
 
-### `handle2FAVerify(code, isBackupCode)`
+### OAuth/Social Login
 
-**Ablauf:**
-1. Verifiziert via `verifyTwoFactorForLogin(userId, code, isBackupCode)`
-2. Bei Erfolg:
-   - Schließt Modal
-   - Meldet User **erneut** via `signIn()` mit den gespeicherten Credentials an
-3. Bei Fehler: `false` zurück (Modal bleibt offen)
+OAuth providers (`google`, `discord`, `github`) use `supabase.auth.signInWithOAuth()`. After the OAuth callback, `auth-session` `oauth-sync` can establish the BFF cookie/session. OAuth is not treated as an OPAQUE login and must not fall into app-password logic.
 
----
+## Vault Unlock
 
-## VaultUnlock — Vault-Entsperrung
+`VaultUnlock` is separate from app authentication. It unlocks local vault encryption after an app session exists. The master password/vault key path is not a replacement for OPAQUE login and is not sent to auth Edge Functions.
 
-> **Datei:** `src/components/vault/VaultUnlock.tsx`
+Resetting the account password does not decrypt the vault and does not recreate a lost vault key. Existing access JWTs can remain valid until the configured Supabase JWT TTL (`supabase/config.toml`: 600 seconds); refresh tokens and sessions are revoked during OPAQUE reset finish.
 
-Wird gezeigt wenn der Vault gesperrt ist. Unterstützt optionale 2FA.
+## Master Password Setup
 
-### State
-| State | Typ | Zweck |
-|---|---|---|
-| `password` | `string` | Eingegebenes Master-Passwort |
-| `showPassword` | `boolean` | Passwort sichtbar? |
-| `loading` | `boolean` | Lädt gerade? |
-| `show2FAModal` | `boolean` | 2FA-Modal aktiv? |
-| `pendingPassword` | `string` | Zwischengespeichertes Passwort für 2FA-Flow |
+`MasterPasswordSetup` configures vault encryption material. It uses local KDF and encrypted verifier logic for vault unlock, not app login.
 
-### `handleSubmit(e)`
+## 2FA
 
-**Ablauf:**
-1. Prüft ob Vault-2FA aktiviert ist via `get2FAStatus(userId)`
-2. **Vault-2FA aktiv:**
-   - Speichert Passwort in `pendingPassword`
-   - Zeigt 2FA-Modal an
-   - Unlock wird pausiert
-3. **Kein Vault-2FA:** Direkt `performUnlock(password)`
-4. **2FA-Prüfung fehlgeschlagen:** Fährt ohne 2FA fort (Fail-Open für Fehlertoleranz)
+2FA for app-password login is enforced inside `auth-opaque` after successful OPAQUE verification and before session issuance. 2FA for password reset/change is enforced inside `auth-recovery` before the reset token can be used for OPAQUE re-registration.
 
-### `performUnlock(masterPassword)`
+The server-side implementation is centralized in `supabase/functions/_shared/twoFactor.ts`. It owns TOTP verification, backup-code verification/consumption, purpose-specific rate-limit actions, and generic error handling. Backup-code verification supports current Argon2id `v3:` hashes plus legacy HMAC/SHA-256 formats for compatibility; backup codes are consumed server-side with an `is_used = false` guard.
 
-**Ablauf:**
-1. `unlock(masterPassword)` via `VaultContext`
-2. Bei Fehler: Toast mit Fehlermeldung, leert Passwort-Felder
+Vault 2FA/VaultFA uses `auth-2fa`. The client may request a requirement or submit a code, but the server creates and consumes short-lived `two_factor_challenges` bound to the authenticated user and purpose. If VaultFA is enabled and the server cannot verify the code, the official app keeps the Vault locked and does not release the Vault key.
 
-### `handle2FAVerify(code, isBackupCode)`
+2FA disable is also handled by `auth-2fa` and accepts only the current TOTP code. Backup codes are rejected for `disable_2fa`.
 
-**Ablauf:**
-1. Verifiziert via `verifyTwoFactorForLogin(userId, code, isBackupCode)`
-2. Bei Erfolg:
-   - Schließt 2FA-Modal
-   - Ruft `performUnlock(pendingPassword)` mit dem gespeicherten Passwort auf
-   - Löscht `pendingPassword`
-3. Bei Fehler: `false` zurück
-
-### `handle2FACancel()`
-Schließt Modal, löscht `pendingPassword` und `password`.
-
-### `handleLogout()`
-`signOut()` via `AuthContext`.
-
-### UI-Features
-- Session-Restore-Hinweis (blauer Banner wenn `pendingSessionRestore: true`)
-- Passwort-Toggle (Auge/Auge-zu Icon)
-- Logout-Button
-
----
-
-## MasterPasswordSetup — Ersteinrichtung
-
-> **Datei:** `src/components/vault/MasterPasswordSetup.tsx`
-
-Wird nach dem ersten Login angezeigt wenn kein Encryption-Salt existiert.
-
-### Schwache-Passwort-Erkennung
-
-#### `hasWeakMasterPasswordPattern(password): boolean`
-
-Prüft gegen bekannte schwache Muster:
-
-| Muster | RegEx/Check |
-|---|---|
-| Nur Buchstaben | `/^[A-Za-z]+$/` |
-| Nur Zahlen | `/^\d+$/` |
-| Nur Wiederholungen | `/^(.)\1+$/` |
-| Häufige Wörter | `password`, `passwort`, `singra`, `qwerty`, etc. |
-| Sequentielle Zahlen | `01234`, `12345`, ..., `54321` |
-| Name + Zahl | `/^[A-Za-z]{3,}\d{3,}[^A-Za-z0-9]*$/` |
-
-**Rückgabe:** `true` wenn ein schwaches Muster erkannt wird
-
-### State
-| State | Typ | Zweck |
-|---|---|---|
-| `password` | `string` | Eingegebenes Passwort |
-| `confirmPassword` | `string` | Bestätigungspasswort |
-| `strength` | `PasswordStrength \| null` | Berechnete Stärke |
-| `showPassword` / `showConfirm` | `boolean` | Passwort-Sichtbarkeit |
-| `loading` | `boolean` | Verarbeitung aktiv? |
-
-### `handlePasswordChange(value)`
-
-**Ablauf:**
-1. Setzt `password` State
-2. Berechnet Stärke via `calculateStrength(value)` (nur wenn Länge > 0)
-
-### `handleSubmit(e)`
-
-**Ablauf — validiert in mehreren Stufen:**
-1. **Leer-Check:** Passwort und Bestätigung vorhanden?
-2. **Übereinstimmungs-Check:** Passwort === Bestätigung?
-3. **Mindestlänge:** ≥ 12 Zeichen
-4. **Stärke-Check:** Score ≥ 2 (`good` oder besser)
-5. **Schwache-Muster-Check:** `hasWeakMasterPasswordPattern()` darf nicht `true` sein
-6. **Erfolg:** `setupMasterPassword(password)` via `VaultContext`
-7. Bei Fehler: Toast mit passender Fehlermeldung
-
-### `handleGenerateStrongPassword()`
-
-**Ablauf:**
-1. Generiert Passwort via `generatePassword({ length: 24, uppercase: true, lowercase: true, numbers: true, symbols: true })`
-2. Setzt `password` und `confirmPassword` auf denselben Wert
-3. Berechnet Stärke
-4. Zeigt Info-Toast mit Hinweis zum Notieren
-
-### UI-Features
-- Stärke-Indikator (farbiger Progress-Bar)
-- Label wird dynamisch: `Schwach / Fair / Gut / Stark / Sehr Stark`
-- „Sicheres Passwort generieren"-Button
-- Hinweis-Karten:
-  - ⚠️ „Passwort kann nicht wiederhergestellt werden"
-  - 🔒 „Mindestens 12 Zeichen, keine häufigen Muster"
+Limit: Vault decryption remains local. Server-side VaultFA prevents the official client from releasing the Vault key before server verification, but it cannot retroactively protect data already decrypted on a compromised device or in a modified local client.

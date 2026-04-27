@@ -1,303 +1,691 @@
 // Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Item List Component
- * 
+ *
  * Displays vault items in grid or list view with filtering,
  * search, and decryption.
  */
 
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Plus, Shield, KeyRound } from 'lucide-react';
+import { Eye, KeyRound, Loader2, Plus, RefreshCw, Shield, TriangleAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { VaultItemCard } from './VaultItemCard';
-import { ItemFilter, ViewMode } from '@/pages/VaultPage';
 import { useVault } from '@/contexts/VaultContext';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { VaultItemData } from '@/services/cryptoService';
-import { cn } from '@/lib/utils';
 import { getServiceHooks } from '@/extensions/registry';
+import { supabase } from '@/integrations/supabase/client';
+import { cn } from '@/lib/utils';
+import { ItemFilter, ViewMode } from '@/pages/VaultPage';
+import { VaultItemData } from '@/services/cryptoService';
 import {
-    isAppOnline,
-    loadVaultSnapshot,
-    upsertOfflineItemRow,
+  isAppOnline,
+  loadVaultSnapshot,
+  upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
+import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
+import { VaultItemCard } from './VaultItemCard';
+import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
+import { VaultQuarantinePanel } from './VaultQuarantinePanel';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
+const DECRYPT_BATCH_SIZE = 25;
+const QUARANTINE_SUMMARY_THRESHOLD = 2;
 
 interface VaultItem {
-    id: string;
-    vault_id: string;
-    title: string;
-    website_url: string | null;
-    icon_url: string | null;
-    item_type: 'password' | 'note' | 'totp' | 'card';
-    is_favorite: boolean | null;
-    category_id: string | null;
-    created_at: string;
-    updated_at: string;
-    // Decrypted data
-    decryptedData?: VaultItemData;
+  id: string;
+  vault_id: string;
+  title: string;
+  website_url: string | null;
+  icon_url: string | null;
+  item_type: 'password' | 'note' | 'totp' | 'card';
+  is_favorite: boolean | null;
+  category_id: string | null;
+  created_at: string;
+  updated_at: string;
+  decryptedData?: VaultItemData;
 }
 
 interface VaultItemListProps {
-    searchQuery: string;
-    filter: ItemFilter;
-    categoryId: string | null;
-    viewMode: ViewMode;
-    onEditItem: (itemId: string) => void;
-    refreshKey?: number; // Incremented to trigger data refresh
+  searchQuery: string;
+  filter: ItemFilter;
+  categoryId: string | null;
+  viewMode: ViewMode;
+  onEditItem: (itemId: string) => void;
+  refreshKey?: number;
+}
+
+type RenderableVaultListEntry =
+  | { kind: 'item'; item: VaultItem }
+  | { kind: 'quarantined'; item: VaultItem; quarantine: QuarantinedVaultItem };
+
+function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
+  return `${item.reason}:${item.updatedAt ?? ''}`;
+}
+
+async function mapInBatches<TInput, TOutput>(
+  items: TInput[],
+  batchSize: number,
+  mapper: (item: TInput) => Promise<TOutput>,
+): Promise<TOutput[]> {
+  const results: TOutput[] = [];
+
+  for (let start = 0; start < items.length; start += batchSize) {
+    const batch = items.slice(start, start + batchSize);
+    results.push(...await Promise.all(batch.map(mapper)));
+
+    if (start + batchSize < items.length) {
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(resolve, 0);
+      });
+    }
+  }
+
+  return results;
 }
 
 export function VaultItemList({
-    searchQuery,
-    filter,
-    categoryId,
-    viewMode,
-    onEditItem,
-    refreshKey,
+  searchQuery,
+  filter,
+  categoryId,
+  viewMode,
+  onEditItem,
+  refreshKey,
 }: VaultItemListProps) {
-    const { t } = useTranslation();
-    const { user } = useAuth();
-    const { decryptItem, encryptItem, isDuressMode } = useVault();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const {
+    decryptItem,
+    encryptItem,
+    isDuressMode,
+    lastIntegrityResult,
+    reportUnreadableItems,
+    refreshIntegrityBaseline,
+    verifyIntegrity,
+    vaultDataVersion,
+  } = useVault();
 
-    const [items, setItems] = useState<VaultItem[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [decrypting, setDecrypting] = useState(false);
-    const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
-    const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
+  const [items, setItems] = useState<VaultItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [decrypting, setDecrypting] = useState(false);
+  const [ignoredQuarantineById, setIgnoredQuarantineById] = useState<Record<string, string>>({});
+  const [showIgnoredQuarantine, setShowIgnoredQuarantine] = useState(false);
+  const [revalidating, setRevalidating] = useState(false);
+  const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
+  const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
+  const revalidationRequestIdRef = useRef(0);
+  const revalidatingRef = useRef(false);
 
-    useEffect(() => {
-        failedDecryptPayloadByItemIdRef.current.clear();
-        loggedDecryptFailuresRef.current.clear();
-    }, [user?.id, isDuressMode]);
+  useEffect(() => {
+    failedDecryptPayloadByItemIdRef.current.clear();
+    loggedDecryptFailuresRef.current.clear();
+  }, [user?.id, isDuressMode]);
 
-    // Fetch vault items
-    useEffect(() => {
-        async function fetchItems() {
-            if (!user) return;
+  const revalidateRemoteIntegrity = useCallback(async () => {
+    if (!user || revalidatingRef.current) {
+      return;
+    }
 
-            setLoading(true);
-            try {
-                const { snapshot, source } = await loadVaultSnapshot(user.id);
-                const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    const requestId = revalidationRequestIdRef.current + 1;
+    revalidationRequestIdRef.current = requestId;
+    revalidatingRef.current = true;
+    setRevalidating(true);
+    try {
+      await verifyIntegrity();
+    } finally {
+      if (revalidationRequestIdRef.current === requestId) {
+        revalidatingRef.current = false;
+        setRevalidating(false);
+      }
+    }
+  }, [user, verifyIntegrity]);
 
-                // Decrypt items
-                setDecrypting(true);
-                const decryptedItems = await Promise.all(
-                    (vaultItems || []).map(async (item) => {
-                        const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
-                        if (cachedFailedPayload === item.encrypted_data) {
-                            return { ...item, decryptedData: undefined };
-                        }
+  useEffect(() => {
+    async function fetchItems() {
+      if (!user) return;
 
-                        try {
-                            const decryptedData = await decryptItem(item.encrypted_data, item.id);
-                            failedDecryptPayloadByItemIdRef.current.delete(item.id);
-                            const hasLegacyPlaintextMeta =
-                                (!decryptedData.title && item.title && item.title !== ENCRYPTED_ITEM_TITLE_PLACEHOLDER) ||
-                                (!decryptedData.websiteUrl && !!item.website_url) ||
-                                (!decryptedData.itemType && !!item.item_type) ||
-                                (typeof decryptedData.isFavorite !== 'boolean' && item.is_favorite !== null) ||
-                                (typeof decryptedData.categoryId === 'undefined' && item.category_id !== null);
-                            const hasPlaintextColumnsToCleanup =
-                                item.title !== ENCRYPTED_ITEM_TITLE_PLACEHOLDER ||
-                                item.website_url !== null ||
-                                item.icon_url !== null ||
-                                item.item_type !== 'password' ||
-                                !!item.is_favorite ||
-                                item.category_id !== null;
+      setLoading(true);
+      try {
+        const { snapshot, source } = await loadVaultSnapshot(user.id);
+        const integrityResult = await verifyIntegrity(snapshot, { source });
+        if (integrityResult?.mode === 'blocked') {
+          setItems([]);
+          return;
+        }
+        const canPersistMigrations = integrityResult?.mode === 'healthy'
+          && integrityResult.isFirstCheck
+          && source === 'remote'
+          && isAppOnline();
 
-                            if (hasLegacyPlaintextMeta || hasPlaintextColumnsToCleanup) {
-                                const resolvedDecryptedData = {
-                                    ...decryptedData,
-                                    title: decryptedData.title || item.title,
-                                    websiteUrl: decryptedData.websiteUrl || item.website_url || undefined,
-                                    itemType: decryptedData.itemType || item.item_type || 'password',
-                                    isFavorite: typeof decryptedData.isFavorite === 'boolean'
-                                        ? decryptedData.isFavorite
-                                        : !!item.is_favorite,
-                                    categoryId: typeof decryptedData.categoryId !== 'undefined'
-                                        ? decryptedData.categoryId
-                                        : item.category_id,
-                                };
+        const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+        let integrityBaselineDirty = false;
+        const trustedItemIds = new Set<string>();
+        const decryptableItemIds = new Set<string>();
+        const unreadableItems: QuarantinedVaultItem[] = [];
 
-                                if (source === 'remote' && isAppOnline()) {
-                                    const migratedEncryptedData = await encryptItem(resolvedDecryptedData, item.id);
-
-                                    await supabase
-                                        .from('vault_items')
-                                        .update({
-                                            encrypted_data: migratedEncryptedData,
-                                            title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                                            website_url: null,
-                                            icon_url: null,
-                                            item_type: 'password',
-                                            is_favorite: false,
-                                            category_id: null,
-                                        })
-                                        .eq('id', item.id);
-
-                                    await upsertOfflineItemRow(user.id, {
-                                        ...item,
-                                        encrypted_data: migratedEncryptedData,
-                                        title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                                        website_url: null,
-                                        icon_url: null,
-                                        item_type: 'password',
-                                        is_favorite: false,
-                                        category_id: null,
-                                        updated_at: new Date().toISOString(),
-                                    }, snapshot.vaultId);
-                                }
-
-                                return {
-                                    ...item,
-                                    title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                                    website_url: null,
-                                    icon_url: null,
-                                    item_type: 'password',
-                                    is_favorite: false,
-                                    category_id: null,
-                                    decryptedData: resolvedDecryptedData,
-                                };
-                            }
-
-                            return { ...item, decryptedData };
-                        } catch (err) {
-                            failedDecryptPayloadByItemIdRef.current.set(item.id, item.encrypted_data);
-                            const logKey = `${item.id}:${item.updated_at}`;
-                            if (!loggedDecryptFailuresRef.current.has(logKey)) {
-                                loggedDecryptFailuresRef.current.add(logKey);
-                                console.debug(
-                                    isDuressMode
-                                        ? 'Failed to decrypt item in Duress Mode (expected for Real items):'
-                                        : 'Failed to decrypt item (key mismatch or corrupt):',
-                                    item.id
-                                );
-                            }
-                            return { ...item, decryptedData: undefined };
-                        }
-                    })
-                );
-
-                setItems(decryptedItems as VaultItem[]);
-            } catch (err) {
-                console.error('Error fetching vault items:', err);
-            } finally {
-                setLoading(false);
-                setDecrypting(false);
+        setDecrypting(true);
+        const decryptedItems = await mapInBatches(
+          vaultItems,
+          DECRYPT_BATCH_SIZE,
+          async (item) => {
+            const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
+            if (cachedFailedPayload === item.encrypted_data) {
+              return { ...item, decryptedData: undefined };
             }
+
+            try {
+              const decryptedData = await decryptItem(item.encrypted_data, item.id);
+              decryptableItemIds.add(item.id);
+              failedDecryptPayloadByItemIdRef.current.delete(item.id);
+
+              const hasLegacyPlaintextMeta =
+                (!decryptedData.title && item.title && item.title !== ENCRYPTED_ITEM_TITLE_PLACEHOLDER)
+                || (!decryptedData.websiteUrl && !!item.website_url)
+                || (!decryptedData.itemType && !!item.item_type)
+                || (typeof decryptedData.isFavorite !== 'boolean' && item.is_favorite !== null)
+                || (typeof decryptedData.categoryId === 'undefined' && item.category_id !== null);
+              const hasPlaintextColumnsToCleanup =
+                item.title !== ENCRYPTED_ITEM_TITLE_PLACEHOLDER
+                || item.website_url !== null
+                || item.icon_url !== null
+                || item.item_type !== 'password'
+                || !!item.is_favorite
+                || item.category_id !== null;
+
+              if (hasLegacyPlaintextMeta || hasPlaintextColumnsToCleanup) {
+                const resolvedDecryptedData = {
+                  ...decryptedData,
+                  title: decryptedData.title || item.title,
+                  websiteUrl: decryptedData.websiteUrl || item.website_url || undefined,
+                  itemType: decryptedData.itemType || item.item_type || 'password',
+                  isFavorite: typeof decryptedData.isFavorite === 'boolean'
+                    ? decryptedData.isFavorite
+                    : !!item.is_favorite,
+                  categoryId: typeof decryptedData.categoryId !== 'undefined'
+                    ? decryptedData.categoryId
+                    : item.category_id,
+                };
+
+                if (canPersistMigrations) {
+                  const migratedEncryptedData = await encryptItem(resolvedDecryptedData, item.id);
+
+                  await supabase
+                    .from('vault_items')
+                    .update({
+                      encrypted_data: migratedEncryptedData,
+                      title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
+                      website_url: null,
+                      icon_url: null,
+                      item_type: 'password',
+                      is_favorite: false,
+                      category_id: null,
+                    })
+                    .eq('id', item.id);
+
+                  await upsertOfflineItemRow(user.id, {
+                    ...item,
+                    encrypted_data: migratedEncryptedData,
+                    title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
+                    website_url: null,
+                    icon_url: null,
+                    item_type: 'password',
+                    is_favorite: false,
+                    category_id: null,
+                    updated_at: new Date().toISOString(),
+                  }, snapshot.vaultId);
+
+                  integrityBaselineDirty = true;
+                  trustedItemIds.add(item.id);
+                }
+
+                return {
+                  ...item,
+                  title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
+                  website_url: null,
+                  icon_url: null,
+                  item_type: 'password',
+                  is_favorite: false,
+                  category_id: null,
+                  decryptedData: resolvedDecryptedData,
+                };
+              }
+
+              return { ...item, decryptedData };
+            } catch {
+              failedDecryptPayloadByItemIdRef.current.set(item.id, item.encrypted_data);
+              unreadableItems.push({
+                id: item.id,
+                reason: 'ciphertext_changed',
+                updatedAt: item.updated_at ?? null,
+                itemType: item.item_type ?? null,
+              });
+              const logKey = `${item.id}:${item.updated_at}`;
+              if (!loggedDecryptFailuresRef.current.has(logKey)) {
+                loggedDecryptFailuresRef.current.add(logKey);
+                console.debug(
+                  isDuressMode
+                    ? 'Failed to decrypt item in Duress Mode (expected for Real items):'
+                    : 'Failed to decrypt item (key mismatch or corrupt):',
+                  item.id,
+                );
+              }
+
+              return { ...item, decryptedData: undefined };
+            }
+          },
+        );
+
+        if (unreadableItems.length > 0) {
+          reportUnreadableItems(unreadableItems);
         }
 
-        fetchItems();
-    }, [user, decryptItem, encryptItem, refreshKey, isDuressMode]); // Added refreshKey to trigger refetch
+        const canPersistTrustedFirstBaseline = integrityResult?.mode === 'healthy'
+          && integrityResult.isFirstCheck
+          && source === 'remote'
+          && isAppOnline()
+          && unreadableItems.length === 0;
 
-    // Filter items
-    const filteredItems = useMemo(() => {
-        return items.filter((item) => {
-            // Items that cannot be decrypted with the active key are never renderable.
-            if (!item.decryptedData) return false;
+        if ((integrityBaselineDirty && canPersistMigrations) || canPersistTrustedFirstBaseline) {
+          await refreshIntegrityBaseline({
+            itemIds: new Set([...decryptableItemIds, ...trustedItemIds]),
+            categoryIds: snapshot.categories.map((category) => category.id),
+          });
+        }
 
-            const resolvedCategoryId = item.decryptedData?.categoryId ?? item.category_id;
-            const resolvedItemType = item.decryptedData?.itemType || item.item_type;
-            const resolvedIsFavorite = typeof item.decryptedData?.isFavorite === 'boolean'
-                ? item.decryptedData.isFavorite
-                : !!item.is_favorite;
+        setItems(decryptedItems as VaultItem[]);
 
-            // TOTP items belong exclusively in the Authenticator section — never shown here
-            if (resolvedItemType === 'totp') return false;
-
-            // Duress mode filter: only show decoy items in duress mode, real items otherwise
-            // This is critical for plausible deniability — the filter happens AFTER decryption
-            const hooks = getServiceHooks();
-            const itemIsDecoy = hooks.isDecoyItem ? hooks.isDecoyItem(item.decryptedData as unknown as Record<string, unknown>) : false;
-            if (isDuressMode && !itemIsDecoy) return false;
-            if (!isDuressMode && itemIsDecoy) return false;
-
-            // Category filter
-            if (categoryId && resolvedCategoryId !== categoryId) return false;
-
-            // Type filter
-            if (filter === 'passwords' && resolvedItemType !== 'password') return false;
-            if (filter === 'notes' && resolvedItemType !== 'note') return false;
-            if (filter === 'favorites' && !resolvedIsFavorite) return false;
-
-            // Search filter
-            if (searchQuery) {
-                const query = searchQuery.toLowerCase();
-                const resolvedTitle = item.decryptedData?.title || item.title;
-                const resolvedUrl = item.decryptedData?.websiteUrl || item.website_url;
-                const matchTitle = resolvedTitle.toLowerCase().includes(query);
-                const matchUrl = resolvedUrl?.toLowerCase().includes(query);
-                const matchUsername = item.decryptedData?.username?.toLowerCase().includes(query);
-                if (!matchTitle && !matchUrl && !matchUsername) return false;
-            }
-
-            return true;
-        });
-    }, [items, filter, categoryId, searchQuery, isDuressMode]);
-
-    if (loading || decrypting) {
-        return (
-            <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-                <Loader2 className="w-8 h-8 animate-spin mb-4" />
-                <p>{decrypting ? t('vault.items.decrypting') : t('common.loading')}</p>
-            </div>
-        );
+        // Cached snapshots keep the vault usable offline and while local writes
+        // are pending. A lightweight remote revalidation follows so DB-side
+        // tampering can move items into quarantine without waiting for edit/open.
+        if (source !== 'remote' && isAppOnline()) {
+          void revalidateRemoteIntegrity();
+        }
+      } catch (err) {
+        console.error('Error fetching vault items:', err);
+      } finally {
+        setLoading(false);
+        setDecrypting(false);
+      }
     }
 
-    if (items.length === 0) {
-        return (
-            <div className="flex flex-col items-center justify-center h-64 text-center">
-                <div className="p-4 rounded-full bg-[hsl(var(--el-2))] border border-[hsl(var(--border)/0.35)] mb-4">
-                    <Shield className="w-8 h-8 text-primary/60" />
-                </div>
-                <h3 className="text-lg font-medium mb-2">{t('vault.empty.title')}</h3>
-                <p className="text-muted-foreground mb-4 max-w-sm">
-                    {t('vault.empty.description')}
-                </p>
-                <Button onClick={() => onEditItem('')}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    {t('vault.empty.action')}
-                </Button>
-            </div>
-        );
+    void fetchItems();
+  }, [
+    user,
+    decryptItem,
+    encryptItem,
+    refreshKey,
+    isDuressMode,
+    reportUnreadableItems,
+    refreshIntegrityBaseline,
+    revalidateRemoteIntegrity,
+    vaultDataVersion,
+    verifyIntegrity,
+  ]);
+
+  const quarantinedItems = useMemo(
+    () => lastIntegrityResult?.quarantinedItems ?? [],
+    [lastIntegrityResult],
+  );
+  const quarantinedItemsById = useMemo(
+    () => new Map(quarantinedItems.map((item) => [item.id, item])),
+    [quarantinedItems],
+  );
+  const hasGroupedQuarantine = quarantinedItems.length >= QUARANTINE_SUMMARY_THRESHOLD;
+  const canRenderGroupedQuarantine = filter === 'all' && !categoryId && searchQuery.trim() === '';
+  const quarantineIgnoreStorageKey = user?.id
+    ? `singra:vault-quarantine-ignored-items:${user.id}`
+    : null;
+  const activeIgnoredQuarantinedItems = useMemo(
+    () => quarantinedItems.filter((item) => ignoredQuarantineById[item.id] === getQuarantineIgnoreToken(item)),
+    [ignoredQuarantineById, quarantinedItems],
+  );
+  const activeIgnoredQuarantineIds = useMemo(
+    () => new Set(activeIgnoredQuarantinedItems.map((item) => item.id)),
+    [activeIgnoredQuarantinedItems],
+  );
+  const hasIgnoredGroupedQuarantine = hasGroupedQuarantine && activeIgnoredQuarantinedItems.length > 0;
+
+  const canRenderInlineQuarantine = useCallback((
+    item: VaultItem,
+    quarantine: QuarantinedVaultItem,
+  ) => {
+    if (quarantinedItems.length !== 1 || searchQuery.trim() !== '') {
+      return false;
     }
 
-    if (filteredItems.length === 0) {
-        return (
-            <div className="flex flex-col items-center justify-center h-64 text-center">
-                <div className="p-4 rounded-full bg-[hsl(var(--el-2))] border border-[hsl(var(--border)/0.35)] mb-4">
-                    <KeyRound className="w-8 h-8 text-primary/60" />
-                </div>
-                <h3 className="text-lg font-medium mb-2">{t('vault.search.noResults')}</h3>
-                <p className="text-muted-foreground max-w-sm">
-                    {t('vault.search.noResultsDescription')}
-                </p>
-            </div>
-        );
+    const quarantinedItemType = quarantine.itemType ?? item.item_type;
+    if (quarantinedItemType === 'totp') {
+      return false;
     }
 
+    if (categoryId && item.category_id !== categoryId) {
+      return false;
+    }
+
+    if (filter === 'passwords') {
+      return quarantinedItemType === 'password';
+    }
+    if (filter === 'notes') {
+      return quarantinedItemType === 'note';
+    }
+    if (filter === 'favorites') {
+      return false;
+    }
+
+    return filter === 'all';
+  }, [filter, categoryId, searchQuery, quarantinedItems.length]);
+
+  useEffect(() => {
+    setShowIgnoredQuarantine(false);
+
+    if (!quarantineIgnoreStorageKey || typeof window === 'undefined') {
+      setIgnoredQuarantineById({});
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(quarantineIgnoreStorageKey) || '{}');
+      setIgnoredQuarantineById(
+        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? parsed as Record<string, string>
+          : {},
+      );
+    } catch {
+      setIgnoredQuarantineById({});
+    }
+  }, [quarantineIgnoreStorageKey]);
+
+  const persistIgnoredQuarantine = useCallback((nextIgnoredById: Record<string, string>) => {
+    if (!quarantineIgnoreStorageKey || typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(quarantineIgnoreStorageKey, JSON.stringify(nextIgnoredById));
+    setIgnoredQuarantineById(nextIgnoredById);
+  }, [quarantineIgnoreStorageKey]);
+
+  const handleIgnoreQuarantineItem = useCallback((item: QuarantinedVaultItem) => {
+    persistIgnoredQuarantine({
+      ...ignoredQuarantineById,
+      [item.id]: getQuarantineIgnoreToken(item),
+    });
+  }, [ignoredQuarantineById, persistIgnoredQuarantine]);
+
+  const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
+    return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
+      const quarantine = quarantinedItemsById.get(item.id);
+      if (quarantine) {
+        if (canRenderInlineQuarantine(item, quarantine)) {
+          entries.push({ kind: 'quarantined', item, quarantine });
+        }
+        return entries;
+      }
+
+      if (!item.decryptedData) {
+        return entries;
+      }
+
+      const resolvedCategoryId = item.decryptedData.categoryId ?? item.category_id;
+      const resolvedItemType = item.decryptedData.itemType || item.item_type;
+      const resolvedIsFavorite = typeof item.decryptedData.isFavorite === 'boolean'
+        ? item.decryptedData.isFavorite
+        : !!item.is_favorite;
+
+      if (resolvedItemType === 'totp') {
+        return entries;
+      }
+
+      const hooks = getServiceHooks();
+      const itemIsDecoy = hooks.isDecoyItem
+        ? hooks.isDecoyItem(item.decryptedData as unknown as Record<string, unknown>)
+        : false;
+
+      if (isDuressMode && !itemIsDecoy) {
+        return entries;
+      }
+      if (!isDuressMode && itemIsDecoy) {
+        return entries;
+      }
+
+      if (categoryId && resolvedCategoryId !== categoryId) {
+        return entries;
+      }
+
+      if (filter === 'passwords' && resolvedItemType !== 'password') {
+        return entries;
+      }
+      if (filter === 'notes' && resolvedItemType !== 'note') {
+        return entries;
+      }
+      if (filter === 'favorites' && !resolvedIsFavorite) {
+        return entries;
+      }
+
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const resolvedTitle = item.decryptedData.title || item.title;
+        const resolvedUrl = item.decryptedData.websiteUrl || item.website_url;
+        const matchTitle = resolvedTitle.toLowerCase().includes(query);
+        const matchUrl = resolvedUrl?.toLowerCase().includes(query);
+        const matchUsername = item.decryptedData.username?.toLowerCase().includes(query);
+        if (!matchTitle && !matchUrl && !matchUsername) {
+          return entries;
+        }
+      }
+
+      entries.push({ kind: 'item', item });
+      return entries;
+    }, []);
+  }, [
+    items,
+    quarantinedItemsById,
+    canRenderInlineQuarantine,
+    filter,
+    categoryId,
+    searchQuery,
+    isDuressMode,
+  ]);
+
+  const inlineQuarantinedIds = useMemo(
+    () => new Set(
+      visibleEntries
+        .filter((entry): entry is Extract<RenderableVaultListEntry, { kind: 'quarantined' }> => entry.kind === 'quarantined')
+        .map((entry) => entry.quarantine.id),
+    ),
+    [visibleEntries],
+  );
+
+  const panelQuarantinedItems = useMemo(
+    () => {
+      if (!hasGroupedQuarantine || !canRenderGroupedQuarantine) {
+        return [];
+      }
+
+      return quarantinedItems.filter(
+        (item) => !inlineQuarantinedIds.has(item.id) && !activeIgnoredQuarantineIds.has(item.id),
+      );
+    },
+    [
+      activeIgnoredQuarantineIds,
+      canRenderGroupedQuarantine,
+      hasGroupedQuarantine,
+      inlineQuarantinedIds,
+      quarantinedItems,
+    ],
+  );
+
+  const handleIgnoreGroupedQuarantine = useCallback(() => {
+    persistIgnoredQuarantine({
+      ...ignoredQuarantineById,
+      ...Object.fromEntries(
+        panelQuarantinedItems.map((item) => [item.id, getQuarantineIgnoreToken(item)]),
+      ),
+    });
+    setShowIgnoredQuarantine(false);
+  }, [ignoredQuarantineById, panelQuarantinedItems, persistIgnoredQuarantine]);
+
+  const renderableItemCount = items.filter((item) => item.decryptedData).length;
+
+  if (loading || decrypting) {
     return (
-        <div
-            className={cn(
-                viewMode === 'grid'
-                    ? 'grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
-                    : 'flex flex-col gap-2'
-            )}
-        >
-            {filteredItems.map((item) => (
-                <VaultItemCard
-                    key={item.id}
-                    item={item}
-                    viewMode={viewMode}
-                    onEdit={() => onEditItem(item.id)}
-                />
-            ))}
-        </div>
+      <div className="flex h-64 flex-col items-center justify-center text-muted-foreground">
+        <Loader2 className="mb-4 h-8 w-8 animate-spin" />
+        <p>{decrypting ? t('vault.items.decrypting') : t('common.loading')}</p>
+      </div>
     );
+  }
+
+  if (items.length === 0 && quarantinedItems.length === 0) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center text-center">
+        <div className="mb-4 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-2))] p-4">
+          <Shield className="h-8 w-8 text-primary/60" />
+        </div>
+        <h3 className="mb-2 text-lg font-medium">{t('vault.empty.title')}</h3>
+        <p className="mb-4 max-w-sm text-muted-foreground">
+          {t('vault.empty.description')}
+        </p>
+        <Button onClick={() => onEditItem('')}>
+          <Plus className="mr-2 h-4 w-4" />
+          {t('vault.empty.action')}
+        </Button>
+      </div>
+    );
+  }
+
+  if (visibleEntries.length === 0 && quarantinedItems.length === 0) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center text-center">
+        <div className="mb-4 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-2))] p-4">
+          <KeyRound className="h-8 w-8 text-primary/60" />
+        </div>
+        <h3 className="mb-2 text-lg font-medium">{t('vault.search.noResults')}</h3>
+        <p className="max-w-sm text-muted-foreground">
+          {t('vault.search.noResultsDescription')}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[hsl(var(--border)/0.45)] bg-[hsl(var(--el-1))] px-4 py-3 text-sm">
+          <p className="inline-flex items-center gap-2 text-muted-foreground">
+            <RefreshCw className={cn('h-4 w-4', revalidating && 'animate-spin')} />
+            {revalidating
+              ? t('vault.integrity.revalidatingEntries', {
+                defaultValue: 'Prüfe Einträge...',
+              })
+              : t('vault.integrity.revalidationHint', {
+                defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.',
+              })}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={revalidating}
+            onClick={() => void revalidateRemoteIntegrity()}
+          >
+            <RefreshCw className={cn('mr-2 h-4 w-4', revalidating && 'animate-spin')} />
+            {t('vault.integrity.revalidateAction', {
+              defaultValue: 'Tresor erneut prüfen',
+            })}
+          </Button>
+        </div>
+      )}
+
+      {canRenderGroupedQuarantine && hasIgnoredGroupedQuarantine && !showIgnoredQuarantine && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
+          <p className="inline-flex items-center gap-2 text-amber-800 dark:text-amber-200">
+            <TriangleAlert className="h-4 w-4" />
+            {t('vault.integrity.ignoredQuarantineHint', {
+              defaultValue: '{{count}} manipulierte Einträge sind in der Quarantäne einsehbar.',
+              count: activeIgnoredQuarantinedItems.length,
+            })}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="border-amber-500/35"
+            onClick={() => setShowIgnoredQuarantine(true)}
+          >
+            <Eye className="mr-2 h-4 w-4" />
+            {t('vault.integrity.showIgnoredQuarantineAction', {
+              defaultValue: 'Quarantäne anzeigen',
+            })}
+          </Button>
+        </div>
+      )}
+
+      <VaultQuarantinePanel
+        items={panelQuarantinedItems}
+        ignoredItems={showIgnoredQuarantine ? activeIgnoredQuarantinedItems : []}
+        onIgnoreItem={handleIgnoreQuarantineItem}
+        onIgnoreAll={
+          hasGroupedQuarantine && canRenderGroupedQuarantine && panelQuarantinedItems.length > 0
+            ? handleIgnoreGroupedQuarantine
+            : undefined
+        }
+      />
+
+      {visibleEntries.length === 0 ? (
+        <div className="flex h-48 flex-col items-center justify-center text-center">
+          <div className="mb-4 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-2))] p-4">
+            <KeyRound className="h-8 w-8 text-primary/60" />
+          </div>
+          {renderableItemCount === 0 ? (
+            <>
+              <h3 className="mb-2 text-lg font-medium">
+                {t('vault.integrity.onlyQuarantinedTitle', {
+                  defaultValue: 'Derzeit sind nur Einträge in Quarantäne vorhanden',
+                })}
+              </h3>
+              <p className="max-w-sm text-muted-foreground">
+                {t('vault.integrity.onlyQuarantinedDescription', {
+                  defaultValue: 'Normale Einträge sind aktuell nicht verfügbar. Prüfe die Quarantänehinweise oben.',
+                })}
+              </p>
+            </>
+          ) : (
+            <>
+              <h3 className="mb-2 text-lg font-medium">{t('vault.search.noResults')}</h3>
+              <p className="max-w-sm text-muted-foreground">
+                {t('vault.search.noResultsDescription')}
+              </p>
+            </>
+          )}
+        </div>
+      ) : (
+        <div
+          className={cn(
+            viewMode === 'grid'
+              ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+              : 'flex flex-col gap-2',
+          )}
+        >
+          {visibleEntries.map((entry) => (
+            entry.kind === 'item' ? (
+              <VaultItemCard
+                key={entry.item.id}
+                item={entry.item}
+                viewMode={viewMode}
+                onEdit={() => onEditItem(entry.item.id)}
+              />
+            ) : (
+              <VaultQuarantinedItemCard
+                key={entry.quarantine.id}
+                itemId={entry.quarantine.id}
+                reason={entry.quarantine.reason}
+                viewMode={viewMode}
+              />
+            )
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

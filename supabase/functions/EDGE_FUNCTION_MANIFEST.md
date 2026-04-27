@@ -8,11 +8,12 @@ Diese Functions bleiben im `singra-vault` Repository:
 
 | Function | Zweck |
 |----------|-------|
-| `auth-opaque` | OPAQUE-Protokoll Login |
-| `auth-register` | Benutzerregistrierung |
+| `auth-opaque` | OPAQUE-Protokoll-Login und OPAQUE-2FA-Abschluss |
+| `auth-register` | OPAQUE-only Benutzerregistrierung |
 | `auth-recovery` | Account-Wiederherstellung |
-| `auth-reset-password` | Passwort zurücksetzen |
-| `auth-session` | Session-Management + 2FA-Verifikation |
+| `auth-reset-password` | OPAQUE-only Passwort zurücksetzen |
+| `auth-2fa` | Zentrale serverseitige 2FA-/VaultFA-Validierung |
+| `auth-session` | Session-Hydration, Logout und OAuth-Sync; kein Passwort-Login |
 | `webauthn` | Passkey/WebAuthn-Operationen |
 | `rate-limit` | Rate-Limiting |
 | `admin-team` | Team-Rollen & Permissions |
@@ -55,6 +56,7 @@ Jede ist mit `// @premium` im Quellcode markiert.
 | Datei | Gehört zu |
 |-------|-----------|
 | `_shared/cors.ts` | Core (wird von beiden genutzt) |
+| `_shared/twoFactor.ts` | Core |
 
 ## Repo-Split Anleitung
 

@@ -294,6 +294,7 @@ export type Database = {
           created_at: string
           expires_at: string
           id: string
+          opaque_identifier: string | null
           server_login_state: string
           user_id: string
         }
@@ -301,6 +302,7 @@ export type Database = {
           created_at?: string
           expires_at: string
           id?: string
+          opaque_identifier?: string | null
           server_login_state: string
           user_id: string
         }
@@ -308,7 +310,86 @@ export type Database = {
           created_at?: string
           expires_at?: string
           id?: string
+          opaque_identifier?: string | null
           server_login_state?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      opaque_password_reset_states: {
+        Row: {
+          consumed_at: string | null
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          consumed_at?: string | null
+          created_at?: string
+          email: string
+          expires_at: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          consumed_at?: string | null
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      opaque_registration_challenges: {
+        Row: {
+          consumed_at: string | null
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          purpose: string
+          user_id: string | null
+        }
+        Insert: {
+          consumed_at?: string | null
+          created_at?: string
+          email: string
+          expires_at: string
+          id?: string
+          purpose: string
+          user_id?: string | null
+        }
+        Update: {
+          consumed_at?: string | null
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          purpose?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      opaque_reenrollment_required: {
+        Row: {
+          detected_at: string
+          email: string
+          reason: string
+          user_id: string
+        }
+        Insert: {
+          detected_at?: string
+          email: string
+          reason?: string
+          user_id: string
+        }
+        Update: {
+          detected_at?: string
+          email?: string
+          reason?: string
           user_id?: string
         }
         Relationships: []
@@ -374,6 +455,7 @@ export type Database = {
           duress_password_verifier: string | null
           duress_salt: string | null
           encryption_salt: string | null
+          encrypted_user_key: string | null
           hide_community_ads: boolean | null
           id: string
           kdf_version: number
@@ -398,6 +480,7 @@ export type Database = {
           duress_password_verifier?: string | null
           duress_salt?: string | null
           encryption_salt?: string | null
+          encrypted_user_key?: string | null
           hide_community_ads?: boolean | null
           id?: string
           kdf_version?: number
@@ -422,6 +505,7 @@ export type Database = {
           duress_password_verifier?: string | null
           duress_salt?: string | null
           encryption_salt?: string | null
+          encrypted_user_key?: string | null
           hide_community_ads?: boolean | null
           id?: string
           kdf_version?: number
@@ -481,21 +565,78 @@ export type Database = {
           email: string
           expires_at: string
           id: string
+          purpose: string
           token_hash: string
+          used_at: string | null
         }
         Insert: {
           created_at?: string | null
           email: string
           expires_at: string
           id?: string
+          purpose?: string
           token_hash: string
+          used_at?: string | null
         }
         Update: {
           created_at?: string | null
           email?: string
           expires_at?: string
           id?: string
+          purpose?: string
           token_hash?: string
+          used_at?: string | null
+        }
+        Relationships: []
+      }
+      password_reset_challenges: {
+        Row: {
+          authorized_at: string | null
+          email: string
+          email_verified_at: string | null
+          expires_at: string
+          id: string
+          ip_address: string | null
+          issued_at: string
+          purpose: string
+          token_hash: string
+          two_factor_required: boolean
+          two_factor_verified_at: string | null
+          used_at: string | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          authorized_at?: string | null
+          email: string
+          email_verified_at?: string | null
+          expires_at: string
+          id?: string
+          ip_address?: string | null
+          issued_at?: string
+          purpose?: string
+          token_hash: string
+          two_factor_required?: boolean
+          two_factor_verified_at?: string | null
+          used_at?: string | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          authorized_at?: string | null
+          email?: string
+          email_verified_at?: string | null
+          expires_at?: string
+          id?: string
+          ip_address?: string | null
+          issued_at?: string
+          purpose?: string
+          token_hash?: string
+          two_factor_required?: boolean
+          two_factor_verified_at?: string | null
+          used_at?: string | null
+          user_agent?: string | null
+          user_id?: string
         }
         Relationships: []
       }
@@ -961,6 +1102,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          opaque_identifier: string | null
           registration_record: string
           updated_at: string
           user_id: string
@@ -968,6 +1110,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          opaque_identifier?: string | null
           registration_record: string
           updated_at?: string
           user_id: string
@@ -975,6 +1118,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          opaque_identifier?: string | null
           registration_record?: string
           updated_at?: string
           user_id?: string
@@ -1155,6 +1299,66 @@ export type Database = {
         }
         Relationships: []
       }
+      sensitive_action_challenges: {
+        Row: {
+          action: string
+          expires_at: string
+          id: string
+          issued_at: string
+          user_id: string
+        }
+        Insert: {
+          action: string
+          expires_at: string
+          id?: string
+          issued_at?: string
+          user_id: string
+        }
+        Update: {
+          action?: string
+          expires_at?: string
+          id?: string
+          issued_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      two_factor_challenges: {
+        Row: {
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          metadata: Json
+          method: string | null
+          purpose: string
+          user_id: string
+          verified_at: string | null
+        }
+        Insert: {
+          consumed_at?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          metadata?: Json
+          method?: string | null
+          purpose: string
+          user_id: string
+          verified_at?: string | null
+        }
+        Update: {
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          metadata?: Json
+          method?: string | null
+          purpose?: string
+          user_id?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       webauthn_challenges: {
         Row: {
           challenge: string
@@ -1188,12 +1392,16 @@ export type Database = {
     }
     Functions: {
       auto_close_stale_support_tickets: { Args: never; Returns: number }
+      begin_vault_reset_recovery: { Args: never; Returns: Json }
       check_family_size: { Args: { owner_id: string }; Returns: number }
       check_subscription_tier: { Args: { user_id: string }; Returns: string }
       cleanup_expired_opaque_login_states: { Args: never; Returns: undefined }
       cleanup_expired_webauthn_challenges: { Args: never; Returns: undefined }
       cleanup_old_rate_limit_attempts: { Args: never; Returns: undefined }
-      delete_my_account: { Args: never; Returns: Json }
+      delete_my_account: {
+        Args: { p_two_factor_challenge_id?: string | null }
+        Returns: Json
+      }
       get_my_permissions: {
         Args: never
         Returns: {
@@ -1255,6 +1463,10 @@ export type Database = {
       rotate_collection_key_atomic: {
         Args: { p_collection_id: string; p_items: Json; p_new_keys: Json }
         Returns: undefined
+      }
+      reset_user_vault_state: {
+        Args: { p_recovery_challenge_id: string }
+        Returns: Json
       }
       rotate_totp_encryption_key: {
         Args: { p_new_key: string }

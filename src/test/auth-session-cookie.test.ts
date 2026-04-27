@@ -14,7 +14,7 @@ describe("auth-session edge function cookie hardening", () => {
         expect(source).toContain("headers.set(\"set-cookie\", `${currentCookie}; Partitioned`)");
         expect(source).toContain("setSessionCookie(headers, data.session.refresh_token)");
         expect(source).toContain("setSessionCookie(headers, refreshedData.session.refresh_token)");
-        expect(source).toContain("setSessionCookie(headers, sessionData.session.refresh_token)");
+        expect(source).toContain("LEGACY_PASSWORD_LOGIN_DISABLED");
         expect(opaqueSource).toContain('SESSION_COOKIE_MAX_AGE_SECONDS") ?? 60 * 60 * 24 * 400');
         expect(opaqueSource).toContain("function appendPartitionedCookieAttribute");
         expect(opaqueSource).toContain("setSessionCookie(headers, sessionData.session.refresh_token)");

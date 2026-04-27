@@ -1,5 +1,5 @@
-// Copyright (c) 2025-2026 Maunting Studios
-// Licensed under the Business Source License 1.1 — see LICENSE
+﻿// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Category Dialog Component
  * 
@@ -7,7 +7,7 @@
  * SVG icon input is blocked for security hardening.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Folder, Trash2, Palette } from 'lucide-react';
 
@@ -22,11 +22,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     AlertDialog,
-    AlertDialogAction,
     AlertDialogCancel,
     AlertDialogContent,
     AlertDialogDescription,
@@ -36,29 +33,24 @@ import {
 } from '@/components/ui/alert-dialog';
 
 import { supabase } from '@/integrations/supabase/client';
+import type { Database } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { CategoryIcon } from './CategoryIcon';
+import { CATEGORY_ICON_PRESETS, normalizeCategoryIcon } from './categoryIconPolicy';
+import type { VaultItemData } from '@/services/cryptoService';
 import {
+    applyOfflineCategoryDeletion,
     buildCategoryRowFromInsert,
     buildVaultItemRowFromInsert,
     enqueueOfflineMutation,
     isAppOnline,
     isLikelyOfflineError,
     loadVaultSnapshot,
-    removeOfflineCategoryRow,
-    resolveDefaultVaultId,
+    shouldUseLocalOnlyVault,
     upsertOfflineCategoryRow,
-    upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
-
-// Common emojis for quick selection
-const COMMON_EMOJIS = [
-    '📱', '💼', '💳', '🛒', '🎮', '🏠', '✈️', '🎵',
-    '📚', '🔧', '🏦', '💊', '🎬', '📧', '🔐', '⭐',
-    '🌐', '💻', '📷', '🎨', '🏃', '🍔', '🚗', '📝',
-];
 
 // Preset colors
 const PRESET_COLORS = [
@@ -73,33 +65,41 @@ interface Category {
     color: string | null;
 }
 
+export interface CategoryChangeEvent {
+    type: 'saved' | 'deleted';
+    categoryId: string;
+}
+
 interface CategoryDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     category: Category | null; // null = create new
-    onSave?: () => void;
+    onSave?: (event?: CategoryChangeEvent) => void;
 }
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
+type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
+type CategoryDeleteMode = 'unlink-items' | 'delete-items';
 
-function isSvgPayload(value: string): boolean {
-    const trimmed = value.trim();
-    return trimmed.startsWith('<svg') || trimmed.startsWith('<?xml');
+interface CategoryItemMatch {
+    item: VaultItemRow;
+    decryptedData: VaultItemData | null;
 }
 
 export function CategoryDialog({ open, onOpenChange, category, onSave }: CategoryDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
-    const { encryptData, decryptItem, encryptItem } = useVault();
+    const { encryptData, decryptItem, encryptItem, refreshIntegrityBaseline } = useVault();
 
     const [name, setName] = useState('');
     const [icon, setIcon] = useState('');
-    const [iconType, setIconType] = useState<'emoji' | 'svg'>('emoji');
     const [color, setColor] = useState<string>('#3b82f6');
     const [loading, setLoading] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deleteImpactLoading, setDeleteImpactLoading] = useState(false);
+    const [deleteImpactCount, setDeleteImpactCount] = useState<number | null>(null);
 
     const isEditing = !!category;
 
@@ -107,16 +107,12 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
     useEffect(() => {
         if (category) {
             setName(category.name);
-            const categoryIcon = category.icon || '';
-            const legacySvgIcon = categoryIcon && isSvgPayload(categoryIcon);
-            setIcon(legacySvgIcon ? '' : categoryIcon);
+            setIcon(normalizeCategoryIcon(category.icon) ?? '');
             setColor(category.color || '#3b82f6');
-            setIconType('emoji');
         } else {
             setName('');
             setIcon('');
             setColor('#3b82f6');
-            setIconType('emoji');
         }
     }, [category, open]);
 
@@ -125,20 +121,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
 
         setLoading(true);
         try {
-            let normalizedIcon: string | null = icon.trim() || null;
-
-            if ((iconType === 'svg' && normalizedIcon) || (normalizedIcon && isSvgPayload(normalizedIcon))) {
-                toast({
-                    variant: 'destructive',
-                    title: t('common.error'),
-                    description: t('categories.svgDisabled'),
-                });
-                return;
-            }
-
-            if (iconType === 'emoji' && normalizedIcon) {
-                normalizedIcon = normalizedIcon.replace(/[<>]/g, '').slice(0, 4);
-            }
+            const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
+            const normalizedIcon = normalizeCategoryIcon(icon);
 
             const categoryId = isEditing ? category.id : crypto.randomUUID();
             const categoryData = {
@@ -154,8 +138,9 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             };
 
             let syncedOnline = false;
+            let categoryRowForCache = buildCategoryRowFromInsert(categoryData);
 
-            if (isAppOnline()) {
+            if (canSyncOnline) {
                 try {
                     const { data: savedCategory, error } = await supabase
                         .from('categories')
@@ -165,7 +150,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
 
                     if (error) throw error;
                     if (savedCategory) {
-                        await upsertOfflineCategoryRow(user.id, savedCategory);
+                        categoryRowForCache = savedCategory;
                     }
                     syncedOnline = true;
                 } catch (err) {
@@ -175,8 +160,9 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                 }
             }
 
+            await upsertOfflineCategoryRow(user.id, categoryRowForCache);
+
             if (!syncedOnline) {
-                await upsertOfflineCategoryRow(user.id, buildCategoryRowFromInsert(categoryData));
                 await enqueueOfflineMutation({
                     userId: user.id,
                     type: 'upsert_category',
@@ -193,8 +179,12 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                     }),
             });
 
+            await refreshIntegrityBaseline({
+                categoryIds: [categoryId],
+            });
+
             onOpenChange(false);
-            onSave?.();
+            onSave?.({ type: 'saved', categoryId });
         } catch (err) {
             console.error('Error saving category:', err);
             toast({
@@ -207,33 +197,92 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         }
     };
 
-    const handleDelete = async () => {
+    const loadItemsInCategory = useCallback(async (): Promise<CategoryItemMatch[]> => {
+        if (!category || !user) return [];
+
+        const { snapshot } = await loadVaultSnapshot(user.id);
+        const items = snapshot.vaultId
+            ? snapshot.items.filter((item) => item.vault_id === snapshot.vaultId)
+            : snapshot.items;
+        const matches: CategoryItemMatch[] = [];
+
+        for (const item of items) {
+            let decryptedData: VaultItemData | null = null;
+            let resolvedCategoryId = item.category_id ?? null;
+
+            try {
+                decryptedData = await decryptItem(item.encrypted_data, item.id);
+                resolvedCategoryId = decryptedData.categoryId ?? item.category_id ?? null;
+            } catch (err) {
+                if (item.category_id === category.id) {
+                    console.warn('Could not decrypt item while checking category delete impact:', item.id, err);
+                }
+            }
+
+            if (resolvedCategoryId === category.id) {
+                matches.push({ item, decryptedData });
+            }
+        }
+
+        return matches;
+    }, [category, decryptItem, user]);
+
+    useEffect(() => {
+        if (!showDeleteConfirm || !category || !user) {
+            setDeleteImpactCount(null);
+            setDeleteImpactLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+        setDeleteImpactLoading(true);
+        setDeleteImpactCount(null);
+
+        void loadItemsInCategory()
+            .then((items) => {
+                if (!cancelled) {
+                    setDeleteImpactCount(items.length);
+                }
+            })
+            .catch((err) => {
+                if (!cancelled) {
+                    console.error('Error checking category delete impact:', err);
+                    setDeleteImpactCount(null);
+                }
+            })
+            .finally(() => {
+                if (!cancelled) {
+                    setDeleteImpactLoading(false);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [category, loadItemsInCategory, showDeleteConfirm, user]);
+
+    const handleDelete = async (mode: CategoryDeleteMode) => {
         if (!category || !user) return;
 
         setLoading(true);
         try {
-            const vaultId = await resolveDefaultVaultId(user.id);
-            const { snapshot } = await loadVaultSnapshot(user.id);
-            const items = vaultId
-                ? snapshot.items.filter((item) => item.vault_id === vaultId)
-                : snapshot.items;
+            const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
+            const affectedItems = await loadItemsInCategory();
+            const affectedItemIds = affectedItems.map(({ item }) => item.id);
+            const updatedItemRows: VaultItemRow[] = [];
+            const deletedItemIds: string[] = [];
+            const trustedItemIds: string[] = [];
 
-            for (const item of items) {
-                try {
-                    const decryptedData = await decryptItem(item.encrypted_data, item.id);
-                    const resolvedCategoryId = decryptedData.categoryId ?? item.category_id ?? null;
-                    if (resolvedCategoryId !== category.id) {
-                        continue;
-                    }
-
+            if (mode === 'unlink-items') {
+                for (const { item, decryptedData } of affectedItems) {
+                    const itemData = decryptedData ?? {
+                        title: item.title,
+                        websiteUrl: item.website_url ?? undefined,
+                        itemType: item.item_type,
+                        isFavorite: !!item.is_favorite,
+                    };
                     const migratedEncryptedData = await encryptItem({
-                        ...decryptedData,
-                        title: decryptedData.title || item.title,
-                        websiteUrl: decryptedData.websiteUrl || item.website_url || undefined,
-                        itemType: decryptedData.itemType || item.item_type || 'password',
-                        isFavorite: typeof decryptedData.isFavorite === 'boolean'
-                            ? decryptedData.isFavorite
-                            : !!item.is_favorite,
+                        ...itemData,
                         categoryId: null,
                     }, item.id);
 
@@ -251,7 +300,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                     };
 
                     let syncedItemOnline = false;
-                    if (isAppOnline()) {
+                    let itemRowForCache = buildVaultItemRowFromInsert(itemPayload);
+                    if (canSyncOnline) {
                         try {
                             const { data: savedItem, error } = await supabase
                                 .from('vault_items')
@@ -260,7 +310,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                                 .single();
                             if (error) throw error;
                             if (savedItem) {
-                                await upsertOfflineItemRow(user.id, savedItem, item.vault_id);
+                                itemRowForCache = savedItem;
                             }
                             syncedItemOnline = true;
                         } catch (err) {
@@ -270,34 +320,50 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         }
                     }
 
+                    updatedItemRows.push(itemRowForCache);
+
                     if (!syncedItemOnline) {
-                        await upsertOfflineItemRow(user.id, buildVaultItemRowFromInsert(itemPayload), item.vault_id);
                         await enqueueOfflineMutation({
                             userId: user.id,
                             type: 'upsert_item',
                             payload: itemPayload,
                         });
                     }
-                } catch (err) {
-                    console.error('Failed to unlink encrypted category reference:', item.id, err);
-                }
-            }
 
-            if (isAppOnline()) {
-                try {
-                    await supabase
-                        .from('vault_items')
-                        .update({ category_id: null })
-                        .eq('category_id', category.id);
-                } catch (err) {
-                    if (!isLikelyOfflineError(err)) {
-                        throw err;
+                    trustedItemIds.push(item.id);
+                }
+            } else {
+                for (const { item } of affectedItems) {
+                    let syncedItemDelete = false;
+                    if (canSyncOnline) {
+                        try {
+                            const { error } = await supabase
+                                .from('vault_items')
+                                .delete()
+                                .eq('id', item.id);
+                            if (error) throw error;
+                            syncedItemDelete = true;
+                        } catch (err) {
+                            if (!isLikelyOfflineError(err)) {
+                                throw err;
+                            }
+                        }
                     }
+
+                    deletedItemIds.push(item.id);
+                    if (!syncedItemDelete) {
+                        await enqueueOfflineMutation({
+                            userId: user.id,
+                            type: 'delete_item',
+                            payload: { id: item.id },
+                        });
+                    }
+                    trustedItemIds.push(item.id);
                 }
             }
 
             let syncedCategoryDelete = false;
-            if (isAppOnline()) {
+            if (canSyncOnline) {
                 try {
                     const { error } = await supabase
                         .from('categories')
@@ -312,7 +378,10 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                 }
             }
 
-            await removeOfflineCategoryRow(user.id, category.id);
+            await applyOfflineCategoryDeletion(user.id, category.id, {
+                updatedItems: updatedItemRows,
+                deletedItemIds,
+            });
             if (!syncedCategoryDelete) {
                 await enqueueOfflineMutation({
                     userId: user.id,
@@ -324,15 +393,30 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             toast({
                 title: t('common.success'),
                 description: syncedCategoryDelete
-                    ? t('categories.deleted')
+                    ? t(
+                        mode === 'delete-items'
+                            ? 'categories.deletedWithItems'
+                            : 'categories.deletedOnlyCategory',
+                        {
+                            defaultValue: mode === 'delete-items'
+                                ? 'Kategorie und {{count}} Einträge gelöscht.'
+                                : 'Kategorie gelöscht. {{count}} Einträge bleiben ohne Kategorie.',
+                            count: affectedItemIds.length,
+                        },
+                    )
                     : t('vault.offlineDeleteQueued', {
                         defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
                     }),
             });
 
+            await refreshIntegrityBaseline({
+                itemIds: trustedItemIds,
+                categoryIds: [category.id],
+            });
+
             setShowDeleteConfirm(false);
             onOpenChange(false);
-            onSave?.();
+            onSave?.({ type: 'deleted', categoryId: category.id });
         } catch (err) {
             console.error('Error deleting category:', err);
             toast({
@@ -344,6 +428,9 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             setLoading(false);
         }
     };
+
+    const categoryDeleteItemCount = deleteImpactCount ?? 0;
+    const categoryHasItems = categoryDeleteItemCount > 0;
 
     return (
         <>
@@ -374,47 +461,28 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         {/* Icon Selection */}
                         <div className="space-y-2">
                             <Label>{t('categories.icon')}</Label>
-                            <Tabs value={iconType} onValueChange={(v) => setIconType(v as 'emoji' | 'svg')}>
-                                <TabsList className="w-full">
-                                    <TabsTrigger value="emoji" className="flex-1">Emoji</TabsTrigger>
-                                    <TabsTrigger value="svg" className="flex-1">SVG</TabsTrigger>
-                                </TabsList>
-
-                                <TabsContent value="emoji" className="space-y-2">
-                                    {/* Quick emoji picker */}
-                                    <div className="grid grid-cols-8 gap-1">
-                                        {COMMON_EMOJIS.map((emoji) => (
-                                            <button
-                                                key={emoji}
-                                                type="button"
-                                                onClick={() => setIcon(emoji)}
-                                                className={`p-2 text-lg rounded hover:bg-accent transition-colors ${icon === emoji ? 'bg-accent ring-2 ring-primary' : ''
-                                                    }`}
-                                            >
-                                                {emoji}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <Input
-                                        value={icon}
-                                        onChange={(e) => setIcon(e.target.value)}
-                                        placeholder={t('categories.emojiPlaceholder')}
-                                        maxLength={4}
-                                    />
-                                </TabsContent>
-
-                                <TabsContent value="svg" className="space-y-2">
-                                    <Textarea
-                                        value={icon}
-                                        onChange={(e) => setIcon(e.target.value)}
-                                        placeholder='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">...</svg>'
-                                        className="font-mono text-xs h-24"
-                                    />
-                                    <p className="text-xs text-muted-foreground">
-                                        {t('categories.svgHint')}
-                                    </p>
-                                </TabsContent>
-                            </Tabs>
+                            <div className="grid grid-cols-8 gap-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setIcon('')}
+                                    className={`p-2 text-lg rounded hover:bg-accent transition-colors ${icon === '' ? 'bg-accent ring-2 ring-primary' : ''
+                                        }`}
+                                    aria-label={t('categories.noIcon', { defaultValue: 'Kein Symbol' })}
+                                >
+                                    <Folder className="mx-auto h-5 w-5" />
+                                </button>
+                                {CATEGORY_ICON_PRESETS.map((emoji, index) => (
+                                    <button
+                                        key={`${emoji}-${index}`}
+                                        type="button"
+                                        onClick={() => setIcon(emoji)}
+                                        className={`p-2 text-lg rounded hover:bg-accent transition-colors ${icon === emoji ? 'bg-accent ring-2 ring-primary' : ''
+                                            }`}
+                                    >
+                                        {emoji}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
 
                         {/* Color Picker */}
@@ -483,21 +551,54 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
 
             {/* Delete Confirmation */}
             <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-                <AlertDialogContent>
+                <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-xl">
                     <AlertDialogHeader>
-                        <AlertDialogTitle>{t('categories.deleteConfirmTitle')}</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            {t('categories.deleteConfirmDesc')}
+                        <AlertDialogTitle className="break-words">{t('categories.deleteConfirmTitle')}</AlertDialogTitle>
+                        <AlertDialogDescription className="break-words leading-relaxed">
+                            {deleteImpactLoading
+                                ? t('common.loading')
+                                : categoryHasItems
+                                    ? t('categories.deleteWithItemsDesc', {
+                                        count: categoryDeleteItemCount,
+                                        defaultValue: 'Diese Kategorie enthält {{count}} Einträge. Du kannst nur die Kategorie löschen oder die Einträge mitlöschen.',
+                                    })
+                                    : t('categories.deleteConfirmDesc')}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
-                            {t('common.delete')}
-                        </AlertDialogAction>
+                    <AlertDialogFooter className="gap-2 sm:flex-col-reverse sm:justify-start sm:space-x-0">
+                        <AlertDialogCancel className="mt-0 h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug">
+                            {t('common.cancel')}
+                        </AlertDialogCancel>
+                        {categoryHasItems && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => void handleDelete('unlink-items')}
+                                disabled={loading || deleteImpactLoading}
+                                className="h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug"
+                            >
+                                {t('categories.deleteCategoryOnly', {
+                                    defaultValue: 'Nur Kategorie löschen',
+                                })}
+                            </Button>
+                        )}
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={() => void handleDelete(categoryHasItems ? 'delete-items' : 'unlink-items')}
+                            disabled={loading || deleteImpactLoading}
+                            className="h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug"
+                        >
+                            {categoryHasItems
+                                ? t('categories.deleteCategoryAndItems', {
+                                    defaultValue: 'Kategorie und Einträge löschen',
+                                })
+                                : t('common.delete')}
+                        </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
         </>
     );
 }
+

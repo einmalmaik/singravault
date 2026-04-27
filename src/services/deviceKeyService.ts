@@ -4,50 +4,40 @@
  * @fileoverview Device Key Service for Singra Vault
  *
  * Manages a 256-bit client-side Device Key that strengthens the vault
- * encryption key. The Device Key is stored locally in IndexedDB and
- * NEVER sent to the server.
+ * encryption key. The Device Key never leaves the local runtime.
  *
  * Key derivation with Device Key:
  *   VaultKey = HKDF-Expand(Argon2id(MasterPW, Salt), DeviceKey)
  *
- * This provides protection even if the server is fully compromised
- * and the attacker has a weak master password — analogous to
- * 1Password's Secret Key, but stronger (256-bit vs 128-bit).
- *
  * SECURITY:
  * - Device Key is generated from crypto.getRandomValues (CSPRNG)
- * - Stored encrypted in IndexedDB (wrapped with a key derived from userId)
+ * - Stored in the shared local secret store
+ * - Browser runtimes without a secure local secret store must not enable it
  * - Never logged, never sent over the network
  * - Loss of Device Key + no backup = vault unrecoverable (by design)
  */
 
-// ============ Constants ============
+import {
+    isLocalSecretStoreSupported,
+    loadLocalSecretBytes,
+    removeLocalSecret,
+    saveLocalSecretBytes,
+} from '@/platform/localSecretStore';
 
-const DB_NAME = 'singra_device_keys';
-const DB_VERSION = 1;
-const STORE_NAME = 'keys';
 const DEVICE_KEY_LENGTH = 32; // 256 bits
 const HKDF_INFO = 'SINGRA_DEVICE_KEY_V1';
+const DEVICE_KEY_SECRET_PREFIX = 'device-key:';
+const LEGACY_DEVICE_KEY_DB_NAME = 'singra_device_keys';
+const LEGACY_DEVICE_KEY_DB_VERSION = 1;
+const LEGACY_DEVICE_KEY_STORE = 'keys';
+const LEGACY_WRAP_SALT = 'SINGRA_DEVICE_KEY_WRAP';
+const LEGACY_WRAP_INFO = 'device-key-wrapping';
 
-// ============ IndexedDB Helpers ============
-
-/**
- * Opens (or creates) the IndexedDB database for device key storage.
- */
-function openDB(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-        request.onupgradeneeded = () => {
-            const db = request.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME, { keyPath: 'userId' });
-            }
-        };
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
+interface LegacyDeviceKeyRecord {
+    userId: string;
+    iv: number[];
+    encrypted: number[];
+    createdAt?: string;
 }
 
 // ============ Core Functions ============
@@ -62,78 +52,47 @@ export function generateDeviceKey(): Uint8Array {
 }
 
 /**
- * Stores a Device Key in IndexedDB, wrapped (encrypted) with a
- * deterministic key derived from the userId.
+ * Stores a Device Key in the shared local secret store.
  *
- * SECURITY: The wrapping key is derived from the userId via HKDF.
- * This is NOT strong protection by itself — it primarily prevents
- * casual inspection. The real security comes from the fact that
- * the Device Key never leaves the device.
- *
- * @param userId - The user's UUID (used as wrapping context)
+ * @param userId - The user's UUID
  * @param deviceKey - The 256-bit device key to store
  */
 export async function storeDeviceKey(userId: string, deviceKey: Uint8Array): Promise<void> {
-    const wrappingKey = await deriveWrappingKey(userId);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
+    if (!(await isLocalSecretStoreSupported())) {
+        throw new Error('Secure local secret storage is not available in this runtime.');
+    }
 
-    const encrypted = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        wrappingKey,
-        deviceKey as BufferSource,
-    );
-
-    const record = {
-        userId,
-        iv: Array.from(iv),
-        encrypted: Array.from(new Uint8Array(encrypted)),
-        createdAt: new Date().toISOString(),
-    };
-
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        const request = store.put(record);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-        tx.oncomplete = () => db.close();
-    });
+    await saveLocalSecretBytes(getDeviceKeySecretKey(userId), deviceKey);
 }
 
 /**
- * Retrieves the Device Key from IndexedDB for a given user.
+ * Retrieves the Device Key from local secret storage for a given user.
+ * Legacy browser/webview IndexedDB records are migrated on read when possible.
  *
  * @param userId - The user's UUID
  * @returns The 256-bit device key, or null if not found
  */
 export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
+    const secretKey = getDeviceKeySecretKey(userId);
+
     try {
-        const db = await openDB();
-        const record = await new Promise<any>((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const store = tx.objectStore(STORE_NAME);
-            const request = store.get(userId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-            tx.oncomplete = () => db.close();
-        });
-
-        if (!record) return null;
-
-        const wrappingKey = await deriveWrappingKey(userId);
-        const iv = new Uint8Array(record.iv);
-        const encrypted = new Uint8Array(record.encrypted);
-
-        const decrypted = await crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv },
-            wrappingKey,
-            encrypted,
-        );
-
-        return new Uint8Array(decrypted);
+        const currentDeviceKey = await loadLocalSecretBytes(secretKey);
+        if (currentDeviceKey) {
+            return currentDeviceKey;
+        }
     } catch {
-        // IndexedDB might be unavailable (private browsing, etc.)
+        // Fall through to the legacy IndexedDB migration path.
+    }
+
+    try {
+        const legacyDeviceKey = await loadLegacyIndexedDbDeviceKey(userId);
+        if (!legacyDeviceKey) {
+            return null;
+        }
+
+        await migrateLegacyDeviceKeyToLocalSecretStore(userId, legacyDeviceKey);
+        return legacyDeviceKey;
+    } catch {
         return null;
     }
 }
@@ -146,36 +105,25 @@ export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
  */
 export async function hasDeviceKey(userId: string): Promise<boolean> {
     try {
-        const db = await openDB();
-        const record = await new Promise<any>((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const store = tx.objectStore(STORE_NAME);
-            const request = store.get(userId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-            tx.oncomplete = () => db.close();
-        });
-        return !!record;
+        return (await getDeviceKey(userId)) !== null;
     } catch {
         return false;
     }
 }
 
 /**
- * Deletes the Device Key from IndexedDB for a given user.
+ * Deletes the Device Key from current storage and the legacy IndexedDB store.
  *
  * @param userId - The user's UUID
  */
 export async function deleteDeviceKey(userId: string): Promise<void> {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        const request = store.delete(userId);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-        tx.oncomplete = () => db.close();
-    });
+    await removeLocalSecret(getDeviceKeySecretKey(userId));
+
+    try {
+        await deleteLegacyIndexedDbDeviceKey(userId);
+    } catch (error) {
+        console.warn('Failed to remove legacy device key record:', error);
+    }
 }
 
 // ============ HKDF-Expand: Combine Argon2id output with Device Key ============
@@ -242,22 +190,32 @@ export async function exportDeviceKeyForTransfer(
     const deviceKey = await getDeviceKey(userId);
     if (!deviceKey) return null;
 
-    // Derive a wrapping key from the PIN
-    const pinKey = await derivePinKey(pin);
     const iv = crypto.getRandomValues(new Uint8Array(12));
+    let encryptedBytes: Uint8Array | null = null;
+    let combined: Uint8Array | null = null;
+    try {
+        // Derive a wrapping key from the PIN
+        const pinKey = await derivePinKey(pin);
 
-    const encrypted = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        pinKey,
-        deviceKey as BufferSource,
-    );
+        const encrypted = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv },
+            pinKey,
+            deviceKey as BufferSource,
+        );
 
-    // Format: base64(iv + encrypted)
-    const combined = new Uint8Array(iv.length + encrypted.byteLength);
-    combined.set(iv, 0);
-    combined.set(new Uint8Array(encrypted), iv.length);
+        encryptedBytes = new Uint8Array(encrypted);
+        // Format: base64(iv + encrypted)
+        combined = new Uint8Array(iv.length + encryptedBytes.byteLength);
+        combined.set(iv, 0);
+        combined.set(encryptedBytes, iv.length);
 
-    return uint8ArrayToBase64(combined);
+        return uint8ArrayToBase64(combined);
+    } finally {
+        deviceKey.fill(0);
+        iv.fill(0);
+        encryptedBytes?.fill(0);
+        combined?.fill(0);
+    }
 }
 
 /**
@@ -289,10 +247,14 @@ export async function importDeviceKeyFromTransfer(
         );
 
         const deviceKey = new Uint8Array(decrypted);
-        if (deviceKey.length !== DEVICE_KEY_LENGTH) return false;
+        try {
+            if (deviceKey.length !== DEVICE_KEY_LENGTH) return false;
 
-        await storeDeviceKey(userId, deviceKey);
-        return true;
+            await storeDeviceKey(userId, deviceKey);
+            return true;
+        } finally {
+            deviceKey.fill(0);
+        }
     } catch {
         // Decryption failed — wrong PIN or corrupted data
         return false;
@@ -301,11 +263,124 @@ export async function importDeviceKeyFromTransfer(
 
 // ============ Internal Helpers ============
 
-/**
- * Derives a wrapping key from the userId for IndexedDB storage.
- * This is defense-in-depth, not the primary security mechanism.
- */
-async function deriveWrappingKey(userId: string): Promise<CryptoKey> {
+function getDeviceKeySecretKey(userId: string): string {
+    return `${DEVICE_KEY_SECRET_PREFIX}${userId}`;
+}
+
+async function migrateLegacyDeviceKeyToLocalSecretStore(
+    userId: string,
+    deviceKey: Uint8Array,
+): Promise<void> {
+    if (!(await isLocalSecretStoreSupported())) {
+        return;
+    }
+
+    try {
+        await saveLocalSecretBytes(getDeviceKeySecretKey(userId), deviceKey);
+        await deleteLegacyIndexedDbDeviceKey(userId);
+    } catch (error) {
+        console.warn('Failed to migrate legacy device key into the local secret store:', error);
+    }
+}
+
+async function loadLegacyIndexedDbDeviceKey(userId: string): Promise<Uint8Array | null> {
+    if (!isLegacyDeviceKeyStoreAvailable()) {
+        return null;
+    }
+
+    try {
+        const record = await withLegacyDeviceKeyStore<LegacyDeviceKeyRecord | null>(
+            'readonly',
+            (store, resolve, reject) => {
+                const request = store.get(userId);
+                request.onsuccess = () => resolve((request.result as LegacyDeviceKeyRecord | undefined) ?? null);
+                request.onerror = () => reject(request.error);
+            },
+        );
+
+        if (!record) {
+            return null;
+        }
+
+        return decryptLegacyDeviceKeyRecord(userId, record);
+    } catch (error) {
+        console.warn('Failed to load legacy device key from IndexedDB:', error);
+        return null;
+    }
+}
+
+async function deleteLegacyIndexedDbDeviceKey(userId: string): Promise<void> {
+    if (!isLegacyDeviceKeyStoreAvailable()) {
+        return;
+    }
+
+    await withLegacyDeviceKeyStore<void>('readwrite', (store, resolve, reject) => {
+        const request = store.delete(userId);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+
+function isLegacyDeviceKeyStoreAvailable(): boolean {
+    return typeof indexedDB !== 'undefined'
+        && typeof crypto !== 'undefined'
+        && typeof crypto.subtle !== 'undefined';
+}
+
+function openLegacyDeviceKeyDb(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(LEGACY_DEVICE_KEY_DB_NAME, LEGACY_DEVICE_KEY_DB_VERSION);
+
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(LEGACY_DEVICE_KEY_STORE)) {
+                db.createObjectStore(LEGACY_DEVICE_KEY_STORE, { keyPath: 'userId' });
+            }
+        };
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+function withLegacyDeviceKeyStore<T>(
+    mode: IDBTransactionMode,
+    handler: (
+        store: IDBObjectStore,
+        resolve: (value: T) => void,
+        reject: (reason?: unknown) => void,
+    ) => void,
+): Promise<T> {
+    return new Promise((resolve, reject) => {
+        openLegacyDeviceKeyDb()
+            .then((db) => {
+                const transaction = db.transaction(LEGACY_DEVICE_KEY_STORE, mode);
+                const store = transaction.objectStore(LEGACY_DEVICE_KEY_STORE);
+                handler(store, resolve, reject);
+            })
+            .catch(reject);
+    });
+}
+
+async function decryptLegacyDeviceKeyRecord(
+    userId: string,
+    record: LegacyDeviceKeyRecord,
+): Promise<Uint8Array | null> {
+    if (!Array.isArray(record.iv) || !Array.isArray(record.encrypted)) {
+        return null;
+    }
+
+    const wrappingKey = await deriveLegacyWrappingKey(userId);
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: new Uint8Array(record.iv) },
+        wrappingKey,
+        new Uint8Array(record.encrypted),
+    );
+
+    return new Uint8Array(decrypted);
+}
+
+async function deriveLegacyWrappingKey(userId: string): Promise<CryptoKey> {
     const keyMaterial = await crypto.subtle.importKey(
         'raw',
         new TextEncoder().encode(userId),
@@ -318,13 +393,13 @@ async function deriveWrappingKey(userId: string): Promise<CryptoKey> {
         {
             name: 'HKDF',
             hash: 'SHA-256',
-            salt: new TextEncoder().encode('SINGRA_DEVICE_KEY_WRAP'),
-            info: new TextEncoder().encode('device-key-wrapping'),
+            salt: new TextEncoder().encode(LEGACY_WRAP_SALT),
+            info: new TextEncoder().encode(LEGACY_WRAP_INFO),
         },
         keyMaterial,
         { name: 'AES-GCM', length: 256 },
         false,
-        ['encrypt', 'decrypt'],
+        ['decrypt'],
     );
 }
 

@@ -37,6 +37,7 @@ import { writeClipboard } from "@/services/clipboardService";
 import {
     hashBackupCode,
     generateBackupCodes,
+    verifyBackupCodeHash,
 } from "@/services/twoFactorService";
 import { languages, changeLanguage } from "@/i18n";
 
@@ -64,8 +65,8 @@ describe("Crypto Edge Cases", () => {
         const key = await deriveKey("x", salt, 2); // Single character password
         
         const plaintext = { title: "Test", password: "secret" };
-        const encrypted = await encryptVaultItem(plaintext, key);
-        const decrypted = await decryptVaultItem(encrypted, key);
+        const encrypted = await encryptVaultItem(plaintext, key, "edge-minimal-password");
+        const decrypted = await decryptVaultItem(encrypted, key, "edge-minimal-password");
         
         expect(decrypted.title).toBe("Test");
         expect(decrypted.password).toBe("secret");
@@ -75,8 +76,8 @@ describe("Crypto Edge Cases", () => {
         const largeText = "A".repeat(100 * 1024); // 100KB
         const plaintext = { title: "Large", notes: largeText };
         
-        const encrypted = await encryptVaultItem(plaintext, testKey);
-        const decrypted = await decryptVaultItem(encrypted, testKey);
+        const encrypted = await encryptVaultItem(plaintext, testKey, "edge-large");
+        const decrypted = await decryptVaultItem(encrypted, testKey, "edge-large");
         
         expect(decrypted.notes).toBe(largeText);
         expect(decrypted.notes?.length).toBe(100 * 1024);
@@ -85,8 +86,8 @@ describe("Crypto Edge Cases", () => {
     it("preserves NULL bytes in plaintext", async () => {
         const plaintext = { title: "Test", password: "pass\x00word\x00null" };
         
-        const encrypted = await encryptVaultItem(plaintext, testKey);
-        const decrypted = await decryptVaultItem(encrypted, testKey);
+        const encrypted = await encryptVaultItem(plaintext, testKey, "edge-null-bytes");
+        const decrypted = await decryptVaultItem(encrypted, testKey, "edge-null-bytes");
         
         expect(decrypted.password).toBe("pass\x00word\x00null");
     });
@@ -94,8 +95,8 @@ describe("Crypto Edge Cases", () => {
     it("preserves BOM character in plaintext", async () => {
         const plaintext = { title: "\uFEFFTitle with BOM", notes: "\uFEFFNotes" };
         
-        const encrypted = await encryptVaultItem(plaintext, testKey);
-        const decrypted = await decryptVaultItem(encrypted, testKey);
+        const encrypted = await encryptVaultItem(plaintext, testKey, "edge-bom");
+        const decrypted = await decryptVaultItem(encrypted, testKey, "edge-bom");
         
         expect(decrypted.title).toBe("\uFEFFTitle with BOM");
         expect(decrypted.notes).toBe("\uFEFFNotes");
@@ -104,8 +105,8 @@ describe("Crypto Edge Cases", () => {
     it("preserves RTL marks in plaintext", async () => {
         const plaintext = { title: "\u200Fعربي\u200F", password: "test" };
         
-        const encrypted = await encryptVaultItem(plaintext, testKey);
-        const decrypted = await decryptVaultItem(encrypted, testKey);
+        const encrypted = await encryptVaultItem(plaintext, testKey, "edge-rtl");
+        const decrypted = await decryptVaultItem(encrypted, testKey, "edge-rtl");
         
         expect(decrypted.title).toBe("\u200Fعربي\u200F");
     });
@@ -113,8 +114,8 @@ describe("Crypto Edge Cases", () => {
     it("handles VaultItemData with all fields undefined", async () => {
         const plaintext = {};
         
-        const encrypted = await encryptVaultItem(plaintext, testKey);
-        const decrypted = await decryptVaultItem(encrypted, testKey);
+        const encrypted = await encryptVaultItem(plaintext, testKey, "edge-empty");
+        const decrypted = await decryptVaultItem(encrypted, testKey, "edge-empty");
         
         expect(decrypted).toEqual({});
     });
@@ -128,8 +129,8 @@ describe("Crypto Edge Cases", () => {
             notes: longValue,
         };
         
-        const encrypted = await encryptVaultItem(plaintext, testKey);
-        const decrypted = await decryptVaultItem(encrypted, testKey);
+        const encrypted = await encryptVaultItem(plaintext, testKey, "edge-long-fields");
+        const decrypted = await decryptVaultItem(encrypted, testKey, "edge-long-fields");
         
         expect(decrypted.title?.length).toBe(50 * 1024);
         expect(decrypted.username?.length).toBe(50 * 1024);
@@ -166,10 +167,10 @@ describe("Crypto Edge Cases", () => {
         const salt2 = generateSalt();
         const key2 = await deriveKey("password2", salt2, 2);
         
-        const encrypted = await encryptVaultItem(plaintext, key1);
+        const encrypted = await encryptVaultItem(plaintext, key1, "edge-wrong-key");
         
         await expect(
-            decryptVaultItem(encrypted, key2)
+            decryptVaultItem(encrypted, key2, "edge-wrong-key")
         ).rejects.toThrow();
     });
 });
@@ -464,10 +465,8 @@ describe("Backup-Code Edge Cases", () => {
 
     it("normalizes lowercase backup code to uppercase", async () => {
         const hash1 = await hashBackupCode("aaaa-bbbb", "salt123");
-        const hash2 = await hashBackupCode("AAAABBBB", "salt123");
         
-        // After normalization (remove dash + uppercase), should be same
-        expect(hash1).toBe(hash2);
+        expect(await verifyBackupCodeHash("AAAABBBB", hash1)).toBe(true);
     });
 
     it("generates 5 unique backup codes without duplicates", () => {

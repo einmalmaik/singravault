@@ -37,7 +37,7 @@ vi.mock("hash-wasm", () => ({
             ["deriveBits"],
         );
         const bits = await crypto.subtle.deriveBits(
-            { name: "PBKDF2", salt: saltBytes as any, iterations: 1000, hash: "SHA-256" },
+            { name: "PBKDF2", salt: saltBytes, iterations: 1000, hash: "SHA-256" },
             baseKey,
             hashLength * 8,
         );
@@ -66,7 +66,6 @@ const mockSupabase = {
         getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-user-1" } }, error: null }),
         getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "test-token" } }, error: null }),
         signUp: vi.fn(),
-        signInWithPassword: vi.fn(),
         signOut: vi.fn().mockResolvedValue({ error: null }),
     },
 };

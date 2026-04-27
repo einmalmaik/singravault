@@ -39,6 +39,7 @@ import { Footer } from '@/components/landing/Footer';
 import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
 type WhitepaperTag =
+    | 'auth'
     | 'crypto'
     | 'client'
     | 'rls'
@@ -58,6 +59,8 @@ interface WhitepaperSection {
     bullets: string[];
     evidence: string[];
 }
+
+const SECURITY_WHITEPAPER_LAST_UPDATED = '26.04.2026';
 
 function asStringArray(value: unknown): string[] {
     if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
@@ -80,6 +83,7 @@ export default function SecurityWhitepaper() {
     const tagMeta = useMemo(() => {
         const tags: Array<{ id: WhitepaperTag; label: string }> = [
             { id: 'crypto', label: t('securityWhitepaper.tags.crypto') },
+            { id: 'auth', label: t('securityWhitepaper.tags.auth') },
             { id: 'client', label: t('securityWhitepaper.tags.client') },
             { id: 'rls', label: t('securityWhitepaper.tags.rls') },
             { id: 'storage', label: t('securityWhitepaper.tags.storage') },
@@ -171,6 +175,9 @@ export default function SecurityWhitepaper() {
                 evidence: [
                     '@singra/premium/src/services/fileAttachmentService.ts',
                     'supabase/migrations/20260213120000_secure_vault_attachments_bucket.sql',
+                    'supabase/migrations/20260426143000_file_attachment_e2ee_chunked_limits.sql',
+                    'docs/premium-file-upload-e2ee.md',
+                    'scripts/check-release-artifacts.mjs',
                 ],
             },
             {
@@ -196,6 +203,41 @@ export default function SecurityWhitepaper() {
                 evidence: ['src/services/offlineVaultService.ts', 'src/contexts/VaultContext.tsx'],
             },
             {
+                id: 'authentication',
+                tags: ['auth', 'client', 'hardening'],
+                icon: <Lock className="h-5 w-5 text-primary" />,
+                title: t('securityWhitepaper.sections.authentication.title'),
+                summary: t('securityWhitepaper.sections.authentication.summary'),
+                bullets: asStringArray(
+                    t('securityWhitepaper.sections.authentication.bullets', { returnObjects: true }),
+                ),
+                evidence: [
+                    'src/pages/Auth.tsx',
+                    'src/services/opaqueService.ts',
+                    'src/services/accountPasswordResetService.ts',
+                    'supabase/functions/auth-opaque/index.ts',
+                    'supabase/functions/auth-session/index.ts',
+                    'supabase/functions/auth-register/index.ts',
+                    'supabase/functions/auth-recovery/index.ts',
+                    'supabase/functions/auth-reset-password/index.ts',
+                ],
+            },
+            {
+                id: 'categories',
+                tags: ['crypto', 'client', 'offline', 'integrity'],
+                icon: <Database className="h-5 w-5 text-primary" />,
+                title: t('securityWhitepaper.sections.categories.title'),
+                summary: t('securityWhitepaper.sections.categories.summary'),
+                bullets: asStringArray(t('securityWhitepaper.sections.categories.bullets', { returnObjects: true })),
+                evidence: [
+                    'src/components/vault/CategoryDialog.tsx:200 (loadItemsInCategory: Eintrag-zu-Kategorie-Zuordnung)',
+                    'src/components/vault/CategoryDialog.tsx:264 (handleDelete: Nur Kategorie vs. Kategorie + Einträge)',
+                    'src/services/offlineVaultService.ts:411 (applyOfflineCategoryDeletion: ein lokaler Snapshot-Write)',
+                    'src/components/vault/VaultSidebar.tsx:124 (race-sicherer Kategorie-Refresh)',
+                    'src/components/vault/categoryIconPolicy.ts:9 (zulässige Icon-Presets; kein SVG-Input)',
+                ],
+            },
+            {
                 id: 'integrity',
                 tags: ['integrity', 'crypto', 'limitations'],
                 icon: <AlertTriangle className="h-5 w-5 text-primary" />,
@@ -204,7 +246,15 @@ export default function SecurityWhitepaper() {
                 bullets: asStringArray(
                     t('securityWhitepaper.sections.integrity.bullets', { returnObjects: true }),
                 ),
-                evidence: ['@singra/premium/src/services/vaultIntegrityService.ts', 'src/contexts/VaultContext.tsx'],
+                evidence: [
+                    'src/services/vaultIntegrityService.ts:131 (inspectVaultSnapshotIntegrity)',
+                    'src/services/vaultIntegrityService.ts:377 (computeVaultSnapshotDigest)',
+                    'src/services/vaultIntegrityService.ts:494 (detectItemDigestDrift)',
+                    'src/services/vaultIntegrityService.ts:540 (detectCategoryDigestDriftIds)',
+                    'src/contexts/VaultContext.tsx:1052 (refreshIntegrityBaseline)',
+                    'src/contexts/VaultContext.tsx:2412 (verifyIntegrity)',
+                    'src/components/vault/VaultIntegrityRecovery.tsx',
+                ],
             },
             {
                 id: 'headers',
@@ -496,7 +546,7 @@ export default function SecurityWhitepaper() {
                                 {t('securityWhitepaper.references.links.nist80063b')}
                             </a>
                             <div className="pt-2 text-xs text-muted-foreground">
-                                {t('securityWhitepaper.lastUpdated', { date: new Date().toLocaleDateString() })}
+                                {t('securityWhitepaper.lastUpdated', { date: SECURITY_WHITEPAPER_LAST_UPDATED })}
                             </div>
                         </CardContent>
                     </Card>

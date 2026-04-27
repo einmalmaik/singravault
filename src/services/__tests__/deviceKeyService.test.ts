@@ -1,0 +1,193 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const localSecretState = vi.hoisted(() => ({
+  supported: true,
+  store: new Map<string, Uint8Array>(),
+}));
+
+vi.mock("@/platform/localSecretStore", () => ({
+  isLocalSecretStoreSupported: vi.fn(async () => localSecretState.supported),
+  saveLocalSecretBytes: vi.fn(async (key: string, value: Uint8Array) => {
+    localSecretState.store.set(key, new Uint8Array(value));
+  }),
+  loadLocalSecretBytes: vi.fn(async (key: string) => {
+    const value = localSecretState.store.get(key);
+    return value ? new Uint8Array(value) : null;
+  }),
+  removeLocalSecret: vi.fn(async (key: string) => {
+    localSecretState.store.delete(key);
+  }),
+}));
+
+import {
+  deleteDeviceKey,
+  exportDeviceKeyForTransfer,
+  generateDeviceKey,
+  getDeviceKey,
+  hasDeviceKey,
+  importDeviceKeyFromTransfer,
+  storeDeviceKey,
+} from "@/services/deviceKeyService";
+
+const LEGACY_DB_NAME = "singra_device_keys";
+const LEGACY_DB_VERSION = 1;
+const LEGACY_STORE_NAME = "keys";
+
+function requestToPromise<T>(request: IDBRequest): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result as T);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function openLegacyDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(LEGACY_DB_NAME, LEGACY_DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(LEGACY_STORE_NAME)) {
+        db.createObjectStore(LEGACY_STORE_NAME, { keyPath: "userId" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function writeLegacyDeviceKeyRecord(userId: string, deviceKey: Uint8Array): Promise<void> {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(userId),
+    "HKDF",
+    false,
+    ["deriveKey"],
+  );
+  const wrappingKey = await crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new TextEncoder().encode("SINGRA_DEVICE_KEY_WRAP"),
+      info: new TextEncoder().encode("device-key-wrapping"),
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"],
+  );
+
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    wrappingKey,
+    deviceKey,
+  );
+
+  const db = await openLegacyDb();
+  const transaction = db.transaction(LEGACY_STORE_NAME, "readwrite");
+  const store = transaction.objectStore(LEGACY_STORE_NAME);
+  await requestToPromise(store.put(
+    {
+      userId,
+      iv: Array.from(iv),
+      encrypted: Array.from(new Uint8Array(encrypted)),
+      createdAt: new Date().toISOString(),
+    },
+    userId,
+  ));
+}
+
+async function readLegacyDeviceKeyRecord(userId: string): Promise<unknown> {
+  const db = await openLegacyDb();
+  const transaction = db.transaction(LEGACY_STORE_NAME, "readonly");
+  const store = transaction.objectStore(LEGACY_STORE_NAME);
+  return requestToPromise(store.get(userId));
+}
+
+describe("deviceKeyService", () => {
+  beforeEach(() => {
+    localSecretState.supported = true;
+    localSecretState.store.clear();
+  });
+
+  it("stores and loads device keys through the local secret store", async () => {
+    const deviceKey = new Uint8Array(32).fill(7);
+
+    await storeDeviceKey("user-1", deviceKey);
+
+    await expect(getDeviceKey("user-1")).resolves.toEqual(deviceKey);
+    await expect(hasDeviceKey("user-1")).resolves.toBe(true);
+  });
+
+  it("rejects storing a device key when secure local storage is unavailable", async () => {
+    localSecretState.supported = false;
+
+    await expect(storeDeviceKey("user-1", generateDeviceKey())).rejects.toThrow(
+      "Secure local secret storage is not available in this runtime.",
+    );
+    await expect(hasDeviceKey("user-1")).resolves.toBe(false);
+  });
+
+  it("deletes stored device keys", async () => {
+    await storeDeviceKey("user-1", new Uint8Array(32).fill(9));
+    await deleteDeviceKey("user-1");
+
+    await expect(getDeviceKey("user-1")).resolves.toBeNull();
+    await expect(hasDeviceKey("user-1")).resolves.toBe(false);
+  });
+
+  it("migrates legacy IndexedDB device keys into the local secret store", async () => {
+    const legacyDeviceKey = new Uint8Array(32);
+    for (let index = 0; index < legacyDeviceKey.length; index += 1) {
+      legacyDeviceKey[index] = index + 11;
+    }
+
+    await writeLegacyDeviceKeyRecord("legacy-user", legacyDeviceKey);
+
+    await expect(getDeviceKey("legacy-user")).resolves.toEqual(legacyDeviceKey);
+    await expect(hasDeviceKey("legacy-user")).resolves.toBe(true);
+    expect(localSecretState.store.get("device-key:legacy-user")).toEqual(legacyDeviceKey);
+    await expect(readLegacyDeviceKeyRecord("legacy-user")).resolves.toBeUndefined();
+  });
+
+  it("still reads legacy IndexedDB device keys when migration cannot persist yet", async () => {
+    const legacyDeviceKey = new Uint8Array(32).fill(13);
+    localSecretState.supported = false;
+
+    await writeLegacyDeviceKeyRecord("legacy-unsupported-user", legacyDeviceKey);
+
+    await expect(getDeviceKey("legacy-unsupported-user")).resolves.toEqual(legacyDeviceKey);
+    expect(localSecretState.store.has("device-key:legacy-unsupported-user")).toBe(false);
+    await expect(readLegacyDeviceKeyRecord("legacy-unsupported-user")).resolves.toEqual(
+      expect.objectContaining({ userId: "legacy-unsupported-user" }),
+    );
+  });
+
+  it("exports and imports device keys with PIN-based transfer encryption", async () => {
+    const original = new Uint8Array(32);
+    for (let index = 0; index < original.length; index += 1) {
+      original[index] = index + 1;
+    }
+
+    await storeDeviceKey("user-1", original);
+    const transferData = await exportDeviceKeyForTransfer("user-1", "123456");
+
+    expect(transferData).toEqual(expect.any(String));
+
+    await deleteDeviceKey("user-1");
+    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "123456")).resolves.toBe(true);
+    await expect(getDeviceKey("user-1")).resolves.toEqual(original);
+  });
+
+  it("rejects import when the transfer PIN is wrong", async () => {
+    const original = new Uint8Array(32).fill(5);
+    await storeDeviceKey("user-1", original);
+
+    const transferData = await exportDeviceKeyForTransfer("user-1", "123456");
+    await deleteDeviceKey("user-1");
+
+    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "654321")).resolves.toBe(false);
+    await expect(getDeviceKey("user-1")).resolves.toBeNull();
+  });
+});

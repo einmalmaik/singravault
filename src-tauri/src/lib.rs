@@ -9,6 +9,7 @@ use tauri::{Emitter, Manager};
 const KEYCHAIN_SERVICE: &str = "Singra Vault";
 const REFRESH_TOKEN_ACCOUNT: &str = "active-refresh-token";
 const PKCE_VERIFIER_ACCOUNT: &str = "active-pkce-verifier";
+const LOCAL_SECRET_ACCOUNT_PREFIX: &str = "local-secret::";
 const PKCE_VERIFIER_MAX_AGE_MS: u128 = 10 * 60 * 1000;
 const SINGLE_INSTANCE_DEEP_LINK_EVENT: &str = "singra://deep-link";
 const TAURI_OAUTH_CALLBACK_PREFIX: &str = "singravault://auth/callback";
@@ -108,12 +109,53 @@ fn clear_pkce_verifier(key: String) -> Result<(), String> {
     save_pkce_store(&store)
 }
 
+#[tauri::command]
+fn save_local_secret(key: String, value: String) -> Result<(), String> {
+    let entry = local_secret_entry(&key)?;
+    let trimmed_value = value.trim();
+    if trimmed_value.is_empty() {
+        return Err("local secret value must not be empty".to_string());
+    }
+
+    entry.set_password(trimmed_value).map_err(keyring_error)
+}
+
+#[tauri::command]
+fn load_local_secret(key: String) -> Result<Option<String>, String> {
+    let entry = local_secret_entry(&key)?;
+    match entry.get_password() {
+        Ok(value) if value.trim().is_empty() => Ok(None),
+        Ok(value) => Ok(Some(value)),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(error) => Err(keyring_error(error)),
+    }
+}
+
+#[tauri::command]
+fn clear_local_secret(key: String) -> Result<(), String> {
+    let entry = local_secret_entry(&key)?;
+    match entry.delete_credential() {
+        Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+        Err(error) => Err(keyring_error(error)),
+    }
+}
+
 fn keychain_entry() -> Result<Entry, String> {
     Entry::new(KEYCHAIN_SERVICE, REFRESH_TOKEN_ACCOUNT).map_err(keyring_error)
 }
 
 fn pkce_entry() -> Result<Entry, String> {
     Entry::new(KEYCHAIN_SERVICE, PKCE_VERIFIER_ACCOUNT).map_err(keyring_error)
+}
+
+fn local_secret_entry(key: &str) -> Result<Entry, String> {
+    let normalized_key = key.trim();
+    if normalized_key.is_empty() {
+        return Err("local secret key must not be empty".to_string());
+    }
+
+    let account = format!("{LOCAL_SECRET_ACCOUNT_PREFIX}{normalized_key}");
+    Entry::new(KEYCHAIN_SERVICE, &account).map_err(keyring_error)
 }
 
 fn load_pkce_store() -> Result<PkceVerifierStore, String> {
@@ -219,7 +261,10 @@ pub fn run() {
             clear_refresh_token,
             save_pkce_verifier,
             load_pkce_verifier,
-            clear_pkce_verifier
+            clear_pkce_verifier,
+            save_local_secret,
+            load_local_secret,
+            clear_local_secret
         ])
         .setup(|_app| {
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]

@@ -12,7 +12,7 @@
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogContext {
-    [key: string]: any;
+    [key: string]: unknown;
 }
 
 class Logger {
@@ -58,7 +58,7 @@ class Logger {
     /**
      * Sanitizes sensitive data from objects before logging
      */
-    private sanitize(data: any): any {
+    private sanitize(data: unknown): unknown {
         if (data === null || data === undefined) {
             return data;
         }
@@ -68,10 +68,11 @@ class Logger {
         }
 
         if (typeof data === 'object') {
-            const sanitized: any = Array.isArray(data) ? [] : {};
+            const source = data as Record<string, unknown>;
+            const sanitized: Record<string, unknown> | unknown[] = Array.isArray(data) ? [] : {};
 
-            for (const key in data) {
-                if (data.hasOwnProperty(key)) {
+            for (const key in source) {
+                if (Object.prototype.hasOwnProperty.call(source, key)) {
                     const lowerKey = key.toLowerCase();
 
                     // Check if key contains sensitive terms
@@ -81,10 +82,10 @@ class Logger {
 
                     if (isSensitive) {
                         sanitized[key] = '[REDACTED]';
-                    } else if (typeof data[key] === 'object') {
-                        sanitized[key] = this.sanitize(data[key]);
+                    } else if (typeof source[key] === 'object') {
+                        sanitized[key] = this.sanitize(source[key]);
                     } else {
-                        sanitized[key] = data[key];
+                        sanitized[key] = source[key];
                     }
                 }
             }

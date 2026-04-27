@@ -30,9 +30,9 @@ describe('Security Regression Test Suite', () => {
         });
     });
 
-    describe('C3: Post-Quantum Cryptography', () => {
-        it('should generate hybrid PQ+RSA key pairs', async () => {
-            const result = await generateUserKeyPair('test-master-password', 2);
+    describe('C3: Post-Quantum sharing-key protection', () => {
+        it('should generate hybrid PQ+RSA key-wrapping key pairs', async () => {
+            const result = await generateUserKeyPair('test-master-password');
 
             // Should have both RSA and PQ keys
             expect(result.publicKey).toBeDefined();

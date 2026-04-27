@@ -48,6 +48,7 @@ describe('USK Layer — createEncryptedUserKey / unwrapUserKey', () => {
 
     expect(typeof bundle.encryptedUserKey).toBe('string');
     expect(bundle.encryptedUserKey.length).toBeGreaterThan(0);
+    expect(bundle.encryptedUserKey.startsWith('usk-wrap-v2:')).toBe(true);
 
     const recovered = await unwrapUserKey(bundle.encryptedUserKey, kdfOutputBytes);
     expect(recovered.type).toBe('secret');
@@ -126,6 +127,7 @@ describe('USK Layer — rewrapUserKey', () => {
 
     const newKdf = generateTestKdfOutput();
     const rewrapped = await rewrapUserKey(bundle.encryptedUserKey, oldKdf, newKdf);
+    expect(rewrapped.startsWith('usk-wrap-v2:')).toBe(true);
 
     // Must succeed with newKdf
     const recoveredKey = await unwrapUserKey(rewrapped, newKdf);

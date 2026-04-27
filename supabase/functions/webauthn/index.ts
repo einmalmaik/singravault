@@ -7,6 +7,7 @@
  * - generate-authentication-options: Creates a challenge for passkey authentication
  * - verify-authentication: Verifies the authentication response
  * - activate-prf: Verifies authentication and stores wrapped master key for PRF unlock
+ * - upgrade-wrapped-key: Verifies authentication and rotates legacy wrapped key material
  * - list-credentials: Lists all registered passkeys for a user
  * - delete-credential: Removes a registered passkey
  *
@@ -35,6 +36,10 @@ import {
     FIRST_PARTY_DESKTOP_ORIGINS,
     FIRST_PARTY_LOCAL_DEV_ORIGINS,
 } from "../_shared/desktopOrigins.ts";
+import {
+    authorizeWebauthnAction,
+    isWebauthnAction,
+} from "./authPolicy.ts";
 
 const DEFAULT_SITE_URL = "https://singravault.mauntingstudios.de";
 const CONFIGURED_SITE_ORIGIN = normalizeHttpOrigin(Deno.env.get("SITE_URL")) ?? DEFAULT_SITE_URL;
@@ -96,7 +101,11 @@ Deno.serve(async (req: Request) => {
 
         // 2. Parse action & Auth check
         const body = await req.json();
-        const { action, email } = body;
+        const { action } = body;
+
+        if (!isWebauthnAction(action)) {
+            return jsonResponse({ error: `Unknown action: ${String(action)}` }, 400, corsHeaders);
+        }
 
         let user: { id: string; email?: string } | null = null;
 
@@ -113,37 +122,13 @@ Deno.serve(async (req: Request) => {
             }
         }
 
-        if (!user) {
-            // Bestimme, ob ein gültiges JWT nötig ist.
-            const requiresAuth = !["generate-authentication-options", "verify-authentication"].includes(action);
-
-            if (requiresAuth) {
-                return jsonResponse({ error: "Unauthorized", details: authErrorDetails }, 401, corsHeaders);
-            }
-
-            // Für Login: Hole die User ID anhand der E-Mail aus der RPC
-            if (!email) {
-                return jsonResponse({ error: "Missing email for authentication" }, 400, corsHeaders);
-            }
-            const { data: users, error: rpcError } = await supabaseAdmin.rpc("get_user_id_by_email", { p_email: email });
-            if (rpcError || !users || users.length === 0) {
-                // Enumeration Guard
-                if (action === "generate-authentication-options") {
-                    const fakeChallenge = new Uint8Array(32);
-                    crypto.getRandomValues(fakeChallenge);
-                    const fakeChallengeB64 = isoBase64URL.fromBuffer(fakeChallenge);
-                    return jsonResponse({
-                        options: { rpId: getRpConfig(req).rpID, challenge: fakeChallengeB64, allowCredentials: [], userVerification: "required" },
-                        prfSalts: {}
-                    }, 200, corsHeaders);
-                } else if (action === "verify-authentication") {
-                    return jsonResponse({ error: "Verification failed" }, 400, corsHeaders);
-                } else {
-                    return jsonResponse({ error: "Invalid user" }, 400, corsHeaders);
-                }
-            }
-            user = { id: users[0].id, email: email };
+        // WebAuthn here extends vault unlock for an already authenticated app
+        // identity. It must not become a parallel login channel.
+        const authz = authorizeWebauthnAction(action, user, authErrorDetails);
+        if (!authz.ok) {
+            return jsonResponse(authz.body, authz.status, corsHeaders);
         }
+        user = authz.user;
 
         const rp = getRpConfig(req);
 
@@ -158,10 +143,13 @@ Deno.serve(async (req: Request) => {
                 return await handleGenerateAuthenticationOptions(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "verify-authentication":
-                return await handleVerifyAuthentication(user as any, rp, supabaseAdmin, body, corsHeaders);
+                return await handleVerifyAuthentication(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "activate-prf":
                 return await handleActivatePrf(user, rp, supabaseAdmin, body, corsHeaders);
+
+            case "upgrade-wrapped-key":
+                return await handleUpgradeWrappedKey(user, rp, supabaseAdmin, body, corsHeaders);
 
             case "list-credentials":
                 return await handleListCredentials(user, rp, supabaseAdmin, corsHeaders);
@@ -174,14 +162,7 @@ Deno.serve(async (req: Request) => {
         }
     } catch (err) {
         console.error("WebAuthn edge function error:", err);
-        return jsonResponse(
-            {
-                error: "Internal server error",
-                details: err instanceof Error ? err.message : String(err),
-            },
-            500,
-            corsHeaders,
-        );
+        return jsonResponse({ error: "Internal server error" }, 500, corsHeaders);
     }
 });
 
@@ -668,6 +649,124 @@ async function handleActivatePrf(
     }
 }
 
+async function handleUpgradeWrappedKey(
+    user: { id: string },
+    rp: { rpID: string; expectedOrigins: string[]; expectedRPIDs: string[] },
+    supabase: ReturnType<typeof createClient>,
+    body: Record<string, unknown>,
+    corsHeaders: Record<string, string>,
+) {
+    const { credential, expectedCredentialId, credentialId, wrappedMasterKey } = body as {
+        credential: unknown;
+        expectedCredentialId?: string;
+        credentialId?: string;
+        wrappedMasterKey?: string;
+    };
+    const targetCredentialId = expectedCredentialId || credentialId;
+
+    if (!credential) {
+        return jsonResponse({ error: "Missing credential response" }, 400, corsHeaders);
+    }
+
+    if (!targetCredentialId) {
+        return jsonResponse({ error: "Missing expectedCredentialId" }, 400, corsHeaders);
+    }
+
+    if (typeof wrappedMasterKey !== "string" || wrappedMasterKey.trim().length === 0) {
+        return jsonResponse({ error: "Missing wrappedMasterKey" }, 400, corsHeaders);
+    }
+
+    const credentialResponse = credential as { id?: string };
+    if (credentialResponse.id !== targetCredentialId) {
+        return jsonResponse({ error: "Unexpected passkey credential used" }, 400, corsHeaders);
+    }
+
+    const { data: challenges } = await supabase
+        .from("webauthn_challenges")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("type", "authentication")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+    if (!challenges || challenges.length === 0) {
+        return jsonResponse({ error: "No pending authentication challenge" }, 400, corsHeaders);
+    }
+
+    const storedChallenge = challenges[0];
+
+    if (new Date(storedChallenge.expires_at) < new Date()) {
+        await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+        return jsonResponse({ error: "Challenge expired" }, 400, corsHeaders);
+    }
+
+    await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+
+    const { data: dbCredentials } = await supabase
+        .from("passkey_credentials")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("credential_id", targetCredentialId);
+
+    if (!dbCredentials || dbCredentials.length === 0) {
+        return jsonResponse({ error: "Credential not found" }, 400, corsHeaders);
+    }
+
+    const dbCredential = dbCredentials[0] as {
+        id: string;
+        credential_id: string;
+        rp_id?: string | null;
+        public_key: string;
+        counter: number;
+        transports?: string[];
+    };
+
+    if (!isCredentialAvailableForRp(dbCredential.rp_id, rp.rpID)) {
+        return jsonResponse({ error: "Credential not available for this app surface" }, 400, corsHeaders);
+    }
+
+    try {
+        const verification = await verifyAuthenticationResponse({
+            response: credential as AuthenticationResponseJSON,
+            expectedChallenge: storedChallenge.challenge,
+            expectedOrigin: rp.expectedOrigins,
+            expectedRPID: rp.expectedRPIDs,
+            credential: {
+                id: dbCredential.credential_id,
+                publicKey: isoBase64URL.toBuffer(dbCredential.public_key),
+                counter: dbCredential.counter,
+                transports: dbCredential.transports || undefined,
+            },
+        });
+
+        if (!verification.verified) {
+            return jsonResponse({ error: "Authentication verification failed" }, 400, corsHeaders);
+        }
+
+        const { error } = await supabase
+            .from("passkey_credentials")
+            .update({
+                counter: verification.authenticationInfo.newCounter,
+                wrapped_master_key: wrappedMasterKey,
+                prf_enabled: true,
+                last_used_at: new Date().toISOString(),
+            })
+            .eq("id", dbCredential.id)
+            .eq("user_id", user.id)
+            .eq("credential_id", dbCredential.credential_id);
+
+        if (error) {
+            console.error("Failed to upgrade wrapped passkey key:", error);
+            return jsonResponse({ error: "Failed to update wrapped key" }, 500, corsHeaders);
+        }
+
+        return jsonResponse({ updated: true, credentialId: dbCredential.credential_id }, 200, corsHeaders);
+    } catch (err) {
+        console.error("Wrapped-key upgrade verification error:", err);
+        return jsonResponse({ error: "Verification failed" }, 400, corsHeaders);
+    }
+}
+
 // ============ Credential Management ============
 
 async function handleListCredentials(
@@ -815,3 +914,4 @@ function dedupeRpIds(origins: string[]): string[] {
 
     return Array.from(uniqueRpIds);
 }
+
