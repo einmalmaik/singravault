@@ -140,6 +140,48 @@ describe('VaultQuarantineActions', () => {
     }));
   });
 
+  it('restores only the selected quarantined entry and leaves non-restorable entries untouched', async () => {
+    mockVaultContext.quarantineResolutionById = {
+      'item-restorable': {
+        reason: 'ciphertext_changed',
+        canRestore: true,
+        canDelete: true,
+        canAcceptMissing: false,
+        hasTrustedLocalCopy: true,
+        isBusy: false,
+        lastError: null,
+      },
+      'item-not-restorable': {
+        reason: 'ciphertext_changed',
+        canRestore: false,
+        canDelete: true,
+        canAcceptMissing: false,
+        hasTrustedLocalCopy: false,
+        isBusy: false,
+        lastError: null,
+      },
+    };
+
+    render(
+      <>
+        <VaultQuarantineActions
+          item={{ id: 'item-restorable', reason: 'ciphertext_changed', updatedAt: null }}
+        />
+        <VaultQuarantineActions
+          item={{ id: 'item-not-restorable', reason: 'ciphertext_changed', updatedAt: null }}
+        />
+      </>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Wiederherstellen' }));
+
+    await waitFor(() => {
+      expect(mockRestoreQuarantinedItem).toHaveBeenCalledWith('item-restorable');
+    });
+    expect(mockRestoreQuarantinedItem).toHaveBeenCalledTimes(1);
+    expect(mockRestoreQuarantinedItem).not.toHaveBeenCalledWith('item-not-restorable');
+  });
+
   it('confirms accepting a missing entry before updating the baseline', async () => {
     mockVaultContext.quarantineResolutionById = {
       'item-missing': {

@@ -76,6 +76,7 @@ import { getTwoFactorRequirement } from '@/services/twoFactorService';
 import {
     inspectVaultSnapshotIntegrity,
     persistIntegrityBaseline,
+    persistTrustedMutationIntegrityBaseline,
     toVaultIntegrityVerificationResult,
     VaultIntegrityBaselineError,
     type VaultIntegrityBaselineInspection,
@@ -228,6 +229,14 @@ function canRebaselineTrustedMutation(
         assessment.inspection.categoryDriftIds.length > 0
         || assessment.inspection.itemDrifts.length > 0
     );
+}
+
+function hasTrustedDrift(
+    assessment: VaultIntegrityAssessment,
+    trustedMutation: NormalizedTrustedVaultMutation,
+): boolean {
+    return assessment.inspection.itemDrifts.some((item) => trustedMutation.itemIds.has(item.id))
+        || assessment.inspection.categoryDriftIds.some((categoryId) => trustedMutation.categoryIds.has(categoryId));
 }
 
 function canRebaselineRecentLocalMutation(
@@ -1216,6 +1225,45 @@ export function VaultProvider({ children }: VaultProviderProps) {
         const trustedFirstBaselineAllowed = integrityAssessment.inspection.baselineKind === 'missing'
             && snapshotBundle.rawSnapshot.items.every((item) => normalizedTrustedMutation.itemIds.has(item.id))
             && snapshotBundle.rawSnapshot.categories.every((category) => normalizedTrustedMutation.categoryIds.has(category.id));
+
+        if (
+            integrityResult.mode === 'quarantine'
+            && !trustedRebaselineAllowed
+            && !trustedFirstBaselineAllowed
+            && hasTrustedDrift(integrityAssessment, normalizedTrustedMutation)
+        ) {
+            const selectiveDigest = await persistTrustedMutationIntegrityBaseline(
+                user.id,
+                snapshotBundle.integritySnapshot,
+                encryptionKey,
+                normalizedTrustedMutation,
+            );
+            if (selectiveDigest) {
+                const reassessment = await assessVaultIntegrity(snapshotBundle.rawSnapshot, encryptionKey);
+                const reassessedResult = reassessment.result;
+                if (reassessedResult.mode === 'quarantine') {
+                    applyIntegrityResultState(reassessedResult);
+                    await syncTrustedRecoverySnapshotState(user.id);
+                    bumpVaultDataVersion();
+                    return;
+                }
+                if (reassessedResult.mode === 'healthy') {
+                    await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
+                    applyIntegrityResultState({
+                        valid: true,
+                        isFirstCheck: false,
+                        computedRoot: selectiveDigest,
+                        storedRoot: selectiveDigest,
+                        itemCount: snapshotBundle.integritySnapshot.items.length,
+                        categoryCount: snapshotBundle.integritySnapshot.categories.length,
+                        mode: 'healthy',
+                        quarantinedItems: [],
+                    });
+                    bumpVaultDataVersion();
+                    return;
+                }
+            }
+        }
 
         if (integrityResult.mode === 'blocked' && !trustedRebaselineAllowed && !trustedFirstBaselineAllowed) {
             await setBlockedIntegrityState(

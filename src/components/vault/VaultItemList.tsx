@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { KeyRound, Loader2, Plus, Shield } from 'lucide-react';
+import { Eye, KeyRound, Loader2, Plus, RefreshCw, Shield, TriangleAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useVault } from '@/contexts/VaultContext';
@@ -31,6 +31,7 @@ import { VaultQuarantinePanel } from './VaultQuarantinePanel';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 const DECRYPT_BATCH_SIZE = 25;
+const QUARANTINE_SUMMARY_THRESHOLD = 2;
 
 interface VaultItem {
   id: string;
@@ -58,6 +59,10 @@ interface VaultItemListProps {
 type RenderableVaultListEntry =
   | { kind: 'item'; item: VaultItem }
   | { kind: 'quarantined'; item: VaultItem; quarantine: QuarantinedVaultItem };
+
+function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
+  return `${item.reason}:${item.updatedAt ?? ''}`;
+}
 
 async function mapInBatches<TInput, TOutput>(
   items: TInput[],
@@ -104,13 +109,37 @@ export function VaultItemList({
   const [items, setItems] = useState<VaultItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [decrypting, setDecrypting] = useState(false);
+  const [ignoredQuarantineById, setIgnoredQuarantineById] = useState<Record<string, string>>({});
+  const [showIgnoredQuarantine, setShowIgnoredQuarantine] = useState(false);
+  const [revalidating, setRevalidating] = useState(false);
   const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
+  const revalidationRequestIdRef = useRef(0);
+  const revalidatingRef = useRef(false);
 
   useEffect(() => {
     failedDecryptPayloadByItemIdRef.current.clear();
     loggedDecryptFailuresRef.current.clear();
   }, [user?.id, isDuressMode]);
+
+  const revalidateRemoteIntegrity = useCallback(async () => {
+    if (!user || revalidatingRef.current) {
+      return;
+    }
+
+    const requestId = revalidationRequestIdRef.current + 1;
+    revalidationRequestIdRef.current = requestId;
+    revalidatingRef.current = true;
+    setRevalidating(true);
+    try {
+      await verifyIntegrity();
+    } finally {
+      if (revalidationRequestIdRef.current === requestId) {
+        revalidatingRef.current = false;
+        setRevalidating(false);
+      }
+    }
+  }, [user, verifyIntegrity]);
 
   useEffect(() => {
     async function fetchItems() {
@@ -265,6 +294,13 @@ export function VaultItemList({
         }
 
         setItems(decryptedItems as VaultItem[]);
+
+        // Cached snapshots keep the vault usable offline and while local writes
+        // are pending. A lightweight remote revalidation follows so DB-side
+        // tampering can move items into quarantine without waiting for edit/open.
+        if (source !== 'remote' && isAppOnline()) {
+          void revalidateRemoteIntegrity();
+        }
       } catch (err) {
         console.error('Error fetching vault items:', err);
       } finally {
@@ -282,6 +318,7 @@ export function VaultItemList({
     isDuressMode,
     reportUnreadableItems,
     refreshIntegrityBaseline,
+    revalidateRemoteIntegrity,
     vaultDataVersion,
     verifyIntegrity,
   ]);
@@ -294,18 +331,92 @@ export function VaultItemList({
     () => new Map(quarantinedItems.map((item) => [item.id, item])),
     [quarantinedItems],
   );
+  const hasGroupedQuarantine = quarantinedItems.length >= QUARANTINE_SUMMARY_THRESHOLD;
+  const canRenderGroupedQuarantine = filter === 'all' && !categoryId && searchQuery.trim() === '';
+  const quarantineIgnoreStorageKey = user?.id
+    ? `singra:vault-quarantine-ignored-items:${user.id}`
+    : null;
+  const activeIgnoredQuarantinedItems = useMemo(
+    () => quarantinedItems.filter((item) => ignoredQuarantineById[item.id] === getQuarantineIgnoreToken(item)),
+    [ignoredQuarantineById, quarantinedItems],
+  );
+  const activeIgnoredQuarantineIds = useMemo(
+    () => new Set(activeIgnoredQuarantinedItems.map((item) => item.id)),
+    [activeIgnoredQuarantinedItems],
+  );
+  const hasIgnoredGroupedQuarantine = hasGroupedQuarantine && activeIgnoredQuarantinedItems.length > 0;
 
-  const canRenderInlineQuarantine = useCallback(() => (
-    filter === 'all'
-    && !categoryId
-    && searchQuery.trim() === ''
-  ), [filter, categoryId, searchQuery]);
+  const canRenderInlineQuarantine = useCallback((
+    item: VaultItem,
+    quarantine: QuarantinedVaultItem,
+  ) => {
+    if (quarantinedItems.length !== 1 || searchQuery.trim() !== '') {
+      return false;
+    }
+
+    const quarantinedItemType = quarantine.itemType ?? item.item_type;
+    if (quarantinedItemType === 'totp') {
+      return false;
+    }
+
+    if (categoryId && item.category_id !== categoryId) {
+      return false;
+    }
+
+    if (filter === 'passwords') {
+      return quarantinedItemType === 'password';
+    }
+    if (filter === 'notes') {
+      return quarantinedItemType === 'note';
+    }
+    if (filter === 'favorites') {
+      return false;
+    }
+
+    return filter === 'all';
+  }, [filter, categoryId, searchQuery, quarantinedItems.length]);
+
+  useEffect(() => {
+    setShowIgnoredQuarantine(false);
+
+    if (!quarantineIgnoreStorageKey || typeof window === 'undefined') {
+      setIgnoredQuarantineById({});
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(quarantineIgnoreStorageKey) || '{}');
+      setIgnoredQuarantineById(
+        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? parsed as Record<string, string>
+          : {},
+      );
+    } catch {
+      setIgnoredQuarantineById({});
+    }
+  }, [quarantineIgnoreStorageKey]);
+
+  const persistIgnoredQuarantine = useCallback((nextIgnoredById: Record<string, string>) => {
+    if (!quarantineIgnoreStorageKey || typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(quarantineIgnoreStorageKey, JSON.stringify(nextIgnoredById));
+    setIgnoredQuarantineById(nextIgnoredById);
+  }, [quarantineIgnoreStorageKey]);
+
+  const handleIgnoreQuarantineItem = useCallback((item: QuarantinedVaultItem) => {
+    persistIgnoredQuarantine({
+      ...ignoredQuarantineById,
+      [item.id]: getQuarantineIgnoreToken(item),
+    });
+  }, [ignoredQuarantineById, persistIgnoredQuarantine]);
 
   const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
     return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
       const quarantine = quarantinedItemsById.get(item.id);
       if (quarantine) {
-        if (canRenderInlineQuarantine()) {
+        if (canRenderInlineQuarantine(item, quarantine)) {
           entries.push({ kind: 'quarantined', item, quarantine });
         }
         return entries;
@@ -386,9 +497,33 @@ export function VaultItemList({
   );
 
   const panelQuarantinedItems = useMemo(
-    () => quarantinedItems.filter((item) => !inlineQuarantinedIds.has(item.id)),
-    [inlineQuarantinedIds, quarantinedItems],
+    () => {
+      if (!hasGroupedQuarantine || !canRenderGroupedQuarantine) {
+        return [];
+      }
+
+      return quarantinedItems.filter(
+        (item) => !inlineQuarantinedIds.has(item.id) && !activeIgnoredQuarantineIds.has(item.id),
+      );
+    },
+    [
+      activeIgnoredQuarantineIds,
+      canRenderGroupedQuarantine,
+      hasGroupedQuarantine,
+      inlineQuarantinedIds,
+      quarantinedItems,
+    ],
   );
+
+  const handleIgnoreGroupedQuarantine = useCallback(() => {
+    persistIgnoredQuarantine({
+      ...ignoredQuarantineById,
+      ...Object.fromEntries(
+        panelQuarantinedItems.map((item) => [item.id, getQuarantineIgnoreToken(item)]),
+      ),
+    });
+    setShowIgnoredQuarantine(false);
+  }, [ignoredQuarantineById, panelQuarantinedItems, persistIgnoredQuarantine]);
 
   const renderableItemCount = items.filter((item) => item.decryptedData).length;
 
@@ -435,7 +570,67 @@ export function VaultItemList({
 
   return (
     <div className="space-y-4">
-      <VaultQuarantinePanel items={panelQuarantinedItems} />
+      {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[hsl(var(--border)/0.45)] bg-[hsl(var(--el-1))] px-4 py-3 text-sm">
+          <p className="inline-flex items-center gap-2 text-muted-foreground">
+            <RefreshCw className={cn('h-4 w-4', revalidating && 'animate-spin')} />
+            {revalidating
+              ? t('vault.integrity.revalidatingEntries', {
+                defaultValue: 'Prüfe Einträge...',
+              })
+              : t('vault.integrity.revalidationHint', {
+                defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.',
+              })}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={revalidating}
+            onClick={() => void revalidateRemoteIntegrity()}
+          >
+            <RefreshCw className={cn('mr-2 h-4 w-4', revalidating && 'animate-spin')} />
+            {t('vault.integrity.revalidateAction', {
+              defaultValue: 'Tresor erneut prüfen',
+            })}
+          </Button>
+        </div>
+      )}
+
+      {canRenderGroupedQuarantine && hasIgnoredGroupedQuarantine && !showIgnoredQuarantine && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
+          <p className="inline-flex items-center gap-2 text-amber-800 dark:text-amber-200">
+            <TriangleAlert className="h-4 w-4" />
+            {t('vault.integrity.ignoredQuarantineHint', {
+              defaultValue: '{{count}} manipulierte Einträge sind in der Quarantäne einsehbar.',
+              count: activeIgnoredQuarantinedItems.length,
+            })}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="border-amber-500/35"
+            onClick={() => setShowIgnoredQuarantine(true)}
+          >
+            <Eye className="mr-2 h-4 w-4" />
+            {t('vault.integrity.showIgnoredQuarantineAction', {
+              defaultValue: 'Quarantäne anzeigen',
+            })}
+          </Button>
+        </div>
+      )}
+
+      <VaultQuarantinePanel
+        items={panelQuarantinedItems}
+        ignoredItems={showIgnoredQuarantine ? activeIgnoredQuarantinedItems : []}
+        onIgnoreItem={handleIgnoreQuarantineItem}
+        onIgnoreAll={
+          hasGroupedQuarantine && canRenderGroupedQuarantine && panelQuarantinedItems.length > 0
+            ? handleIgnoreGroupedQuarantine
+            : undefined
+        }
+      />
 
       {visibleEntries.length === 0 ? (
         <div className="flex h-48 flex-col items-center justify-center text-center">

@@ -153,6 +153,9 @@ export function VaultSidebar({
                     }
 
                     if (quarantinedItemIdsRef.current.has(item.id)) {
+                        if (quarantinedItemIdsRef.current.size >= 2) {
+                            return;
+                        }
                         if (item.category_id) {
                             counts[item.category_id] = (counts[item.category_id] || 0) + 1;
                         }

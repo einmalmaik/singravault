@@ -61,9 +61,9 @@ export function DesktopOAuthBridgeView() {
       <div className="w-full max-w-lg rounded-lg border border-border/60 bg-card/95 p-8 shadow-xl shadow-black/10">
         <div className="flex items-center gap-3 mb-6">
           <img
-            src="/singra-icon.png"
+            src="/brand/auth-panel.png"
             alt="Singra Vault"
-            className="h-12 w-12 rounded-full shadow-lg shadow-primary/20 ring-1 ring-border/70"
+            className="h-12 w-12 rounded-xl object-cover shadow-lg shadow-primary/20 ring-1 ring-border/70"
           />
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Verbindung mit Singra Vault</h1>

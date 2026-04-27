@@ -309,6 +309,70 @@ export async function persistIntegrityBaseline(
   return digest;
 }
 
+export async function persistTrustedMutationIntegrityBaseline(
+  userId: string,
+  snapshot: VaultIntegritySnapshot,
+  vaultKey: CryptoKey,
+  trustedMutation: {
+    itemIds?: Iterable<string>;
+    categoryIds?: Iterable<string>;
+  },
+): Promise<string | null> {
+  const storedBaseline = await loadStoredIntegrityBaseline(userId, vaultKey);
+  if (!storedBaseline || storedBaseline.version !== 2) {
+    return null;
+  }
+
+  const trustedItemIds = new Set(trustedMutation.itemIds ?? []);
+  const trustedCategoryIds = new Set(trustedMutation.categoryIds ?? []);
+  if (trustedItemIds.size === 0 && trustedCategoryIds.size === 0) {
+    return null;
+  }
+
+  const currentItemDigests = buildItemDigestMap(snapshot);
+  const currentCategoryDigests = buildCategoryDigestMap(snapshot);
+  const nextItemDigests = { ...storedBaseline.itemDigests };
+  const nextCategoryDigests = { ...storedBaseline.categoryDigests };
+
+  for (const itemId of trustedItemIds) {
+    if (currentItemDigests[itemId]) {
+      nextItemDigests[itemId] = currentItemDigests[itemId];
+    } else {
+      delete nextItemDigests[itemId];
+    }
+  }
+
+  for (const categoryId of trustedCategoryIds) {
+    if (currentCategoryDigests[categoryId]) {
+      nextCategoryDigests[categoryId] = currentCategoryDigests[categoryId];
+    } else {
+      delete nextCategoryDigests[categoryId];
+    }
+  }
+
+  const payloadWithoutRoot = {
+    version: 2 as const,
+    itemDigests: nextItemDigests,
+    categoryDigests: nextCategoryDigests,
+    itemCount: Object.keys(nextItemDigests).length,
+    categoryCount: Object.keys(nextCategoryDigests).length,
+    recordedAt: new Date().toISOString(),
+  };
+  const digestBuffer = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify(payloadWithoutRoot)),
+  );
+  const snapshotDigest = bytesToBase64(new Uint8Array(digestBuffer));
+  const payload: StoredIntegrityBaselineV2 = {
+    ...payloadWithoutRoot,
+    snapshotDigest,
+  };
+
+  const encryptedPayload = await encrypt(JSON.stringify(payload), vaultKey);
+  await saveIntegrityBaselineEnvelope(userId, encryptedPayload);
+  return snapshotDigest;
+}
+
 export async function clearIntegrityBaseline(userId: string): Promise<void> {
   await Promise.all([
     removeIntegrityBaselineEnvelope(userId),

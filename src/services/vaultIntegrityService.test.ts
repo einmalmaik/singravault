@@ -72,6 +72,89 @@ describe("vaultIntegrityService", () => {
     ]);
   });
 
+  it("re-baselines only trusted local item changes while preserving unrelated quarantine drift", async () => {
+    const {
+      persistTrustedMutationIntegrityBaseline,
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+
+    await verifyVaultSnapshotIntegrity("user-1", {
+      items: [
+        { id: "item-edited", encrypted_data: "cipher-old" },
+        { id: "item-tampered", encrypted_data: "cipher-safe" },
+      ],
+      categories: [],
+    }, key);
+
+    await persistTrustedMutationIntegrityBaseline("user-1", {
+      items: [
+        { id: "item-edited", encrypted_data: "cipher-new" },
+        { id: "item-tampered", encrypted_data: "cipher-tampered" },
+      ],
+      categories: [],
+    }, key, {
+      itemIds: ["item-edited"],
+    });
+
+    const result = await verifyVaultSnapshotIntegrity("user-1", {
+      items: [
+        { id: "item-edited", encrypted_data: "cipher-new" },
+        { id: "item-tampered", encrypted_data: "cipher-tampered" },
+      ],
+      categories: [],
+    }, key);
+
+    expect(result.mode).toBe("quarantine");
+    expect(result.quarantinedItems).toEqual([
+      expect.objectContaining({
+        id: "item-tampered",
+        reason: "ciphertext_changed",
+      }),
+    ]);
+  });
+
+  it("adds a trusted newly created item to the baseline without trusting unrelated drift", async () => {
+    const {
+      persistTrustedMutationIntegrityBaseline,
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+
+    await verifyVaultSnapshotIntegrity("user-1", {
+      items: [{ id: "item-tampered", encrypted_data: "cipher-safe" }],
+      categories: [],
+    }, key);
+
+    await persistTrustedMutationIntegrityBaseline("user-1", {
+      items: [
+        { id: "item-new", encrypted_data: "cipher-new" },
+        { id: "item-tampered", encrypted_data: "cipher-tampered" },
+      ],
+      categories: [],
+    }, key, {
+      itemIds: ["item-new"],
+    });
+
+    const result = await verifyVaultSnapshotIntegrity("user-1", {
+      items: [
+        { id: "item-new", encrypted_data: "cipher-new" },
+        { id: "item-tampered", encrypted_data: "cipher-tampered" },
+      ],
+      categories: [],
+    }, key);
+
+    expect(result.mode).toBe("quarantine");
+    expect(result.quarantinedItems).toEqual([
+      expect.objectContaining({
+        id: "item-tampered",
+        reason: "ciphertext_changed",
+      }),
+    ]);
+  });
+
   it("quarantines missing and unknown items against a stored V2 baseline", async () => {
     const {
       verifyVaultSnapshotIntegrity,
