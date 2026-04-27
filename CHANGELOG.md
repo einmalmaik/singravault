@@ -2,6 +2,66 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## 0.4.0 - 2026-04-27
+
+### Highlights
+
+- Sicherheitsrelease mit bereinigter Git-Historie für den versehentlich committeden Klartext-Vault-Export
+- OPAQUE-only Passwort-Authentifizierung, Reset- und Change-Flows wurden konsolidiert und gehärtet
+- Vault-Recovery, Quarantäne, Integrity-Rebaseline und destruktive Reset-Pfade wurden gegen Datenverlust und schwache Reauthentifizierung gehärtet
+- Post-Quantum-Kryptografie ist klarer auf Key-Wrapping-/Sharing-/Emergency-Flows ausgerichtet
+- Desktop-Dateirechte und Release-Guardrails wurden enger gefasst
+
+### Added
+
+- Vault-Quarantäne- und Recovery-Oberflächen für Integritätsprobleme
+- Trusted-Rebaseline-Flow für Vault-Integrity-Recovery
+- Server-seitig abgesicherte Vault-Reset-Recovery-Challenge mit frischer Reauthentifizierung
+- Konfigurierbare TOTP-Parameter und persistente TOTP-Speicherpfade
+- Pending-Premium-Attachment-Flow und Dialog-Reset-Verhalten
+- Repository-Secret-Guardrail für CI und Release-Builds
+- Release-Artefakt-Guardrail gegen versehentliche Secret-/Export-Artefakte
+- Tests für AAD-gebundene Shared-Key- und Hybrid/PQ-Key-Wrapping-Pfade
+
+### Changed
+
+- Neue Sharing-/Emergency-/Family-Keypairs verwenden standardmäßig Hybrid/PQ-Key-Wrapping statt still auf RSA-only zu fallen
+- Shared-Key-Entschlüsselung ist im normalen Runtime-Pfad fail-closed und erlaubt Legacy-No-AAD-Fallback nur noch explizit für Migrationspfade
+- Hybrid/PQ-Key-Wrapping verlangt Kontextbindung per AAD für sicherheitskritische Wrapped Keys
+- Vault-Reset-RPCs erzwingen serverseitig Challenge-, Reauth- und 2FA/VaultFA-Schutz statt nur Client-seitiger Bestätigung
+- Tauri-Capabilities erlauben keine breiten rekursiven Schreib-, Rename- oder Löschrechte mehr auf Nutzerordnern
+- Vault-Notes bleiben in Payloads und Snapshots verschlüsselt
+- Snapshot-Quelle wird bei Integrity-Checks explizit berücksichtigt
+- Support-Widget erhält Host-Auth sauberer
+- Landing- und Auth-Branding wurden mit neuen Bildassets und Cover-Verhalten überarbeitet
+- Post-Quantum-Dokumentation beschreibt PQ als Key-Wrapping-Schicht, nicht als Primär-Vault-Verschlüsselung
+
+### Fixed
+
+- Vault-Unlock zeigt Fehler zuverlässiger an und Reset-Logik wurde entkoppelt
+- Legacy-Device-Keys werden toleranter migriert; defekte Secrets führen nicht mehr unkontrolliert in Folgefehler
+- Kategorie-Integrity-Flows wurden stabilisiert
+- OTP-Sendefehler bei OPAQUE-Signup rollen sauber zurück
+- Passkey-Status wird auch dann geladen, wenn eine WebAuthn-Probe fehlschlägt
+- Account-Deletion-, Auth-Fehler- und OAuth-Flows wurden robuster
+- Legacy-Desktop-Tokens werden konsequenter bereinigt
+- Lokales Secret-Handling und Core-Unlock-Pfade wurden gehärtet
+
+### Security
+
+- Der versehentlich committede Klartext-Vault-Export wurde aus der Branch-Historie entfernt und der Branch neu auf `origin/main` basiert
+- CI prüft jetzt auf Klartext-Vault-Exports, `.env`-Leaks, TOTP-Seeds, private Keys und andere Secret-Muster
+- Release-Builds prüfen zusätzlich, dass keine blockierten Export-/Secret-Artefakte ausgeliefert werden
+- Die alte unsichere destruktive Reset-RPC-Zwischenversion wurde durch einen nicht gegranteten Fail-Closed-Placeholder ersetzt
+- SECURITY DEFINER-RPCs für Vault-Reset laufen mit engerem Suchpfad und serverseitigen Schutzbedingungen
+- AAD-Kontextbindung verhindert Runtime-No-AAD-Fallbacks und Wrapped-Key-Kontextvertauschung in den gehärteten Pfaden
+
+### Operational Notes
+
+- Passwörter und TOTP-Seeds aus dem exponierten Vault-Export müssen operativ rotiert werden; der Code-Release kann diese externen Konten nicht automatisch absichern
+- Bestehende lokale Klone, Forks, CI-Caches und Artefakte können alte Git-Objekte weiter enthalten und müssen bei Bedarf separat bereinigt werden
+- OPAQUE-Server-Setup wurde nicht rotiert, weil im Export kein Projekt-OPAQUE-Secret nachgewiesen wurde
+
 ## 0.3.0 - 2026-04-21
 
 ### Added
