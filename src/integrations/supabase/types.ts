@@ -1042,7 +1042,6 @@ export type Database = {
           id: string
           is_enabled: boolean | null
           last_verified_at: string | null
-          totp_secret: string | null
           totp_secret_enc: string | null
           updated_at: string | null
           user_id: string
@@ -1054,7 +1053,6 @@ export type Database = {
           id?: string
           is_enabled?: boolean | null
           last_verified_at?: string | null
-          totp_secret?: string | null
           totp_secret_enc?: string | null
           updated_at?: string | null
           user_id: string
@@ -1066,7 +1064,6 @@ export type Database = {
           id?: string
           is_enabled?: boolean | null
           last_verified_at?: string | null
-          totp_secret?: string | null
           totp_secret_enc?: string | null
           updated_at?: string | null
           user_id?: string

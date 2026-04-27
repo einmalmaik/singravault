@@ -584,10 +584,10 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
                 website_url: null,
                 icon_url: null,
-                item_type: itemType,
-                is_favorite: data.isFavorite,
+                item_type: 'password' as const,
+                is_favorite: false,
                 encrypted_data: encryptedData,
-                category_id: sanitizeOptionalUuid(selectedCategoryId),
+                category_id: null,
             };
 
             let syncedOnline = false;
