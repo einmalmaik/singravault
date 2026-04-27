@@ -827,6 +827,11 @@
           "title": "Zwei-Faktor-Authentifizierung deaktivieren",
           "description": "Gib den aktuellen Code aus deiner Authenticator-App ein, um 2FA zu deaktivieren.",
           "backupCodeNotAllowed": "Backup-Codes können nicht zum Deaktivieren von 2FA verwendet werden. Bitte nutze deine Authenticator-App.",
+          "rateLimitedSeconds_one": "Zu viele Versuche. Bitte versuche es in {{count}} Sekunde erneut.",
+          "rateLimitedSeconds_other": "Zu viele Versuche. Bitte versuche es in {{count}} Sekunden erneut.",
+          "rateLimitedMinutes_one": "Zu viele Versuche. Bitte versuche es in {{count}} Minute erneut.",
+          "rateLimitedMinutes_other": "Zu viele Versuche. Bitte versuche es in {{count}} Minuten erneut.",
+          "rateLimitedLater": "Zu viele Versuche. Bitte warte kurz und versuche es später erneut.",
           "success": "Zwei-Faktor-Authentifizierung wurde deaktiviert."
         },
         "vault": {

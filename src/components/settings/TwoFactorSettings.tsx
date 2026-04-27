@@ -63,8 +63,8 @@ import {
     disableTwoFactor,
     setVaultTwoFactor,
     regenerateBackupCodes,
-    TwoFactorStatus,
 } from '@/services/twoFactorService';
+import type { TwoFactorStatus, TwoFactorOperationResult } from '@/services/twoFactorService';
 import { writeClipboard } from '@/services/clipboardService';
 import { saveExportFile } from '@/services/exportFileService';
 
@@ -160,7 +160,7 @@ export function TwoFactorSettings() {
             setSetupStep('backup');
             await loadStatus();
         } else {
-            setError(result.error || t('settings.security.twoFactor.verify.invalid'));
+            setError(formatTwoFactorOperationError(result, t));
         }
 
         setVerifying(false);
@@ -597,7 +597,13 @@ export function TwoFactorSettings() {
                             />
                         </div>
 
-                        {error && <p className="text-sm text-destructive">{error}</p>}
+                        {error && (
+                            <Alert variant="destructive" role="alert">
+                                <AlertTriangle className="h-4 w-4" />
+                                <AlertTitle>{t('common.error')}</AlertTitle>
+                                <AlertDescription>{error}</AlertDescription>
+                            </Alert>
+                        )}
                     </div>
 
                     <DialogFooter>
@@ -624,4 +630,41 @@ export function TwoFactorSettings() {
             </Dialog>
         </>
     );
+}
+
+function formatTwoFactorOperationError(
+    result: TwoFactorOperationResult,
+    t: ReturnType<typeof useTranslation>['t'],
+): string {
+    if (result.errorCode !== 'RATE_LIMITED') {
+        return result.error || t('settings.security.twoFactor.verify.invalid');
+    }
+
+    const seconds = result.retryAfterSeconds ?? secondsUntil(result.lockedUntil);
+    if (!seconds || seconds <= 0) {
+        return t('settings.security.twoFactor.disableDialog.rateLimitedLater');
+    }
+
+    if (seconds < 60) {
+        return t('settings.security.twoFactor.disableDialog.rateLimitedSeconds', {
+            count: seconds,
+        });
+    }
+
+    return t('settings.security.twoFactor.disableDialog.rateLimitedMinutes', {
+        count: Math.ceil(seconds / 60),
+    });
+}
+
+function secondsUntil(lockedUntil?: string | null): number | undefined {
+    if (!lockedUntil) {
+        return undefined;
+    }
+
+    const millis = new Date(lockedUntil).getTime() - Date.now();
+    if (!Number.isFinite(millis) || millis <= 0) {
+        return undefined;
+    }
+
+    return Math.ceil(millis / 1000);
 }

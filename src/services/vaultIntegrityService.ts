@@ -261,20 +261,6 @@ export function toVaultIntegrityVerificationResult(
     };
   }
 
-  if (inspection.baselineKind === 'v2' && inspection.storedRoot !== inspection.digest) {
-    return {
-      valid: false,
-      isFirstCheck: false,
-      computedRoot: inspection.digest,
-      storedRoot: inspection.storedRoot,
-      itemCount: inspection.itemCount,
-      categoryCount: inspection.categoryCount,
-      mode: 'blocked',
-      blockedReason: 'snapshot_malformed',
-      quarantinedItems: [],
-    };
-  }
-
   return {
     valid: true,
     isFirstCheck: false,

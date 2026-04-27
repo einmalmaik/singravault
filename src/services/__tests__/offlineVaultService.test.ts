@@ -421,6 +421,15 @@ describe("Offline credentials", () => {
     expect(snapshot).not.toHaveProperty("masterKey");
     expect(snapshot).not.toHaveProperty("encryptionKey");
   });
+
+  it("saveOfflineVaultTwoFactorRequirement round-trips and survives credential updates", async () => {
+    await svc.saveOfflineVaultTwoFactorRequirement(USER_ID, false);
+    await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz", 2);
+
+    await expect(svc.getOfflineVaultTwoFactorRequirement(USER_ID)).resolves.toBe(false);
+    const snapshot = await svc.getOfflineSnapshot(USER_ID);
+    expect(snapshot?.vaultTwoFactorRequired).toBe(false);
+  });
 });
 
 // ============================================================================
@@ -701,6 +710,29 @@ describe("fetchRemoteOfflineSnapshot", () => {
     // Should be persisted in IndexedDB
     const cached = await svc.getOfflineSnapshot(USER_ID);
     expect(cached).toEqual(snapshot);
+  });
+
+  it("preserves cached master-password credentials when refreshing the remote snapshot", async () => {
+    await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz", 2, "encrypted-user-key");
+    await svc.saveOfflineVaultTwoFactorRequirement(USER_ID, false);
+
+    const vaultChain = createChainable({ data: { id: VAULT_ID }, error: null });
+    const catChain = createChainable({ data: [makeCategoryRow()], error: null });
+    const itemChain = createChainable({ data: [makeItemRow()], error: null });
+
+    mockSupabase._setChains([vaultChain, catChain, itemChain]);
+
+    const snapshot = await svc.fetchRemoteOfflineSnapshot(USER_ID);
+    const cached = await svc.getOfflineSnapshot(USER_ID);
+
+    expect(snapshot.encryptionSalt).toBe("salt-abc");
+    expect(snapshot.masterPasswordVerifier).toBe("verifier-xyz");
+    expect(snapshot.kdfVersion).toBe(2);
+    expect(snapshot.encryptedUserKey).toBe("encrypted-user-key");
+    expect(snapshot.vaultTwoFactorRequired).toBe(false);
+    expect(cached?.encryptionSalt).toBe("salt-abc");
+    expect(cached?.masterPasswordVerifier).toBe("verifier-xyz");
+    expect(cached?.vaultTwoFactorRequired).toBe(false);
   });
 
   it("throws on DB error from categories query", async () => {

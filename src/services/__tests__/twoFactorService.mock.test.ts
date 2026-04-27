@@ -122,6 +122,23 @@ const TEST_SECRET = "JBSWY3DPEHPK3PXP";
 const TEST_CODE = "123456";
 const TEST_SALT = "dGVzdC1zYWx0LWJhc2U2NA=="; // base64
 
+class MockFunctionsHttpError extends Error {
+  context: {
+    status: number;
+    headers: { get: (name: string) => string | null };
+    json: () => Promise<Record<string, unknown>>;
+  };
+
+  constructor(status: number, body: Record<string, unknown>) {
+    super("Edge Function returned a non-2xx status code");
+    this.context = {
+      status,
+      headers: { get: () => null },
+      json: () => Promise.resolve(body),
+    };
+  }
+}
+
 /**
  * Configures `mockSupabase.from` so that successive calls to `from(tableName)`
  * each get their own pre-configured chainable mock.
@@ -473,6 +490,27 @@ describe("disableTwoFactor", () => {
     expect(result).toEqual({
       success: false,
       error: "Invalid or expired verification code",
+    });
+  });
+
+  it("normalizes auth-2fa rate limits into user-facing retry metadata", async () => {
+    mockSupabase.functions.invoke.mockResolvedValueOnce({
+      data: null,
+      error: new MockFunctionsHttpError(429, {
+        error: "Too many attempts",
+        retryAfterSeconds: 120,
+        lockedUntil: "2026-04-27T20:00:00.000Z",
+      }),
+    });
+
+    const result = await disableTwoFactor(TEST_USER_ID, TEST_CODE);
+
+    expect(result).toEqual({
+      success: false,
+      error: "Too many attempts. Try again in 2 minutes.",
+      errorCode: "RATE_LIMITED",
+      retryAfterSeconds: 120,
+      lockedUntil: "2026-04-27T20:00:00.000Z",
     });
   });
 

@@ -49,12 +49,14 @@ import {
     fetchRemoteOfflineSnapshot,
     getOfflineSnapshot,
     getOfflineCredentials,
+    getOfflineVaultTwoFactorRequirement,
     getTrustedOfflineSnapshot,
     isRecentLocalVaultMutation,
     loadVaultSnapshot,
     saveOfflineSnapshot,
     saveTrustedOfflineSnapshot,
     saveOfflineCredentials,
+    saveOfflineVaultTwoFactorRequirement,
     type OfflineVaultSnapshot,
 } from '@/services/offlineVaultService';
 import {
@@ -525,6 +527,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
     const [trustedRecoveryAvailable, setTrustedRecoveryAvailable] = useState(false);
     const [trustedSnapshotItemsById, setTrustedSnapshotItemsById] = useState<TrustedSnapshotItemsById>({});
     const [lastActivity, setLastActivity] = useState(Date.now());
+    const [connectivityCheckNonce, setConnectivityCheckNonce] = useState(0);
 
     const clearActiveVaultSession = useCallback(() => {
         setEncryptionKey(null);
@@ -595,6 +598,12 @@ export function VaultProvider({ children }: VaultProviderProps) {
         setAutoLockTimeoutState(timeout);
     };
 
+    useEffect(() => {
+        const refreshSetupState = () => setConnectivityCheckNonce((value) => value + 1);
+        window.addEventListener('online', refreshSetupState);
+        return () => window.removeEventListener('online', refreshSetupState);
+    }, []);
+
     const refreshPasskeyUnlockStatus = useCallback(async (): Promise<void> => {
         if (!authReady || !user) {
             setHasPasskeyUnlock(false);
@@ -611,6 +620,22 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setHasPasskeyUnlock(false);
         }
     }, [user, authReady]); // authReady required â€” stale closure fix
+
+    const applyCachedVaultCredentials = useCallback(async (userId: string): Promise<boolean> => {
+        const cached = await getOfflineCredentials(userId);
+        if (!cached) {
+            return false;
+        }
+
+        setIsSetupRequired(false);
+        setSalt(cached.salt);
+        setVerificationHash(cached.verifier);
+        if (cached.kdfVersion !== null) {
+            setKdfVersion(cached.kdfVersion);
+        }
+        setEncryptedUserKey(cached.encryptedUserKey);
+        return true;
+    }, []);
 
     const getResolvedDeviceKey = useCallback(async (): Promise<Uint8Array | null> => {
         if (currentDeviceKey) {
@@ -1173,6 +1198,21 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return { error: new Error('No active user session') };
         }
 
+        if (!isAppOnline()) {
+            const cachedRequired = await getOfflineVaultTwoFactorRequirement(user.id);
+            if (cachedRequired === false) {
+                return { error: null };
+            }
+
+            return {
+                error: new Error(
+                    cachedRequired === true
+                        ? 'Vault 2FA is required and must be verified online before offline unlock.'
+                        : 'Vault 2FA status is not cached. Unlock online once before using this vault offline.',
+                ),
+            };
+        }
+
         const requirement = await getTwoFactorRequirement({
             userId: user.id,
             context: 'vault_unlock',
@@ -1183,6 +1223,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         }
 
         if (!requirement.required) {
+            await saveOfflineVaultTwoFactorRequirement(user.id, false);
             return { error: null };
         }
 
@@ -1195,6 +1236,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             return { error: new Error('Vault 2FA verification failed.') };
         }
 
+        await saveOfflineVaultTwoFactorRequirement(user.id, true);
         return { error: null };
     }, [user]);
 
@@ -1480,15 +1522,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             console.debug('[VaultContext] authReady is true, fetching user profiles...');
 
             if (isTauriDevUserId(user.id)) {
-                const cached = await getOfflineCredentials(user.id);
-                if (cached) {
-                    setIsSetupRequired(false);
-                    setSalt(cached.salt);
-                    setVerificationHash(cached.verifier);
-                    if (cached.kdfVersion !== null) {
-                        setKdfVersion(cached.kdfVersion);
-                    }
-                    setEncryptedUserKey(cached.encryptedUserKey);
+                if (await applyCachedVaultCredentials(user.id)) {
                     await ensureTauriDevVaultSnapshot(user.id);
                 } else {
                     setIsSetupRequired(true);
@@ -1503,20 +1537,13 @@ export function VaultProvider({ children }: VaultProviderProps) {
             // ============ Offline-First: skip network if offline ============
             if (!isAppOnline()) {
                 console.debug('[VaultContext] App is offline, loading cached credentials...');
-                const cached = await getOfflineCredentials(user.id);
-                if (cached) {
-                    setIsSetupRequired(false);
-                    setSalt(cached.salt);
-                    setVerificationHash(cached.verifier);
-                    if (cached.kdfVersion !== null) {
-                        setKdfVersion(cached.kdfVersion);
-                    }
-                    setEncryptedUserKey(cached.encryptedUserKey);
+                if (await applyCachedVaultCredentials(user.id)) {
                     setIsLoading(false);
                     return;
                 }
-                // No cache available while offline â€” cannot determine setup state
-                setIsSetupRequired(true);
+                // Without a trusted local snapshot, offline clients cannot prove
+                // that no master password exists. Fail closed and keep setup hidden.
+                setIsSetupRequired(false);
                 setIsLocked(true);
                 setIsLoading(false);
                 return;
@@ -1534,20 +1561,18 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
                 if (error || !profile?.encryption_salt) {
                     // No profile found â€” try cache fallback for any error
-                    const cached = await getOfflineCredentials(user.id);
-                    if (cached) {
-                        setIsSetupRequired(false);
-                        setSalt(cached.salt);
-                        setVerificationHash(cached.verifier);
-                        if (cached.kdfVersion !== null) {
-                            setKdfVersion(cached.kdfVersion);
-                        }
-                        setEncryptedUserKey(cached.encryptedUserKey);
+                    if (await applyCachedVaultCredentials(user.id)) {
                         setIsLoading(false);
                         return;
                     }
-                    // No cached data or truly no profile - setup required
-                    setIsSetupRequired(true);
+                    if (error) {
+                        console.warn('[VaultContext] Vault setup check failed; keeping setup flow hidden until state is known.', error);
+                        setIsSetupRequired(false);
+                    } else {
+                        // A successful profile read with no encryption salt is the only
+                        // normal web/PWA path that may offer first-time setup.
+                        setIsSetupRequired(true);
+                    }
                     setIsLocked(true);
                 } else {
                     const profileKdfVersion = (profile.kdf_version as number) ?? 1;
@@ -1594,26 +1619,19 @@ export function VaultProvider({ children }: VaultProviderProps) {
             } catch (err) {
                 console.error('Error checking vault setup:', err);
                 // Robust fallback: try cache on ANY error (not just offline errors)
-                const cached = await getOfflineCredentials(user.id);
-                if (cached) {
-                    setIsSetupRequired(false);
-                    setSalt(cached.salt);
-                    setVerificationHash(cached.verifier);
-                    if (cached.kdfVersion !== null) {
-                        setKdfVersion(cached.kdfVersion);
-                    }
-                    setEncryptedUserKey(cached.encryptedUserKey);
+                if (await applyCachedVaultCredentials(user.id)) {
                     setIsLoading(false);
                     return;
                 }
-                setIsSetupRequired(true);
+                setIsSetupRequired(false);
+                setIsLocked(true);
             } finally {
                 setIsLoading(false);
             }
         }
 
         checkSetup();
-    }, [user, authReady, webAuthnAvailable, refreshPasskeyUnlockStatus]); // authReady required â€” stale closure fix
+    }, [user, authReady, webAuthnAvailable, refreshPasskeyUnlockStatus, applyCachedVaultCredentials, connectivityCheckNonce]); // authReady required â€” stale closure fix
 
     // Auto-lock on inactivity
     useEffect(() => {
@@ -1659,6 +1677,30 @@ export function VaultProvider({ children }: VaultProviderProps) {
         }
 
         try {
+            const cached = await getOfflineCredentials(user.id);
+            if (cached) {
+                await applyCachedVaultCredentials(user.id);
+                return { error: new Error('Master password is already set for this account.') };
+            }
+
+            if (!isTauriDevUserId(user.id)) {
+                const { data: existingProfile, error: existingProfileError } = await supabase
+                    .from('profiles')
+                    .select('encryption_salt')
+                    .eq('user_id', user.id)
+                    .maybeSingle() as { data: Record<string, unknown> | null; error: unknown };
+
+                if (existingProfileError) {
+                    return { error: new Error('Could not verify current master password state. Please try again online.') };
+                }
+
+                if (existingProfile?.encryption_salt) {
+                    setIsSetupRequired(false);
+                    setSalt(existingProfile.encryption_salt as string);
+                    return { error: new Error('Master password is already set for this account.') };
+                }
+            }
+
             // Generate new salt
             const newSalt = generateSalt();
 
@@ -1738,7 +1780,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             console.error('Error setting up master password:', err);
             return { error: err as Error };
         }
-    }, [finalizeVaultUnlock, user]);
+    }, [applyCachedVaultCredentials, finalizeVaultUnlock, user]);
 
     /**
      * Unlocks the vault with the master password.
@@ -2315,6 +2357,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
         if (cooldown !== null) {
             const seconds = Math.ceil(cooldown / 1000);
             return { error: new Error(`Too many attempts. Try again in ${seconds}s.`) };
+        }
+
+        if (!isAppOnline()) {
+            return {
+                error: new Error(
+                    'Passkey unlock requires an online WebAuthn challenge. Use your master password for offline unlock.',
+                ),
+            };
         }
 
         try {

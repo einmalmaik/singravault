@@ -760,7 +760,14 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     return (
         <>
             <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                <DialogContent
+                    className="max-w-lg max-h-[90vh] overflow-y-auto"
+                    onOpenAutoFocus={(event) => {
+                        // On mobile, Radix focusing the first input opens the keyboard immediately.
+                        // Let the user decide whether they want to edit text or only adjust metadata.
+                        event.preventDefault();
+                    }}
+                >
                     <DialogHeader>
                         <DialogTitle>
                             {isEditing ? t('vault.editItem') : t('vault.newItem')}

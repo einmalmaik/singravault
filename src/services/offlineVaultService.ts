@@ -47,6 +47,11 @@ export interface OfflineVaultSnapshot {
   kdfVersion?: number | null;
   /** Encrypted UserKey (profiles.encrypted_user_key) for USK-based offline unlock */
   encryptedUserKey?: string | null;
+  /**
+   * Last online vault-unlock 2FA requirement. null/undefined means unknown,
+   * which must fail closed while offline.
+   */
+  vaultTwoFactorRequired?: boolean | null;
 }
 
 type OfflineMutation =
@@ -276,6 +281,27 @@ export async function saveOfflineSnapshot(snapshot: OfflineVaultSnapshot): Promi
   });
 }
 
+function preserveLocalSecurityState(
+  snapshot: OfflineVaultSnapshot,
+  existing: OfflineVaultSnapshot | null,
+): OfflineVaultSnapshot {
+  if (!existing) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    // Remote vault snapshots intentionally contain item/category data only.
+    // Keep account-bound unlock metadata locally so PWA/Web reloads and
+    // offline fallback cannot forget that a master password already exists.
+    encryptionSalt: snapshot.encryptionSalt ?? existing.encryptionSalt,
+    masterPasswordVerifier: snapshot.masterPasswordVerifier ?? existing.masterPasswordVerifier,
+    kdfVersion: snapshot.kdfVersion ?? existing.kdfVersion,
+    encryptedUserKey: snapshot.encryptedUserKey ?? existing.encryptedUserKey,
+    vaultTwoFactorRequired: snapshot.vaultTwoFactorRequired ?? existing.vaultTwoFactorRequired,
+  };
+}
+
 export async function removeOfflineSnapshot(userId: string): Promise<void> {
   await withStore<void>(SNAPSHOTS_STORE, 'readwrite', (store, resolve, reject) => {
     const req = store.delete(userId);
@@ -348,6 +374,25 @@ export async function getOfflineCredentials(
     kdfVersion: snapshot.kdfVersion ?? null,
     encryptedUserKey: snapshot.encryptedUserKey ?? null,
   };
+}
+
+export async function saveOfflineVaultTwoFactorRequirement(
+  userId: string,
+  required: boolean,
+): Promise<void> {
+  const snapshot = await ensureSnapshot(userId);
+  snapshot.vaultTwoFactorRequired = required;
+  snapshot.updatedAt = nowIso();
+  await saveOfflineSnapshot(snapshot);
+}
+
+export async function getOfflineVaultTwoFactorRequirement(
+  userId: string,
+): Promise<boolean | null> {
+  const snapshot = await getOfflineSnapshot(userId);
+  return typeof snapshot?.vaultTwoFactorRequired === 'boolean'
+    ? snapshot.vaultTwoFactorRequired
+    : null;
 }
 
 async function ensureSnapshot(userId: string): Promise<OfflineVaultSnapshot> {
@@ -579,7 +624,7 @@ export async function fetchRemoteOfflineSnapshot(
   }
 
   const now = nowIso();
-  const snapshot: OfflineVaultSnapshot = {
+  const remoteSnapshot: OfflineVaultSnapshot = {
     userId,
     vaultId,
     items,
@@ -587,6 +632,8 @@ export async function fetchRemoteOfflineSnapshot(
     lastSyncedAt: now,
     updatedAt: now,
   };
+  const cachedSnapshot = await getOfflineSnapshot(userId);
+  const snapshot = preserveLocalSecurityState(remoteSnapshot, cachedSnapshot);
 
   if (options?.persist !== false) {
     await saveOfflineSnapshot(snapshot);
@@ -630,6 +677,7 @@ function applyRecentLocalMutations(
     masterPasswordVerifier: cachedSnapshot.masterPasswordVerifier ?? remoteSnapshot.masterPasswordVerifier,
     kdfVersion: cachedSnapshot.kdfVersion ?? remoteSnapshot.kdfVersion,
     encryptedUserKey: cachedSnapshot.encryptedUserKey ?? remoteSnapshot.encryptedUserKey,
+    vaultTwoFactorRequired: cachedSnapshot.vaultTwoFactorRequired ?? remoteSnapshot.vaultTwoFactorRequired,
   };
 }
 

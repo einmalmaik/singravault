@@ -51,6 +51,21 @@ export interface SetupData {
     backupCodes: string[];
 }
 
+export type TwoFactorErrorCode =
+    | 'RATE_LIMITED'
+    | 'AUTH_REQUIRED'
+    | 'FORBIDDEN'
+    | 'SERVER_ERROR'
+    | 'UNKNOWN';
+
+export interface TwoFactorOperationResult {
+    success: boolean;
+    error?: string;
+    errorCode?: TwoFactorErrorCode;
+    retryAfterSeconds?: number;
+    lockedUntil?: string | null;
+}
+
 // ============ Constants ============
 
 const ISSUER = 'Singra Vault';
@@ -354,12 +369,152 @@ async function loadTwoFactorStatus(userId: string): Promise<TwoFactorStatusLoadR
     };
 }
 
+interface Auth2FAInvokeError {
+    message: string;
+    status?: number;
+    code: TwoFactorErrorCode;
+    retryAfterSeconds?: number;
+    lockedUntil?: string | null;
+    details?: Record<string, unknown>;
+}
+
+interface FunctionsErrorContextLike {
+    status?: number;
+    headers?: {
+        get: (name: string) => string | null;
+    };
+    json?: () => Promise<unknown>;
+}
+
 async function invokeAuth2FA<T = Record<string, unknown>>(body: Record<string, unknown>): Promise<{
     data: T | null;
-    error: { message?: string } | null;
+    error: Auth2FAInvokeError | null;
 }> {
     const { data, error } = await supabase.functions.invoke<T>('auth-2fa', { body });
-    return { data: data ?? null, error };
+    return { data: data ?? null, error: error ? await normalizeAuth2FAError(error) : null };
+}
+
+async function normalizeAuth2FAError(error: unknown): Promise<Auth2FAInvokeError> {
+    const context = getFunctionsErrorContext(error);
+    const status = context?.status;
+    const details = context ? await readFunctionErrorDetails(context) : null;
+    const retryAfterSeconds = getRetryAfterSeconds(details, context);
+    const lockedUntil = getString(details?.lockedUntil) ?? null;
+    const code = getTwoFactorErrorCode(status);
+
+    if (code === 'RATE_LIMITED') {
+        return {
+            message: formatRateLimitedMessage(retryAfterSeconds, lockedUntil),
+            status,
+            code,
+            retryAfterSeconds,
+            lockedUntil,
+            details: details ?? undefined,
+        };
+    }
+
+    const detailMessage = getString(details?.error) ?? getString(details?.message);
+    const fallbackMessage = error instanceof Error
+        ? error.message
+        : getString(isRecord(error) ? error.message : undefined) ?? '2FA verification failed.';
+    return {
+        message: detailMessage ?? fallbackMessage,
+        status,
+        code,
+        retryAfterSeconds,
+        lockedUntil,
+        details: details ?? undefined,
+    };
+}
+
+function getFunctionsErrorContext(error: unknown): FunctionsErrorContextLike | null {
+    if (!isRecord(error) || !isRecord(error.context)) {
+        return null;
+    }
+
+    return error.context as FunctionsErrorContextLike;
+}
+
+async function readFunctionErrorDetails(context: FunctionsErrorContextLike): Promise<Record<string, unknown> | null> {
+    if (typeof context.json !== 'function') {
+        return null;
+    }
+
+    try {
+        const value = await context.json();
+        return isRecord(value) ? value : null;
+    } catch {
+        return null;
+    }
+}
+
+function getRetryAfterSeconds(
+    details: Record<string, unknown> | null,
+    context: FunctionsErrorContextLike | null,
+): number | undefined {
+    const bodyRetryAfter = getPositiveNumber(details?.retryAfterSeconds);
+    if (bodyRetryAfter !== undefined) {
+        return bodyRetryAfter;
+    }
+
+    const headerValue = context?.headers?.get('Retry-After');
+    if (!headerValue) {
+        return undefined;
+    }
+
+    const parsed = Number.parseInt(headerValue, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function getTwoFactorErrorCode(status: number | undefined): TwoFactorErrorCode {
+    if (status === 429) return 'RATE_LIMITED';
+    if (status === 401) return 'AUTH_REQUIRED';
+    if (status === 403) return 'FORBIDDEN';
+    if (status && status >= 500) return 'SERVER_ERROR';
+    return 'UNKNOWN';
+}
+
+function formatRateLimitedMessage(retryAfterSeconds?: number, lockedUntil?: string | null): string {
+    const seconds = retryAfterSeconds ?? secondsUntil(lockedUntil);
+    if (seconds && seconds > 0) {
+        return `Too many attempts. Try again in ${formatDuration(seconds)}.`;
+    }
+
+    return 'Too many attempts. Please try again later.';
+}
+
+function secondsUntil(lockedUntil?: string | null): number | undefined {
+    if (!lockedUntil) {
+        return undefined;
+    }
+
+    const millis = new Date(lockedUntil).getTime() - Date.now();
+    if (!Number.isFinite(millis) || millis <= 0) {
+        return undefined;
+    }
+
+    return Math.ceil(millis / 1000);
+}
+
+function formatDuration(seconds: number): string {
+    if (seconds < 60) {
+        return `${seconds} second${seconds === 1 ? '' : 's'}`;
+    }
+
+    const minutes = Math.ceil(seconds / 60);
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+function getPositiveNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function getString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
 }
 
 export async function getTwoFactorRequirement(input: {
@@ -620,7 +775,7 @@ export async function verifyAndConsumeBackupCode(
 export async function disableTwoFactor(
     userId: string,
     code: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<TwoFactorOperationResult> {
     void userId;
     const { data, error } = await invokeAuth2FA<{ success?: boolean; error?: string }>({
         action: 'disable-2fa',
@@ -632,6 +787,9 @@ export async function disableTwoFactor(
         return {
             success: false,
             error: data?.error || error?.message || 'Invalid code. Backup codes cannot be used to disable 2FA.',
+            errorCode: error?.code,
+            retryAfterSeconds: error?.retryAfterSeconds,
+            lockedUntil: error?.lockedUntil,
         };
     }
 
@@ -729,7 +887,7 @@ export async function verifyTwoFactorCode(input: {
     context: TwoFactorContext;
     code: string;
     method: TwoFactorVerificationMethod;
-}): Promise<{ success: boolean; error?: string }> {
+}): Promise<TwoFactorOperationResult> {
     const normalizedCode = input.code.trim();
     if (!normalizedCode) {
         return { success: false, error: 'Invalid verification code.' };
@@ -772,7 +930,7 @@ export async function verifyTwoFactorChallenge(input: {
     context: TwoFactorContext;
     code: string;
     method: TwoFactorVerificationMethod;
-}): Promise<{ success: boolean; challengeId?: string; error?: string }> {
+}): Promise<TwoFactorOperationResult & { challengeId?: string }> {
     const normalizedCode = input.code.trim();
     if (!normalizedCode) {
         return { success: false, error: 'Invalid verification code.' };
@@ -789,7 +947,13 @@ export async function verifyTwoFactorChallenge(input: {
         });
 
         if (challenge.error) {
-            return { success: false, error: challenge.error.message || 'Invalid verification code.' };
+            return {
+                success: false,
+                error: challenge.error.message || 'Invalid verification code.',
+                errorCode: challenge.error.code,
+                retryAfterSeconds: challenge.error.retryAfterSeconds,
+                lockedUntil: challenge.error.lockedUntil,
+            };
         }
 
         if (challenge.data?.required === false) {
@@ -813,6 +977,9 @@ export async function verifyTwoFactorChallenge(input: {
             return {
                 success: false,
                 error: verified.data?.error || verified.error?.message || 'Invalid verification code.',
+                errorCode: verified.error?.code,
+                retryAfterSeconds: verified.error?.retryAfterSeconds,
+                lockedUntil: verified.error?.lockedUntil,
             };
         }
 

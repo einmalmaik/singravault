@@ -175,6 +175,20 @@ describe("auth flow hardening", () => {
     expect(twoFactorSource).toContain("vault_totp_verify");
   });
 
+  it("allows authenticated Edge Functions to read TOTP secrets only through service-role RPC context", () => {
+    const migrationSource = readFileSync(
+      "supabase/migrations/20260427190000_allow_service_role_2fa_secret_verification.sql",
+      "utf-8",
+    );
+
+    expect(migrationSource).toContain("CREATE OR REPLACE FUNCTION public.get_user_2fa_secret");
+    expect(migrationSource).toContain("_role TEXT := auth.role()");
+    expect(migrationSource).toContain("_role <> 'service_role'");
+    expect(migrationSource).toContain("RAISE EXCEPTION 'Forbidden'");
+    expect(migrationSource).toContain("GRANT EXECUTE ON FUNCTION public.get_user_2fa_secret(UUID, BOOLEAN) TO authenticated");
+    expect(migrationSource).toContain("GRANT EXECUTE ON FUNCTION public.get_user_2fa_secret(UUID, BOOLEAN) TO service_role");
+  });
+
   it("removes legacy app-password login as a client or server bypass", () => {
     const authPageSource = readFileSync("src/pages/Auth.tsx", "utf-8");
     const sessionSource = readFileSync("supabase/functions/auth-session/index.ts", "utf-8");
