@@ -29,6 +29,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
 import {
+    DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH,
     exportDeviceKeyForTransfer,
     importDeviceKeyFromTransfer,
 } from '@/services/deviceKeyService';
@@ -73,7 +74,7 @@ export function DeviceKeySettings() {
     };
 
     const handleExport = async () => {
-        if (!user || !pin || pin.length < 4) return;
+        if (!user || !pin || pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH) return;
         setLoading(true);
 
         const data = await exportDeviceKeyForTransfer(user.id, pin);
@@ -91,7 +92,7 @@ export function DeviceKeySettings() {
     };
 
     const handleImport = async () => {
-        if (!user || !importData || !pin || pin.length < 4) return;
+        if (!user || !importData || pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH) return;
         setLoading(true);
 
         const success = await importDeviceKeyFromTransfer(user.id, importData, pin);
@@ -236,14 +237,14 @@ export function DeviceKeySettings() {
                                     value={pin}
                                     onChange={(e) => setPin(e.target.value)}
                                     placeholder={t('deviceKey.pinPlaceholder')}
-                                    minLength={4}
+                                    minLength={DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH}
                                 />
                             </div>
                             <DialogFooter>
                                 <Button variant="outline" onClick={() => setShowExportDialog(false)}>
                                     {t('common.cancel')}
                                 </Button>
-                                <Button onClick={handleExport} disabled={pin.length < 4 || loading}>
+                                <Button onClick={handleExport} disabled={pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH || loading}>
                                     {t('deviceKey.generateCode')}
                                 </Button>
                             </DialogFooter>
@@ -291,6 +292,7 @@ export function DeviceKeySettings() {
                                 value={pin}
                                 onChange={(e) => setPin(e.target.value)}
                                 placeholder={t('deviceKey.pinPlaceholder')}
+                                minLength={DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH}
                             />
                         </div>
                     </div>
@@ -298,7 +300,7 @@ export function DeviceKeySettings() {
                         <Button variant="outline" onClick={() => setShowImportDialog(false)}>
                             {t('common.cancel')}
                         </Button>
-                        <Button onClick={handleImport} disabled={!importData || pin.length < 4 || loading}>
+                        <Button onClick={handleImport} disabled={!importData || pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH || loading}>
                             {t('deviceKey.import')}
                         </Button>
                     </DialogFooter>

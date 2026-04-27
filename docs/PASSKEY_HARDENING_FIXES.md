@@ -26,3 +26,10 @@ Migration added: `20260217233000_harden_passkey_prf_consistency.sql`
 - Adds constraint:
   - `prf_enabled = FALSE OR wrapped_master_key IS NOT NULL`
 
+## Challenge Binding Update (2026-04-27)
+
+- WebAuthn challenge generation now returns a `challengeId`.
+- Verification, PRF activation, and wrapped-key upgrade consume the exact challenge row instead of selecting the newest user/type challenge.
+- Challenge rows are bound to the RP ID, origin, and, for credential-scoped authentication, the expected credential ID.
+- Migration added: `20260427211000_bind_webauthn_challenges_to_scope.sql`.
+

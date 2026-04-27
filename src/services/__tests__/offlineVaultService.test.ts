@@ -205,7 +205,7 @@ const mockSupabase = vi.hoisted(() => {
 
   return {
     from: vi.fn().mockImplementation(fromImpl),
-    rpc: vi.fn(),
+    rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
     auth: { getUser: vi.fn(), getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "test-token" } }, error: null }) },
     functions: { invoke: vi.fn() },
     storage: { from: vi.fn() },
@@ -217,6 +217,7 @@ const mockSupabase = vi.hoisted(() => {
     _reset: () => {
       chains.length = 0;
       chainIndex = 0;
+      mockSupabase.rpc.mockResolvedValue({ data: [], error: null });
     },
     _restoreFrom: () => {
       // vi.clearAllMocks() strips mockImplementation — restore it
@@ -712,6 +713,29 @@ describe("fetchRemoteOfflineSnapshot", () => {
     expect(cached).toEqual(snapshot);
   });
 
+  it("stores the remote vault revision and rejects a lower later revision", async () => {
+    mockSupabase.rpc.mockResolvedValueOnce({ data: [{ revision: 8 }], error: null });
+    mockSupabase._setChains([
+      createChainable({ data: { id: VAULT_ID }, error: null }),
+      createChainable({ data: [], error: null }),
+      createChainable({ data: [], error: null }),
+    ]);
+
+    const initial = await svc.fetchRemoteOfflineSnapshot(USER_ID);
+    expect(initial.remoteRevision).toBe(8);
+
+    mockSupabase.rpc.mockResolvedValueOnce({ data: [{ revision: 7 }], error: null });
+    mockSupabase._setChains([
+      createChainable({ data: { id: VAULT_ID }, error: null }),
+      createChainable({ data: [], error: null }),
+      createChainable({ data: [], error: null }),
+    ]);
+
+    await expect(svc.fetchRemoteOfflineSnapshot(USER_ID)).rejects.toThrow(
+      "Remote vault snapshot is older than the local sync checkpoint.",
+    );
+  });
+
   it("preserves cached master-password credentials when refreshing the remote snapshot", async () => {
     await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz", 2, "encrypted-user-key");
     await svc.saveOfflineVaultTwoFactorRequirement(USER_ID, false);
@@ -885,7 +909,7 @@ describe("syncOfflineMutations", () => {
     expect(mockSupabase.from).not.toHaveBeenCalled();
   });
 
-  it("replays upsert_item and delete_item mutations to Supabase", async () => {
+  it("replays upsert_item and delete_item mutations through the revision-checked RPC", async () => {
     // Enqueue two mutations
     await svc.enqueueOfflineMutation({
       userId: USER_ID,
@@ -905,29 +929,25 @@ describe("syncOfflineMutations", () => {
       payload: { id: "item-2" },
     } as MutationInput);
 
-    // Mock Supabase calls for:
-    // 1) upsert vault_items (upsert_item)
-    // 2) delete vault_items (delete_item)
-    // 3) fetchRemoteOfflineSnapshot calls (vaults, categories, vault_items)
-    const upsertChain = createChainable({ data: null, error: null });
-    const deleteChain = createChainable({ data: null, error: null });
+    mockSupabase.rpc
+      .mockResolvedValueOnce({ data: { applied: true, revision: 2, conflict_reason: null }, error: null })
+      .mockResolvedValueOnce({ data: { applied: true, revision: 3, conflict_reason: null }, error: null })
+      .mockResolvedValueOnce({ data: [{ revision: 3 }], error: null });
+
     const refreshVaultChain = createChainable({ data: { id: VAULT_ID }, error: null });
     const refreshCatChain = createChainable({ data: [], error: null });
     const refreshItemChain = createChainable({ data: [], error: null });
 
-    mockSupabase._setChains([
-      upsertChain,     // upsert_item
-      deleteChain,     // delete_item
-      refreshVaultChain, // fetchRemoteOfflineSnapshot → vaults
-      refreshCatChain,   // fetchRemoteOfflineSnapshot → categories
-      refreshItemChain,  // fetchRemoteOfflineSnapshot → vault_items
-    ]);
+    mockSupabase._setChains([refreshVaultChain, refreshCatChain, refreshItemChain]);
 
     const result = await svc.syncOfflineMutations(USER_ID);
 
     expect(result.processed).toBe(2);
     expect(result.errors).toBe(0);
     expect(result.remaining).toBe(0);
+    expect(mockSupabase.rpc).toHaveBeenCalledWith("apply_vault_mutation", expect.objectContaining({
+      p_type: "upsert_item",
+    }));
   });
 
   it("removes successful mutations from queue after sync", async () => {
@@ -937,12 +957,14 @@ describe("syncOfflineMutations", () => {
       payload: { id: "cat-1", user_id: USER_ID, name: "Work" },
     } as MutationInput);
 
-    // upsert_category + fetchRemoteOfflineSnapshot chains
-    const upsertCatChain = createChainable({ data: null, error: null });
+    mockSupabase.rpc
+      .mockResolvedValueOnce({ data: { applied: true, revision: 2, conflict_reason: null }, error: null })
+      .mockResolvedValueOnce({ data: [], error: null });
+
     const refreshVaultChain = createChainable({ data: null, error: null });
     const refreshCatChain = createChainable({ data: [], error: null });
 
-    mockSupabase._setChains([upsertCatChain, refreshVaultChain, refreshCatChain]);
+    mockSupabase._setChains([refreshVaultChain, refreshCatChain]);
 
     await svc.syncOfflineMutations(USER_ID);
 
@@ -963,13 +985,10 @@ describe("syncOfflineMutations", () => {
       },
     } as MutationInput);
 
-    // The upsert returns a non-network error
-    const failChain = createChainable({
+    mockSupabase.rpc.mockResolvedValueOnce({
       data: null,
       error: { message: "constraint violation", code: "23505" },
     });
-
-    mockSupabase._setChains([failChain]);
 
     const result = await svc.syncOfflineMutations(USER_ID);
 
@@ -977,5 +996,36 @@ describe("syncOfflineMutations", () => {
     expect(result.processed).toBe(0);
     // Mutation remains in queue (not removed on non-offline error)
     expect(result.remaining).toBe(1);
+  });
+
+  it("keeps a conflicted offline mutation in the queue", async () => {
+    await svc.saveOfflineSnapshot({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      items: [],
+      categories: [],
+      lastSyncedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      remoteRevision: 4,
+    });
+
+    await svc.enqueueOfflineMutation({
+      userId: USER_ID,
+      type: "delete_item",
+      payload: { id: "item-1" },
+    } as MutationInput);
+
+    mockSupabase.rpc.mockResolvedValueOnce({
+      data: { applied: false, revision: 5, conflict_reason: "stale_base_revision" },
+      error: null,
+    });
+
+    const result = await svc.syncOfflineMutations(USER_ID);
+
+    expect(result).toEqual({ processed: 0, remaining: 1, errors: 1 });
+    expect(mockSupabase.rpc).toHaveBeenCalledWith("apply_vault_mutation", expect.objectContaining({
+      p_base_revision: 4,
+      p_type: "delete_item",
+    }));
   });
 });

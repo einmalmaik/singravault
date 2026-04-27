@@ -4,7 +4,8 @@
  * @fileoverview Device Key Service for Singra Vault
  *
  * Manages a 256-bit client-side Device Key that strengthens the vault
- * encryption key. The Device Key never leaves the local runtime.
+ * encryption key. The Device Key stays in the local runtime except during
+ * explicit encrypted transfer export initiated by the user.
  *
  * Key derivation with Device Key:
  *   VaultKey = HKDF-Expand(Argon2id(MasterPW, Salt), DeviceKey)
@@ -23,10 +24,21 @@ import {
     removeLocalSecret,
     saveLocalSecretBytes,
 } from '@/platform/localSecretStore';
+import { argon2id } from 'hash-wasm';
 
 const DEVICE_KEY_LENGTH = 32; // 256 bits
 const HKDF_INFO = 'SINGRA_DEVICE_KEY_V1';
 const DEVICE_KEY_SECRET_PREFIX = 'device-key:';
+const DEVICE_KEY_TRANSFER_V2_PREFIX = 'sv-dk-transfer-v2:';
+export const DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH = 12;
+const TRANSFER_SALT_LENGTH = 16;
+const TRANSFER_IV_LENGTH = 12;
+const TRANSFER_KDF_PARAMS = {
+    memory: 65536,
+    iterations: 3,
+    parallelism: 1,
+    hashLength: 32,
+} as const;
 const LEGACY_DEVICE_KEY_DB_NAME = 'singra_device_keys';
 const LEGACY_DEVICE_KEY_DB_VERSION = 1;
 const LEGACY_DEVICE_KEY_STORE = 'keys';
@@ -38,6 +50,18 @@ interface LegacyDeviceKeyRecord {
     iv: number[];
     encrypted: number[];
     createdAt?: string;
+}
+
+interface DeviceKeyTransferEnvelopeV2 {
+    version: 2;
+    kdf: 'argon2id';
+    memory: number;
+    iterations: number;
+    parallelism: number;
+    salt: string;
+    iv: string;
+    ciphertext: string;
+    createdAt: string;
 }
 
 // ============ Core Functions ============
@@ -176,26 +200,29 @@ export async function deriveWithDeviceKey(
 
 /**
  * Exports the device key as a base64-encoded string for QR code display.
- * The exported key is additionally encrypted with a user-chosen PIN
+ * The exported key is additionally encrypted with a user-chosen transfer secret
  * for secure transfer between devices.
  *
  * @param userId - The user's UUID
- * @param pin - A PIN/password chosen by the user for transfer encryption
- * @returns Base64-encoded encrypted device key, or null if no key exists
+ * @param pin - A transfer secret chosen by the user for transfer encryption
+ * @returns Versioned encrypted device key envelope, or null if no key exists
  */
 export async function exportDeviceKeyForTransfer(
     userId: string,
     pin: string,
 ): Promise<string | null> {
+    if (!isValidTransferSecret(pin)) {
+        return null;
+    }
+
     const deviceKey = await getDeviceKey(userId);
     if (!deviceKey) return null;
 
-    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const iv = crypto.getRandomValues(new Uint8Array(TRANSFER_IV_LENGTH));
+    const salt = crypto.getRandomValues(new Uint8Array(TRANSFER_SALT_LENGTH));
     let encryptedBytes: Uint8Array | null = null;
-    let combined: Uint8Array | null = null;
     try {
-        // Derive a wrapping key from the PIN
-        const pinKey = await derivePinKey(pin);
+        const pinKey = await deriveTransferWrappingKey(pin, salt, TRANSFER_KDF_PARAMS);
 
         const encrypted = await crypto.subtle.encrypt(
             { name: 'AES-GCM', iv },
@@ -204,17 +231,24 @@ export async function exportDeviceKeyForTransfer(
         );
 
         encryptedBytes = new Uint8Array(encrypted);
-        // Format: base64(iv + encrypted)
-        combined = new Uint8Array(iv.length + encryptedBytes.byteLength);
-        combined.set(iv, 0);
-        combined.set(encryptedBytes, iv.length);
+        const envelope: DeviceKeyTransferEnvelopeV2 = {
+            version: 2,
+            kdf: 'argon2id',
+            memory: TRANSFER_KDF_PARAMS.memory,
+            iterations: TRANSFER_KDF_PARAMS.iterations,
+            parallelism: TRANSFER_KDF_PARAMS.parallelism,
+            salt: uint8ArrayToBase64(salt),
+            iv: uint8ArrayToBase64(iv),
+            ciphertext: uint8ArrayToBase64(encryptedBytes),
+            createdAt: new Date().toISOString(),
+        };
 
-        return uint8ArrayToBase64(combined);
+        return `${DEVICE_KEY_TRANSFER_V2_PREFIX}${jsonToBase64(envelope)}`;
     } finally {
         deviceKey.fill(0);
         iv.fill(0);
+        salt.fill(0);
         encryptedBytes?.fill(0);
-        combined?.fill(0);
     }
 }
 
@@ -222,23 +256,42 @@ export async function exportDeviceKeyForTransfer(
  * Imports a device key from a transfer string (scanned from QR code).
  *
  * @param userId - The user's UUID
- * @param transferData - Base64-encoded encrypted device key
- * @param pin - The PIN used during export
- * @returns true if import succeeded, false if PIN was wrong or data invalid
+ * @param transferData - Versioned encrypted device key envelope
+ * @param pin - The transfer secret used during export
+ * @returns true if import succeeded, false if the transfer secret or data is invalid
  */
 export async function importDeviceKeyFromTransfer(
     userId: string,
     transferData: string,
     pin: string,
 ): Promise<boolean> {
+    if (!isValidTransferSecret(pin) || !transferData.startsWith(DEVICE_KEY_TRANSFER_V2_PREFIX)) {
+        return false;
+    }
+
+    let iv = new Uint8Array();
+    let salt = new Uint8Array();
+    let encrypted = new Uint8Array();
+
     try {
-        const combined = base64ToUint8Array(transferData);
-        if (combined.length < 13) return false; // 12 bytes IV + at least 1 byte
+        const envelope = parseTransferEnvelopeV2(transferData);
+        iv = base64ToUint8Array(envelope.iv);
+        salt = base64ToUint8Array(envelope.salt);
+        encrypted = base64ToUint8Array(envelope.ciphertext);
 
-        const iv = combined.slice(0, 12);
-        const encrypted = combined.slice(12);
+        if (iv.length !== TRANSFER_IV_LENGTH || salt.length !== TRANSFER_SALT_LENGTH || encrypted.length === 0) {
+            iv.fill(0);
+            salt.fill(0);
+            encrypted.fill(0);
+            return false;
+        }
 
-        const pinKey = await derivePinKey(pin);
+        const pinKey = await deriveTransferWrappingKey(pin, salt, {
+            memory: envelope.memory,
+            iterations: envelope.iterations,
+            parallelism: envelope.parallelism,
+            hashLength: TRANSFER_KDF_PARAMS.hashLength,
+        });
 
         const decrypted = await crypto.subtle.decrypt(
             { name: 'AES-GCM', iv },
@@ -254,9 +307,15 @@ export async function importDeviceKeyFromTransfer(
             return true;
         } finally {
             deviceKey.fill(0);
+            iv.fill(0);
+            salt.fill(0);
+            encrypted.fill(0);
         }
     } catch {
-        // Decryption failed — wrong PIN or corrupted data
+        iv.fill(0);
+        salt.fill(0);
+        encrypted.fill(0);
+        // Decryption failed: wrong transfer secret, malformed envelope, or corrupted data.
         return false;
     }
 }
@@ -403,33 +462,94 @@ async function deriveLegacyWrappingKey(userId: string): Promise<CryptoKey> {
     );
 }
 
-/**
- * Derives an AES key from a PIN for transfer encryption.
- */
-async function derivePinKey(pin: string): Promise<CryptoKey> {
-    const keyMaterial = await crypto.subtle.importKey(
-        'raw',
-        new TextEncoder().encode(pin),
-        'PBKDF2',
-        false,
-        ['deriveKey'],
-    );
+function isValidTransferSecret(pin: string): boolean {
+    return typeof pin === 'string' && pin.length >= DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH;
+}
 
-    return crypto.subtle.deriveKey(
-        {
-            name: 'PBKDF2',
-            salt: new TextEncoder().encode('SINGRA_DEVICE_KEY_TRANSFER'),
-            iterations: 100000,
-            hash: 'SHA-256',
-        },
-        keyMaterial,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt', 'decrypt'],
-    );
+async function deriveTransferWrappingKey(
+    pin: string,
+    salt: Uint8Array,
+    params: { memory: number; iterations: number; parallelism: number; hashLength: number },
+): Promise<CryptoKey> {
+    if (params.memory < TRANSFER_KDF_PARAMS.memory
+        || params.iterations < TRANSFER_KDF_PARAMS.iterations
+        || params.parallelism < 1
+        || params.hashLength !== TRANSFER_KDF_PARAMS.hashLength) {
+        throw new Error('Unsupported device key transfer KDF parameters.');
+    }
+
+    const result = await argon2id({
+        password: pin,
+        salt,
+        parallelism: params.parallelism,
+        iterations: params.iterations,
+        memorySize: params.memory,
+        hashLength: params.hashLength,
+        outputType: 'binary',
+    }) as unknown;
+
+    const keyBytes = normalizeArgon2Output(result);
+    try {
+        return crypto.subtle.importKey(
+            'raw',
+            keyBytes as BufferSource,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt', 'decrypt'],
+        );
+    } finally {
+        keyBytes.fill(0);
+    }
+}
+
+function normalizeArgon2Output(result: unknown): Uint8Array {
+    if (result instanceof Uint8Array) {
+        return new Uint8Array(result);
+    }
+
+    if (result instanceof ArrayBuffer) {
+        return new Uint8Array(result);
+    }
+
+    if (Array.isArray(result)) {
+        return new Uint8Array(result);
+    }
+
+    if (ArrayBuffer.isView(result)) {
+        return new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
+    }
+
+    throw new Error('argon2id returned unsupported type');
+}
+
+function parseTransferEnvelopeV2(transferData: string): DeviceKeyTransferEnvelopeV2 {
+    const envelope = JSON.parse(base64ToUtf8(transferData.slice(DEVICE_KEY_TRANSFER_V2_PREFIX.length))) as Partial<DeviceKeyTransferEnvelopeV2>;
+    if (
+        envelope.version !== 2
+        || envelope.kdf !== 'argon2id'
+        || typeof envelope.memory !== 'number'
+        || typeof envelope.iterations !== 'number'
+        || typeof envelope.parallelism !== 'number'
+        || typeof envelope.salt !== 'string'
+        || typeof envelope.iv !== 'string'
+        || typeof envelope.ciphertext !== 'string'
+        || typeof envelope.createdAt !== 'string'
+    ) {
+        throw new Error('Invalid device key transfer envelope.');
+    }
+
+    return envelope as DeviceKeyTransferEnvelopeV2;
 }
 
 // ============ Utility Functions ============
+
+function jsonToBase64(value: unknown): string {
+    return uint8ArrayToBase64(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function base64ToUtf8(base64: string): string {
+    return new TextDecoder().decode(base64ToUint8Array(base64));
+}
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
     let binary = '';

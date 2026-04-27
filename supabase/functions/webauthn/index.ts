@@ -45,6 +45,18 @@ const DEFAULT_SITE_URL = "https://singravault.mauntingstudios.de";
 const CONFIGURED_SITE_ORIGIN = normalizeHttpOrigin(Deno.env.get("SITE_URL")) ?? DEFAULT_SITE_URL;
 const CONFIGURED_SITE_RP_ID = new URL(CONFIGURED_SITE_ORIGIN).hostname;
 
+type RpConfig = ReturnType<typeof getRpConfig>;
+
+interface StoredWebauthnChallenge {
+    id: string;
+    challenge: string;
+    type: "registration" | "authentication";
+    expires_at: string;
+    rp_id?: string | null;
+    origin?: string | null;
+    credential_id?: string | null;
+}
+
 // ============ Configuration ============
 
 /**
@@ -170,7 +182,7 @@ Deno.serve(async (req: Request) => {
 
 async function handleGenerateRegistrationOptions(
     user: { id: string; email?: string },
-    rp: { rpName: string; rpID: string },
+    rp: RpConfig,
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
@@ -221,21 +233,29 @@ async function handleGenerateRegistrationOptions(
     }
 
     // Store challenge server-side (5 min TTL)
-    await supabase.from("webauthn_challenges").insert({
+    const { data: challengeRow, error: challengeError } = await supabase.from("webauthn_challenges").insert({
         user_id: user.id,
         challenge: options.challenge,
         type: "registration",
-    });
+        rp_id: rp.rpID,
+        origin: rp.origin,
+    }).select("id").single();
+
+    if (challengeError || !challengeRow?.id) {
+        console.error("Failed to store registration challenge:", challengeError);
+        return jsonResponse({ error: "Failed to store registration challenge" }, 500, corsHeaders);
+    }
 
     return jsonResponse({
         options,
         prfSalt,
+        challengeId: challengeRow.id,
     }, 200, corsHeaders);
 }
 
 async function handleVerifyRegistration(
     user: { id: string },
-    rp: { rpName: string; rpID: string; origin: string; expectedOrigins: string[]; expectedRPIDs: string[] },
+    rp: RpConfig,
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
@@ -246,26 +266,21 @@ async function handleVerifyRegistration(
         prfSalt: string;
         wrappedMasterKey?: string;
         prfEnabled?: boolean;
+        challengeId?: string;
     };
 
     if (!credential) {
         return jsonResponse({ error: "Missing credential response" }, 400, corsHeaders);
     }
 
-    // Retrieve the stored challenge
-    const { data: challenges } = await supabase
-        .from("webauthn_challenges")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("type", "registration")
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-    if (!challenges || challenges.length === 0) {
-        return jsonResponse({ error: "No pending registration challenge" }, 400, corsHeaders);
-    }
-
-    const storedChallenge = challenges[0];
+    const storedChallenge = await loadPendingWebauthnChallenge(
+        supabase,
+        user.id,
+        "registration",
+        challengeId,
+        corsHeaders,
+    );
+    if (storedChallenge instanceof Response) return storedChallenge;
 
     // Check expiry
     if (new Date(storedChallenge.expires_at) < new Date()) {
@@ -273,13 +288,19 @@ async function handleVerifyRegistration(
         return jsonResponse({ error: "Challenge expired" }, 400, corsHeaders);
     }
 
+    const challengeScope = getChallengeVerificationScope(storedChallenge, rp);
+    if (!challengeScope) {
+        await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+        return jsonResponse({ error: "Challenge scope mismatch" }, 400, corsHeaders);
+    }
+
     try {
         // Verify the registration response
         const verification = await verifyRegistrationResponse({
             response: credential as RegistrationResponseJSON,
             expectedChallenge: storedChallenge.challenge,
-            expectedOrigin: rp.expectedOrigins,
-            expectedRPID: rp.expectedRPIDs,
+            expectedOrigin: challengeScope.expectedOrigin,
+            expectedRPID: challengeScope.expectedRPID,
         });
 
         if (!verification.verified || !verification.registrationInfo) {
@@ -294,7 +315,7 @@ async function handleVerifyRegistration(
             .insert({
                 user_id: user.id,
                 credential_id: regCredential.id,
-                rp_id: rp.rpID,
+                rp_id: challengeScope.expectedRPID,
                 public_key: isoBase64URL.fromBuffer(regCredential.publicKey),
                 counter: regCredential.counter,
                 transports: regCredential.transports || [],
@@ -329,7 +350,7 @@ async function handleVerifyRegistration(
 
 async function handleGenerateAuthenticationOptions(
     user: { id: string },
-    rp: { rpID: string },
+    rp: RpConfig,
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
@@ -386,11 +407,19 @@ async function handleGenerateAuthenticationOptions(
     }
 
     // Store challenge server-side
-    await supabase.from("webauthn_challenges").insert({
+    const { data: challengeRow, error: challengeError } = await supabase.from("webauthn_challenges").insert({
         user_id: user.id,
         challenge: options.challenge,
         type: "authentication",
-    });
+        rp_id: rp.rpID,
+        origin: rp.origin,
+        credential_id: credentialId ?? null,
+    }).select("id").single();
+
+    if (challengeError || !challengeRow?.id) {
+        console.error("Failed to store authentication challenge:", challengeError);
+        return jsonResponse({ error: "Failed to store authentication challenge" }, 500, corsHeaders);
+    }
 
     // Build a map of credential_id -> prfSalt.
     // Include:
@@ -410,19 +439,21 @@ async function handleGenerateAuthenticationOptions(
     return jsonResponse({
         options,
         prfSalts,
+        challengeId: challengeRow.id,
     }, 200, corsHeaders);
 }
 
 async function handleVerifyAuthentication(
     user: { id: string },
-    rp: { rpID: string; expectedOrigins: string[]; expectedRPIDs: string[] },
+    rp: RpConfig,
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
 ) {
-    const { credential, expectedCredentialId } = body as {
+    const { credential, expectedCredentialId, challengeId } = body as {
         credential: unknown;
         expectedCredentialId?: string;
+        challengeId?: string;
     };
 
     if (!credential) {
@@ -436,25 +467,25 @@ async function handleVerifyAuthentication(
         return jsonResponse({ error: "Unexpected passkey credential used" }, 400, corsHeaders);
     }
 
-    // Retrieve the stored challenge
-    const { data: challenges } = await supabase
-        .from("webauthn_challenges")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("type", "authentication")
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-    if (!challenges || challenges.length === 0) {
-        return jsonResponse({ error: "No pending authentication challenge" }, 400, corsHeaders);
-    }
-
-    const storedChallenge = challenges[0];
+    const storedChallenge = await loadPendingWebauthnChallenge(
+        supabase,
+        user.id,
+        "authentication",
+        challengeId,
+        corsHeaders,
+    );
+    if (storedChallenge instanceof Response) return storedChallenge;
 
     // Check expiry
     if (new Date(storedChallenge.expires_at) < new Date()) {
         await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
         return jsonResponse({ error: "Challenge expired" }, 400, corsHeaders);
+    }
+
+    const challengeScope = getChallengeVerificationScope(storedChallenge, rp);
+    if (!challengeScope || (storedChallenge.credential_id && storedChallenge.credential_id !== credentialResponse.id)) {
+        await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+        return jsonResponse({ error: "Challenge scope mismatch" }, 400, corsHeaders);
     }
 
     // Challenge sofort löschen — verhindert Replay-Angriffe auch bei Verifikationsfehlern
@@ -490,8 +521,8 @@ async function handleVerifyAuthentication(
         const verification = await verifyAuthenticationResponse({
             response: credential as AuthenticationResponseJSON,
             expectedChallenge: storedChallenge.challenge,
-            expectedOrigin: rp.expectedOrigins,
-            expectedRPID: rp.expectedRPIDs,
+            expectedOrigin: challengeScope.expectedOrigin,
+            expectedRPID: challengeScope.expectedRPID,
             credential: {
                 id: dbCredential.credential_id,
                 publicKey: isoBase64URL.toBuffer(dbCredential.public_key),
@@ -531,15 +562,16 @@ async function handleVerifyAuthentication(
 
 async function handleActivatePrf(
     user: { id: string },
-    rp: { rpID: string; expectedOrigins: string[]; expectedRPIDs: string[] },
+    rp: RpConfig,
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
 ) {
-    const { credential, expectedCredentialId, wrappedMasterKey } = body as {
+    const { credential, expectedCredentialId, wrappedMasterKey, challengeId } = body as {
         credential: unknown;
         expectedCredentialId?: string;
         wrappedMasterKey?: string;
+        challengeId?: string;
     };
 
     if (!credential) {
@@ -559,23 +591,24 @@ async function handleActivatePrf(
         return jsonResponse({ error: "Unexpected passkey credential used" }, 400, corsHeaders);
     }
 
-    const { data: challenges } = await supabase
-        .from("webauthn_challenges")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("type", "authentication")
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-    if (!challenges || challenges.length === 0) {
-        return jsonResponse({ error: "No pending authentication challenge" }, 400, corsHeaders);
-    }
-
-    const storedChallenge = challenges[0];
+    const storedChallenge = await loadPendingWebauthnChallenge(
+        supabase,
+        user.id,
+        "authentication",
+        challengeId,
+        corsHeaders,
+    );
+    if (storedChallenge instanceof Response) return storedChallenge;
 
     if (new Date(storedChallenge.expires_at) < new Date()) {
         await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
         return jsonResponse({ error: "Challenge expired" }, 400, corsHeaders);
+    }
+
+    const challengeScope = getChallengeVerificationScope(storedChallenge, rp);
+    if (!challengeScope || (storedChallenge.credential_id && storedChallenge.credential_id !== expectedCredentialId)) {
+        await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+        return jsonResponse({ error: "Challenge scope mismatch" }, 400, corsHeaders);
     }
 
     // Challenge sofort löschen — verhindert Replay-Angriffe auch bei Verifikationsfehlern
@@ -608,8 +641,8 @@ async function handleActivatePrf(
         const verification = await verifyAuthenticationResponse({
             response: credential as AuthenticationResponseJSON,
             expectedChallenge: storedChallenge.challenge,
-            expectedOrigin: rp.expectedOrigins,
-            expectedRPID: rp.expectedRPIDs,
+            expectedOrigin: challengeScope.expectedOrigin,
+            expectedRPID: challengeScope.expectedRPID,
             credential: {
                 id: dbCredential.credential_id,
                 publicKey: isoBase64URL.toBuffer(dbCredential.public_key),
@@ -651,16 +684,17 @@ async function handleActivatePrf(
 
 async function handleUpgradeWrappedKey(
     user: { id: string },
-    rp: { rpID: string; expectedOrigins: string[]; expectedRPIDs: string[] },
+    rp: RpConfig,
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
 ) {
-    const { credential, expectedCredentialId, credentialId, wrappedMasterKey } = body as {
+    const { credential, expectedCredentialId, credentialId, wrappedMasterKey, challengeId } = body as {
         credential: unknown;
         expectedCredentialId?: string;
         credentialId?: string;
         wrappedMasterKey?: string;
+        challengeId?: string;
     };
     const targetCredentialId = expectedCredentialId || credentialId;
 
@@ -681,23 +715,24 @@ async function handleUpgradeWrappedKey(
         return jsonResponse({ error: "Unexpected passkey credential used" }, 400, corsHeaders);
     }
 
-    const { data: challenges } = await supabase
-        .from("webauthn_challenges")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("type", "authentication")
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-    if (!challenges || challenges.length === 0) {
-        return jsonResponse({ error: "No pending authentication challenge" }, 400, corsHeaders);
-    }
-
-    const storedChallenge = challenges[0];
+    const storedChallenge = await loadPendingWebauthnChallenge(
+        supabase,
+        user.id,
+        "authentication",
+        challengeId,
+        corsHeaders,
+    );
+    if (storedChallenge instanceof Response) return storedChallenge;
 
     if (new Date(storedChallenge.expires_at) < new Date()) {
         await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
         return jsonResponse({ error: "Challenge expired" }, 400, corsHeaders);
+    }
+
+    const challengeScope = getChallengeVerificationScope(storedChallenge, rp);
+    if (!challengeScope || (storedChallenge.credential_id && storedChallenge.credential_id !== targetCredentialId)) {
+        await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+        return jsonResponse({ error: "Challenge scope mismatch" }, 400, corsHeaders);
     }
 
     await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
@@ -729,8 +764,8 @@ async function handleUpgradeWrappedKey(
         const verification = await verifyAuthenticationResponse({
             response: credential as AuthenticationResponseJSON,
             expectedChallenge: storedChallenge.challenge,
-            expectedOrigin: rp.expectedOrigins,
-            expectedRPID: rp.expectedRPIDs,
+            expectedOrigin: challengeScope.expectedOrigin,
+            expectedRPID: challengeScope.expectedRPID,
             credential: {
                 id: dbCredential.credential_id,
                 publicKey: isoBase64URL.toBuffer(dbCredential.public_key),
@@ -869,6 +904,56 @@ function isCredentialAvailableForRp(
     // hosted web surface. Keep them visible there so existing users do not lose
     // their web passkeys, while desktop/local surfaces stay isolated.
     return !credentialRpId && currentRpId === CONFIGURED_SITE_RP_ID;
+}
+
+async function loadPendingWebauthnChallenge(
+    supabase: ReturnType<typeof createClient>,
+    userId: string,
+    type: StoredWebauthnChallenge["type"],
+    challengeId: unknown,
+    corsHeaders: Record<string, string>,
+): Promise<StoredWebauthnChallenge | Response> {
+    if (typeof challengeId !== "string" || challengeId.trim().length === 0) {
+        return jsonResponse({ error: "Missing challengeId" }, 400, corsHeaders);
+    }
+
+    const { data, error } = await supabase
+        .from("webauthn_challenges")
+        .select("*")
+        .eq("id", challengeId)
+        .eq("user_id", userId)
+        .eq("type", type)
+        .maybeSingle();
+
+    if (error) {
+        console.error("Failed to load WebAuthn challenge:", error);
+        return jsonResponse({ error: "Failed to load challenge" }, 500, corsHeaders);
+    }
+
+    if (!data) {
+        return jsonResponse({ error: `No pending ${type} challenge` }, 400, corsHeaders);
+    }
+
+    return data as StoredWebauthnChallenge;
+}
+
+function getChallengeVerificationScope(
+    challenge: StoredWebauthnChallenge,
+    rp: RpConfig,
+): { expectedOrigin: string; expectedRPID: string } | null {
+    const challengeRpId = typeof challenge.rp_id === "string" && challenge.rp_id.trim().length > 0
+        ? challenge.rp_id.trim()
+        : rp.rpID;
+    const challengeOrigin = normalizeHttpOrigin(challenge.origin) ?? rp.origin;
+
+    if (challengeRpId !== rp.rpID || challengeOrigin !== rp.origin) {
+        return null;
+    }
+
+    return {
+        expectedOrigin: challengeOrigin,
+        expectedRPID: challengeRpId,
+    };
 }
 
 function normalizeHttpOrigin(value: string | null | undefined): string | null {

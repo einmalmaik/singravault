@@ -61,7 +61,7 @@ export function SEO({
         'Passwort Manager',
         'Passwortmanager',
         'Password Manager',
-        'Zero-Knowledge',
+        'Clientseitige Verschlüsselung',
         'Verschlüsselung',
         'Sicherheit',
     ];
@@ -120,7 +120,7 @@ export function createWebsiteStructuredData() {
         '@type': 'WebSite',
         name: SITE_NAME,
         url: BASE_URL,
-        description: 'Sicherer Zero-Knowledge Passwort Manager mit clientseitiger Verschlüsselung.',
+        description: 'Passwort Manager mit clientseitig verschlüsselten Vault-Payloads und Metadatenminimierung.',
         potentialAction: {
             '@type': 'SearchAction',
             target: `${BASE_URL}/vault?q={search_term_string}`,

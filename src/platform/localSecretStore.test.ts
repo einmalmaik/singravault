@@ -79,6 +79,7 @@ describe("localSecretStore", () => {
   });
 
   it("uses tauri invoke commands in desktop runtime", async () => {
+    const key = "device-key:00000000-0000-4000-8000-000000000001";
     runtimeState.isTauri = true;
     runtimeState.invoke.mockResolvedValueOnce(undefined);
     runtimeState.invoke.mockResolvedValueOnce("c2VjcmV0");
@@ -86,20 +87,20 @@ describe("localSecretStore", () => {
 
     const store = await import("./localSecretStore");
 
-    await store.saveLocalSecretBytes("device-key:test", new Uint8Array([115, 101, 99, 114, 101, 116]));
-    const loaded = await store.loadLocalSecretBytes("device-key:test");
-    await store.removeLocalSecret("device-key:test");
+    await store.saveLocalSecretBytes(key, new Uint8Array([115, 101, 99, 114, 101, 116]));
+    const loaded = await store.loadLocalSecretBytes(key);
+    await store.removeLocalSecret(key);
 
     expect(Array.from(loaded ?? [])).toEqual([115, 101, 99, 114, 101, 116]);
     expect(runtimeState.invoke).toHaveBeenNthCalledWith(1, "save_local_secret", {
-      key: "device-key:test",
+      key,
       value: "c2VjcmV0",
     });
     expect(runtimeState.invoke).toHaveBeenNthCalledWith(2, "load_local_secret", {
-      key: "device-key:test",
+      key,
     });
     expect(runtimeState.invoke).toHaveBeenNthCalledWith(3, "clear_local_secret", {
-      key: "device-key:test",
+      key,
     });
   });
 

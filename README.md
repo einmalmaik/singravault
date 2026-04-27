@@ -1,14 +1,14 @@
 # Singra Vault
 
-> **Status:** `0.3.0 Stable`
+> **Status:** `0.4.0`
 >
-> Web, PWA und Desktop werden aktiv weiterentwickelt. `0.3.0` ist die erste Freigabe, die wir als stabil markieren.
+> Web, PWA und Desktop werden aktiv weiterentwickelt. Der aktuelle Core-Stand ist auf die Paketversion `0.4.0` ausgerichtet.
 
 **Live-Instanz:** [singravault.mauntingstudios.de](https://singravault.mauntingstudios.de)
 
 ## Überblick
 
-Singra Vault ist ein Zero-Knowledge Passwort-Manager mit Fokus auf Datenschutz, lokaler Verschlüsselung und klarer Trennung zwischen öffentlichem Core und privatem Premium-Bereich.
+Singra Vault ist ein Passwort-Manager mit clientseitig verschlüsselten Vault-Payloads, Metadatenminimierung und klarer Trennung zwischen öffentlichem Core und privatem Premium-Bereich.
 
 Dieses Repository enthält den **öffentlichen Core**:
 
@@ -28,18 +28,22 @@ Diese Teile bleiben im privaten Paket `@singra/premium`.
 
 ## Sicherheitsmodell
 
-Singra Vault verfolgt einen **Zero-Knowledge** Ansatz:
+Singra Vault verfolgt einen **Zero-Knowledge-orientierten Ansatz für Vault-Payloads**:
 
 - Verschlüsselung und Entschlüsselung passieren clientseitig
 - das Master-Passwort verlässt das Gerät nicht im Klartext
 - sensible Schlüsselableitung erfolgt lokal
 - serverseitige Dienste dürfen keinen Zugriff auf entschlüsselte Tresor-Inhalte haben
+- serverseitig sichtbare Vault-Item-Metadaten werden für neue Writes auf neutrale Platzhalter erzwungen
+
+Nicht jede Produktfunktion liegt innerhalb derselben Grenze: Account-, Billing-, Support-, Recovery-/Emergency-, 2FA- und technische Sync-Metadaten bleiben je nach Funktion serverseitig sichtbar oder serverseitig geschützt. Web/PWA-Browser-Speicher ist keine OS-Keychain-Grenze; stärkere lokale Secret-Bindung gilt nur für Tauri-Desktop mit OS-Keychain.
 
 Technische Eckpunkte:
 
 - **Verschlüsselung:** AES-GCM
 - **KDF:** Argon2id
 - **Passkeys / WebAuthn:** plattformabhängig pro Origin bzw. RP-ID
+- **Web-Session:** HttpOnly-BFF-Refresh-Cookie mit kurzer Standardlaufzeit; keine JS-lesbare Refresh-Token-Fallback-Persistenz
 - **Desktop-Session:** Refresh-Token im OS-Keychain, Access-Token nur im Speicher
 
 ## Core vs. Premium

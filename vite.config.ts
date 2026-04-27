@@ -15,7 +15,7 @@ function getSecurityHeaders(mode: string) {
   const workerSrc = "worker-src 'self' blob:";
   const connectSrc = dev
     ? "connect-src 'self' ws: wss: http: https:"
-    : "connect-src 'self' https://*.supabase.co wss://*.supabase.co";
+    : "connect-src 'self' https://*.supabase.co https://api.pwnedpasswords.com wss://*.supabase.co";
 
   return {
     "Content-Security-Policy": [

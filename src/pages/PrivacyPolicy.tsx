@@ -143,7 +143,7 @@ const PrivacyPolicy = () => {
           "Datenschutzerklaerung",
           "Privacy Policy",
           "DSGVO",
-          "Zero-Knowledge",
+          "clientseitige Verschlüsselung",
           "Datenverarbeitung",
         ]}
       />

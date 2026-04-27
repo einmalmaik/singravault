@@ -276,17 +276,19 @@ export async function registerPasskey(
     const { data: serverData, error: serverError } = await invokeWebauthn<{
         options: PublicKeyCredentialCreationOptionsJSON;
         prfSalt: string;
+        challengeId: string;
     }>({
         action: 'generate-registration-options',
         displayName: deviceName,
     });
 
-    if (serverError || !serverData?.options) {
+    if (serverError || !serverData?.options || !serverData.challengeId) {
         return { success: false, error: serverError?.message || 'Failed to get registration options' };
     }
 
     const options: PublicKeyCredentialCreationOptionsJSON = serverData.options;
     const prfSalt: string = serverData.prfSalt;
+    const challengeId: string = serverData.challengeId;
 
     // 2. Convert PRF salt from base64url to ArrayBuffer
     const prfSaltBytes = base64URLStringToBuffer(prfSalt);
@@ -347,6 +349,7 @@ export async function registerPasskey(
     }>({
         action: 'verify-registration',
         credential: regResponse as unknown as Record<string, unknown>,
+        challengeId,
         deviceName,
         prfSalt,
         wrappedMasterKey,
@@ -387,17 +390,19 @@ export async function activatePasskeyPrf(
     const { data: serverData, error: serverError } = await invokeWebauthn<{
         options: PublicKeyCredentialRequestOptionsJSON;
         prfSalts: Record<string, string>;
+        challengeId: string;
     }>({
         action: 'generate-authentication-options',
         credentialId: expectedCredentialId,
     });
 
-    if (serverError || !serverData?.options) {
+    if (serverError || !serverData?.options || !serverData.challengeId) {
         return { success: false, error: serverError?.message || 'Failed to get authentication options' };
     }
 
     const options: PublicKeyCredentialRequestOptionsJSON = serverData.options;
     const prfSalts: Record<string, string> = serverData.prfSalts || {};
+    const challengeId: string = serverData.challengeId;
 
     // Build PRF extension
     const prfExtension = buildAuthenticationPrfExtension(prfSalts);
@@ -448,6 +453,7 @@ export async function activatePasskeyPrf(
             action: 'activate-prf',
             credential: authResponse as unknown as Record<string, unknown>,
             expectedCredentialId,
+            challengeId,
             wrappedMasterKey: wrappedKey,
         });
 
@@ -476,16 +482,18 @@ export async function authenticatePasskey(
     const { data: serverData, error: serverError } = await invokeWebauthn<{
         options: PublicKeyCredentialRequestOptionsJSON;
         prfSalts: Record<string, string>;
+        challengeId: string;
     }>({
         action: 'generate-authentication-options',
     });
 
-    if (serverError || !serverData?.options) {
+    if (serverError || !serverData?.options || !serverData.challengeId) {
         return { success: false, error: serverError?.message || 'Failed to get authentication options' };
     }
 
     const requestOptions: PublicKeyCredentialRequestOptionsJSON = serverData.options;
     const prfSalts: Record<string, string> = serverData.prfSalts || {};
+    const challengeId: string = serverData.challengeId;
 
     // 2. Build PRF extension
     const prfExtension = buildAuthenticationPrfExtension(prfSalts);
@@ -518,6 +526,7 @@ export async function authenticatePasskey(
     }>({
         action: 'verify-authentication',
         credential: authResponse as unknown as Record<string, unknown>,
+        challengeId,
     });
 
     if (verifyError || !verifyData?.verified) {

@@ -436,7 +436,7 @@ describe("AuthContext", () => {
             consoleWarn.mockRestore();
         });
 
-        it("restores the tab fallback session when BFF cookie hydration returns 401", async () => {
+        it("does not restore the legacy tab fallback session when BFF cookie hydration returns 401", async () => {
             sessionStorage.setItem("singra-auth-session-fallback", JSON.stringify({
                 access_token: "fallback-token",
                 refresh_token: "fallback-refresh",
@@ -459,10 +459,13 @@ describe("AuthContext", () => {
                 expect(result.current.loading).toBe(false);
             });
 
-            expect(mockSupabase.auth.setSession).toHaveBeenCalledWith({
+            expect(result.current.user).toBeNull();
+            expect(result.current.session).toBeNull();
+            expect(mockSupabase.auth.setSession).not.toHaveBeenCalledWith({
                 access_token: "fallback-token",
                 refresh_token: "fallback-refresh",
             });
+            expect(sessionStorage.getItem("singra-auth-session-fallback")).toBeNull();
         });
     });
 

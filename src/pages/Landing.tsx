@@ -28,13 +28,13 @@ export default function Landing() {
   return (
     <div className="min-h-screen flex flex-col">
       <SEO
-        title="Sicherer Zero-Knowledge Passwort-Manager"
-        description="Singra Vault ist ein sicherer Zero-Knowledge Passwort Manager mit clientseitiger Verschlüsselung. Kostenlos, Open Source, und mit voller Kontrolle über deine Daten."
+        title="Clientseitig verschlüsselter Passwort-Manager"
+        description="Singra Vault ist ein Passwort Manager mit clientseitig verschlüsselten Vault-Payloads, Metadatenminimierung und klar dokumentierten Plattformgrenzen."
         path="/"
         keywords={[
           'Passwort Manager kostenlos',
           'Passwortmanager Open Source',
-          'Zero-Knowledge Encryption',
+          'clientseitige Verschlüsselung',
           'Sichere Passwörter',
           'Passwort Generator',
           'Zwei-Faktor-Authentifizierung',

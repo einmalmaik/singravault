@@ -19,7 +19,41 @@ vi.mock("@/platform/localSecretStore", () => ({
   }),
 }));
 
+vi.mock("hash-wasm", () => ({
+  argon2id: vi.fn(async ({
+    password,
+    salt,
+    hashLength,
+  }: {
+    password: string;
+    salt: Uint8Array;
+    hashLength: number;
+  }) => {
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(password),
+      "PBKDF2",
+      false,
+      ["deriveBits"],
+    );
+
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        salt,
+        iterations: 1000,
+        hash: "SHA-256",
+      },
+      keyMaterial,
+      hashLength * 8,
+    );
+
+    return new Uint8Array(bits);
+  }),
+}));
+
 import {
+  DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH,
   deleteDeviceKey,
   exportDeviceKeyForTransfer,
   generateDeviceKey,
@@ -164,30 +198,41 @@ describe("deviceKeyService", () => {
     );
   });
 
-  it("exports and imports device keys with PIN-based transfer encryption", async () => {
+  it("exports and imports device keys with versioned transfer encryption", async () => {
     const original = new Uint8Array(32);
     for (let index = 0; index < original.length; index += 1) {
       original[index] = index + 1;
     }
 
     await storeDeviceKey("user-1", original);
-    const transferData = await exportDeviceKeyForTransfer("user-1", "123456");
+    const transferData = await exportDeviceKeyForTransfer("user-1", "random-secret-123");
 
-    expect(transferData).toEqual(expect.any(String));
+    expect(transferData).toEqual(expect.stringMatching(/^sv-dk-transfer-v2:/));
 
     await deleteDeviceKey("user-1");
-    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "123456")).resolves.toBe(true);
+    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "random-secret-123")).resolves.toBe(true);
     await expect(getDeviceKey("user-1")).resolves.toEqual(original);
   });
 
-  it("rejects import when the transfer PIN is wrong", async () => {
+  it("rejects short transfer secrets and legacy raw transfer blobs", async () => {
     const original = new Uint8Array(32).fill(5);
     await storeDeviceKey("user-1", original);
 
-    const transferData = await exportDeviceKeyForTransfer("user-1", "123456");
+    await expect(exportDeviceKeyForTransfer(
+      "user-1",
+      "x".repeat(DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH - 1),
+    )).resolves.toBeNull();
+    await expect(importDeviceKeyFromTransfer("user-1", "not-a-v2-envelope", "random-secret-123")).resolves.toBe(false);
+  });
+
+  it("rejects import when the transfer secret is wrong", async () => {
+    const original = new Uint8Array(32).fill(5);
+    await storeDeviceKey("user-1", original);
+
+    const transferData = await exportDeviceKeyForTransfer("user-1", "random-secret-123");
     await deleteDeviceKey("user-1");
 
-    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "654321")).resolves.toBe(false);
+    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "different-secret-456")).resolves.toBe(false);
     await expect(getDeviceKey("user-1")).resolves.toBeNull();
   });
 });

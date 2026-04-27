@@ -45,6 +45,7 @@ import {
   AUTH_OFFLINE_IDENTITY_STORAGE_KEY,
   clearPersistentSession,
   hydrateAuthSession,
+  readSessionFallback,
   readOfflineIdentity,
   refreshCurrentSession,
   SESSION_FALLBACK_STORAGE_KEY,
@@ -143,6 +144,16 @@ describe("authSessionManager", () => {
 
     expect(sessionStorage.getItem(SESSION_FALLBACK_STORAGE_KEY)).toBeNull();
     expect(localStorage.getItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY)).toBeNull();
+  });
+
+  it("clears legacy tab fallback tokens instead of hydrating from them", () => {
+    sessionStorage.setItem(SESSION_FALLBACK_STORAGE_KEY, JSON.stringify({
+      access_token: "old-access",
+      refresh_token: "old-refresh",
+    }));
+
+    expect(readSessionFallback()).toBeNull();
+    expect(sessionStorage.getItem(SESSION_FALLBACK_STORAGE_KEY)).toBeNull();
   });
 
   it("does not hydrate a desktop session from token-free offline identity alone", async () => {

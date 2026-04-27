@@ -22,6 +22,8 @@ import {
     Clipboard,
     AlertTriangle,
     ExternalLink,
+    MonitorSmartphone,
+    Fingerprint,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -60,7 +62,7 @@ interface WhitepaperSection {
     evidence: string[];
 }
 
-const SECURITY_WHITEPAPER_LAST_UPDATED = '26.04.2026';
+const SECURITY_WHITEPAPER_LAST_UPDATED = '27.04.2026';
 
 function asStringArray(value: unknown): string[] {
     if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
@@ -223,6 +225,49 @@ export default function SecurityWhitepaper() {
                 ],
             },
             {
+                id: 'device-keys',
+                tags: ['crypto', 'client', 'storage', 'limitations'],
+                icon: <MonitorSmartphone className="h-5 w-5 text-primary" />,
+                title: t('securityWhitepaper.sections.deviceKeys.title'),
+                summary: t('securityWhitepaper.sections.deviceKeys.summary'),
+                bullets: asStringArray(t('securityWhitepaper.sections.deviceKeys.bullets', { returnObjects: true })),
+                evidence: [
+                    'src/services/deviceKeyService.ts',
+                    'src/platform/localSecretStore.ts',
+                    'src-tauri/src/lib.rs',
+                    'docs/DEVICE_KEY.md',
+                ],
+            },
+            {
+                id: 'sessions-webauthn',
+                tags: ['auth', 'client', 'hardening'],
+                icon: <Fingerprint className="h-5 w-5 text-primary" />,
+                title: t('securityWhitepaper.sections.sessionsWebAuthn.title'),
+                summary: t('securityWhitepaper.sections.sessionsWebAuthn.summary'),
+                bullets: asStringArray(t('securityWhitepaper.sections.sessionsWebAuthn.bullets', { returnObjects: true })),
+                evidence: [
+                    'src/services/authSessionManager.ts',
+                    'supabase/functions/auth-session/index.ts',
+                    'supabase/functions/webauthn/index.ts',
+                    'supabase/migrations/20260427211000_bind_webauthn_challenges_to_scope.sql',
+                ],
+            },
+            {
+                id: 'recovery-emergency',
+                tags: ['sharing', 'crypto', 'limitations'],
+                icon: <AlertTriangle className="h-5 w-5 text-primary" />,
+                title: t('securityWhitepaper.sections.recoveryEmergency.title'),
+                summary: t('securityWhitepaper.sections.recoveryEmergency.summary'),
+                bullets: asStringArray(t('securityWhitepaper.sections.recoveryEmergency.bullets', { returnObjects: true })),
+                evidence: [
+                    'supabase/functions/auth-recovery/index.ts',
+                    'src/services/vaultRecoveryService.ts',
+                    '@singra/premium/src/services/emergencyAccessService.ts',
+                    '@singra/premium/src/components/settings/EmergencyAccessSettings.tsx',
+                    'supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql',
+                ],
+            },
+            {
                 id: 'categories',
                 tags: ['crypto', 'client', 'offline', 'integrity'],
                 icon: <Database className="h-5 w-5 text-primary" />,
@@ -325,11 +370,11 @@ export default function SecurityWhitepaper() {
         <div className="min-h-screen bg-background flex flex-col">
             <SEO
                 title="Security Whitepaper"
-                description="Faktenbasierte Beschreibung der Sicherheitsarchitektur von Singra Vault. Zero-Knowledge Verschlüsselung, Argon2id KDF, AES-GCM, Row Level Security und mehr – direkt aus dem Code abgeleitet."
+                description="Faktenbasierte Beschreibung der Sicherheitsarchitektur von Singra Vault: clientseitige Vault-Payload-Verschlüsselung, Argon2id, AES-GCM, Row Level Security und dokumentierte Grenzen."
                 path="/security"
                 keywords={[
                     'Security Whitepaper',
-                    'Zero-Knowledge',
+                    'Zero-Knowledge Vault Payloads',
                     'Argon2id',
                     'AES-GCM',
                     'Row Level Security',

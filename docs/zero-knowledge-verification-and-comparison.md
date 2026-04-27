@@ -14,6 +14,7 @@
 | OPAQUE registration record | Yes, `user_opaque_records.registration_record` | No app password or app-password hash |
 | Vault master password / vault key | No | No |
 | Vault items (`encrypted_data`) | Yes | No, AES-256-GCM ciphertext |
+| Vault item title/type/favorite/category columns | Yes | Neutral placeholders for new writes; legacy rows may remain until client migration |
 | Encryption salt | Yes | Public salt, not useful without the master password |
 | Master-password verifier | Yes | Encrypted verifier value, not an auth password hash |
 | TOTP secrets | Yes | Server-side encrypted; needed for server-side 2FA verification |
@@ -41,6 +42,16 @@ None of these functions reads, writes, or decrypts vault item `encrypted_data`.
 ### Admin Access
 
 With database/service-role access an admin can read ciphertext, salts, OPAQUE records, and structural metadata, but cannot derive the app login password or vault decryption key from the current login path. Vault decryption still depends on client-side key derivation from the vault/master password.
+
+New vault item writes are forced through neutral server-visible metadata placeholders by migration `20260427210000_enforce_opaque_vault_item_metadata.sql`. Existing legacy rows are not bulk-wiped by that migration because SQL cannot safely copy remaining plaintext metadata into encrypted payloads.
+
+### Platform Boundary
+
+Web/PWA local secret storage uses IndexedDB plus a non-extractable browser `CryptoKey` when available. This is a browser defense-in-depth layer, not an OS secret boundary. Tauri/Desktop local secrets use the OS keychain through narrowly scoped Rust commands, which is the stronger local Device-Key storage path.
+
+### Recovery And Emergency Access
+
+Recovery and Emergency Access create separate key-access workflows. They are encrypted client-side, but they still expand the trusted computing base and must be treated as alternative Vault-key paths with their own revocation, notification, waiting-period and trustee-account risks.
 
 ### Premium File Attachments
 
@@ -75,6 +86,8 @@ This comparison is high-level and should be rechecked before publication because
 - The web delivery model remains sensitive to compromised shipped JavaScript, XSS, malicious extensions, or device malware.
 - Existing accounts without an OPAQUE record cannot be safely auto-migrated without the password entering the server. They must use the OPAQUE reset flow.
 - Metadata such as user IDs, timestamps, ownership links, and some product-level names remains structural plaintext.
+- Browser/PWA local secret storage does not protect against compromised same-origin JavaScript, malicious extensions, or a compromised renderer.
+- Emergency Access and other sharing/recovery flows are alternative key paths, not part of the narrow single-user vault-payload boundary.
 - File attachment rollback protection is detection-oriented. Manifests are versioned, carry a manifest root and previous-manifest hash field, and chunks are bound through AAD to user, item, file, revision, manifest root, index, and chunk count. The client stores a local last-seen revision/hash checkpoint and blocks older/conflicting manifests when that checkpoint exists. Without a trustworthy local checkpoint or an external transparency/audit system, a fully malicious server can still replay an older valid ciphertext state to a fresh device.
 
 ## Conclusion

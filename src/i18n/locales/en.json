@@ -51,7 +51,7 @@
     "hero": {
       "title": "Your Passwords.",
       "titleHighlight": "Only for you.",
-      "subtitle": "Open source. End-to-end encrypted. Zero-knowledge by design.",
+      "subtitle": "Public core. Client-side encrypted vault payloads. Documented boundaries.",
       "cta": "Get started for free",
       "ctaSecondary": "Learn more",
       "description": "Singra Vault protects your vault data locally on your device before it is synchronized. App-password login uses OPAQUE; OAuth remains a separate sign-in path."
@@ -60,16 +60,16 @@
       "title": "Highest Security Standards",
       "subtitle": "We combine strong cryptography with local integrity checks, passkey unlock, and clearly documented limits.",
       "zeroKnowledge": {
-        "title": "Zero-Knowledge Architecture",
-        "description": "We can never see your passwords. Decryption happens only on your device."
+        "title": "Client-side encrypted vault payloads",
+        "description": "Vault contents are encrypted and decrypted locally. Technical metadata and recovery/sharing paths have separate documented boundaries."
       },
       "e2ee": {
         "title": "End-to-End Encryption",
         "description": "AES-256-GCM encryption with Argon2id (128 MiB) key derivation - stronger than industry standard."
       },
       "openSource": {
-        "title": "100% Open Source",
-        "description": "The entire codebase is publicly available and auditable by the community."
+        "title": "Public core source",
+        "description": "The public core is available for review. Premium extensions are delivered separately."
       },
       "clientSide": {
         "title": "Client-Side Encryption",
@@ -123,7 +123,7 @@
     "openSource": {
       "title": "Transparent & Open Source",
       "subtitle": "Trust through transparency",
-      "description": "Singra Vault is fully open source. Every line of code can be reviewed by the community. No hidden backdoors, no secrets.",
+      "description": "The public Singra Vault core is available for review. Premium extensions stay separate and are not committed to this repository.",
       "cta": "View code on GitHub",
       "community": "Join the community"
     },
@@ -135,7 +135,7 @@
       "features": {
         "openSource": "Open Source",
         "e2ee": "End-to-End Encryption",
-        "zeroKnowledge": "Zero-Knowledge",
+        "zeroKnowledge": "Zero-Knowledge (vault payloads)",
         "free": "Free Tier Available",
         "kdf": "Key Derivation (KDF)",
         "postQuantum": "Post-Quantum Protection for Sharing Keys",
@@ -150,7 +150,7 @@
       },
       "legend": {
         "full": "Full support",
-        "partial": "Partial / Premium only",
+        "partial": "Partial / scoped boundary",
         "unavailable": "Not available"
       },
       "disclaimer": "All information is based on official public documentation from the respective vendors. Pricing, feature scope, and browser support may change at any time.",
@@ -279,6 +279,39 @@
           "The Supabase app session is created only after successful OPAQUE finish and is additionally bound to the OPAQUE sessionKey with an HMAC over access token and user ID."
         ]
       },
+      "deviceKeys": {
+        "title": "Device keys & local secret stores",
+        "summary": "Device keys strengthen local device binding, but the strength differs by platform.",
+        "bullets": [
+          "Tauri/Desktop stores local secrets through Rust commands in the OS secret store. The Rust layer accepts only narrow key domains such as device-key:<uuid> and vault-integrity:<uuid>; arbitrary renderer key names are rejected.",
+          "Web/PWA uses IndexedDB and non-extractable WebCrypto keys as defense in depth. This is not an OS-keychain boundary: compromised same-origin JavaScript can still invoke allowed app operations.",
+          "Device-key transfer no longer uses a short PIN. Transfer blobs are sv-dk-transfer-v2 envelopes with per-transfer salt, Argon2id derivation, AES-GCM, and a transfer secret of at least 12 characters.",
+          "Legacy/raw transfer blobs are not imported. This is an intentional compatibility break because short PIN-wrapped artifacts were offline brute-forceable.",
+          "Local secrets are never treated as a replacement for unlocked vault-key material. A compromised unlocked client remains a full compromise of the active session."
+        ]
+      },
+      "sessionsWebAuthn": {
+        "title": "Sessions, cookies & WebAuthn",
+        "summary": "Sessions limit account access; WebAuthn is bound to concrete challenge, origin, and RP contexts.",
+        "bullets": [
+          "The BFF session uses an HttpOnly cookie for refresh material. The former JS-readable sessionStorage fallback is cleared during hydration and is no longer written.",
+          "The default cookie lifetime is reduced to 14 days. Access tokens remain short-lived; account access is still a sensitive bearer-token risk and is not the same as vault unlock.",
+          "WebAuthn registration and authentication return a challengeId. Verification loads exactly that challenge by user_id, type, and ID; parallel 'latest challenge' flows are no longer accepted.",
+          "The expected RP ID and origin come from the stored challenge scope. Web, PWA, and Tauri are not treated as automatically sharing one passkey surface.",
+          "Passkey PRF can enable vault unlock only when credential assertion, PRF output, and the server-stored wrappedMasterKey material all match."
+        ]
+      },
+      "recoveryEmergency": {
+        "title": "Recovery & Emergency Access",
+        "summary": "Recovery and Emergency Access are alternative key-access paths and therefore explicit parts of the trusted computing base.",
+        "bullets": [
+          "Account recovery does not restore plaintext passwords. Email code, optional account 2FA, and OPAQUE re-enrollment create new login data; vault-key material must then be made usable separately.",
+          "Vault reset is a destructive recovery operation guarded by a short-lived one-time server challenge. It does not restore old vault contents.",
+          "Emergency Access stores the grantor vault key hybrid-wrapped for the trustee. Current paths require ML-KEM-768 + RSA-OAEP and block new legacy RSA-only encrypted_master_key writes.",
+          "Trustees receive access only after invite acceptance, setup, request, and wait period. RLS exposes grantor vault ciphertext only when status=granted, granted_at is set, and PQ key material exists.",
+          "The feature remains documented as an alternative access path: a compromised trustee account plus available trustee private keys can open the grantor vault after a successful Emergency Access flow."
+        ]
+      },
       "cryptography": {
         "title": "Cryptography & KDF",
         "summary": "AES-256-GCM for data; Argon2id for key derivation; KDF is migrated to stronger parameters when needed.",
@@ -338,11 +371,13 @@
       },
       "offline": {
         "title": "Offline mode",
-        "summary": "Offline snapshots + mutation queue live in IndexedDB and sync back when online.",
+        "summary": "Offline snapshots + mutation queue are kept in IndexedDB and checked against a server-side sync head.",
         "bullets": [
           "OfflineVaultSnapshot stores per-user snapshots (items, categories) and queued mutations.",
           "Offline unlock stores salt + verifier in snapshot (no plaintext master password).",
-          "Limitation: browser storage can be wiped; integrity depends on a local baseline."
+          "Each known remote snapshot also stores the last accepted server-side vault revision. A lower later server state is blocked as a rollback/stale snapshot and must not overwrite the local cache.",
+          "Offline mutations remember their base revision and are synchronized through apply_vault_mutation() as compare-and-swap. If the server has advanced, the mutation remains queued for conflict-aware handling.",
+          "Limitation: browser storage can be wiped; a new device without a local high-water mark cannot cryptographically identify an old but internally consistent server state as a rollback by itself."
         ]
       },
       "categories": {
@@ -364,6 +399,7 @@
           "Item drift leads to quarantine instead of silent rendering: changed ciphertext, missing items, and unknown server items are surfaced separately.",
           "The baseline stores separate digests for items and categories. Item drift can be quarantined; category drift blocks normal access because categories affect vault structure and visibility.",
           "Legitimate local changes call refreshIntegrityBaseline() with the affected item/category IDs. Only those IDs may update the baseline; arbitrary database changes are not trusted.",
+          "The local integrity check works with the sync head: a server state below the last locally accepted revision is not accepted as a new healthy baseline.",
           "Recovery is only possible from an already trusted local copy. Without such a copy there is no cryptographic recovery path.",
           "Tampered categories or unreadable local baselines block normal access. In that case only Safe Mode, local export, or a vault reset remain."
         ]
@@ -407,9 +443,9 @@
     "lastUpdated": "Last updated: {{date}}",
     "contact": "For questions, please contact privacy@singra.net",
     "zeroKnowledge": {
-      "title": "Zero-Knowledge Architecture",
+      "title": "Zero-Knowledge-oriented vault encryption",
       "description": "Your data belongs only to you.",
-      "details": "Singra Vault is built on a Zero-Knowledge principle. This means your passwords and sensitive data are encrypted exclusively on your device before ever being stored or transmitted. We as operators have technically no way to view your decrypted data. Your Master Password never leaves your device.\n\nTransparency note: In the current web architecture, 100% absolute Zero-Knowledge is not fully possible because some technical metadata must remain processable on the server (for example IDs, timestamps, ownership references, and session/authentication state). We minimize this metadata, encrypt all sensitive vault content and major vault metadata, and continuously reduce plaintext wherever technically feasible."
+      "details": "Vault payloads are encrypted on your device before they are stored or synchronized. Operators should not be able to view decrypted vault contents. Your Master Password is not processed server-side.\n\nTransparency note: The product is not strict Zero-Knowledge in every function. IDs, timestamps, ownership references, authentication state, 2FA verification, browser/desktop runtime boundaries, and recovery, emergency, and sharing paths have their own metadata and trust boundaries. We minimize this metadata and force neutral server-side placeholders for new vault items wherever it is technically safe."
     },
     "general": {
       "title": "General",
@@ -417,11 +453,11 @@
     },
     "collection": {
       "title": "Data Collection",
-      "content": "We collect only what is necessary to provide the service:\n\n- Email address (for authentication and account recovery)\n- Encrypted vault data (we cannot read the content)\n- Encrypted vault metadata (e.g. item title, URL, type, favorite flag, category reference)\n- Master Password Hash (for verification, not the password itself)\n- Encrypted 2FA/TOTP secret (for two-factor authentication)\n- Authentication metadata (login time)\n\nVault Health note: For the analysis feature, passwords are evaluated locally after decryption in your active session (e.g. strength, age, and reuse checks). No additional persistent server-side storage of plaintext passwords is performed."
+      "content": "We collect only what is necessary to provide the service:\n\n- Email address (for authentication and account recovery)\n- Encrypted vault data (we cannot read the content)\n- Server-visible technical metadata such as IDs, ownership references, timestamps, and neutral vault-item placeholders\n- Vault verifier/OPAQUE data for authentication and unlock checks, not your plaintext password\n- Server-side encrypted 2FA/TOTP secret (for two-factor authentication)\n- Authentication metadata (login time)\n\nVault Health note: For the analysis feature, passwords are evaluated locally after decryption in your active session (e.g. strength, age, and reuse checks). No additional persistent server-side storage of plaintext passwords is performed."
     },
     "security": {
       "title": "Security Measures",
-      "content": "To protect your data, we use state-of-the-art encryption technologies:\n\n- AES-256-GCM for data encryption\n- Argon2id for key derivation\n- Client-side encryption for vault content and vault metadata\n- Server-side encryption for stored 2FA/TOTP secrets\n- HTTPS/TLS for all transmissions\n\nAll cryptographic operations for vault data take place locally in your browser."
+      "content": "To protect your data, we use modern encryption technologies:\n\n- AES-256-GCM for vault payload encryption\n- Argon2id for key derivation\n- Client-side encryption for vault contents and sensitive vault metadata\n- Server-side encryption for stored 2FA/TOTP secrets\n- HTTPS/TLS for all transmissions\n\nCryptographic operations for vault payloads happen locally. Browser storage is not an OS-keychain boundary; the stronger local secret path applies to Tauri/Desktop."
     },
     "storage": {
       "title": "Data Storage",
@@ -1592,16 +1628,16 @@
     "enableSuccess": "Device Key enabled. Create an export now for other devices!",
     "export": "Export",
     "exportTitle": "Export Device Key",
-    "exportDesc": "The Device Key will be encrypted with a PIN. Enter this code on the new device.",
+    "exportDesc": "The Device Key is encrypted with a transfer secret. Use at least 12 random characters.",
     "exportFailed": "Export failed.",
-    "exportInstructions": "Copy this code and enter it along with your PIN on the new device. The code contains your encrypted Device Key.",
+    "exportInstructions": "Copy this code and enter it together with the transfer secret on the new device. Old short PIN transfer codes are no longer accepted.",
     "import": "Import",
     "importTitle": "Import Device Key",
-    "importDesc": "Enter the export code and PIN from the other device.",
+    "importDesc": "Enter the export code and transfer secret from the other device.",
     "importSuccess": "Device Key imported successfully.",
-    "importFailed": "Import failed. Check the code and PIN.",
-    "transferPin": "Transfer PIN",
-    "pinPlaceholder": "At least 4 characters",
+    "importFailed": "Import failed. Check the code and transfer secret.",
+    "transferPin": "Transfer secret",
+    "pinPlaceholder": "At least 12 random characters",
     "transferCode": "Transfer code",
     "codePlaceholder": "Base64 code from other device",
     "generateCode": "Generate code"

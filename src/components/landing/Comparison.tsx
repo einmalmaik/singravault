@@ -41,7 +41,7 @@ const competitors: Competitor[] = [
         features: {
             openSource: 'yes',
             e2ee: 'yes',
-            zeroKnowledge: 'yes',
+            zeroKnowledge: 'partial',
             free: 'yes',
             kdf: 'yes',
             postQuantum: 'yes',
@@ -56,6 +56,7 @@ const competitors: Competitor[] = [
         },
         details: {
             kdf: 'Argon2id 128 MiB',
+            zeroKnowledge: 'Vault payloads',
             postQuantum: 'ML-KEM-768 + RSA-4096 for sharing/emergency key wrapping',
             clipboardClear: '30s',
             pricing: '€0 / €1,65 pro Monat',

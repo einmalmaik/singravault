@@ -94,9 +94,9 @@ export function Hero() {
             {/* Trust indicators */}
             <div className="grid gap-3 pt-4 sm:grid-cols-3">
               {[
-                { label: 'Zero-Knowledge', value: '100%' },
-                { label: 'Open Source', value: 'Public' },
-                { label: 'End-to-End', value: 'Encrypted' },
+                { label: 'Vault-Payloads', value: 'Encrypted' },
+                { label: 'Core Source', value: 'Public' },
+                { label: 'Metadata', value: 'Minimized' },
               ].map((stat, index) => (
                 <div
                   key={stat.label}

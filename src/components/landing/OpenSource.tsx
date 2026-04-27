@@ -67,7 +67,7 @@ export function OpenSource() {
                       <div className="w-3 h-3 rounded-full bg-success" />
                     </div>
                     <code className="text-xs sm:text-sm">
-                      <span className="text-muted-foreground">// Zero-Knowledge Encryption</span>
+                      <span className="text-muted-foreground">// Client-side vault encryption</span>
                       <br />
                       <span className="text-primary">const</span> key = <span className="text-success">deriveKey</span>(
                       <br />

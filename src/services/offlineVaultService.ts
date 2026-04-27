@@ -41,6 +41,11 @@ export interface OfflineVaultSnapshot {
   categories: CategoryRow[];
   lastSyncedAt: string | null;
   updatedAt: string;
+  /**
+   * Monotonic server-maintained vault revision observed during the last trusted
+   * online sync. Used only as a local rollback/stale-read checkpoint.
+   */
+  remoteRevision?: number | null;
   // Credentials for offline unlock
   encryptionSalt?: string | null;
   masterPasswordVerifier?: string | null;
@@ -59,6 +64,7 @@ type OfflineMutation =
     id: string;
     userId: string;
     createdAt: string;
+    baseRemoteRevision?: number | null;
     type: 'upsert_item';
     payload: VaultItemInsert & { id: string };
   }
@@ -66,6 +72,7 @@ type OfflineMutation =
     id: string;
     userId: string;
     createdAt: string;
+    baseRemoteRevision?: number | null;
     type: 'delete_item';
     payload: { id: string };
   }
@@ -73,6 +80,7 @@ type OfflineMutation =
     id: string;
     userId: string;
     createdAt: string;
+    baseRemoteRevision?: number | null;
     type: 'upsert_category';
     payload: CategoryInsert & { id: string };
   }
@@ -80,6 +88,7 @@ type OfflineMutation =
     id: string;
     userId: string;
     createdAt: string;
+    baseRemoteRevision?: number | null;
     type: 'delete_category';
     payload: { id: string };
   };
@@ -299,7 +308,64 @@ function preserveLocalSecurityState(
     kdfVersion: snapshot.kdfVersion ?? existing.kdfVersion,
     encryptedUserKey: snapshot.encryptedUserKey ?? existing.encryptedUserKey,
     vaultTwoFactorRequired: snapshot.vaultTwoFactorRequired ?? existing.vaultTwoFactorRequired,
+    remoteRevision: snapshot.remoteRevision ?? existing.remoteRevision ?? null,
   };
+}
+
+export class OfflineSnapshotRollbackError extends Error {
+  constructor(message = 'Remote vault snapshot is older than the local sync checkpoint.') {
+    super(message);
+    this.name = 'OfflineSnapshotRollbackError';
+  }
+}
+
+async function fetchRemoteVaultRevision(vaultId: string | null): Promise<number | null> {
+  if (!vaultId) {
+    return null;
+  }
+
+  const { data, error } = await supabase.rpc(
+    'get_vault_sync_head' as never,
+    { p_vault_id: vaultId } as never,
+  ) as unknown as {
+    data: Array<{ revision: number | string | null }> | null;
+    error: { code?: string; message?: string } | null;
+  };
+
+  if (error) {
+    // Deployments without the sync-head migration should continue to work; they
+    // simply do not get rollback detection until the migration is applied.
+    if (error.code === 'PGRST202' || String(error.message ?? '').includes('get_vault_sync_head')) {
+      return null;
+    }
+    throw error;
+  }
+
+  const rawRevision = data?.[0]?.revision;
+  if (typeof rawRevision === 'number' && Number.isSafeInteger(rawRevision)) {
+    return rawRevision;
+  }
+
+  if (typeof rawRevision === 'string' && /^\d+$/.test(rawRevision)) {
+    const parsed = Number(rawRevision);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function assertRemoteRevisionNotRolledBack(
+  cachedSnapshot: OfflineVaultSnapshot | null,
+  remoteRevision: number | null,
+): void {
+  const localRevision = cachedSnapshot?.remoteRevision;
+  if (
+    typeof localRevision === 'number'
+    && typeof remoteRevision === 'number'
+    && remoteRevision < localRevision
+  ) {
+    throw new OfflineSnapshotRollbackError();
+  }
 }
 
 export async function removeOfflineSnapshot(userId: string): Promise<void> {
@@ -494,6 +560,9 @@ export async function enqueueOfflineMutation(
     ...mutation,
     id,
     createdAt: nowIso(),
+    baseRemoteRevision: mutation.baseRemoteRevision
+      ?? (await getOfflineSnapshot(mutation.userId))?.remoteRevision
+      ?? null,
   } as OfflineMutation;
 
   await withStore<void>(MUTATIONS_STORE, 'readwrite', (store, resolve, reject) => {
@@ -503,6 +572,60 @@ export async function enqueueOfflineMutation(
   });
 
   return id;
+}
+
+interface AppliedVaultMutationResult {
+  applied: boolean;
+  revision: number | string | null;
+  conflict_reason: string | null;
+}
+
+function normalizeRemoteRevision(value: number | string | null | undefined): number | null {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+async function applyQueuedVaultMutation(mutation: OfflineMutation): Promise<AppliedVaultMutationResult> {
+  const { data, error } = await supabase.rpc(
+    'apply_vault_mutation' as never,
+    {
+      p_base_revision: mutation.baseRemoteRevision ?? null,
+      p_type: mutation.type,
+      p_payload: mutation.payload,
+    } as never,
+  ) as unknown as {
+    data: AppliedVaultMutationResult | null;
+    error: { message?: string } | null;
+  };
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? { applied: false, revision: null, conflict_reason: 'empty_result' };
+}
+
+async function updateCachedRemoteRevision(userId: string, revision: number | null): Promise<void> {
+  if (revision === null) {
+    return;
+  }
+
+  const snapshot = await ensureSnapshot(userId);
+  if (typeof snapshot.remoteRevision === 'number' && revision < snapshot.remoteRevision) {
+    throw new OfflineSnapshotRollbackError();
+  }
+
+  snapshot.remoteRevision = revision;
+  snapshot.updatedAt = nowIso();
+  await saveOfflineSnapshot(snapshot);
 }
 
 export async function getOfflineMutations(userId: string): Promise<OfflineMutation[]> {
@@ -633,7 +756,11 @@ export async function fetchRemoteOfflineSnapshot(
     updatedAt: now,
   };
   const cachedSnapshot = await getOfflineSnapshot(userId);
+  const remoteRevision = await fetchRemoteVaultRevision(vaultId);
+  assertRemoteRevisionNotRolledBack(cachedSnapshot, remoteRevision);
+
   const snapshot = preserveLocalSecurityState(remoteSnapshot, cachedSnapshot);
+  snapshot.remoteRevision = remoteRevision ?? cachedSnapshot?.remoteRevision ?? null;
 
   if (options?.persist !== false) {
     await saveOfflineSnapshot(snapshot);
@@ -678,6 +805,7 @@ function applyRecentLocalMutations(
     kdfVersion: cachedSnapshot.kdfVersion ?? remoteSnapshot.kdfVersion,
     encryptedUserKey: cachedSnapshot.encryptedUserKey ?? remoteSnapshot.encryptedUserKey,
     vaultTwoFactorRequired: cachedSnapshot.vaultTwoFactorRequired ?? remoteSnapshot.vaultTwoFactorRequired,
+    remoteRevision: remoteSnapshot.remoteRevision ?? cachedSnapshot.remoteRevision ?? null,
   };
 }
 
@@ -757,30 +885,13 @@ export async function syncOfflineMutations(userId: string): Promise<{
 
   for (const mutation of queue) {
     try {
-      if (mutation.type === 'upsert_item') {
-        const { error } = await supabase
-          .from('vault_items')
-          .upsert(mutation.payload, { onConflict: 'id' });
-        if (error) throw error;
-      } else if (mutation.type === 'delete_item') {
-        const { error } = await supabase
-          .from('vault_items')
-          .delete()
-          .eq('id', mutation.payload.id);
-        if (error) throw error;
-      } else if (mutation.type === 'upsert_category') {
-        const { error } = await supabase
-          .from('categories')
-          .upsert(mutation.payload, { onConflict: 'id' });
-        if (error) throw error;
-      } else if (mutation.type === 'delete_category') {
-        const { error } = await supabase
-          .from('categories')
-          .delete()
-          .eq('id', mutation.payload.id);
-        if (error) throw error;
+      const mutationResult = await applyQueuedVaultMutation(mutation);
+      if (!mutationResult.applied) {
+        errors += 1;
+        break;
       }
 
+      await updateCachedRemoteRevision(userId, normalizeRemoteRevision(mutationResult.revision));
       successfulIds.push(mutation.id);
     } catch (err) {
       if (isLikelyOfflineError(err)) {

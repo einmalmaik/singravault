@@ -1,35 +1,44 @@
-# OfflineVaultService — Offline-Vault-Cache & Sync
+# OfflineVaultService - Offline-Vault-Cache, Sync und Rollback-Grenzen
 
 > **Datei:** `src/services/offlineVaultService.ts`  
-> **Zweck:** Offline-First-Architektur mit IndexedDB-Cache und Mutation-Queue für lokale Änderungen, die bei Wiederverbindung synchronisiert werden.
-
----
+> **Zweck:** lokaler IndexedDB-Cache, Offline-Unlock-Metadaten und Mutation-Queue für Änderungen, die nach Wiederverbindung kontrolliert synchronisiert werden.
 
 ## Architektur-Überblick
 
-```
-Online:   Supabase ──► fetchRemoteOfflineSnapshot() ──► IndexedDB (Snapshot)
-                                                              ▲
-Offline:  Lokale Änderungen ──► enqueueOfflineMutation()     │
-                                       │                      │
-                                       ▼                      │
-                               IndexedDB (Mutations)          │
-                                       │                      │
-Online:   syncOfflineMutations() ──────┴───── Replay → Supabase
+```text
+Online:   Supabase -> fetchRemoteOfflineSnapshot() -> IndexedDB snapshot
+                         |                                 ^
+                         | get_vault_sync_head()           |
+                         v                                 |
+                    remoteRevision ------------------------+
+
+Offline:  local change -> enqueueOfflineMutation(baseRemoteRevision)
+                         -> IndexedDB mutations
+
+Online:   syncOfflineMutations()
+          -> apply_vault_mutation(baseRemoteRevision, type, payload)
+          -> remove only successfully applied mutations
 ```
 
-**IndexedDB-Datenbank:** `singra-offline-vault` (Version 1)
+**IndexedDB-Datenbank:** `singra-offline-vault` (Version 2)
 
 | Object Store | Key | Zweck |
 |---|---|---|
-| `snapshots` | `userId` | Vault-Snapshots pro Nutzer |
+| `snapshots` | `userId` | Vault-Snapshot pro Nutzer |
 | `mutations` | `id` (UUID) | Warteschlange ausstehender Änderungen |
 
----
+## Sicherheitsgrenze
 
-## Types
+Der Offline-Cache ist ein lokaler Verfügbarkeits- und Komfortpfad. Er ist keine stärkere Secret Boundary als die jeweilige Plattform zulässt:
+
+- Im Browser/PWA liegt der Cache im Same-Origin-Browser-Speicher. XSS oder kompromittiertes Same-Origin-JavaScript ist deshalb als Vault-Compromise-Szenario zu behandeln, sobald der Vault entsperrt ist.
+- Auf Tauri/Desktop kann lokales Secret-Material über den Rust-Layer an OS-Secret-Storage gebunden werden; das ist stärker als Browser-IndexedDB, aber kein Schutz gegen Malware mit Zugriff auf den entsperrten Prozess.
+- Ein frisches Gerät ohne lokale High-Water-Mark kann einen alten, intern konsistenten Serverstand nicht allein kryptografisch als Rollback erkennen.
+
+## Datenmodell
 
 ### `OfflineVaultSnapshot`
+
 ```typescript
 interface OfflineVaultSnapshot {
     userId: string;
@@ -38,103 +47,63 @@ interface OfflineVaultSnapshot {
     categories: CategoryRow[];
     lastSyncedAt: string | null;
     updatedAt: string;
-    encryptionSalt?: string | null;       // für Offline-Unlock
-    masterPasswordVerifier?: string | null; // für Offline-Unlock
-    kdfVersion?: number | null;            // KDF-Version für korrekte Key-Ableitung offline
+    encryptionSalt?: string | null;
+    masterPasswordVerifier?: string | null;
+    kdfVersion?: number | null;
+    remoteRevision?: number | null;
 }
 ```
 
-### `OfflineMutation` (Union-Typ)
-Vier Varianten: `upsert_item`, `delete_item`, `upsert_category`, `delete_category`  
-Jede enthält: `id` (UUID), `userId`, `createdAt`, `type`, `payload`
+`remoteRevision` ist die zuletzt akzeptierte serverseitige Vault-Revision. Beim Laden eines neuen Remote-Snapshots darf diese Revision nicht kleiner werden. Ein kleinerer Wert wird als Rollback/stale Snapshot behandelt und überschreibt den lokalen Cache nicht.
 
----
+### `OfflineMutation`
 
-## Offline-Unlock-Flow (seit Feb 2026)
+Die Queue enthält vier Varianten: `upsert_item`, `delete_item`, `upsert_category`, `delete_category`.
+
+Jede Mutation enthält `id`, `userId`, `createdAt`, `type`, `payload` und optional `baseRemoteRevision`. Beim Enqueue wird `baseRemoteRevision` aus dem aktuellen Snapshot übernommen, sofern der Aufrufer keinen Wert setzt.
+
+## Serverseitige Revisionen
+
+Die Migration `20260427212000_harden_emergency_access_and_sync_heads.sql` führt `vault_sync_heads` ein:
+
+- `vault_id` identifiziert den Vault.
+- `revision` ist ein monoton erhöhter Zähler.
+- Trigger auf `vault_items` und `categories` erhöhen die Revision bei Insert/Update/Delete.
+- `get_vault_sync_head(p_vault_id)` liefert die aktuelle Revision für den authentifizierten Vault-Besitzer.
+- `apply_vault_mutation(p_base_revision, p_type, p_payload)` führt Offline-Mutationen als Compare-and-Swap aus.
+
+Wenn `p_base_revision` nicht zur aktuellen Revision passt, gibt `apply_vault_mutation()` kein erfolgreiches Write frei, sondern meldet `applied:false` mit `conflict_reason:'stale_base_revision'`. Die lokale Mutation bleibt dann in der Queue.
+
+## Offline-Unlock-Flow
 
 ```text
 1. isAppOnline() prüfen
-2. Offline? → getOfflineCredentials() → salt/verifier/kdfVersion setzen → Unlock-Screen
-3. Online? → Supabase-Query → Profil laden → Credentials + kdfVersion cachen
-4. Fehler (beliebig)? → Cache versuchen → Kein Cache? → Setup-Screen
+2. Offline -> getOfflineCredentials() -> salt/verifier/kdfVersion setzen -> Unlock-Screen
+3. Online  -> Profil laden -> Credentials + kdfVersion cachen
+4. Netzwerkfehler -> Cache versuchen -> kein Cache -> Setup-Screen
 ```
 
-**Wichtig:** `kdfVersion` wird mitgecacht, damit offline die korrekte KDF (Argon2id mit den richtigen Parametern) verwendet wird. Ohne den gecachten `kdfVersion` würde der Default `1` greifen und eine falsche Key-Ableitung erzeugen.
+`kdfVersion` wird mitgecacht, damit offline dieselbe KDF-Variante wie online verwendet wird. Der Cache enthält kein Master-Passwort im Klartext.
 
----
+## Zentrale Funktionen
 
-## Funktionen
+### `fetchRemoteOfflineSnapshot(userId)`
 
-### Netzwerk-Erkennung
+Lädt Items und Kategorien vom Server, fragt die aktuelle `remoteRevision` ab und speichert den Snapshot nur, wenn dadurch keine bekannte lokale High-Water-Mark unterschritten wird.
 
-#### `isAppOnline(): boolean`
-Prüft `navigator.onLine`. Gibt `true` zurück wenn `navigator` nicht verfügbar (SSR).
+Falls die Datenbankmigration noch nicht ausgerollt ist, toleriert der Client eine fehlende `get_vault_sync_head`-RPC und speichert `remoteRevision:null`. Das ist ein Migrationspfad, keine Zielarchitektur.
 
-#### `isLikelyOfflineError(error): boolean`
-Erkennt Netzwerk-Fehler anhand der Fehlermeldung.
+### `enqueueOfflineMutation(mutation)`
 
-**Geprüfte Muster:** `'failed to fetch'`, `'network'`, `'fetch'`, `'load failed'`, `'xhr'`
+Reiht lokale Änderungen ein und versieht sie mit der aktuellen `baseRemoteRevision`. Dadurch wird beim späteren Sync nachvollziehbar, auf welchem Remote-Stand die lokale Änderung basiert.
 
----
+### `syncOfflineMutations(userId)`
 
-### Snapshot-Verwaltung
+Synchronisiert Queue-Einträge über `apply_vault_mutation()`. Nur erfolgreiche Mutationen werden aus der Queue entfernt. Bei Offline-/Netzwerkfehlern bricht der Sync ab; bei Revisionskonflikten bleibt die Mutation erhalten und kann später bewusst aufgelöst werden.
 
-#### `getOfflineSnapshot(userId): Promise<OfflineVaultSnapshot | null>`
-Liest den Snapshot aus IndexedDB für den gegebenen User.
+## Grenzen und offene Risiken
 
-#### `saveOfflineSnapshot(snapshot): Promise<void>`
-Speichert/überschreibt einen Snapshot in IndexedDB.
-
-#### `saveOfflineCredentials(userId, encryptionSalt, masterPasswordVerifier, kdfVersion?): Promise<void>`
-Speichert Verschlüsselungs-Credentials für den Offline-Unlock.
-
-**Parameter:**
-- `userId` — Benutzer-ID
-- `encryptionSalt` — Salt für die Key-Ableitung
-- `masterPasswordVerifier` — Hash zur Passwort-Verifikation
-- `kdfVersion` (optional) — KDF-Version (z.B. 2 für Argon2id mit aktuellen Parametern)
-
-#### `getOfflineCredentials(userId): Promise<{ salt, verifier, kdfVersion } | null>`
-Liest gecachete Credentials für den Offline-Unlock. Gibt jetzt auch `kdfVersion` zurück (`null` falls nicht gecacht).
-
----
-
-### Item- und Kategorie-Verwaltung (lokal)
-
-#### `upsertOfflineItemRow(userId, row, vaultIdOverride?): Promise<void>`
-Fügt ein Item zum lokalen Snapshot hinzu oder aktualisiert es.
-
-#### `removeOfflineItemRow(userId, itemId): Promise<void>`
-Entfernt ein Item aus dem lokalen Snapshot.
-
-#### `upsertOfflineCategoryRow(userId, row): Promise<void>`
-Fügt eine Kategorie zum lokalen Snapshot hinzu/aktualisiert sie.
-
-#### `removeOfflineCategoryRow(userId, categoryId): Promise<void>`
-Entfernt eine Kategorie aus dem lokalen Snapshot.
-
----
-
-### Mutation-Queue
-
-#### `enqueueOfflineMutation(mutation): Promise<string>`
-Reiht eine Offline-Mutation in die Warteschlange ein.
-
-#### `getOfflineMutations(userId): Promise<OfflineMutation[]>`
-Liest alle ausstehenden Mutationen für einen User, **sortiert nach `createdAt`**.
-
-#### `removeOfflineMutations(mutationIds): Promise<void>`
-Löscht erfolgreich verarbeitete Mutationen aus der Queue.
-
----
-
-### Remote-Sync
-
-#### `fetchRemoteOfflineSnapshot(userId): Promise<OfflineVaultSnapshot>`
-Lädt den kompletten Vault vom Server und speichert ihn als lokalen Snapshot.
-
-#### `loadVaultSnapshot(userId): Promise<{ snapshot, source }>`
-Intelligentes Laden: Online → Remote, Fehler → Cache, kein Cache → Empty.
-
-#### `syncOfflineMutations(userId): Promise<{ processed, remaining, errors }>`
-Spielt die Mutation-Queue gegen den Server ab.
+- Die Revision schützt bekannte Geräte gegen erkannte Rollbacks unter die zuletzt akzeptierte Revision. Sie ersetzt keinen extern auditierbaren Transparency Log.
+- Ein bösartiger Server kann einem neuen Gerät einen alten, aber konsistenten Stand liefern, solange das Gerät keine vorherige High-Water-Mark besitzt.
+- Browser-Speicher kann gelöscht werden. Dadurch geht die lokale High-Water-Mark verloren.
+- Konfliktauflösung ist derzeit konservativ: stale Mutations bleiben queued, statt automatisch fremde Änderungen zu überschreiben.

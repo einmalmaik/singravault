@@ -1,7 +1,7 @@
 # CryptoService — Verschlüsselungs-Engine
 
 > **Datei:** `src/services/cryptoService.ts`  
-> **Zweck:** Zero-Knowledge-Verschlüsselung aller Vault-Daten auf dem Client. Das Master-Passwort verlässt **niemals** den Browser.
+> **Zweck:** Clientseitige Verschlüsselung der Vault-Payloads. Das Master-Passwort wird nicht serverseitig verarbeitet; Browser-/Renderer-Kompromittierung bleibt außerhalb dieser kryptografischen Grenze.
 
 ---
 
@@ -25,7 +25,8 @@ Master-Passwort  ──►  Argon2id (KDF)  ──►  AES-256-GCM Key
 
 | Konstante | Wert | Bedeutung |
 |---|---|---|
-| `ARGON2_MEMORY` | 65 536 (64 MiB) | RAM-Verbrauch für Argon2id |
+| `KDF_PARAMS[1].memory` | 65 536 (64 MiB) | Legacy-RAM-Verbrauch für Argon2id |
+| `KDF_PARAMS[2].memory` | 131 072 (128 MiB) | Aktueller RAM-Verbrauch für Argon2id |
 | `ARGON2_ITERATIONS` | 3 | Anzahl Durchläufe |
 | `ARGON2_PARALLELISM` | 4 | Parallele Lanes |
 | `ARGON2_HASH_LENGTH` | 32 (256 Bit) | Schlüssellänge für AES-256 |
@@ -122,7 +123,7 @@ Entschlüsselt AES-256-GCM-verschlüsselte Daten.
 
 ---
 
-### `encryptVaultItem(data, key): Promise<string>`
+### `encryptVaultItem(data, key, entryId): Promise<string>`
 
 Verschlüsselt die sensiblen Felder eines Vault-Eintrags.
 
@@ -131,16 +132,17 @@ Verschlüsselt die sensiblen Felder eines Vault-Eintrags.
 |---|---|---|
 | `data` | `VaultItemData` | Objekt mit sensiblen Feldern |
 | `key` | `CryptoKey` | Abgeleiteter Schlüssel |
+| `entryId` | `string` | Vault-Item-ID für AAD-Bindung |
 
 **Ablauf:**
 1. Serialisiert `data` als JSON via `JSON.stringify()`
-2. Ruft `encrypt(json, key)` auf
+2. Verschlüsselt mit AES-GCM und bindet die Item-ID als Additional Authenticated Data (AAD)
 
-**Rückgabe:** Base64-kodierter, verschlüsselter JSON-String
+**Rückgabe:** Versionierter Vault-Item-Ciphertext (`sv-vault-v1:...`)
 
 ---
 
-### `decryptVaultItem(encryptedData, key): Promise<VaultItemData>`
+### `decryptVaultItem(encryptedData, key, entryId): Promise<VaultItemData>`
 
 Entschlüsselt die sensiblen Felder eines Vault-Eintrags.
 
@@ -149,10 +151,13 @@ Entschlüsselt die sensiblen Felder eines Vault-Eintrags.
 |---|---|---|
 | `encryptedData` | `string` | Base64-kodierter, verschlüsselter JSON |
 | `key` | `CryptoKey` | Abgeleiteter Schlüssel |
+| `entryId` | `string` | Erwartete Vault-Item-ID für AAD-Prüfung |
 
 **Ablauf:**
-1. Ruft `decrypt(encryptedData, key)` auf
+1. Prüft das versionierte Envelope-Format und entschlüsselt mit AAD-Bindung an `entryId`
 2. Parst das Ergebnis als JSON via `JSON.parse()`
+
+Legacy-No-AAD-Daten dürfen nur in expliziten Migrationspfaden gelesen werden. Normale Runtime-Lesewege sollen bei fehlender AAD-Bindung fehlschlagen, damit Ciphertexte nicht zwischen Items verschoben werden können.
 
 **Rückgabe:** `VaultItemData`-Objekt
 
@@ -169,7 +174,7 @@ Erstellt einen Verifikations-Hash, um Unlock-Versuche zu prüfen, ohne das Passw
 
 **Rückgabe:** `v3:${encryptedConstant}`
 
-> **Hinweis:** Ältere Formate (`v2:challenge:encrypted` und Legacy ohne Prefix) werden beim Verify weiterhin akzeptiert.
+> **Hinweis:** Ältere Verifier-Formate werden nur als Kompatibilitätspfad akzeptiert und sollen nach erfolgreichem Unlock migriert werden.
 
 ---
 
@@ -185,7 +190,7 @@ Prüft, ob ein Schlüssel korrekt ist.
 
 **Ablauf:**
 1. Versucht, `verificationHash` mit `key` zu entschlüsseln
-2. Vergleicht das Ergebnis mit `'SINGRA_PW_VERIFICATION'`
+2. Vergleicht das Ergebnis mit der erwarteten Verifier-Konstante des jeweiligen Formats; aktuelle v3-Verifier nutzen `SINGRA_VAULT_VERIFY_V3`
 3. Bei Entschlüsselungsfehler (falscher Key) → `catch` → `false`
 
 **Rückgabe:** `true` wenn der Schlüssel korrekt ist

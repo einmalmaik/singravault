@@ -67,6 +67,8 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
     return onlineState(memorySession);
   }
 
+  clearSessionFallback();
+
   if (isTauriRuntime()) {
     console.info("[AuthSessionManager] hydrateAuthSession entering Tauri refresh path.");
     const purgedLegacySessions = purgeLegacyDesktopAuthTokens(runtimeConfig.supabaseUrl);
@@ -100,11 +102,6 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
   }
 
   if (isInIframe()) {
-    const fallbackSession = await restoreSessionFromFallback();
-    if (fallbackSession) {
-      return onlineState(fallbackSession);
-    }
-
     return offlineOrUnauthenticatedState();
   }
 
@@ -115,11 +112,6 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
   const bffSession = await hydrateFromBffCookie();
   if (bffSession) {
     return onlineState(bffSession);
-  }
-
-  const fallbackSession = await restoreSessionFromFallback();
-  if (fallbackSession) {
-    return onlineState(fallbackSession);
   }
 
   return offlineOrUnauthenticatedState();
@@ -158,8 +150,6 @@ export async function persistAuthenticatedSession(session: Session | null): Prom
     } catch (error) {
       console.error("[Auth] Failed to persist desktop refresh token in keychain:", error);
     }
-  } else if (isInIframe()) {
-    persistSessionFallback(session);
   } else {
     clearSessionFallback();
   }
@@ -222,19 +212,9 @@ export async function hydrateFromBffCookie(): Promise<Session | null> {
 }
 
 export function persistSessionFallback(session: Session | null): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  if (!session?.access_token || !session.refresh_token) {
-    clearSessionFallback();
-    return;
-  }
-
-  window.sessionStorage.setItem(SESSION_FALLBACK_STORAGE_KEY, JSON.stringify({
-    access_token: session.access_token,
-    refresh_token: session.refresh_token,
-  }));
+  void session;
+  // Legacy compatibility hook: browser refresh tokens must not be persisted in JS-readable storage.
+  clearSessionFallback();
 }
 
 export function clearSessionFallback(): void {
@@ -250,26 +230,9 @@ export function readSessionFallback(): SessionTokens | null {
     return null;
   }
 
-  const raw = window.sessionStorage.getItem(SESSION_FALLBACK_STORAGE_KEY);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<SessionTokens>;
-    if (!parsed.access_token || !parsed.refresh_token) {
-      clearSessionFallback();
-      return null;
-    }
-
-    return {
-      access_token: parsed.access_token,
-      refresh_token: parsed.refresh_token,
-    };
-  } catch {
-    clearSessionFallback();
-    return null;
-  }
+  // Remove any token fallback written by older builds instead of hydrating from it.
+  clearSessionFallback();
+  return null;
 }
 
 export async function saveOfflineIdentity(identity: OfflineIdentity): Promise<void> {
@@ -340,8 +303,7 @@ async function refreshCurrentSessionUncached(): Promise<Session | null> {
   }
 
   const currentSession = await getMemorySession();
-  const fallbackSession = readSessionFallback();
-  const refreshToken = currentSession?.refresh_token || fallbackSession?.refresh_token;
+  const refreshToken = currentSession?.refresh_token;
   if (!refreshToken) {
     return null;
   }
@@ -394,20 +356,6 @@ async function refreshFromTauriKeychain(): Promise<Session | null> {
   await persistAuthenticatedSession(data.session);
   console.info("[AuthSessionManager] refreshFromTauriKeychain refreshed the desktop session successfully.");
   return data.session;
-}
-
-async function restoreSessionFromFallback(): Promise<Session | null> {
-  const fallbackSession = readSessionFallback();
-  if (!fallbackSession) {
-    return null;
-  }
-
-  try {
-    return await applyAuthenticatedSession(fallbackSession);
-  } catch {
-    clearSessionFallback();
-    return null;
-  }
 }
 
 async function getMemorySession(): Promise<Session | null> {

@@ -18,8 +18,9 @@ Der Core führt `src/platform/localSecretStore.ts` als gemeinsame Abstraktion ei
 
 ### Tauri
 
-- native Speicherung über Core-Commands
+- native Speicherung über Core-Commands mit Rust-seitiger Key-Allowlist
 - OS-Keyring als lokaler Secret-Store
+- erlaubte Secret-Domänen sind eng begrenzt (`device-key:<user-uuid>`, `vault-integrity:<user-uuid>`)
 
 ### Web/PWA
 

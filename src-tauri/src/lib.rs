@@ -10,6 +10,8 @@ const KEYCHAIN_SERVICE: &str = "Singra Vault";
 const REFRESH_TOKEN_ACCOUNT: &str = "active-refresh-token";
 const PKCE_VERIFIER_ACCOUNT: &str = "active-pkce-verifier";
 const LOCAL_SECRET_ACCOUNT_PREFIX: &str = "local-secret::";
+const DEVICE_KEY_LOCAL_SECRET_PREFIX: &str = "device-key:";
+const INTEGRITY_LOCAL_SECRET_PREFIX: &str = "vault-integrity:";
 const PKCE_VERIFIER_MAX_AGE_MS: u128 = 10 * 60 * 1000;
 const SINGLE_INSTANCE_DEEP_LINK_EVENT: &str = "singra://deep-link";
 const TAURI_OAUTH_CALLBACK_PREFIX: &str = "singravault://auth/callback";
@@ -149,13 +151,46 @@ fn pkce_entry() -> Result<Entry, String> {
 }
 
 fn local_secret_entry(key: &str) -> Result<Entry, String> {
-    let normalized_key = key.trim();
-    if normalized_key.is_empty() {
-        return Err("local secret key must not be empty".to_string());
-    }
-
+    let normalized_key = normalize_local_secret_key(key)?;
     let account = format!("{LOCAL_SECRET_ACCOUNT_PREFIX}{normalized_key}");
     Entry::new(KEYCHAIN_SERVICE, &account).map_err(keyring_error)
+}
+
+fn normalize_local_secret_key(key: &str) -> Result<String, String> {
+    let normalized_key = key.trim();
+
+    if is_allowed_user_scoped_secret_key(normalized_key, DEVICE_KEY_LOCAL_SECRET_PREFIX)
+        || is_allowed_user_scoped_secret_key(normalized_key, INTEGRITY_LOCAL_SECRET_PREFIX)
+    {
+        return Ok(normalized_key.to_string());
+    }
+
+    Err("local secret key is not allowed".to_string())
+}
+
+fn is_allowed_user_scoped_secret_key(key: &str, prefix: &str) -> bool {
+    key.strip_prefix(prefix)
+        .map(is_uuid_like)
+        .unwrap_or(false)
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+
+    for (index, character) in value.chars().enumerate() {
+        let should_be_hyphen = matches!(index, 8 | 13 | 18 | 23);
+        if should_be_hyphen {
+            if character != '-' {
+                return false;
+            }
+        } else if !character.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn load_pkce_store() -> Result<PkceVerifierStore, String> {
@@ -230,6 +265,36 @@ fn now_millis() -> Result<u128, String> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .map_err(|error| format!("system clock is before UNIX_EPOCH: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_secret_keys_allow_only_expected_user_scoped_domains() {
+        assert_eq!(
+            normalize_local_secret_key("device-key:00000000-0000-4000-8000-000000000001").unwrap(),
+            "device-key:00000000-0000-4000-8000-000000000001",
+        );
+        assert_eq!(
+            normalize_local_secret_key(" vault-integrity:00000000-0000-4000-8000-000000000001 ").unwrap(),
+            "vault-integrity:00000000-0000-4000-8000-000000000001",
+        );
+    }
+
+    #[test]
+    fn local_secret_keys_reject_free_form_accounts() {
+        for key in [
+            "",
+            "device-key:test",
+            "refresh-token:00000000-0000-4000-8000-000000000001",
+            "vault-integrity:user-1",
+            "device-key:00000000-0000-4000-8000-000000000001:extra",
+        ] {
+            assert!(normalize_local_secret_key(key).is_err(), "{key} should be rejected");
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

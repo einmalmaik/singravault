@@ -1,0 +1,74 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+describe("security hardening contracts", () => {
+  it("keeps browser session fallback tokens non-persistent", () => {
+    const source = readFileSync("src/services/authSessionManager.ts", "utf-8");
+
+    expect(source).not.toContain("window.sessionStorage.setItem(SESSION_FALLBACK_STORAGE_KEY");
+    expect(source).toContain("Remove any token fallback written by older builds");
+  });
+
+  it("delivers a production CSP without unsafe script execution", () => {
+    const html = readFileSync("index.html", "utf-8");
+    const vercel = readFileSync("vercel.json", "utf-8");
+    const vite = readFileSync("vite.config.ts", "utf-8");
+
+    expect(html).not.toContain("'unsafe-eval'");
+    expect(html).not.toContain("script-src 'self' 'unsafe-inline'");
+    expect(vercel).not.toContain("'unsafe-eval'");
+    expect(vite).toContain("https://api.pwnedpasswords.com");
+  });
+
+  it("binds WebAuthn verification to the exact stored challenge id", () => {
+    const source = readFileSync("supabase/functions/webauthn/index.ts", "utf-8");
+
+    expect(source).toContain("Missing challengeId");
+    expect(source).toContain('.eq("id", challengeId)');
+    expect(source).toContain("getChallengeVerificationScope");
+    expect(source).not.toMatch(/from\("webauthn_challenges"\)[\s\S]{0,240}\.order\("created_at"/);
+  });
+
+  it("enforces opaque vault item metadata for future database writes", () => {
+    const migration = readFileSync(
+      "supabase/migrations/20260427210000_enforce_opaque_vault_item_metadata.sql",
+      "utf-8",
+    );
+
+    expect(migration).toContain("CREATE TRIGGER enforce_opaque_vault_item_metadata_trigger");
+    expect(migration).toContain("BEFORE INSERT OR UPDATE ON public.vault_items");
+    expect(migration).toContain("NEW.category_id := NULL");
+    expect(migration).not.toContain("UPDATE public.vault_items");
+  });
+
+  it("keeps emergency access scoped to hybrid key material and narrow policies", () => {
+    const migration = readFileSync(
+      "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
+      "utf-8",
+    );
+
+    expect(migration).toContain("emergency_access_no_legacy_master_key_check");
+    expect(migration).toContain("CHECK (encrypted_master_key IS NULL)");
+    expect(migration).toContain("Trustees can view granted emergency vault items");
+    expect(migration).toContain("ea.pq_encrypted_master_key IS NOT NULL");
+    expect(migration).toContain("lower(trusted_email) = lower(current_setting");
+    expect(migration).toContain('DROP POLICY IF EXISTS "Grantors can update emergency access"');
+  });
+
+  it("uses a monotonic sync head and CAS RPC for queued offline mutations", () => {
+    const migration = readFileSync(
+      "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
+      "utf-8",
+    );
+    const offlineService = readFileSync("src/services/offlineVaultService.ts", "utf-8");
+
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.vault_sync_heads");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.apply_vault_mutation");
+    expect(migration).toContain("p_base_revision IS NOT NULL AND _current_revision <> p_base_revision");
+    expect(migration).toContain("Mutation vault_id must belong to authenticated user");
+    expect(offlineService).toContain("baseRemoteRevision");
+    expect(offlineService).toContain("OfflineSnapshotRollbackError");
+    expect(offlineService).toContain("apply_vault_mutation");
+    expect(offlineService).not.toContain(".from('vault_items')\n          .upsert(mutation.payload");
+  });
+});
