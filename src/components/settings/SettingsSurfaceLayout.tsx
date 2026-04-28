@@ -13,7 +13,7 @@ import { isPremiumActive } from '@/extensions/registry';
 import type { SettingsSurface, SettingsTabId } from '@/extensions/types';
 import { getAdminEntryPath, getPrimaryAppPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState, resolveReturnPath } from '@/services/returnNavigationState';
-import { APP_VERSION } from '@/config/appVersion';
+import { APP_VERSION_DISPLAY } from '@/config/appVersion';
 import {
   filterSettingsSections,
   getDefaultSettingsTab,
@@ -215,7 +215,7 @@ export function SettingsSurfaceLayout({
         )}
 
         <div className="mt-12 text-center text-sm text-muted-foreground">
-          <p>{`Singra Vault v${APP_VERSION}`}</p>
+          <p>{`Singra Vault ${APP_VERSION_DISPLAY}`}</p>
           <p className="mt-1">{t('settings.footer')}</p>
         </div>
       </main>

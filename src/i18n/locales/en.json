@@ -226,7 +226,7 @@
   "securityWhitepaper": {
     "title": "Security Whitepaper",
     "subtitle": "A factual description of the security architecture – derived directly from the codebase and DB policies.",
-    "disclaimer": "Note: This page describes the implementation (code) – not an external audit. 100% security does not exist, but we document transparently what we do and what we do not.",
+    "disclaimer": "Note: This page describes the implementation (code), not an external audit. Security boundaries and claims without evidence are documented explicitly.",
     "privacyLink": "View privacy policy",
     "searchPlaceholder": "Search sections (e.g., Argon2id, RLS, integrity)…",
     "clearFilters": "Reset filters",

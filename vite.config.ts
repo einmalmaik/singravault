@@ -7,6 +7,44 @@ import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
 import { VitePWA } from "vite-plugin-pwa";
 
+const GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/einmalmaik/singravault/releases/latest";
+
+async function resolveAppVersion(mode: string, packageVersion: string): Promise<{ version: string; source: string }> {
+  const explicitVersion = process.env.SINGRA_VAULT_VERSION?.trim();
+  if (explicitVersion) {
+    return { version: explicitVersion.replace(/^v/i, ""), source: "env:SINGRA_VAULT_VERSION" };
+  }
+
+  if (mode === "development") {
+    return { version: "dev build", source: "development-mode" };
+  }
+
+  try {
+    const response = await fetch(GITHUB_LATEST_RELEASE_URL, {
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "singra-vault-build",
+      },
+    });
+
+    if (!response.ok) {
+      return { version: "unreleased", source: `github-latest-release-http-${response.status}` };
+    }
+
+    const release = await response.json() as { tag_name?: unknown; name?: unknown };
+    const tag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+    const normalizedTag = tag.replace(/^v/i, "");
+
+    if (/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(normalizedTag)) {
+      return { version: normalizedTag, source: "github-latest-release" };
+    }
+  } catch {
+    return { version: "unreleased", source: "github-latest-release-unavailable" };
+  }
+
+  return { version: "unreleased", source: packageVersion ? "github-latest-release-invalid-tag" : "package-version-missing" };
+}
+
 function buildContentSecurityPolicy(mode: string, delivery: "header" | "meta" = "header") {
   const dev = mode === "development";
   const scriptSrc = dev
@@ -69,11 +107,11 @@ function cspMetaPlugin(mode: string) {
 }
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => {
+export default defineConfig(async ({ mode }) => {
   const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "package.json"), "utf-8")) as {
     version?: string;
   };
-  const appVersion = packageJson.version ?? "0.0.0";
+  const appVersion = await resolveAppVersion(mode, packageJson.version ?? "");
   const securityHeaders = getSecurityHeaders(mode);
   const isDev = mode === "development";
   const tauriDevHost = process.env.TAURI_DEV_HOST;
@@ -262,7 +300,8 @@ export default defineConfig(({ mode }) => {
       target: "esnext",
     },
     define: {
-      __APP_VERSION__: JSON.stringify(appVersion),
+      __APP_VERSION__: JSON.stringify(appVersion.version),
+      __APP_VERSION_SOURCE__: JSON.stringify(appVersion.source),
     },
   };
 });

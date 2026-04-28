@@ -45,7 +45,7 @@ Migration `20260427212000_harden_emergency_access_and_sync_heads.sql` setzt folg
 
 - Ein kompromittierter Trustee-Account plus Zugriff auf dessen entschlüsselten Vault kann nach Ablauf/Freigabe den Grantor-Key-Pfad nutzen.
 - Emergency Access ist daher schwächer als ein Modell ohne alternativen Key-Pfad. Das ist eine bewusste Produktfunktion, kein Bestandteil des strikten Zero-Knowledge-Kerns.
-- Hybrides/PQ-Key-Wrapping über `pq_encrypted_master_key` und Trustee-PQ-Key-Material härtet den Key-Wrapping-Pfad gegen spätere kryptografische Angriffe. Es macht Emergency Access nicht absolut sicher und löst keine Account-, Geräte-, RLS-, Benachrichtigungs- oder entsperrter-Client-Trust-Boundary.
+- Hybrides/PQ-Key-Wrapping über `pq_encrypted_master_key` und Trustee-PQ-Key-Material härtet den Key-Wrapping-Pfad gegen spätere kryptografische Angriffe. Es adressiert nicht die Account-, Geräte-, RLS-, Benachrichtigungs- oder entsperrter-Client-Trust-Boundary.
 - Wenn Trustee-Account, Trustee-Gerät oder ein entsperrter Trustee-Vault kompromittiert sind, hilft PQ nicht gegen diesen lokalen oder Account-Kompromiss.
 - Server- oder Admin-Manipulationen müssen durch Statusregeln, RLS, Benachrichtigungen und Auditierbarkeit begrenzt werden. Sie sind nicht vollständig kryptografisch unmöglich gemacht.
 - Widerruf vor Grant muss den Pfad effektiv schließen; bereits gewährter Zugriff kann nach Kenntnisnahme durch den Trustee nicht rückwirkend kryptografisch ungeschehen gemacht werden.

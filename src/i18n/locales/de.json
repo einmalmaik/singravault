@@ -226,7 +226,7 @@
   "securityWhitepaper": {
     "title": "Security Whitepaper",
     "subtitle": "Faktenbasierte Beschreibung der Sicherheitsarchitektur – direkt aus dem Code und den DB-Policies abgeleitet.",
-    "disclaimer": "Hinweis: Diese Seite beschreibt die Implementierung (Code) – kein externes Audit. 100% Sicherheit gibt es nicht, aber wir dokumentieren transparent, was wir tun und was nicht.",
+    "disclaimer": "Hinweis: Diese Seite beschreibt die Implementierung (Code) und keinen externen Audit. Sicherheitsgrenzen und nicht belegte Claims werden ausdrücklich dokumentiert.",
     "privacyLink": "Datenschutz ansehen",
     "searchPlaceholder": "Abschnitte durchsuchen (z.B. Argon2id, RLS, Integrity)…",
     "clearFilters": "Filter zurücksetzen",
