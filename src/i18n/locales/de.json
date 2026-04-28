@@ -612,6 +612,8 @@
     "loadError": "Tresor-Einträge konnten nicht geladen werden.",
     "offlineSaved": "Offline gespeichert. Wird bei Internet automatisch synchronisiert.",
     "offlineDeleteQueued": "Offline gelöscht. Löschung wird bei Internet synchronisiert.",
+    "offlineMode": "Offline-Modus aktiv: Änderungen werden lokal gespeichert.",
+    "syncingOfflineChanges": "Synchronisiere Offline-Änderungen...",
     "syncedAfterOffline": "{{count}} Offline-Änderungen synchronisiert.",
     "empty": {
       "title": "Dein Tresor ist leer",
@@ -732,6 +734,8 @@
       "confirmAcceptMissingDescription": "Der fehlende Eintrag wird aus der vertrauenswürdigen lokalen Baseline entfernt. Danach ist keine Wiederherstellung mehr möglich, solange keine andere lokale Kopie existiert.",
       "safeModeDescription": "Safe Mode arbeitet ausschließlich mit dem letzten vertrauenswürdigen lokalen Snapshot. Änderungen sind deaktiviert.",
       "safeModeNotice": "Safe Mode ist schreibgeschützt. Prüfe deine Einträge und exportiere sie bei Bedarf, bevor du den Tresor zurücksetzt.",
+      "revalidatingEntries": "Prüfe Einträge...",
+      "revalidateAction": "Tresor erneut prüfen",
       "resetChallengeExpired": "Die Sicherheitsbestätigung für den Tresor-Reset ist abgelaufen. Bitte versuche es erneut.",
       "resetFailed": "Der Tresor konnte nicht zurückgesetzt werden."
     }
@@ -782,6 +786,10 @@
       "title": "Tresor ist aktuell gesperrt",
       "description": "Konto- und Abo-Einstellungen bleiben verfügbar. Tresorbezogene Einstellungen erfordern das Entsperren."
     },
+    "desktopLegal": {
+      "title": "Rechtliches & Informationen",
+      "description": "Datenschutz, Impressum und Sicherheitsdokumentation bleiben auf jeder Plattform erreichbar."
+    },
     "account": {
       "title": "Konto",
       "description": "Verwalte dein Konto und deine Anmeldedaten.",
@@ -800,6 +808,7 @@
       "exportBeforeDelete": "Tresor vor Löschung exportieren",
       "deleteTwoFactorLabel": "Zwei-Faktor-Code bestätigen",
       "deleteTotpPlaceholder": "6-stelliger Authenticator-Code",
+      "deleteTotpOnlyHint": "Backup-Codes können die Kontolöschung nicht autorisieren.",
       "deleteBackupCodePlaceholder": "Backup-Code",
       "deleteUseBackupCode": "Backup-Code verwenden",
       "deleteTwoFactorInvalid": "Der Zwei-Faktor-Code ist ungültig oder abgelaufen."

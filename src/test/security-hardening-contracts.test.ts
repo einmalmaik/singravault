@@ -71,4 +71,26 @@ describe("security hardening contracts", () => {
     expect(offlineService).toContain("apply_vault_mutation");
     expect(offlineService).not.toContain(".from('vault_items')\n          .upsert(mutation.payload");
   });
+
+  it("requires encrypted category metadata for sync RPC and direct category writes", () => {
+    const syncMigration = readFileSync(
+      "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
+      "utf-8",
+    );
+    const categoryMigration = readFileSync(
+      "supabase/migrations/20260428143000_enforce_encrypted_category_metadata.sql",
+      "utf-8",
+    );
+
+    expect(syncMigration).toContain("Category name must be client-side encrypted");
+    expect(syncMigration).toContain("COALESCE(p_payload->>'name', '') NOT LIKE 'enc:cat:v1:%'");
+    expect(syncMigration).toContain("parent_id = NULL");
+    expect(syncMigration).toContain("sort_order = NULL");
+
+    expect(categoryMigration).toContain("CREATE TRIGGER enforce_encrypted_category_metadata_trigger");
+    expect(categoryMigration).toContain("BEFORE INSERT OR UPDATE ON public.categories");
+    expect(categoryMigration).toContain("NEW.name, '') NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("NEW.parent_id := NULL");
+    expect(categoryMigration).toContain("NEW.sort_order := NULL");
+  });
 });

@@ -476,6 +476,25 @@ BEGIN
         WHERE id = _item_id
           AND user_id = _uid;
     ELSIF p_type = 'upsert_category' THEN
+        IF COALESCE(p_payload->>'name', '') NOT LIKE 'enc:cat:v1:%' THEN
+            RAISE EXCEPTION 'Category name must be client-side encrypted'
+                USING ERRCODE = '22023';
+        END IF;
+
+        IF p_payload ? 'icon'
+           AND p_payload->>'icon' IS NOT NULL
+           AND p_payload->>'icon' NOT LIKE 'enc:cat:v1:%' THEN
+            RAISE EXCEPTION 'Category icon must be client-side encrypted'
+                USING ERRCODE = '22023';
+        END IF;
+
+        IF p_payload ? 'color'
+           AND p_payload->>'color' IS NOT NULL
+           AND p_payload->>'color' NOT LIKE 'enc:cat:v1:%' THEN
+            RAISE EXCEPTION 'Category color must be client-side encrypted'
+                USING ERRCODE = '22023';
+        END IF;
+
         INSERT INTO public.categories (
             id,
             user_id,
@@ -491,15 +510,15 @@ BEGIN
             p_payload->>'name',
             p_payload->>'icon',
             p_payload->>'color',
-            NULLIF(p_payload->>'parent_id', '')::UUID,
-            NULLIF(p_payload->>'sort_order', '')::INTEGER
+            NULL,
+            NULL
         )
         ON CONFLICT (id) DO UPDATE
         SET name = EXCLUDED.name,
             icon = EXCLUDED.icon,
             color = EXCLUDED.color,
-            parent_id = EXCLUDED.parent_id,
-            sort_order = EXCLUDED.sort_order,
+            parent_id = NULL,
+            sort_order = NULL,
             updated_at = NOW();
     ELSIF p_type = 'delete_category' THEN
         DELETE FROM public.categories

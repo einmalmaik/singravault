@@ -52,7 +52,6 @@ export function AccountSettings() {
     const [showReauthDialog, setShowReauthDialog] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState('');
     const [twoFactorCode, setTwoFactorCode] = useState('');
-    const [useBackupCode, setUseBackupCode] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isLoadingDeleteContext, setIsLoadingDeleteContext] = useState(false);
@@ -116,7 +115,7 @@ export function AccountSettings() {
                 const verification = await verifyTwoFactorChallenge({
                     context: 'critical_action',
                     code: twoFactorCode,
-                    method: useBackupCode ? 'backup_code' : 'totp',
+                    method: 'totp',
                 });
                 if (!verification.success || !verification.challengeId) {
                     toast({
@@ -172,13 +171,12 @@ export function AccountSettings() {
                 title: t('common.error'),
                 description: t('settings.account.deleteFailed'),
             });
-            return true;
+            return false;
         } finally {
             setIsDeleting(false);
             setShowDeleteDialog(false);
             setDeleteConfirmation('');
             setTwoFactorCode('');
-            setUseBackupCode(false);
         }
     };
 
@@ -348,19 +346,12 @@ export function AccountSettings() {
                                         <Input
                                             value={twoFactorCode}
                                             onChange={(e) => setTwoFactorCode(e.target.value)}
-                                            placeholder={useBackupCode
-                                                ? t('settings.account.deleteBackupCodePlaceholder')
-                                                : t('settings.account.deleteTotpPlaceholder')}
+                                            placeholder={t('settings.account.deleteTotpPlaceholder')}
                                             autoComplete="one-time-code"
                                         />
-                                        <label className="flex items-center gap-2 text-xs">
-                                            <input
-                                                type="checkbox"
-                                                checked={useBackupCode}
-                                                onChange={(event) => setUseBackupCode(event.target.checked)}
-                                            />
-                                            {t('settings.account.deleteUseBackupCode')}
-                                        </label>
+                                        <p className="text-xs text-muted-foreground">
+                                            {t('settings.account.deleteTotpOnlyHint')}
+                                        </p>
                                     </div>
                                 )}
                             <div className="space-y-2">

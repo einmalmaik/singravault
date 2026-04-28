@@ -23,6 +23,7 @@ describe("account deletion and auth runtime hardening", () => {
     expect(migration).toContain("ACCOUNT_DELETE_2FA_REQUIRED");
     expect(migration).toContain("p_two_factor_challenge_id UUID DEFAULT NULL");
     expect(migration).toContain("purpose = 'critical_action'");
+    expect(migration).toContain("method = 'totp'");
   });
 
   it("deletes core user-owned data and audits for leftovers before returning success", () => {
@@ -54,6 +55,8 @@ describe("account deletion and auth runtime hardening", () => {
     expect(accountSettings).toContain("exportBeforeDelete");
     expect(accountSettings).toContain("deleteTwoFactorLabel");
     expect(accountSettings).toContain("verifyTwoFactorChallenge");
+    expect(accountSettings).toContain("method: 'totp'");
+    expect(accountSettings).not.toContain("method: useBackupCode ? 'backup_code' : 'totp'");
   });
 
   it("uses stable auth error codes instead of leaking raw OPAQUE/database errors", () => {

@@ -612,6 +612,8 @@
     "loadError": "Failed to load vault items.",
     "offlineSaved": "Saved offline. Will sync automatically when internet is available.",
     "offlineDeleteQueued": "Deleted offline. The deletion will sync when internet is available.",
+    "offlineMode": "Offline mode active: changes are stored locally.",
+    "syncingOfflineChanges": "Synchronizing offline changes...",
     "syncedAfterOffline": "{{count}} offline changes synchronized.",
     "copied": "Copied",
     "copiedPassword": "Password has been copied.",
@@ -707,6 +709,8 @@
       "confirmAcceptMissingDescription": "The missing item will be removed from the trusted local baseline. Recovery will no longer be possible unless another local copy exists.",
       "safeModeDescription": "Safe Mode works exclusively with the last trusted local snapshot. Changes are disabled.",
       "safeModeNotice": "Safe Mode is read-only. Review and export your items if needed before resetting the vault.",
+      "revalidatingEntries": "Checking entries...",
+      "revalidateAction": "Check vault again",
       "resetChallengeExpired": "The vault reset confirmation expired. Please try again.",
       "resetFailed": "The vault could not be reset."
     }
@@ -759,6 +763,10 @@
       "title": "Vault is currently locked",
       "description": "Account and billing settings remain available. Vault-related settings require unlocking your vault."
     },
+    "desktopLegal": {
+      "title": "Legal & information",
+      "description": "Privacy, imprint, and security documentation remain available on every platform."
+    },
     "account": {
       "title": "Account",
       "description": "Manage your account and login credentials.",
@@ -777,6 +785,7 @@
       "exportBeforeDelete": "Export vault before deletion",
       "deleteTwoFactorLabel": "Confirm two-factor code",
       "deleteTotpPlaceholder": "6-digit authenticator code",
+      "deleteTotpOnlyHint": "Backup codes cannot authorize account deletion.",
       "deleteBackupCodePlaceholder": "Backup code",
       "deleteUseBackupCode": "Use backup code",
       "deleteTwoFactorInvalid": "The two-factor code is invalid or expired."
