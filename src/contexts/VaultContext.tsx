@@ -38,11 +38,24 @@ import {
     wrapPrivateKeyWithUserKey,
 } from '@/services/cryptoService';
 import {
+    deleteDeviceKey,
     generateDeviceKey,
     storeDeviceKey,
     getDeviceKey as loadDeviceKey,
     hasDeviceKey as checkHasDeviceKey,
 } from '@/services/deviceKeyService';
+import {
+    createDeviceKeyInvalidError,
+    createDeviceKeyMissingError,
+    createDeviceKeyUnavailableError,
+    createMasterPasswordInvalidError,
+    DeviceKeyUnlockError,
+    normalizeVaultProtectionMode,
+    requiresDeviceKey,
+    VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
+    VAULT_PROTECTION_MODE_MASTER_ONLY,
+    type VaultProtectionMode,
+} from '@/services/deviceKeyProtectionPolicy';
 import { isLocalSecretStoreSupported } from '@/platform/localSecretStore';
 import {
     isAppOnline,
@@ -511,6 +524,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
     // Device Key state
     const [deviceKeyActive, setDeviceKeyActive] = useState(false);
     const [currentDeviceKey, setCurrentDeviceKey] = useState<Uint8Array | null>(null);
+    const [vaultProtectionMode, setVaultProtectionMode] = useState<VaultProtectionMode>(VAULT_PROTECTION_MODE_MASTER_ONLY);
     // USK (User Symmetric Key) â€” encrypted form stored in profiles.encrypted_user_key
     // null = pre-USK user (will be migrated on next unlock), string = already migrated
     const [encryptedUserKey, setEncryptedUserKey] = useState<string | null>(null);
@@ -566,6 +580,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         setDuressConfig(null);
         setDeviceKeyActive(false);
         setCurrentDeviceKey(null);
+        setVaultProtectionMode(VAULT_PROTECTION_MODE_MASTER_ONLY);
         setEncryptedUserKey(null);
         setTrustedRecoveryAvailable(false);
         setTrustedSnapshotItemsById({});
@@ -635,6 +650,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setKdfVersion(cached.kdfVersion);
         }
         setEncryptedUserKey(cached.encryptedUserKey);
+        setVaultProtectionMode(normalizeVaultProtectionMode(cached.vaultProtectionMode));
         return true;
     }, []);
 
@@ -664,13 +680,18 @@ export function VaultProvider({ children }: VaultProviderProps) {
         deviceKey: Uint8Array | null;
         error: Error | null;
     }> => {
-        const deviceKey = await getResolvedDeviceKey();
-        if (deviceKeyActive && !deviceKey) {
+        if (requiresDeviceKey(vaultProtectionMode) && !(await isLocalSecretStoreSupported())) {
             return {
                 deviceKey: null,
-                error: new Error(
-                    'Device key is unavailable on this device. Restore the device key or use a recovery method.',
-                ),
+                error: createDeviceKeyUnavailableError(),
+            };
+        }
+
+        const deviceKey = await getResolvedDeviceKey();
+        if (requiresDeviceKey(vaultProtectionMode) && !deviceKey) {
+            return {
+                deviceKey: null,
+                error: createDeviceKeyMissingError(),
             };
         }
 
@@ -678,7 +699,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
             deviceKey,
             error: null,
         };
-    }, [deviceKeyActive, getResolvedDeviceKey]);
+    }, [getResolvedDeviceKey, vaultProtectionMode]);
 
     const buildIntegritySnapshot = useCallback((
         snapshot: {
@@ -1377,9 +1398,9 @@ export function VaultProvider({ children }: VaultProviderProps) {
         }
 
         setVerificationHash(newVerifier);
-        await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion, encryptedUserKey);
+        await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion, encryptedUserKey, vaultProtectionMode);
         return newVerifier;
-    }, [encryptedUserKey, kdfVersion, salt, user]);
+    }, [encryptedUserKey, kdfVersion, salt, user, vaultProtectionMode]);
 
     const recoverLegacyKeyWithoutVerifier = useCallback(async (
         candidateKey: CryptoKey,
@@ -1480,6 +1501,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 newVerifier,
                 kdfVersion,
                 uskBundle.encryptedUserKey,
+                vaultProtectionMode,
             );
             console.info('USK migration complete: encrypted_user_key persisted.');
 
@@ -1498,7 +1520,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 persisted: false,
             };
         }
-    }, [kdfVersion, salt, user]);
+    }, [kdfVersion, salt, user, vaultProtectionMode]);
 
     // Check if master password is set up
     useEffect(() => {
@@ -1556,7 +1578,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 // types are regenerated. Using explicit column list + type assertion.
                 const { data: profile, error } = await supabase
                     .from('profiles')
-                    .select('encryption_salt, master_password_verifier, kdf_version, encrypted_user_key')
+                    .select('encryption_salt, master_password_verifier, kdf_version, encrypted_user_key, vault_protection_mode, device_key_version, device_key_enabled_at, device_key_backup_acknowledged_at')
                     .eq('user_id', user.id)
                     .maybeSingle() as { data: Record<string, unknown> | null; error: unknown };
 
@@ -1578,11 +1600,13 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 } else {
                     const profileKdfVersion = (profile.kdf_version as number) ?? 1;
                     const profileEncryptedUserKey = (profile.encrypted_user_key as string) || null;
+                    const profileProtectionMode = normalizeVaultProtectionMode(profile.vault_protection_mode);
                     setIsSetupRequired(false);
                     setSalt(profile.encryption_salt as string);
                     setVerificationHash((profile.master_password_verifier as string) || null);
                     setKdfVersion(profileKdfVersion);
                     setEncryptedUserKey(profileEncryptedUserKey);
+                    setVaultProtectionMode(profileProtectionMode);
                     // Cache credentials (including kdfVersion and encryptedUserKey) for offline use
                     await saveOfflineCredentials(
                         user.id,
@@ -1590,6 +1614,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                         (profile.master_password_verifier as string) || null,
                         profileKdfVersion,
                         profileEncryptedUserKey,
+                        profileProtectionMode,
                     );
 
                     await refreshPasskeyUnlockStatus();
@@ -1731,6 +1756,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     verifyHash,
                     CURRENT_KDF_VERSION,
                     uskBundle.encryptedUserKey,
+                    VAULT_PROTECTION_MODE_MASTER_ONLY,
                 );
                 await ensureTauriDevVaultSnapshot(user.id);
                 return finalizeVaultUnlock(uskBundle.userKey);
@@ -1760,6 +1786,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     master_password_verifier: verifyHash,
                     kdf_version: CURRENT_KDF_VERSION,
                     encrypted_user_key: uskBundle.encryptedUserKey,
+                    vault_protection_mode: VAULT_PROTECTION_MODE_MASTER_ONLY,
+                    device_key_version: null,
+                    device_key_enabled_at: null,
+                    device_key_backup_acknowledged_at: null,
                 } as Record<string, unknown>)
                 .eq('user_id', user.id);
 
@@ -1772,10 +1802,18 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setVerificationHash(verifyHash);
             setEncryptedUserKey(uskBundle.encryptedUserKey);
             setKdfVersion(CURRENT_KDF_VERSION);
+            setVaultProtectionMode(VAULT_PROTECTION_MODE_MASTER_ONLY);
             setIsSetupRequired(false);
 
             // Cache credentials for offline use (including encryptedUserKey)
-            await saveOfflineCredentials(user.id, newSalt, verifyHash, CURRENT_KDF_VERSION, uskBundle.encryptedUserKey);
+            await saveOfflineCredentials(
+                user.id,
+                newSalt,
+                verifyHash,
+                CURRENT_KDF_VERSION,
+                uskBundle.encryptedUserKey,
+                VAULT_PROTECTION_MODE_MASTER_ONLY,
+            );
             return finalizeVaultUnlock(uskBundle.userKey);
         } catch (err) {
             console.error('Error setting up master password:', err);
@@ -1915,6 +1953,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                     upgrade.newVerifier,
                                     upgrade.activeVersion,
                                     encryptedUserKey,
+                                    vaultProtectionMode,
                                 );
                                 shouldBackfillVerifier = false;
                                 console.info(
@@ -2104,12 +2143,24 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
             try {
                 if (encryptedUserKey) {
-                    const userKey = await unwrapUserKey(encryptedUserKey, kdfOutputBytes);
+                    let userKey: CryptoKey;
+                    try {
+                        userKey = await unwrapUserKey(encryptedUserKey, kdfOutputBytes);
+                    } catch (unwrapError) {
+                        if (requiresDeviceKey(vaultProtectionMode) && deviceKey) {
+                            throw createDeviceKeyInvalidError();
+                        }
+                        throw unwrapError;
+                    }
                     if (verifier) {
                         const isValid = await verifyKey(verifier, userKey);
                         if (!isValid) {
                             recordFailedAttempt();
-                            return { error: new Error('Invalid master password') };
+                            return {
+                                error: requiresDeviceKey(vaultProtectionMode) && deviceKey
+                                    ? createDeviceKeyInvalidError()
+                                    : createMasterPasswordInvalidError(),
+                            };
                         }
                     }
 
@@ -2131,7 +2182,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 setVerificationHash(upgrade.newVerifier);
                                 setKdfVersion(upgrade.activeVersion);
                                 setEncryptedUserKey(upgrade.newEncryptedUserKey);
-                                await saveOfflineCredentials(user.id, salt, upgrade.newVerifier, upgrade.activeVersion, upgrade.newEncryptedUserKey);
+                                await saveOfflineCredentials(
+                                    user.id,
+                                    salt,
+                                    upgrade.newVerifier,
+                                    upgrade.activeVersion,
+                                    upgrade.newEncryptedUserKey,
+                                    vaultProtectionMode,
+                                );
                                 shouldBackfillVerifier = false;
                                 console.info(`KDF upgraded (USK rewrap-only) from v${kdfVersion} to v${upgrade.activeVersion}. No vault re-encryption needed.`);
                             }
@@ -2144,7 +2202,11 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     const isValid = verifier ? await verifyKey(verifier, legacyKey) : await recoverLegacyKeyWithoutVerifier(legacyKey);
                     if (!isValid) {
                         recordFailedAttempt();
-                        return { error: new Error('Invalid master password') };
+                        return {
+                            error: requiresDeviceKey(vaultProtectionMode) && deviceKey
+                                ? createDeviceKeyInvalidError()
+                                : createMasterPasswordInvalidError(),
+                        };
                     }
 
                     resetUnlockAttempts();
@@ -2331,7 +2393,14 @@ export function VaultProvider({ children }: VaultProviderProps) {
         } catch (err) {
             console.error('Error unlocking vault:', err);
             recordFailedAttempt();
-            return { error: new Error('Invalid master password') };
+            if (err instanceof DeviceKeyUnlockError) {
+                return { error: err };
+            }
+            return {
+                error: requiresDeviceKey(vaultProtectionMode)
+                    ? createDeviceKeyInvalidError()
+                    : createMasterPasswordInvalidError(),
+            };
         }
     }, [
         user,
@@ -2344,6 +2413,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
         finalizeVaultUnlock,
         backfillVerificationHash,
         getRequiredDeviceKey,
+        vaultProtectionMode,
         recoverLegacyKeyWithoutVerifier,
         migrateLegacyVaultToUserKey,
     ]);
@@ -2563,22 +2633,40 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 } finally {
                     kdfOutputBytes2.fill(0);
                 }
+                await storeDeviceKey(user.id, newDeviceKey);
+                const enabledAt = new Date().toISOString();
                 const { error: updateError } = await supabase
                     .from('profiles')
                     .update({
                         master_password_verifier: newVerifier,
                         encrypted_user_key: newEncryptedUserKey,
+                        vault_protection_mode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
+                        device_key_version: 1,
+                        device_key_enabled_at: enabledAt,
+                        device_key_backup_acknowledged_at: enabledAt,
                     } as Record<string, unknown>)
                     .eq('user_id', user.id);
                 if (updateError) {
+                    try {
+                        await deleteDeviceKey(user.id);
+                    } catch {
+                        // Best-effort rollback only; never log local secret material.
+                    }
                     throw new Error(`Failed to update profile: ${updateError.message}`);
                 }
-                await storeDeviceKey(user.id, newDeviceKey);
                 setEncryptedUserKey(newEncryptedUserKey);
                 setVerificationHash(newVerifier);
                 setCurrentDeviceKey(newDeviceKey);
                 setDeviceKeyActive(true);
-                await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion, newEncryptedUserKey);
+                setVaultProtectionMode(VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED);
+                await saveOfflineCredentials(
+                    user.id,
+                    salt,
+                    newVerifier,
+                    kdfVersion,
+                    newEncryptedUserKey,
+                    VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
+                );
                 console.info('Device Key enabled (USK path). No vault re-encryption needed.');
                 return { error: null };
             }
@@ -2633,11 +2721,18 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 }
             }
 
-            // Update the verifier in profile
+            await storeDeviceKey(user.id, newDeviceKey);
+            const enabledAt = new Date().toISOString();
+
+            // Update the verifier and non-secret protection metadata in profile.
             const { error: updateError } = await supabase
                 .from('profiles')
                 .update({
                     master_password_verifier: newVerifier,
+                    vault_protection_mode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
+                    device_key_version: 1,
+                    device_key_enabled_at: enabledAt,
+                    device_key_backup_acknowledged_at: enabledAt,
                 } as Record<string, unknown>)
                 .eq('user_id', user.id);
 
@@ -2645,17 +2740,22 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 throw new Error(`Failed to update profile: ${updateError.message}`);
             }
 
-            // Store device key in the local secret store
-            await storeDeviceKey(user.id, newDeviceKey);
-
             // Update state
             setEncryptionKey(newKey);
             setVerificationHash(newVerifier);
             setCurrentDeviceKey(newDeviceKey);
             setDeviceKeyActive(true);
+            setVaultProtectionMode(VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED);
 
             // Update offline credentials
-            await saveOfflineCredentials(user.id, salt, newVerifier, kdfVersion);
+            await saveOfflineCredentials(
+                user.id,
+                salt,
+                newVerifier,
+                kdfVersion,
+                null,
+                VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
+            );
 
             console.info(
                 `Device Key enabled. Re-encrypted ${reEncResult.itemsReEncrypted} items, ` +

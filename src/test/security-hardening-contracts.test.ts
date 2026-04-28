@@ -182,6 +182,27 @@ describe("security hardening contracts", () => {
     expect(serviceWorker).not.toContain("cache.put");
   });
 
+  it("stores only non-secret Device Key protection metadata server-side", () => {
+    const migration = readFileSync(
+      "supabase/migrations/20260428203000_add_vault_protection_mode.sql",
+      "utf-8",
+    );
+    const vaultContext = readFileSync("src/contexts/VaultContext.tsx", "utf-8");
+
+    expect(migration).toContain("vault_protection_mode");
+    expect(migration).toContain("'master_only'");
+    expect(migration).toContain("'device_key_required'");
+    expect(migration).toContain("device_key_version");
+    expect(migration).toContain("COMMENT ON COLUMN public.profiles.vault_protection_mode");
+    expect(migration).not.toMatch(/device_key_(hash|fingerprint|secret|value|material)/i);
+    expect(migration).not.toContain("encrypted_device_key");
+
+    expect(vaultContext).toContain("VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED");
+    expect(vaultContext).toContain("requiresDeviceKey(vaultProtectionMode)");
+    expect(vaultContext).not.toContain("device_key_hash");
+    expect(vaultContext).not.toContain("device_key_fingerprint");
+  });
+
   it("centralizes server-visible vault item metadata neutralization for new writes", () => {
     const policy = readFileSync("src/services/vaultMetadataPolicy.ts", "utf-8");
     const itemDialog = readFileSync("src/components/vault/VaultItemDialog.tsx", "utf-8");

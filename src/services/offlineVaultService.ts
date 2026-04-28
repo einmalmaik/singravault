@@ -11,6 +11,8 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { isTauriDevUserId, TAURI_DEV_VAULT_ID } from '@/platform/tauriDevMode';
 import { neutralizeVaultItemServerMetadata } from '@/services/vaultMetadataPolicy';
+import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
+import { VAULT_PROTECTION_MODE_MASTER_ONLY } from '@/services/deviceKeyProtectionPolicy';
 
 type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
 type VaultItemInsert = Database['public']['Tables']['vault_items']['Insert'];
@@ -53,6 +55,8 @@ export interface OfflineVaultSnapshot {
   kdfVersion?: number | null;
   /** Encrypted UserKey (profiles.encrypted_user_key) for USK-based offline unlock */
   encryptedUserKey?: string | null;
+  /** Non-secret profile.vault_protection_mode cached for offline unlock UX. */
+  vaultProtectionMode?: VaultProtectionMode | null;
   /**
    * Last online vault-unlock 2FA requirement. null/undefined means unknown,
    * which must fail closed while offline.
@@ -309,6 +313,7 @@ function preserveLocalSecurityState(
     masterPasswordVerifier: snapshot.masterPasswordVerifier ?? existing.masterPasswordVerifier,
     kdfVersion: snapshot.kdfVersion ?? existing.kdfVersion,
     encryptedUserKey: snapshot.encryptedUserKey ?? existing.encryptedUserKey,
+    vaultProtectionMode: snapshot.vaultProtectionMode ?? existing.vaultProtectionMode ?? VAULT_PROTECTION_MODE_MASTER_ONLY,
     vaultTwoFactorRequired: snapshot.vaultTwoFactorRequired ?? existing.vaultTwoFactorRequired,
     remoteRevision: snapshot.remoteRevision ?? existing.remoteRevision ?? null,
   };
@@ -412,6 +417,7 @@ export async function saveOfflineCredentials(
   masterPasswordVerifier: string | null,
   kdfVersion?: number,
   encryptedUserKey?: string | null,
+  vaultProtectionMode: VaultProtectionMode = VAULT_PROTECTION_MODE_MASTER_ONLY,
 ): Promise<void> {
   const snapshot = await ensureSnapshot(userId);
   snapshot.encryptionSalt = encryptionSalt;
@@ -422,6 +428,7 @@ export async function saveOfflineCredentials(
   if (encryptedUserKey !== undefined) {
     snapshot.encryptedUserKey = encryptedUserKey;
   }
+  snapshot.vaultProtectionMode = vaultProtectionMode;
   snapshot.updatedAt = nowIso();
   await saveOfflineSnapshot(snapshot);
 }
@@ -431,7 +438,13 @@ export async function saveOfflineCredentials(
  */
 export async function getOfflineCredentials(
   userId: string,
-): Promise<{ salt: string; verifier: string | null; kdfVersion: number | null; encryptedUserKey: string | null } | null> {
+): Promise<{
+  salt: string;
+  verifier: string | null;
+  kdfVersion: number | null;
+  encryptedUserKey: string | null;
+  vaultProtectionMode: VaultProtectionMode;
+} | null> {
   const snapshot = await getOfflineSnapshot(userId);
   if (!snapshot?.encryptionSalt) {
     return null;
@@ -441,6 +454,7 @@ export async function getOfflineCredentials(
     verifier: snapshot.masterPasswordVerifier ?? null,
     kdfVersion: snapshot.kdfVersion ?? null,
     encryptedUserKey: snapshot.encryptedUserKey ?? null,
+    vaultProtectionMode: snapshot.vaultProtectionMode ?? VAULT_PROTECTION_MODE_MASTER_ONLY,
   };
 }
 
@@ -813,6 +827,7 @@ function applyRecentLocalMutations(
     masterPasswordVerifier: cachedSnapshot.masterPasswordVerifier ?? remoteSnapshot.masterPasswordVerifier,
     kdfVersion: cachedSnapshot.kdfVersion ?? remoteSnapshot.kdfVersion,
     encryptedUserKey: cachedSnapshot.encryptedUserKey ?? remoteSnapshot.encryptedUserKey,
+    vaultProtectionMode: cachedSnapshot.vaultProtectionMode ?? remoteSnapshot.vaultProtectionMode ?? VAULT_PROTECTION_MODE_MASTER_ONLY,
     vaultTwoFactorRequired: cachedSnapshot.vaultTwoFactorRequired ?? remoteSnapshot.vaultTwoFactorRequired,
     remoteRevision: remoteSnapshot.remoteRevision ?? cachedSnapshot.remoteRevision ?? null,
   };

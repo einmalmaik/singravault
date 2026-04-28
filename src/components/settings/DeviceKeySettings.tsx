@@ -25,9 +25,11 @@ import {
     DialogFooter,
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { isTauriRuntime } from '@/platform/runtime';
 import {
     DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH,
     exportDeviceKeyForTransfer,
@@ -49,6 +51,8 @@ export function DeviceKeySettings() {
     const [exportedData, setExportedData] = useState('');
     const [importData, setImportData] = useState('');
     const [loading, setLoading] = useState(false);
+    const [backupAcknowledged, setBackupAcknowledged] = useState(false);
+    const isDesktopRuntime = isTauriRuntime();
 
     const handleEnable = async () => {
         if (!masterPassword) return;
@@ -59,6 +63,7 @@ export function DeviceKeySettings() {
         setLoading(false);
         setShowEnableDialog(false);
         setMasterPassword('');
+        setBackupAcknowledged(false);
 
         if (error) {
             toast({
@@ -67,6 +72,8 @@ export function DeviceKeySettings() {
                 description: t('deviceKey.enableFailed'),
             });
         } else {
+            setPin(generateDeviceKeyTransferSecret());
+            setShowExportDialog(true);
             toast({
                 title: t('common.success'),
                 description: t('deviceKey.enableSuccess'),
@@ -197,6 +204,12 @@ export function DeviceKeySettings() {
                             {t('deviceKey.enableWarning')}
                         </AlertDescription>
                     </Alert>
+                    <Alert>
+                        <AlertTriangle className="w-4 h-4" />
+                        <AlertDescription>
+                            {isDesktopRuntime ? t('deviceKey.desktopBoundary') : t('deviceKey.webBoundary')}
+                        </AlertDescription>
+                    </Alert>
                     <div className="space-y-2">
                         <Label>{t('auth.unlock.password')}</Label>
                         <Input
@@ -206,11 +219,21 @@ export function DeviceKeySettings() {
                             placeholder="••••••••••••"
                         />
                     </div>
+                    <div className="flex items-start gap-2">
+                        <Checkbox
+                            id="device-key-backup-ack"
+                            checked={backupAcknowledged}
+                            onCheckedChange={(checked) => setBackupAcknowledged(checked === true)}
+                        />
+                        <Label htmlFor="device-key-backup-ack" className="text-sm font-normal leading-snug">
+                            {t('deviceKey.backupAck')}
+                        </Label>
+                    </div>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setShowEnableDialog(false)}>
+                        <Button variant="outline" onClick={() => { setShowEnableDialog(false); setBackupAcknowledged(false); }}>
                             {t('common.cancel')}
                         </Button>
-                        <Button onClick={handleEnable} disabled={!masterPassword || loading}>
+                        <Button onClick={handleEnable} disabled={!masterPassword || !backupAcknowledged || loading}>
                             {t('deviceKey.enable')}
                         </Button>
                     </DialogFooter>
@@ -229,6 +252,12 @@ export function DeviceKeySettings() {
                             {t('deviceKey.exportDesc')}
                         </DialogDescription>
                     </DialogHeader>
+                    <Alert>
+                        <AlertTriangle className="w-4 h-4" />
+                        <AlertDescription>
+                            {t('deviceKey.transferWarning')}
+                        </AlertDescription>
+                    </Alert>
                     {!exportedData ? (
                         <>
                             <div className="space-y-2">
@@ -286,6 +315,12 @@ export function DeviceKeySettings() {
                             {t('deviceKey.importDesc')}
                         </DialogDescription>
                     </DialogHeader>
+                    <Alert>
+                        <AlertTriangle className="w-4 h-4" />
+                        <AlertDescription>
+                            {t('deviceKey.importWarning')}
+                        </AlertDescription>
+                    </Alert>
                     <div className="space-y-4">
                         <div className="space-y-2">
                             <Label>{t('deviceKey.transferCode')}</Label>

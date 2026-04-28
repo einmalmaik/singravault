@@ -190,7 +190,11 @@ fn is_uuid_like(value: &str) -> bool {
         }
     }
 
-    true
+    // Supabase auth user ids are UUID v4. Requiring the version and variant
+    // keeps renderer-accessible keychain accounts tightly user-scoped instead
+    // of accepting arbitrary UUID-looking names.
+    value.as_bytes()[14] == b'4'
+        && matches!(value.as_bytes()[19], b'8' | b'9' | b'a' | b'b' | b'A' | b'B')
 }
 
 fn load_pkce_store() -> Result<PkceVerifierStore, String> {
@@ -291,6 +295,8 @@ mod tests {
             "refresh-token:00000000-0000-4000-8000-000000000001",
             "vault-integrity:user-1",
             "device-key:00000000-0000-4000-8000-000000000001:extra",
+            "device-key:00000000-0000-1000-8000-000000000001",
+            "device-key:00000000-0000-4000-7000-000000000001",
         ] {
             assert!(normalize_local_secret_key(key).is_err(), "{key} should be rejected");
         }

@@ -31,11 +31,21 @@ Desktop/Tauri und Web/PWA sind nicht gleich stark:
 - Löschen: Reset/Recovery löscht Device Key, Offline-Daten und Integrity-Baseline lokal.
 - Memory-Cleanup: temporäre Byte-Arrays werden best-effort mit `fill(0)` überschrieben. JavaScript garantiert keine vollständige Speicherbereinigung.
 
+## Serverseitiger Protection Mode
+
+Der Server speichert kein Device-Key-Material, aber seit `20260428203000_add_vault_protection_mode.sql` nicht-sensitive Schutzkonfiguration auf `profiles`:
+
+- `vault_protection_mode = 'master_only' | 'device_key_required'`
+- `device_key_version = 1`, nur wenn Device-Key-Schutz aktiv ist
+- `device_key_enabled_at` und `device_key_backup_acknowledged_at`
+
+Diese Werte sind kein Secret, kein Hash, kein Fingerprint und nicht aus dem Device Key ableitbar. Sie sagen nur, welchen lokalen Unlock-Faktor der Client erwarten muss. Bestehende Profile starten mit `master_only`, damit alte Vaults nicht ausgesperrt werden. Nach erfolgreicher Device-Key-Aktivierung setzt der Client den Modus erst nach erfolgreichem Rewrap/Roundtrip und lokalem Store auf `device_key_required`.
+
 ## Unlock und Verlust
 
 Ein Device-Key-geschützter Vault lässt sich ohne den korrekten Device Key nicht entschlüsseln. Wenn der lokale Device Key verloren geht und kein Export/Transfer existiert, gibt es keinen serverseitigen Recovery-Pfad für die verschlüsselten Daten.
 
-Wichtig: Es gibt aktuell kein serverseitiges `device_key_required`-Flag. Auf einem neuen Gerät ohne lokalen Key kann der Client deshalb nicht immer zwischen "falsches Master-Passwort" und "Device Key fehlt" unterscheiden. Kryptografisch bleibt der Unlock blockiert, die UX kann aber generisch wirken.
+Wenn `vault_protection_mode = 'device_key_required'` gilt, darf der Client keinen Master-only-Fallback versuchen. Fehlt der lokale Device Key, zeigt die App einen Import-/Recovery-Hinweis statt einer generischen Passwortmeldung. Ist ein lokaler Key vorhanden, aber das Entpacken des UserKey scheitert, bleibt die Meldung bewusst begrenzt: falscher Device Key oder falsche Eingabe, ohne Secret-Details zu loggen.
 
 ## Import und Transfer
 

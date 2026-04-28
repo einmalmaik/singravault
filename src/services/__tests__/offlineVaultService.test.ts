@@ -396,14 +396,42 @@ describe("Offline credentials", () => {
     await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz", 2);
 
     const creds = await svc.getOfflineCredentials(USER_ID);
-    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: 2, encryptedUserKey: null });
+    expect(creds).toEqual({
+      salt: "salt-abc",
+      verifier: "verifier-xyz",
+      kdfVersion: 2,
+      encryptedUserKey: null,
+      vaultProtectionMode: "master_only",
+    });
   });
 
   it("saveOfflineCredentials without kdfVersion returns null kdfVersion", async () => {
     await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz");
 
     const creds = await svc.getOfflineCredentials(USER_ID);
-    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: null, encryptedUserKey: null });
+    expect(creds).toEqual({
+      salt: "salt-abc",
+      verifier: "verifier-xyz",
+      kdfVersion: null,
+      encryptedUserKey: null,
+      vaultProtectionMode: "master_only",
+    });
+  });
+
+  it("round-trips required Device Key protection mode", async () => {
+    await svc.saveOfflineCredentials(
+      USER_ID,
+      "salt-abc",
+      "verifier-xyz",
+      2,
+      "encrypted-user-key",
+      "device_key_required",
+    );
+
+    await expect(svc.getOfflineCredentials(USER_ID)).resolves.toMatchObject({
+      encryptedUserKey: "encrypted-user-key",
+      vaultProtectionMode: "device_key_required",
+    });
   });
 
   it("getOfflineCredentials returns null when not saved", async () => {
@@ -794,6 +822,7 @@ describe("fetchRemoteOfflineSnapshot", () => {
     expect(snapshot.masterPasswordVerifier).toBe("verifier-xyz");
     expect(snapshot.kdfVersion).toBe(2);
     expect(snapshot.encryptedUserKey).toBe("encrypted-user-key");
+    expect(snapshot.vaultProtectionMode).toBe("master_only");
     expect(snapshot.vaultTwoFactorRequired).toBe(false);
     expect(cached?.encryptionSalt).toBe("salt-abc");
     expect(cached?.masterPasswordVerifier).toBe("verifier-xyz");

@@ -153,11 +153,13 @@ const mockGenerateDeviceKey = vi.fn(() => new Uint8Array(32).fill(5));
 const mockStoreDeviceKey = vi.fn();
 const mockLoadDeviceKey = vi.fn();
 const mockCheckHasDeviceKey = vi.fn();
+const mockDeleteDeviceKey = vi.fn();
 vi.mock("@/services/deviceKeyService", () => ({
   generateDeviceKey: () => mockGenerateDeviceKey(),
   storeDeviceKey: (...args: unknown[]) => mockStoreDeviceKey(...args),
   getDeviceKey: (...args: unknown[]) => mockLoadDeviceKey(...args),
   hasDeviceKey: (...args: unknown[]) => mockCheckHasDeviceKey(...args),
+  deleteDeviceKey: (...args: unknown[]) => mockDeleteDeviceKey(...args),
 }));
 
 // Mock passkey service
@@ -1086,6 +1088,7 @@ describe("VaultContext", () => {
         "migrated-verifier",
         1,
         "mock-migrated-user-key",
+        "master_only",
       );
     });
   });
@@ -1517,6 +1520,7 @@ describe("VaultContext", () => {
             encryption_salt: "existing-salt",
             master_password_verifier: "existing-verifier",
             kdf_version: 2,
+            vault_protection_mode: "device_key_required",
           })),
         }),
         update: vi.fn().mockReturnValue({
@@ -1578,6 +1582,7 @@ describe("VaultContext", () => {
             encryption_salt: "existing-salt",
             master_password_verifier: "existing-verifier",
             kdf_version: 2,
+            vault_protection_mode: "device_key_required",
           })),
         }),
         update: vi.fn().mockReturnValue({
@@ -1605,7 +1610,7 @@ describe("VaultContext", () => {
       });
 
       expect(unlockResult?.error?.message).toBe(
-        "Device key is unavailable on this device. Restore the device key or use a recovery method.",
+        "This vault is protected with a Device Key. No matching Device Key was found on this device. Import your Device Key from a trusted device or use your documented recovery process. Without the Device Key, this vault cannot be decrypted.",
       );
       expect(mockDeriveRawKey).toHaveBeenCalledTimes(1);
       expect(mockRecordFailedAttempt).not.toHaveBeenCalled();

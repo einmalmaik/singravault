@@ -71,11 +71,11 @@ Der Claim ist nicht korrekt, wenn daraus Schutz gegen kompromittierte Browser-La
 | DK-2026-04-28-03 | P1 | Transfer-KDF | Envelope-Parameter waren nur nach unten begrenzt; extreme Werte konnten DoS auslösen. | Behoben: exakt erlaubte Argon2id-Parameter. |
 | DK-2026-04-28-04 | P2 | Transfer UX | 12-Zeichen-Minimum war für abgefangene Offline-Envelopes zu schwach kommuniziert. | Behoben: Minimum 20, zufälliges Secret in UI. |
 | DK-2026-04-28-05 | P2 | Aktivierung | Local-Secret-Store-Verfügbarkeit wurde nicht vor serverseitiger Device-Key-Aktivierung geprüft. | Behoben: Preflight vor Migration. |
-| DK-2026-04-28-06 | P2 | UX/Architektur | Kein serverseitiges `device_key_required`-Flag; neues Gerät ohne Key bekommt ggf. generische Unlock-Fehler. | Dokumentiert; sicherheitskritisch blockiert der Unlock trotzdem. |
+| DK-2026-04-28-06 | P2 | UX/Architektur | Kein serverseitiges `device_key_required`-Flag; neues Gerät ohne Key bekommt ggf. generische Unlock-Fehler. | Behoben: `profiles.vault_protection_mode` + Unlock-Policy unterscheidet fehlenden lokalen Device Key von generischem Passwortfehler. |
 
 ## Restrisiken
 
 - Web/PWA ist keine OS-Keychain-Grenze.
 - Transfer-Codes sind offline brute-forcebar, wenn das Transfer Secret schwach oder zusammen mit dem Code kompromittiert wird.
 - JavaScript-Zeroization ist best-effort.
-- Ohne serverseitiges Required-Flag bleibt die Fehlermeldung bei fehlendem Device Key auf neuen Geräten nicht immer eindeutig.
+- Tauri-Keychain-Commands liefern den Device Key weiterhin an den autorisierten Renderer; Rust-seitige Derivation ohne JS-Rohmaterial bleibt eine sinnvolle Folgeaufgabe.
