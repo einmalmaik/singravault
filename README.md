@@ -1,8 +1,8 @@
 # Singra Vault
 
-> **Status:** `0.4.0`
+> **Status:** `0.4.3`
 >
-> Web, PWA und Desktop werden aktiv weiterentwickelt. Der aktuelle Core-Stand ist auf die Paketversion `0.4.0` ausgerichtet.
+> Web, PWA und Desktop werden aktiv weiterentwickelt. Der aktuelle Core-Stand ist auf die Paketversion `0.4.3` ausgerichtet.
 
 **Live-Instanz:** [singravault.mauntingstudios.de](https://singravault.mauntingstudios.de)
 

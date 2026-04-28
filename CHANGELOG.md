@@ -2,6 +2,59 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## 0.4.3 - 2026-04-28
+
+### Security Hardening
+
+- Server-sichtbare Vault-Item-Metadaten werden bei neuen Core-Writes zentral neutralisiert: Titel, URL, Icon, Typ, Favorit, Kategorie, Sortierung und `last_used_at` bleiben nicht mehr als fachliche Klartext-Metadaten in den `vault_items`-Spalten stehen.
+- Legacy-Vault-Item-Metadaten werden nach erfolgreichem Unlock lokal in den verschlüsselten Payload übernommen und anschließend serverseitig neutralisiert; bei fehlender Remote-Persistenz bleibt das entschlüsselte Item nutzbar, ohne Daten aus dem Payload zu verwerfen.
+- Kategorien werden stärker auf verschlüsselte `enc:cat:v1:`-Metadaten ausgerichtet; direkte Kategorie- und Sync-RPC-Writes neutralisieren Parent-/Sortier-Metadaten und erzwingen verschlüsselte Kategorie-Namen.
+- Device-Key-Aktivierung schlägt geschlossen fehl, wenn die UserKey-Migration noch nicht persistiert ist, damit keine Device-Key-Pflicht ohne rettbaren Unlock-Zustand entsteht.
+- Device-Key-Transfer und Import wurden von einfachem PIN-Wrapping auf versionierte `sv-dk-transfer-v2`-Envelopes mit Argon2id-Parametern, Längenlimits und Downgrade-/DoS-Prüfungen gehärtet.
+- WebAuthn-Challenges werden an konkrete Challenge-IDs, RP-ID, Origin und optional Credential-ID gebunden; die Funktion nutzt zusätzlich serverseitige Rate-Limits für Challenge-, Verify- und Verwaltungsaktionen.
+- Account-Löschung läuft über eine Edge Function mit Rate-Limit, enger CORS-Methodenliste und Storage-API-Cleanup statt direkter Storage-Tabellenlöschung.
+- Sensitive Supabase-RPCs für OPAQUE-Reset, Session-Revocation und 2FA-Secret-Helfer wurden von `anon`/`authenticated` entzogen und auf `service_role` beziehungsweise SECURITY-DEFINER-Wrapper eingegrenzt.
+- Edge-CORS gibt bei abgelehnten Origins keinen `null`- oder Wildcard-Origin mehr aus und behandelt hyphen-delimitierte Preview-Origin-Suffixe nur für ausreichend spezifische, kontrollierte Host-Suffixe.
+- Ein versehentlich generiertes Loadtest-Token-Artefakt wurde entfernt; die Repository-Guardrails erkennen nun auch `.failed.txt`-Varianten dieser Artefakte.
+
+### Zero-Knowledge & Metadata
+
+- Neue Vault-Item-Writes in Dialogen, Offline-Mutations und Quarantine-Recovery verwenden eine gemeinsame Metadata-Policy, damit fachliche Item-Metadaten im verschlüsselten Payload bleiben.
+- Legacy-Migrationen führen serverseitige Altdaten zuerst in die lokal entschlüsselten Item-Daten zusammen, verschlüsseln danach neu und schreiben nur neutrale Serverfelder zurück.
+- Offline-Snapshots speichern zusätzlich einen monotonen Sync-Head und queued Mutations laufen über eine Compare-and-Set-RPC, um Rollback- oder stale-write-Situationen besser zu erkennen.
+- Die Security-Dokumentation wurde präzisiert: Vault-Inhalte und fachliche Vault-Metadaten werden stärker minimiert, aber Account-, Auth-, Sync-, Recovery-, Billing-/Support-, Storagegrößen-, Zeitstempel- und Laufzeit-Metadaten liegen weiterhin außerhalb der strikten Vault-Content-Zero-Knowledge-Grenze.
+
+### Device Key
+
+- `vault_protection_mode`, `device_key_version`, `device_key_enabled_at` und `device_key_backup_acknowledged_at` wurden als nicht-geheime Profilmetadaten ergänzt, um `master_only` und `device_key_required` sauber zu unterscheiden.
+- Device Keys werden konsequent als 32-Byte-Schlüssel validiert; ungültige lokale oder Legacy-Keys werden nicht als verwendbare Device Keys akzeptiert.
+- Tauri/Desktop hält rohe Device-Key-Bytes in Rust/OS-Keychain-Pfaden und stellt dem Renderer nur eng begrenzte native Operationen bereit: Verfügbarkeit prüfen, erzeugen, ableiten, exportieren und importieren.
+- Lokale Secret-Keychain-Namen wurden auf erlaubte, nutzergebundene Namespaces eingegrenzt; generische Renderer-Lese-/Schreibzugriffe auf den Device-Key-Namespace sind blockiert.
+- Die Device-Key-Settings und Dokumentation beschreiben Import, Backup-Risiko und Web/PWA- versus Tauri/Desktop-Grenzen expliziter.
+
+### Supabase / Edge Functions
+
+- Neue Migrationen erweitern die Rate-Limit-Aktionsliste für Account Delete und WebAuthn, härten WebAuthn-Challenge-Scope, erzwingen opaque Vault-Item- und verschlüsselte Category-Metadaten, ergänzen Sync-Head/CAS-Mutationslogik und fügen Device-Key-Schutzmodus-Metadaten hinzu.
+- Linked-DB-Lint-Fixes qualifizieren Extension-Funktionen, korrigieren OPAQUE-Reset-Konfliktziele und räumen problematische Grants auf.
+- `account-delete` ist im Open-Core-Edge-Function-Set enthalten; Premium-, Admin-, Billing-, Support- und Family-Funktionen bleiben getrennt dokumentiert und werden nicht in den öffentlichen Core gezogen.
+
+### Tauri / Desktop
+
+- Device-Key-Derivation, Export und Import wurden in native Tauri-Kommandos verschoben, damit langfristiges Device-Key-Material nicht über generische JS-Secret-Reads läuft.
+- Die Tauri-Capabilities erlauben weiterhin den nötigen Save-Dialog und app-spezifische Log-Verzeichnisse, geben aber keine breiten Opener- oder Lese-Permissions frei.
+- CSP-, Session- und Renderer-Risiken wurden dokumentiert; verbleibende Web/PWA- und Desktop-Renderer-Grenzen werden nicht als vollständig gelöst dargestellt.
+
+### Tests
+
+- Neue und erweiterte Regressionstests decken Vault-Metadata-Policy, Legacy-Metadata-Migration, Device-Key-Service und Native Bridge, Device-Key-Protection-Policy, Account-Delete-Runtime-Hardening, Edge-CORS, WebAuthn/Rate-Limit-Kontrakte, Tauri-Capabilities und Repository-Guardrails ab.
+- Security-Whitepaper-, Footer-/Version-, Offline-Vault-, Auth-Session-, Export- und Crypto-Pipeline-Tests wurden an die gehärteten Flows angepasst.
+
+### Notes
+
+- Dieses Release verbessert die Sicherheitslage und reduziert fachliche Vault-Metadaten auf dem Server, behauptet aber nicht „100 % Zero Knowledge für alle Metadaten“.
+- Premium, Admin, Billing, Support und Family bleiben außerhalb des öffentlichen Core-Repositories.
+- Der manuelle Runtime-Check für `/vault/settings` wurde mit echtem Account durchgeführt: Settings laden sauber, Device-Key-Schutz wird angezeigt, keine doppelten Provider, keine Hook-/Context-/`@fs`-Fehler und keine Browser-Konsolenfehler.
+
 ## 0.4.0 - 2026-04-27
 
 ### Highlights
