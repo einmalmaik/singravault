@@ -20,4 +20,10 @@ describe('Tauri default capability contract', () => {
     expect(capability.permissions).toContain('dialog:allow-save');
     expect(capability.permissions).toContain('fs:allow-write-file');
   });
+
+  it('does not expose opener file/path commands to the renderer', () => {
+    expect(capability.permissions).not.toContain('opener:default');
+    expect(capability.permissions).toContain('opener:allow-open-url');
+    expect(capability.permissions).toContain('opener:allow-default-urls');
+  });
 });

@@ -10,6 +10,7 @@ import {
   removeOfflineItemRow,
   upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
+import { neutralizeVaultItemServerMetadata } from '@/services/vaultMetadataPolicy';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
 
 type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
@@ -185,18 +186,10 @@ async function buildTrustedItemUpsertPayload(
     throw new Error('Kein Standard-Tresor verfügbar.');
   }
 
-  return {
+  return neutralizeVaultItemServerMetadata({
     id: trustedItem.id,
     user_id: userId,
     vault_id: vaultId,
-    title: trustedItem.title,
-    website_url: trustedItem.website_url,
-    icon_url: trustedItem.icon_url,
-    item_type: trustedItem.item_type,
-    is_favorite: trustedItem.is_favorite,
     encrypted_data: trustedItem.encrypted_data,
-    category_id: trustedItem.category_id,
-    sort_order: trustedItem.sort_order,
-    last_used_at: trustedItem.last_used_at,
-  };
+  });
 }

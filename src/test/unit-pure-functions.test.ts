@@ -240,7 +240,7 @@ describe("buildVaultItemRowFromInsert()", () => {
     expect(row.id).toBe("item-1");
     expect(row.user_id).toBe("user-1");
     expect(row.vault_id).toBe("vault-1");
-    expect(row.title).toBe("Test");
+    expect(row.title).toBe("Encrypted Item");
     expect(row.encrypted_data).toBe("enc-data");
     expect(row.website_url).toBeNull();
     expect(row.icon_url).toBeNull();
@@ -253,7 +253,7 @@ describe("buildVaultItemRowFromInsert()", () => {
     expect(row.updated_at).toBeTruthy();
   });
 
-  it("preserves optional fields when provided", () => {
+  it("neutralizes optional server-visible item metadata when provided", () => {
     const insert = {
       id: "item-2",
       user_id: "user-1",
@@ -267,10 +267,14 @@ describe("buildVaultItemRowFromInsert()", () => {
     };
     const row = buildVaultItemRowFromInsert(insert);
 
-    expect(row.website_url).toBe("https://example.com");
-    expect(row.item_type).toBe("note");
-    expect(row.is_favorite).toBe(true);
-    expect(row.category_id).toBe("cat-1");
+    expect(row.title).toBe("Encrypted Item");
+    expect(row.website_url).toBeNull();
+    expect(row.icon_url).toBeNull();
+    expect(row.item_type).toBe("password");
+    expect(row.is_favorite).toBe(false);
+    expect(row.category_id).toBeNull();
+    expect(JSON.stringify(row)).not.toContain("https://example.com");
+    expect(JSON.stringify(row)).not.toContain("cat-1");
   });
 });
 

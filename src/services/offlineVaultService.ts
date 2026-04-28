@@ -10,6 +10,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { isTauriDevUserId, TAURI_DEV_VAULT_ID } from '@/platform/tauriDevMode';
+import { neutralizeVaultItemServerMetadata } from '@/services/vaultMetadataPolicy';
 
 type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
 type VaultItemInsert = Database['public']['Tables']['vault_items']['Insert'];
@@ -241,19 +242,20 @@ export function shouldUseLocalOnlyVault(userId: string | null | undefined): bool
 
 export function buildVaultItemRowFromInsert(insert: VaultItemInsert & { id: string }): VaultItemRow {
   const now = nowIso();
+  const neutralInsert = neutralizeVaultItemServerMetadata(insert);
   return {
-    id: insert.id,
-    user_id: insert.user_id,
-    vault_id: insert.vault_id,
-    title: insert.title,
-    website_url: insert.website_url ?? null,
-    icon_url: insert.icon_url ?? null,
-    item_type: (insert.item_type ?? 'password') as VaultItemRow['item_type'],
-    encrypted_data: insert.encrypted_data,
-    category_id: insert.category_id ?? null,
-    is_favorite: insert.is_favorite ?? false,
-    sort_order: insert.sort_order ?? null,
-    last_used_at: insert.last_used_at ?? null,
+    id: neutralInsert.id,
+    user_id: neutralInsert.user_id,
+    vault_id: neutralInsert.vault_id,
+    title: neutralInsert.title,
+    website_url: neutralInsert.website_url,
+    icon_url: neutralInsert.icon_url,
+    item_type: neutralInsert.item_type as VaultItemRow['item_type'],
+    encrypted_data: neutralInsert.encrypted_data,
+    category_id: neutralInsert.category_id,
+    is_favorite: neutralInsert.is_favorite,
+    sort_order: neutralInsert.sort_order,
+    last_used_at: neutralInsert.last_used_at,
     created_at: now,
     updated_at: now,
   };
@@ -556,12 +558,19 @@ export async function enqueueOfflineMutation(
     return id;
   }
 
+  const normalizedMutation = mutation.type === 'upsert_item'
+    ? {
+      ...mutation,
+      payload: neutralizeVaultItemServerMetadata(mutation.payload),
+    }
+    : mutation;
+
   const fullMutation = {
-    ...mutation,
+    ...normalizedMutation,
     id,
     createdAt: nowIso(),
-    baseRemoteRevision: mutation.baseRemoteRevision
-      ?? (await getOfflineSnapshot(mutation.userId))?.remoteRevision
+    baseRemoteRevision: normalizedMutation.baseRemoteRevision
+      ?? (await getOfflineSnapshot(normalizedMutation.userId))?.remoteRevision
       ?? null,
   } as OfflineMutation;
 

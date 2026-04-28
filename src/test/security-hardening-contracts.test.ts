@@ -93,4 +93,28 @@ describe("security hardening contracts", () => {
     expect(categoryMigration).toContain("NEW.parent_id := NULL");
     expect(categoryMigration).toContain("NEW.sort_order := NULL");
   });
+
+  it("keeps service worker caching scoped away from Supabase and vault API responses", () => {
+    const serviceWorker = readFileSync("src/sw.ts", "utf-8");
+
+    expect(serviceWorker).toContain('url.pathname.startsWith("/assets/")');
+    expect(serviceWorker).not.toContain("https://*.supabase.co");
+    expect(serviceWorker).not.toContain("supabase.co");
+    expect(serviceWorker).not.toMatch(/registerRoute\([\s\S]{0,240}(vault_items|auth-|account-delete|webauthn|functions\/v1)/);
+    expect(serviceWorker).not.toContain("cache.put");
+  });
+
+  it("centralizes server-visible vault item metadata neutralization for new writes", () => {
+    const policy = readFileSync("src/services/vaultMetadataPolicy.ts", "utf-8");
+    const itemDialog = readFileSync("src/components/vault/VaultItemDialog.tsx", "utf-8");
+    const categoryDialog = readFileSync("src/components/vault/CategoryDialog.tsx", "utf-8");
+    const offlineService = readFileSync("src/services/offlineVaultService.ts", "utf-8");
+    const recoveryService = readFileSync("src/services/vaultQuarantineRecoveryService.ts", "utf-8");
+
+    expect(policy).toContain("neutralizeVaultItemServerMetadata");
+    expect(itemDialog).toContain("neutralizeVaultItemServerMetadata");
+    expect(categoryDialog).toContain("neutralizeVaultItemServerMetadata");
+    expect(offlineService).toContain("neutralizeVaultItemServerMetadata(mutation.payload)");
+    expect(recoveryService).toContain("neutralizeVaultItemServerMetadata");
+  });
 });

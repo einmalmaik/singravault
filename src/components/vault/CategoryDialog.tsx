@@ -51,6 +51,10 @@ import {
     shouldUseLocalOnlyVault,
     upsertOfflineCategoryRow,
 } from '@/services/offlineVaultService';
+import {
+    ENCRYPTED_CATEGORY_PREFIX,
+    neutralizeVaultItemServerMetadata,
+} from '@/services/vaultMetadataPolicy';
 
 // Preset colors
 const PRESET_COLORS = [
@@ -77,8 +81,6 @@ interface CategoryDialogProps {
     onSave?: (event?: CategoryChangeEvent) => void;
 }
 
-const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
-const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
 type CategoryDeleteMode = 'unlink-items' | 'delete-items';
 
@@ -286,18 +288,12 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         categoryId: null,
                     }, item.id);
 
-                    const itemPayload = {
+                    const itemPayload = neutralizeVaultItemServerMetadata({
                         id: item.id,
                         user_id: item.user_id,
                         vault_id: item.vault_id,
-                        title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                        website_url: null,
-                        icon_url: null,
-                        item_type: 'password' as const,
-                        is_favorite: false,
                         encrypted_data: migratedEncryptedData,
-                        category_id: null,
-                    };
+                    });
 
                     let syncedItemOnline = false;
                     let itemRowForCache = buildVaultItemRowFromInsert(itemPayload);

@@ -564,6 +564,47 @@ describe("Mutation queue", () => {
     expect(mutations[0].id).toBe(id);
   });
 
+  it("neutralizes sensitive metadata before queueing an offline item upsert", async () => {
+    await svc.enqueueOfflineMutation({
+      userId: USER_ID,
+      type: "upsert_item",
+      payload: {
+        id: "item-sensitive",
+        user_id: USER_ID,
+        vault_id: VAULT_ID,
+        title: "Bank Admin",
+        website_url: "https://bank.example.test",
+        icon_url: "https://bank.example.test/favicon.ico",
+        item_type: "totp",
+        is_favorite: true,
+        category_id: "finance",
+        sort_order: 1,
+        last_used_at: "2026-04-28T10:00:00.000Z",
+        encrypted_data: "sv-vault-v1:ciphertext",
+      },
+    } as MutationInput);
+
+    const [mutation] = await svc.getOfflineMutations(USER_ID);
+    expect(mutation.type).toBe("upsert_item");
+    if (mutation.type !== "upsert_item") {
+      throw new Error("expected upsert_item mutation");
+    }
+
+    expect(mutation.payload).toMatchObject({
+      title: "Encrypted Item",
+      website_url: null,
+      icon_url: null,
+      item_type: "password",
+      is_favorite: false,
+      category_id: null,
+      sort_order: null,
+      last_used_at: null,
+    });
+    expect(JSON.stringify(mutation.payload)).not.toContain("Bank Admin");
+    expect(JSON.stringify(mutation.payload)).not.toContain("bank.example.test");
+    expect(JSON.stringify(mutation.payload)).not.toContain("finance");
+  });
+
   it("tauri dev user: does not queue local-only mutations", async () => {
     const id = await svc.enqueueOfflineMutation({
       userId: TAURI_DEV_USER_ID,
