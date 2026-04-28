@@ -38,7 +38,7 @@ import { saveExportFile } from '@/services/exportFileService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
 import { verifyTwoFactorChallenge } from '@/services/twoFactorService';
 import { clearLastOAuthProvider } from '@/services/socialLoginPreferenceService';
-import { invokeAuthedFunction } from '@/services/edgeFunctionService';
+import { invokeAuthedFunction, isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
@@ -156,17 +156,13 @@ export function AccountSettings() {
             navigate('/');
             return true;
         } catch (error) {
-            if (error instanceof Error) {
-                const errorMessage = error.message;
-                const errorDetails = 'details' in error ? JSON.stringify(error.details) : '';
-                if (errorMessage.includes('REAUTH_REQUIRED') || errorDetails.includes('REAUTH_REQUIRED')) {
-                    toast({
-                        title: t('common.error'),
-                        description: t('reauth.accountDeleteContext'),
-                    });
-                    setShowReauthDialog(true);
-                    return false;
-                }
+            if (isAccountDeleteReauthRequired(error)) {
+                toast({
+                    title: t('common.error'),
+                    description: t('reauth.accountDeleteContext'),
+                });
+                setShowReauthDialog(true);
+                return false;
             }
 
             toast({
@@ -400,5 +396,19 @@ export function AccountSettings() {
                 onSuccess={executeDeleteAccount}
             />
         </>
+    );
+}
+
+function isAccountDeleteReauthRequired(error: unknown): boolean {
+    if (error instanceof Error && error.message.includes('REAUTH_REQUIRED')) {
+        return true;
+    }
+
+    if (!isEdgeFunctionServiceError(error)) {
+        return false;
+    }
+
+    return Object.values(error.details ?? {}).some((value) =>
+        typeof value === 'string' && value.includes('REAUTH_REQUIRED')
     );
 }

@@ -60,11 +60,14 @@ describe("account deletion and auth runtime hardening", () => {
     expect(storageApiMigration).not.toContain("DELETE FROM storage.objects");
     expect(accountSettings).toContain("invokeAuthedFunction<{ deleted?: boolean }>('account-delete'");
     expect(accountSettings).not.toContain("supabase.rpc('delete_my_account'");
+    expect(accountSettings).toContain("isEdgeFunctionServiceError");
+    expect(accountSettings).toContain("isAccountDeleteReauthRequired");
     expect(accountDeleteFunction).toContain('userClient.rpc("delete_my_account"');
     expect(accountDeleteFunction).toContain(".storage");
     expect(accountDeleteFunction).toContain(".remove(batch)");
     expect(accountDeleteFunction).toContain('ATTACHMENTS_BUCKET = "vault-attachments"');
     expect(accountDeleteFunction).toContain("storage_cleanup_failed");
+    expect(accountDeleteFunction).toContain('allowedMethods: "POST, OPTIONS"');
   });
 
   it("keeps account-delete UI export/2FA warning outside nested paragraph descriptions", () => {

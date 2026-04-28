@@ -23,6 +23,9 @@ verify_jwt = false
 [functions.auth-2fa]
 verify_jwt = false
 
+[functions.account-delete]
+verify_jwt = false
+
 [functions.rate-limit]
 verify_jwt = false
 

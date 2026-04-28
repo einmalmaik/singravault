@@ -17,7 +17,7 @@ const STORAGE_PAGE_SIZE = 100;
 const REMOVE_BATCH_SIZE = 100;
 
 Deno.serve(async (req) => {
-    const corsHeaders = getCorsHeaders(req);
+    const corsHeaders = getCorsHeaders(req, { allowedMethods: "POST, OPTIONS" });
     const headers = new Headers({
         ...corsHeaders,
         "Content-Type": "application/json",

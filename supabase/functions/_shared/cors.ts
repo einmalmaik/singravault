@@ -35,6 +35,9 @@ const productionOrigins = configuredOrigin
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(isConfiguredOriginSafe);
+const DEFAULT_ALLOWED_METHODS = "POST, GET, OPTIONS, PUT, DELETE";
+const DEFAULT_ALLOWED_HEADERS = "authorization, x-client-info, apikey, content-type";
+
 const securityResponseHeaders = {
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "no-store",
@@ -90,8 +93,13 @@ function isAllowedOrigin(origin: string): boolean {
  * @param req - The incoming request
  * @returns CORS headers record
  */
-export function getCorsHeaders(req: Request): Record<string, string> {
+export interface CorsHeaderOptions {
+    allowedMethods?: string;
+}
+
+export function getCorsHeaders(req: Request, options: CorsHeaderOptions = {}): Record<string, string> {
     const origin = req.headers.get("Origin");
+    const allowedMethods = options.allowedMethods ?? DEFAULT_ALLOWED_METHODS;
 
     // SECURITY: Reject requests without Origin header (except for whitelisted paths)
     if (!origin) {
@@ -106,9 +114,8 @@ export function getCorsHeaders(req: Request): Record<string, string> {
             // Deny CORS for browser requests without Origin
             return {
                 ...securityResponseHeaders,
-                "Access-Control-Allow-Origin": "null",
-                "Access-Control-Allow-Headers": "none",
-                "Access-Control-Allow-Methods": "none",
+                "Access-Control-Allow-Headers": DEFAULT_ALLOWED_HEADERS,
+                "Access-Control-Allow-Methods": allowedMethods,
             };
         }
 
@@ -116,23 +123,29 @@ export function getCorsHeaders(req: Request): Record<string, string> {
         return {
             ...securityResponseHeaders,
             "Access-Control-Allow-Origin": productionOrigins[0],
-            "Access-Control-Allow-Headers":
-                "authorization, x-client-info, apikey, content-type",
-            "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
+            "Access-Control-Allow-Headers": DEFAULT_ALLOWED_HEADERS,
+            "Access-Control-Allow-Methods": allowedMethods,
             "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
         };
     }
 
-    // Only allow explicitly whitelisted origins
-    const allowed = isAllowedOrigin(origin) ? origin : "null";
+    if (!isAllowedOrigin(origin)) {
+        return {
+            ...securityResponseHeaders,
+            "Access-Control-Allow-Headers": DEFAULT_ALLOWED_HEADERS,
+            "Access-Control-Allow-Methods": allowedMethods,
+            "Vary": "Origin",
+        };
+    }
 
     return {
         ...securityResponseHeaders,
-        "Access-Control-Allow-Origin": allowed,
-        "Access-Control-Allow-Headers":
-            "authorization, x-client-info, apikey, content-type",
-        "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Headers": DEFAULT_ALLOWED_HEADERS,
+        "Access-Control-Allow-Methods": allowedMethods,
         "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
     };
 }
 
