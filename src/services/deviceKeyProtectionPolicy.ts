@@ -11,6 +11,7 @@ export type DeviceKeyUnlockErrorCode =
     | 'DEVICE_KEY_REQUIRED_BUT_MISSING'
     | 'DEVICE_KEY_REQUIRED_BUT_INVALID'
     | 'DEVICE_KEY_STORE_UNAVAILABLE'
+    | 'USER_KEY_MIGRATION_REQUIRED'
     | 'MASTER_PASSWORD_INVALID'
     | 'VAULT_KEY_DECRYPT_FAILED';
 
@@ -56,6 +57,13 @@ export function createDeviceKeyInvalidError(): DeviceKeyUnlockError {
     return new DeviceKeyUnlockError(
         'DEVICE_KEY_REQUIRED_BUT_INVALID',
         'The local Device Key does not match this vault, or the master password is incorrect. Check your master password or import the correct Device Key again.',
+    );
+}
+
+export function createUserKeyMigrationRequiredError(): DeviceKeyUnlockError {
+    return new DeviceKeyUnlockError(
+        'USER_KEY_MIGRATION_REQUIRED',
+        'Device Key protection requires the vault UserKey wrapper to be saved first. Unlock online once and retry after the migration completes.',
     );
 }
 

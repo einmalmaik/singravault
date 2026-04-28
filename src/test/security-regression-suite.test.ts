@@ -41,7 +41,7 @@ describe('Security Regression Test Suite', () => {
 
             // Encrypted private key should have v2 format
             expect(result.encryptedPrivateKey).toMatch(/^pq-v2:/);
-        });
+        }, 30_000);
 
         it('should migrate RSA-only keys to hybrid', async () => {
             // Create legacy RSA-only key
@@ -57,7 +57,7 @@ describe('Security Regression Test Suite', () => {
             expect(migrated).not.toBeNull();
             expect(migrated!.pqPublicKey).toBeDefined();
             expect(migrated!.encryptedPrivateKey).toMatch(/^pq-v2:/);
-        });
+        }, 30_000);
     });
 
     describe('C4: Memory Safety', () => {

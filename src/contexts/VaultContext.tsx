@@ -54,6 +54,7 @@ import {
     createDeviceKeyMissingError,
     createDeviceKeyUnavailableError,
     createMasterPasswordInvalidError,
+    createUserKeyMigrationRequiredError,
     DeviceKeyUnlockError,
     normalizeVaultProtectionMode,
     requiresDeviceKey,
@@ -2658,6 +2659,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
         try {
             if (!(await isLocalSecretStoreSupported())) {
                 return { error: new Error('Secure local secret storage is not available in this runtime.') };
+            }
+
+            if (!encryptedUserKey) {
+                return { error: createUserKeyMigrationRequiredError() };
             }
 
             if (isNativeDeviceKeyBridgeRuntime()) {

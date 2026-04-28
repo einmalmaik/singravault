@@ -1,6 +1,7 @@
 import {
   createDeviceKeyInvalidError,
   createDeviceKeyMissingError,
+  createUserKeyMigrationRequiredError,
   normalizeVaultProtectionMode,
   requiresDeviceKey,
 } from "@/services/deviceKeyProtectionPolicy";
@@ -23,5 +24,12 @@ describe("deviceKeyProtectionPolicy", () => {
     const invalid = createDeviceKeyInvalidError();
     expect(invalid.code).toBe("DEVICE_KEY_REQUIRED_BUT_INVALID");
     expect(invalid.message).not.toMatch(/device-key:|SINGRA_DEVICE_KEY|sv-dk-transfer/i);
+  });
+
+  it("fails closed when Device Key enablement is requested before UserKey migration", () => {
+    const error = createUserKeyMigrationRequiredError();
+    expect(error.code).toBe("USER_KEY_MIGRATION_REQUIRED");
+    expect(error.message).toContain("UserKey wrapper");
+    expect(error.message).not.toMatch(/device-key:|SINGRA_DEVICE_KEY|sv-dk-transfer|master password/i);
   });
 });
