@@ -15,21 +15,19 @@ import { Button } from '@/components/ui/button';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { getServiceHooks } from '@/extensions/registry';
-import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { ItemFilter, ViewMode } from '@/pages/VaultPage';
 import { VaultItemData } from '@/services/cryptoService';
 import {
   isAppOnline,
   loadVaultSnapshot,
-  upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
+import { migrateLegacyVaultItemMetadata } from '@/services/legacyVaultMetadataMigrationService';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
 import { VaultItemCard } from './VaultItemCard';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
 
-const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 const DECRYPT_BATCH_SIZE = 25;
 const QUARANTINE_SUMMARY_THRESHOLD = 2;
 
@@ -179,79 +177,23 @@ export function VaultItemList({
               decryptableItemIds.add(item.id);
               failedDecryptPayloadByItemIdRef.current.delete(item.id);
 
-              const hasLegacyPlaintextMeta =
-                (!decryptedData.title && item.title && item.title !== ENCRYPTED_ITEM_TITLE_PLACEHOLDER)
-                || (!decryptedData.websiteUrl && !!item.website_url)
-                || (!decryptedData.itemType && !!item.item_type)
-                || (typeof decryptedData.isFavorite !== 'boolean' && item.is_favorite !== null)
-                || (typeof decryptedData.categoryId === 'undefined' && item.category_id !== null);
-              const hasPlaintextColumnsToCleanup =
-                item.title !== ENCRYPTED_ITEM_TITLE_PLACEHOLDER
-                || item.website_url !== null
-                || item.icon_url !== null
-                || item.item_type !== 'password'
-                || !!item.is_favorite
-                || item.category_id !== null;
-
-              if (hasLegacyPlaintextMeta || hasPlaintextColumnsToCleanup) {
-                const resolvedDecryptedData = {
-                  ...decryptedData,
-                  title: decryptedData.title || item.title,
-                  websiteUrl: decryptedData.websiteUrl || item.website_url || undefined,
-                  itemType: decryptedData.itemType || item.item_type || 'password',
-                  isFavorite: typeof decryptedData.isFavorite === 'boolean'
-                    ? decryptedData.isFavorite
-                    : !!item.is_favorite,
-                  categoryId: typeof decryptedData.categoryId !== 'undefined'
-                    ? decryptedData.categoryId
-                    : item.category_id,
-                };
-
-                if (canPersistMigrations) {
-                  const migratedEncryptedData = await encryptItem(resolvedDecryptedData, item.id);
-
-                  await supabase
-                    .from('vault_items')
-                    .update({
-                      encrypted_data: migratedEncryptedData,
-                      title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                      website_url: null,
-                      icon_url: null,
-                      item_type: 'password',
-                      is_favorite: false,
-                      category_id: null,
-                    })
-                    .eq('id', item.id);
-
-                  await upsertOfflineItemRow(user.id, {
-                    ...item,
-                    encrypted_data: migratedEncryptedData,
-                    title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                    website_url: null,
-                    icon_url: null,
-                    item_type: 'password',
-                    is_favorite: false,
-                    category_id: null,
-                    updated_at: new Date().toISOString(),
-                  }, snapshot.vaultId);
-
-                  integrityBaselineDirty = true;
-                  trustedItemIds.add(item.id);
-                }
-
-                return {
-                  ...item,
-                  title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                  website_url: null,
-                  icon_url: null,
-                  item_type: 'password',
-                  is_favorite: false,
-                  category_id: null,
-                  decryptedData: resolvedDecryptedData,
-                };
+              const migration = await migrateLegacyVaultItemMetadata({
+                userId: user.id,
+                vaultId: snapshot.vaultId,
+                item,
+                decryptedData,
+                canPersistRemote: canPersistMigrations,
+                encryptItem,
+              });
+              if (migration.migrated) {
+                integrityBaselineDirty = true;
+                trustedItemIds.add(item.id);
               }
 
-              return { ...item, decryptedData };
+              return {
+                ...migration.item,
+                decryptedData: migration.decryptedData,
+              };
             } catch {
               failedDecryptPayloadByItemIdRef.current.set(item.id, item.encrypted_data);
               unreadableItems.push({

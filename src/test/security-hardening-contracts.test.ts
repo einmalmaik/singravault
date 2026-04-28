@@ -26,7 +26,55 @@ describe("security hardening contracts", () => {
     expect(source).toContain("Missing challengeId");
     expect(source).toContain('.eq("id", challengeId)');
     expect(source).toContain("getChallengeVerificationScope");
+    expect(source).toContain("getWebauthnRateLimitAction");
+    expect(source).toContain("recordWebauthnRateLimitOutcome");
+    expect(source).toContain("webauthn_challenge");
+    expect(source).toContain("webauthn_verify");
+    expect(source).toContain("webauthn_manage");
     expect(source).not.toMatch(/from\("webauthn_challenges"\)[\s\S]{0,240}\.order\("created_at"/);
+  });
+
+  it("keeps Premium/Admin functions out of the Open-Core Edge Function config", () => {
+    const config = readFileSync("supabase/config.toml", "utf-8");
+    const manifest = readFileSync("supabase/functions/EDGE_FUNCTION_MANIFEST.md", "utf-8");
+
+    for (const privateFunction of [
+      "admin-team",
+      "create-checkout-session",
+      "create-portal-session",
+      "cancel-subscription",
+      "stripe-webhook",
+      "invite-family-member",
+      "accept-family-invitation",
+      "invite-emergency-access",
+      "support-submit",
+      "support-list",
+      "support-metrics",
+      "desktop-release",
+      "admin-support",
+      "send-test-mail",
+    ]) {
+      expect(config).not.toContain(`[functions.${privateFunction}]`);
+      expect(manifest).toContain(`\`${privateFunction}\``);
+    }
+  });
+
+  it("extends the database rate-limit allow-list for account-delete and WebAuthn actions", () => {
+    const migration = readFileSync(
+      "supabase/migrations/20260428170000_extend_rate_limit_actions_for_edge_hardening.sql",
+      "utf-8",
+    );
+    const sharedRateLimit = readFileSync("supabase/functions/_shared/authRateLimit.ts", "utf-8");
+
+    for (const action of [
+      "account_delete",
+      "webauthn_challenge",
+      "webauthn_verify",
+      "webauthn_manage",
+    ]) {
+      expect(migration).toContain(`'${action}'`);
+      expect(sharedRateLimit).toContain(`"${action}"`);
+    }
   });
 
   it("enforces opaque vault item metadata for future database writes", () => {
@@ -110,11 +158,16 @@ describe("security hardening contracts", () => {
     const categoryDialog = readFileSync("src/components/vault/CategoryDialog.tsx", "utf-8");
     const offlineService = readFileSync("src/services/offlineVaultService.ts", "utf-8");
     const recoveryService = readFileSync("src/services/vaultQuarantineRecoveryService.ts", "utf-8");
+    const legacyMigrationService = readFileSync("src/services/legacyVaultMetadataMigrationService.ts", "utf-8");
 
     expect(policy).toContain("neutralizeVaultItemServerMetadata");
+    expect(policy).toContain("hasLegacyVaultItemServerMetadata");
+    expect(policy).toContain("mergeLegacyVaultItemMetadataIntoPayload");
     expect(itemDialog).toContain("neutralizeVaultItemServerMetadata");
     expect(categoryDialog).toContain("neutralizeVaultItemServerMetadata");
     expect(offlineService).toContain("neutralizeVaultItemServerMetadata(mutation.payload)");
     expect(recoveryService).toContain("neutralizeVaultItemServerMetadata");
+    expect(legacyMigrationService).toContain("migrateLegacyVaultItemMetadata");
+    expect(legacyMigrationService).toContain(".eq('user_id', input.userId)");
   });
 });

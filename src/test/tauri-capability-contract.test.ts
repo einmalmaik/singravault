@@ -19,6 +19,9 @@ describe('Tauri default capability contract', () => {
   it('keeps only the narrow file write command needed after a user-selected save dialog', () => {
     expect(capability.permissions).toContain('dialog:allow-save');
     expect(capability.permissions).toContain('fs:allow-write-file');
+    expect(capability.permissions).toContain('fs:create-app-specific-dirs');
+    expect(capability.permissions).toContain('fs:allow-applog-write');
+    expect(capability.permissions).not.toContain('fs:allow-applog-read');
   });
 
   it('does not expose opener file/path commands to the renderer', () => {

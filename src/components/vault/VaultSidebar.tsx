@@ -49,8 +49,8 @@ import {
     isAppOnline,
     loadVaultSnapshot,
     upsertOfflineCategoryRow,
-    upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
+import { migrateLegacyVaultItemMetadata } from '@/services/legacyVaultMetadataMigrationService';
 import { isPremiumActive } from '@/extensions/registry';
 import { buildReturnState } from '@/services/returnNavigationState';
 
@@ -70,7 +70,6 @@ interface VaultSidebarProps {
 }
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
-const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
 export function VaultSidebar({
     selectedCategory,
@@ -165,64 +164,22 @@ export function VaultSidebar({
                     try {
                         const decryptedData = await decryptItem(item.encrypted_data, item.id);
                         failedDecryptPayloadByItemIdRef.current.delete(item.id);
-                        const resolvedCategoryId = decryptedData.categoryId ?? item.category_id;
-                        const resolvedTitle = decryptedData.title || item.title;
-                        const resolvedWebsiteUrl = decryptedData.websiteUrl || item.website_url || undefined;
-                        const resolvedItemType = decryptedData.itemType || item.item_type || 'password';
-                        const resolvedIsFavorite = typeof decryptedData.isFavorite === 'boolean'
-                            ? decryptedData.isFavorite
-                            : !!item.is_favorite;
-                        const hasLegacyPlaintextMeta =
-                            (!decryptedData.title && item.title && item.title !== ENCRYPTED_ITEM_TITLE_PLACEHOLDER) ||
-                            (!decryptedData.websiteUrl && !!item.website_url) ||
-                            (!decryptedData.itemType && !!item.item_type) ||
-                            (typeof decryptedData.isFavorite !== 'boolean' && item.is_favorite !== null) ||
-                            (typeof decryptedData.categoryId === 'undefined' && item.category_id !== null);
-                        const hasPlaintextColumnsToCleanup =
-                            item.title !== ENCRYPTED_ITEM_TITLE_PLACEHOLDER ||
-                            item.website_url !== null ||
-                            item.icon_url !== null ||
-                            item.item_type !== 'password' ||
-                            !!item.is_favorite ||
-                            item.category_id !== null;
 
-                        if (canPersistMigrations && (hasLegacyPlaintextMeta || hasPlaintextColumnsToCleanup)) {
-                            const migratedEncryptedData = await encryptItem({
-                                ...decryptedData,
-                                title: resolvedTitle,
-                                websiteUrl: resolvedWebsiteUrl,
-                                itemType: resolvedItemType,
-                                isFavorite: resolvedIsFavorite,
-                                categoryId: resolvedCategoryId,
-                            }, item.id);
+                        const migration = await migrateLegacyVaultItemMetadata({
+                            userId: user.id,
+                            vaultId: snapshot.vaultId,
+                            item,
+                            decryptedData,
+                            canPersistRemote: canPersistMigrations,
+                            encryptItem,
+                        });
 
-                            await supabase
-                                .from('vault_items')
-                                .update({
-                                    encrypted_data: migratedEncryptedData,
-                                    title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                                    website_url: null,
-                                    icon_url: null,
-                                    item_type: 'password',
-                                    is_favorite: false,
-                                    category_id: null,
-                                })
-                                .eq('id', item.id);
-
-                            await upsertOfflineItemRow(user.id, {
-                                ...item,
-                                encrypted_data: migratedEncryptedData,
-                                title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                                website_url: null,
-                                icon_url: null,
-                                item_type: 'password',
-                                is_favorite: false,
-                                category_id: null,
-                                updated_at: new Date().toISOString(),
-                            }, snapshot.vaultId);
+                        if (migration.migrated) {
                             integrityBaselineDirty = true;
                             trustedItemIds.add(item.id);
                         }
+
+                        const resolvedCategoryId = migration.decryptedData.categoryId ?? migration.item.category_id;
 
                         if (resolvedCategoryId) {
                             counts[resolvedCategoryId] = (counts[resolvedCategoryId] || 0) + 1;

@@ -1,6 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import {
+    authRateLimitResponse,
+    checkAuthRateLimit,
+    recordAuthRateLimitFailure,
+    resetAuthRateLimit,
+} from "../_shared/authRateLimit.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -43,6 +49,16 @@ Deno.serve(async (req) => {
             return jsonResponse({ error: "AUTH_REQUIRED" }, 401, headers);
         }
 
+        const rateLimitState = await checkAuthRateLimit({
+            supabaseAdmin,
+            req,
+            action: "account_delete",
+            account: { kind: "user", value: userId },
+        });
+        if (!rateLimitState.allowed) {
+            return authRateLimitResponse(rateLimitState, headers);
+        }
+
         const payload = await parsePayload(req);
         const userClient = createClient(supabaseUrl, supabaseAnonKey, {
             auth: {
@@ -60,9 +76,11 @@ Deno.serve(async (req) => {
             p_two_factor_challenge_id: payload.twoFactorChallengeId ?? null,
         });
         if (error) {
+            await recordAuthRateLimitFailure(rateLimitState);
             const publicError = mapAccountDeleteError(error.message);
             return jsonResponse({ error: publicError }, mapAccountDeleteStatus(publicError), headers);
         }
+        await resetAuthRateLimit(rateLimitState);
 
         let removedStorageObjects = 0;
         let storageCleanupFailed = false;

@@ -85,3 +85,69 @@ WHERE event_object_schema = 'public'
     'enforce_encrypted_category_metadata_trigger'
   )
 ORDER BY event_object_table, trigger_name, event_manipulation;
+
+-- 5. RLS must remain enabled on exposed vault metadata tables.
+SELECT
+  schemaname,
+  tablename,
+  rowsecurity
+FROM pg_tables
+WHERE schemaname = 'public'
+  AND tablename IN (
+    'vault_items',
+    'categories',
+    'vault_item_tags',
+    'tags',
+    'file_attachments',
+    'vault_sync_heads'
+  )
+  AND rowsecurity IS DISTINCT FROM true
+ORDER BY tablename;
+
+-- 6. Core attachment metadata must not expose semantic names or MIME values.
+-- This is expected to return zero rows for Open-Core deployments. Premium
+-- attachment implementations must keep encrypted_metadata populated and use
+-- opaque storage paths rather than original filenames.
+SELECT
+  id,
+  user_id,
+  vault_item_id,
+  file_name,
+  mime_type,
+  storage_path,
+  encrypted,
+  encrypted_metadata IS NOT NULL AS has_encrypted_metadata
+FROM public.file_attachments
+WHERE encrypted IS DISTINCT FROM true
+   OR encrypted_metadata IS NULL
+   OR file_name !~ '^attachment-[0-9a-f-]{36}$'
+   OR mime_type IS NOT NULL
+   OR storage_path ~* '[[:alnum:]_-]+\\.(pdf|docx?|xlsx?|png|jpe?g|gif|txt|csv|zip)$'
+ORDER BY updated_at DESC;
+
+-- 7. Vault item rows must not carry TOTP/account-secret shaped values in
+-- compatibility metadata columns. Real Vault TOTP secrets belong in encrypted_data.
+SELECT
+  id,
+  user_id,
+  title,
+  website_url,
+  icon_url
+FROM public.vault_items
+WHERE title ~* '(totp|secret|otp|otpauth)'
+   OR COALESCE(website_url, '') ~* '(otpauth://|secret=)'
+   OR COALESCE(icon_url, '') ~* '(otpauth://|secret=)';
+
+-- 8. Rate-limit action allow-list must include current critical Edge actions.
+SELECT
+  conname,
+  pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid = 'public.rate_limit_attempts'::regclass
+  AND conname = 'rate_limit_attempts_action_check'
+  AND (
+    pg_get_constraintdef(oid) NOT LIKE '%account_delete%'
+    OR pg_get_constraintdef(oid) NOT LIKE '%webauthn_challenge%'
+    OR pg_get_constraintdef(oid) NOT LIKE '%webauthn_verify%'
+    OR pg_get_constraintdef(oid) NOT LIKE '%webauthn_manage%'
+  );

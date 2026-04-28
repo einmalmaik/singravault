@@ -69,6 +69,11 @@ describe("account deletion and auth runtime hardening", () => {
     expect(accountDeleteFunction).toContain("storage_cleanup_failed");
     expect(accountDeleteFunction).toContain('allowedMethods: "POST, OPTIONS"');
     expect(accountDeleteFunction).toContain("mapAccountDeleteError");
+    expect(accountDeleteFunction).toContain('action: "account_delete"');
+    expect(accountDeleteFunction).toContain("checkAuthRateLimit");
+    expect(accountDeleteFunction).toContain("authRateLimitResponse");
+    expect(accountDeleteFunction).toContain("recordAuthRateLimitFailure(rateLimitState)");
+    expect(accountDeleteFunction).toContain("resetAuthRateLimit(rateLimitState)");
     expect(accountDeleteFunction).not.toContain("details: error.details");
     expect(accountDeleteFunction).not.toContain("hint: error.hint");
   });

@@ -10,7 +10,6 @@
     "deep-link:default",
     "dialog:allow-save",
     "fs:create-app-specific-dirs",
-    "fs:allow-applog-read",
     "fs:allow-applog-write",
     "fs:allow-write-file",
     "opener:allow-open-url",

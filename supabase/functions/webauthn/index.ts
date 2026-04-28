@@ -39,7 +39,16 @@ import {
 import {
     authorizeWebauthnAction,
     isWebauthnAction,
+    type WebauthnAction,
 } from "./authPolicy.ts";
+import {
+    authRateLimitResponse,
+    checkAuthRateLimit,
+    recordAuthRateLimitFailure,
+    resetAuthRateLimit,
+    type AuthRateLimitAction,
+    type AuthRateLimitState,
+} from "../_shared/authRateLimit.ts";
 
 const DEFAULT_SITE_URL = "https://singravault.mauntingstudios.de";
 const CONFIGURED_SITE_ORIGIN = normalizeHttpOrigin(Deno.env.get("SITE_URL")) ?? DEFAULT_SITE_URL;
@@ -142,36 +151,58 @@ Deno.serve(async (req: Request) => {
         }
         user = authz.user;
 
+        const rateLimitState = await checkAuthRateLimit({
+            supabaseAdmin,
+            req,
+            action: getWebauthnRateLimitAction(action),
+            account: { kind: "user", value: user.id },
+        });
+        if (!rateLimitState.allowed) {
+            return authRateLimitResponse(rateLimitState, new Headers(corsHeaders));
+        }
+
         const rp = getRpConfig(req);
+        let response: Response;
 
         switch (action) {
             case "generate-registration-options":
-                return await handleGenerateRegistrationOptions(user, rp, supabaseAdmin, body, corsHeaders);
+                response = await handleGenerateRegistrationOptions(user, rp, supabaseAdmin, body, corsHeaders);
+                break;
 
             case "verify-registration":
-                return await handleVerifyRegistration(user, rp, supabaseAdmin, body, corsHeaders);
+                response = await handleVerifyRegistration(user, rp, supabaseAdmin, body, corsHeaders);
+                break;
 
             case "generate-authentication-options":
-                return await handleGenerateAuthenticationOptions(user, rp, supabaseAdmin, body, corsHeaders);
+                response = await handleGenerateAuthenticationOptions(user, rp, supabaseAdmin, body, corsHeaders);
+                break;
 
             case "verify-authentication":
-                return await handleVerifyAuthentication(user, rp, supabaseAdmin, body, corsHeaders);
+                response = await handleVerifyAuthentication(user, rp, supabaseAdmin, body, corsHeaders);
+                break;
 
             case "activate-prf":
-                return await handleActivatePrf(user, rp, supabaseAdmin, body, corsHeaders);
+                response = await handleActivatePrf(user, rp, supabaseAdmin, body, corsHeaders);
+                break;
 
             case "upgrade-wrapped-key":
-                return await handleUpgradeWrappedKey(user, rp, supabaseAdmin, body, corsHeaders);
+                response = await handleUpgradeWrappedKey(user, rp, supabaseAdmin, body, corsHeaders);
+                break;
 
             case "list-credentials":
-                return await handleListCredentials(user, rp, supabaseAdmin, corsHeaders);
+                response = await handleListCredentials(user, rp, supabaseAdmin, corsHeaders);
+                break;
 
             case "delete-credential":
-                return await handleDeleteCredential(user, rp, supabaseAdmin, body, corsHeaders);
+                response = await handleDeleteCredential(user, rp, supabaseAdmin, body, corsHeaders);
+                break;
 
             default:
-                return jsonResponse({ error: `Unknown action: ${action}` }, 400, corsHeaders);
+                response = jsonResponse({ error: `Unknown action: ${action}` }, 400, corsHeaders);
         }
+
+        await recordWebauthnRateLimitOutcome(action, rateLimitState, response);
+        return response;
     } catch (err) {
         console.error("WebAuthn edge function error:", err);
         return jsonResponse({ error: "Internal server error" }, 500, corsHeaders);
@@ -875,6 +906,44 @@ function jsonResponse(data: unknown, status = 200, corsHeaders: Record<string, s
         status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+}
+
+function getWebauthnRateLimitAction(action: WebauthnAction): AuthRateLimitAction {
+    if (
+        action === "generate-registration-options" ||
+        action === "generate-authentication-options"
+    ) {
+        return "webauthn_challenge";
+    }
+
+    if (
+        action === "verify-registration" ||
+        action === "verify-authentication" ||
+        action === "activate-prf" ||
+        action === "upgrade-wrapped-key"
+    ) {
+        return "webauthn_verify";
+    }
+
+    return "webauthn_manage";
+}
+
+async function recordWebauthnRateLimitOutcome(
+    action: WebauthnAction,
+    state: AuthRateLimitState,
+    response: Response,
+): Promise<void> {
+    const requestQuotaAction = action === "generate-registration-options" ||
+        action === "generate-authentication-options";
+
+    if (requestQuotaAction || response.status >= 400) {
+        await recordAuthRateLimitFailure(state);
+        return;
+    }
+
+    if (state.action === "webauthn_verify") {
+        await resetAuthRateLimit(state);
+    }
 }
 
 function extractBearerToken(authHeader: string): string | null {
