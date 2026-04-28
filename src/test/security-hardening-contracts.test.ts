@@ -203,6 +203,26 @@ describe("security hardening contracts", () => {
     expect(vaultContext).not.toContain("device_key_fingerprint");
   });
 
+  it("keeps Tauri Device Key raw material out of generic renderer reads", () => {
+    const rust = readFileSync("src-tauri/src/lib.rs", "utf-8");
+    const nativeBridge = readFileSync("src/services/deviceKeyNativeBridge.ts", "utf-8");
+    const deviceKeyService = readFileSync("src/services/deviceKeyService.ts", "utf-8");
+
+    expect(rust).toContain("derive_device_protected_key");
+    expect(rust).toContain("verify_device_key_available");
+    expect(rust).toContain("generate_and_store_device_key");
+    expect(rust).toContain("export_device_key_for_transfer");
+    expect(rust).toContain("import_device_key_from_transfer");
+    expect(rust).toContain("normalize_local_secret_key_for_read");
+    expect(rust).toContain("local_secret_read_write_blocks_device_key_namespace");
+    expect(rust).toContain("normalize_local_secret_key(key, false)");
+
+    expect(nativeBridge).toContain("derive_device_protected_key");
+    expect(nativeBridge).not.toContain("load_local_secret");
+    expect(deviceKeyService).toContain("Tauri/Desktop keeps raw Device Key material inside Rust/OS keychain");
+    expect(deviceKeyService).toContain("return null;");
+  });
+
   it("centralizes server-visible vault item metadata neutralization for new writes", () => {
     const policy = readFileSync("src/services/vaultMetadataPolicy.ts", "utf-8");
     const itemDialog = readFileSync("src/components/vault/VaultItemDialog.tsx", "utf-8");

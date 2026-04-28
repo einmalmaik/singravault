@@ -1,5 +1,11 @@
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
+use argon2::{Algorithm, Argon2, Params, Version};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use hkdf::Hkdf;
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -12,9 +18,30 @@ const PKCE_VERIFIER_ACCOUNT: &str = "active-pkce-verifier";
 const LOCAL_SECRET_ACCOUNT_PREFIX: &str = "local-secret::";
 const DEVICE_KEY_LOCAL_SECRET_PREFIX: &str = "device-key:";
 const INTEGRITY_LOCAL_SECRET_PREFIX: &str = "vault-integrity:";
+const DEVICE_KEY_LENGTH: usize = 32;
+const ARGON2_OUTPUT_LENGTH: usize = 32;
+const DERIVED_KEY_LENGTH: usize = 32;
+const DEVICE_KEY_DERIVATION_VERSION: u8 = 1;
+const DEVICE_KEY_HKDF_INFO: &[u8] = b"SINGRA_DEVICE_KEY_V1";
+const DEVICE_KEY_TRANSFER_V2_PREFIX: &str = "sv-dk-transfer-v2:";
+const DEVICE_KEY_TRANSFER_MAX_ENVELOPE_LENGTH: usize = 16_384;
+const DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH: usize = 20;
+const TRANSFER_SALT_LENGTH: usize = 16;
+const TRANSFER_IV_LENGTH: usize = 12;
+const TRANSFER_KDF_MEMORY_KIB: u32 = 65_536;
+const TRANSFER_KDF_ITERATIONS: u32 = 3;
+const TRANSFER_KDF_PARALLELISM: u32 = 1;
+const TRANSFER_KDF_HASH_LENGTH: usize = 32;
 const PKCE_VERIFIER_MAX_AGE_MS: u128 = 10 * 60 * 1000;
 const SINGLE_INSTANCE_DEEP_LINK_EVENT: &str = "singra://deep-link";
 const TAURI_OAUTH_CALLBACK_PREFIX: &str = "singravault://auth/callback";
+
+const DEVICE_KEY_MISSING: &str = "DEVICE_KEY_MISSING";
+const DEVICE_KEY_ALREADY_EXISTS: &str = "DEVICE_KEY_ALREADY_EXISTS";
+const DEVICE_KEY_INVALID_USER_ID: &str = "DEVICE_KEY_INVALID_USER_ID";
+const DEVICE_KEY_INVALID_INPUT: &str = "DEVICE_KEY_INVALID_INPUT";
+const DEVICE_KEY_STORE_UNAVAILABLE: &str = "DEVICE_KEY_STORE_UNAVAILABLE";
+const DEVICE_KEY_CRYPTO_FAILED: &str = "DEVICE_KEY_CRYPTO_FAILED";
 
 #[derive(Serialize, Deserialize)]
 struct PkceVerifierRecord {
@@ -30,6 +57,20 @@ struct PkceVerifierStoreEntry {
 }
 
 type PkceVerifierStore = HashMap<String, PkceVerifierStoreEntry>;
+
+#[derive(Serialize, Deserialize)]
+struct DeviceKeyTransferEnvelopeV2 {
+    version: u8,
+    kdf: String,
+    memory: u32,
+    iterations: u32,
+    parallelism: u32,
+    salt: String,
+    iv: String,
+    ciphertext: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+}
 
 #[tauri::command]
 fn save_refresh_token(refresh_token: String) -> Result<(), String> {
@@ -71,10 +112,13 @@ fn save_pkce_verifier(key: String, verifier: String) -> Result<(), String> {
     }
 
     let mut store = load_pkce_store()?;
-    store.insert(key.to_string(), PkceVerifierStoreEntry {
-        verifier: verifier.to_string(),
-        created_at_ms: now_millis()?,
-    });
+    store.insert(
+        key.to_string(),
+        PkceVerifierStoreEntry {
+            verifier: verifier.to_string(),
+            created_at_ms: now_millis()?,
+        },
+    );
     save_pkce_store(&store)
 }
 
@@ -113,7 +157,7 @@ fn clear_pkce_verifier(key: String) -> Result<(), String> {
 
 #[tauri::command]
 fn save_local_secret(key: String, value: String) -> Result<(), String> {
-    let entry = local_secret_entry(&key)?;
+    let entry = local_secret_entry_for_write(&key)?;
     let trimmed_value = value.trim();
     if trimmed_value.is_empty() {
         return Err("local secret value must not be empty".to_string());
@@ -124,7 +168,7 @@ fn save_local_secret(key: String, value: String) -> Result<(), String> {
 
 #[tauri::command]
 fn load_local_secret(key: String) -> Result<Option<String>, String> {
-    let entry = local_secret_entry(&key)?;
+    let entry = local_secret_entry_for_read(&key)?;
     match entry.get_password() {
         Ok(value) if value.trim().is_empty() => Ok(None),
         Ok(value) => Ok(Some(value)),
@@ -135,11 +179,172 @@ fn load_local_secret(key: String) -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn clear_local_secret(key: String) -> Result<(), String> {
-    let entry = local_secret_entry(&key)?;
+    let entry = local_secret_entry_for_clear(&key)?;
     match entry.delete_credential() {
         Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
         Err(error) => Err(keyring_error(error)),
     }
+}
+
+#[tauri::command]
+fn verify_device_key_available(user_id: String) -> Result<bool, String> {
+    match load_device_key_bytes(&user_id) {
+        Ok(Some(mut device_key)) => {
+            device_key.fill(0);
+            Ok(true)
+        }
+        Ok(None) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+#[tauri::command]
+fn generate_and_store_device_key(user_id: String) -> Result<(), String> {
+    let entry = device_key_entry_for_user(&user_id)?;
+    match entry.get_password() {
+        Ok(value) if !value.trim().is_empty() => return Err(DEVICE_KEY_ALREADY_EXISTS.to_string()),
+        Ok(_) | Err(KeyringError::NoEntry) => {}
+        Err(error) => return Err(map_keyring_error_code(error)),
+    }
+
+    let mut device_key = [0u8; DEVICE_KEY_LENGTH];
+    getrandom::getrandom(&mut device_key).map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+    let encoded = BASE64.encode(device_key);
+    device_key.fill(0);
+    entry.set_password(&encoded).map_err(map_keyring_error_code)
+}
+
+#[tauri::command]
+fn derive_device_protected_key(
+    user_id: String,
+    argon2_output_base64: String,
+    version: u8,
+) -> Result<String, String> {
+    if version != DEVICE_KEY_DERIVATION_VERSION {
+        return Err(DEVICE_KEY_INVALID_INPUT.to_string());
+    }
+
+    let mut argon2_output = decode_fixed_base64(&argon2_output_base64, ARGON2_OUTPUT_LENGTH)?;
+    let mut device_key = match load_device_key_bytes(&user_id)? {
+        Some(device_key) => device_key,
+        None => {
+            argon2_output.fill(0);
+            return Err(DEVICE_KEY_MISSING.to_string());
+        }
+    };
+
+    let derived = derive_device_protected_key_bytes(&argon2_output, &device_key)?;
+    argon2_output.fill(0);
+    device_key.fill(0);
+    Ok(BASE64.encode(derived))
+}
+
+#[tauri::command]
+fn export_device_key_for_transfer(
+    user_id: String,
+    transfer_secret: String,
+) -> Result<Option<String>, String> {
+    if !is_valid_transfer_secret(&transfer_secret) {
+        return Ok(None);
+    }
+
+    let mut device_key = match load_device_key_bytes(&user_id)? {
+        Some(device_key) => device_key,
+        None => return Ok(None),
+    };
+    let mut salt = [0u8; TRANSFER_SALT_LENGTH];
+    let mut iv = [0u8; TRANSFER_IV_LENGTH];
+    getrandom::getrandom(&mut salt).map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+    getrandom::getrandom(&mut iv).map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+
+    let mut wrapping_key = derive_transfer_wrapping_key(transfer_secret.as_bytes(), &salt)?;
+    let cipher = Aes256Gcm::new_from_slice(&wrapping_key)
+        .map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&iv), device_key.as_slice())
+        .map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+
+    let envelope = DeviceKeyTransferEnvelopeV2 {
+        version: 2,
+        kdf: "argon2id".to_string(),
+        memory: TRANSFER_KDF_MEMORY_KIB,
+        iterations: TRANSFER_KDF_ITERATIONS,
+        parallelism: TRANSFER_KDF_PARALLELISM,
+        salt: BASE64.encode(salt),
+        iv: BASE64.encode(iv),
+        ciphertext: BASE64.encode(ciphertext),
+        created_at: now_millis()?.to_string(),
+    };
+    let payload =
+        serde_json::to_vec(&envelope).map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+    let transfer = format!("{DEVICE_KEY_TRANSFER_V2_PREFIX}{}", BASE64.encode(payload));
+
+    device_key.fill(0);
+    wrapping_key.fill(0);
+    salt.fill(0);
+    iv.fill(0);
+
+    Ok(Some(transfer))
+}
+
+#[tauri::command]
+fn import_device_key_from_transfer(
+    user_id: String,
+    transfer_data: String,
+    transfer_secret: String,
+) -> Result<bool, String> {
+    if !is_valid_transfer_secret(&transfer_secret)
+        || !transfer_data.starts_with(DEVICE_KEY_TRANSFER_V2_PREFIX)
+        || transfer_data.len() > DEVICE_KEY_TRANSFER_MAX_ENVELOPE_LENGTH
+    {
+        return Ok(false);
+    }
+
+    let entry = device_key_entry_for_user(&user_id)?;
+    match entry.get_password() {
+        Ok(value) if !value.trim().is_empty() => return Ok(false),
+        Ok(_) | Err(KeyringError::NoEntry) => {}
+        Err(error) => return Err(map_keyring_error_code(error)),
+    }
+
+    let envelope = parse_transfer_envelope(&transfer_data)?;
+    if !is_supported_transfer_envelope(&envelope) {
+        return Ok(false);
+    }
+
+    let salt = decode_fixed_base64(&envelope.salt, TRANSFER_SALT_LENGTH)?;
+    let iv = decode_fixed_base64(&envelope.iv, TRANSFER_IV_LENGTH)?;
+    let ciphertext = BASE64
+        .decode(envelope.ciphertext.trim())
+        .map_err(|_| DEVICE_KEY_INVALID_INPUT.to_string())?;
+    if ciphertext.is_empty() {
+        return Ok(false);
+    }
+
+    let mut wrapping_key = derive_transfer_wrapping_key(transfer_secret.as_bytes(), &salt)?;
+    let cipher = Aes256Gcm::new_from_slice(&wrapping_key)
+        .map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+    let mut device_key = match cipher.decrypt(Nonce::from_slice(&iv), ciphertext.as_slice()) {
+        Ok(device_key) => device_key,
+        Err(_) => {
+            wrapping_key.fill(0);
+            return Ok(false);
+        }
+    };
+
+    if device_key.len() != DEVICE_KEY_LENGTH {
+        device_key.fill(0);
+        wrapping_key.fill(0);
+        return Ok(false);
+    }
+
+    let encoded = BASE64.encode(&device_key);
+    device_key.fill(0);
+    wrapping_key.fill(0);
+    entry
+        .set_password(&encoded)
+        .map_err(map_keyring_error_code)?;
+    Ok(true)
 }
 
 fn keychain_entry() -> Result<Entry, String> {
@@ -150,28 +355,153 @@ fn pkce_entry() -> Result<Entry, String> {
     Entry::new(KEYCHAIN_SERVICE, PKCE_VERIFIER_ACCOUNT).map_err(keyring_error)
 }
 
-fn local_secret_entry(key: &str) -> Result<Entry, String> {
-    let normalized_key = normalize_local_secret_key(key)?;
+fn local_secret_entry_for_write(key: &str) -> Result<Entry, String> {
+    let normalized_key = normalize_local_secret_key_for_write(key)?;
     let account = format!("{LOCAL_SECRET_ACCOUNT_PREFIX}{normalized_key}");
     Entry::new(KEYCHAIN_SERVICE, &account).map_err(keyring_error)
 }
 
-fn normalize_local_secret_key(key: &str) -> Result<String, String> {
+fn local_secret_entry_for_read(key: &str) -> Result<Entry, String> {
+    let normalized_key = normalize_local_secret_key_for_read(key)?;
+    let account = format!("{LOCAL_SECRET_ACCOUNT_PREFIX}{normalized_key}");
+    Entry::new(KEYCHAIN_SERVICE, &account).map_err(keyring_error)
+}
+
+fn local_secret_entry_for_clear(key: &str) -> Result<Entry, String> {
+    let normalized_key = normalize_local_secret_key_for_clear(key)?;
+    let account = format!("{LOCAL_SECRET_ACCOUNT_PREFIX}{normalized_key}");
+    Entry::new(KEYCHAIN_SERVICE, &account).map_err(keyring_error)
+}
+
+fn normalize_local_secret_key_for_write(key: &str) -> Result<String, String> {
+    normalize_local_secret_key(key, false)
+}
+
+fn normalize_local_secret_key_for_read(key: &str) -> Result<String, String> {
+    normalize_local_secret_key(key, false)
+}
+
+fn normalize_local_secret_key_for_clear(key: &str) -> Result<String, String> {
+    normalize_local_secret_key(key, true)
+}
+
+fn normalize_local_secret_key(key: &str, allow_device_key: bool) -> Result<String, String> {
     let normalized_key = key.trim();
 
-    if is_allowed_user_scoped_secret_key(normalized_key, DEVICE_KEY_LOCAL_SECRET_PREFIX)
-        || is_allowed_user_scoped_secret_key(normalized_key, INTEGRITY_LOCAL_SECRET_PREFIX)
+    if allow_device_key
+        && is_allowed_user_scoped_secret_key(normalized_key, DEVICE_KEY_LOCAL_SECRET_PREFIX)
     {
+        return Ok(normalized_key.to_string());
+    }
+
+    if is_allowed_user_scoped_secret_key(normalized_key, INTEGRITY_LOCAL_SECRET_PREFIX) {
         return Ok(normalized_key.to_string());
     }
 
     Err("local secret key is not allowed".to_string())
 }
 
+fn device_key_entry_for_user(user_id: &str) -> Result<Entry, String> {
+    let user_id = validate_user_id(user_id)?;
+    let account = format!("{LOCAL_SECRET_ACCOUNT_PREFIX}{DEVICE_KEY_LOCAL_SECRET_PREFIX}{user_id}");
+    Entry::new(KEYCHAIN_SERVICE, &account).map_err(keyring_error)
+}
+
+fn validate_user_id(user_id: &str) -> Result<&str, String> {
+    let trimmed = user_id.trim();
+    if is_uuid_like(trimmed) {
+        Ok(trimmed)
+    } else {
+        Err(DEVICE_KEY_INVALID_USER_ID.to_string())
+    }
+}
+
+fn load_device_key_bytes(user_id: &str) -> Result<Option<Vec<u8>>, String> {
+    let entry = device_key_entry_for_user(user_id)?;
+    let payload = match entry.get_password() {
+        Ok(value) if value.trim().is_empty() => return Ok(None),
+        Ok(value) => value,
+        Err(KeyringError::NoEntry) => return Ok(None),
+        Err(error) => return Err(map_keyring_error_code(error)),
+    };
+
+    let device_key = decode_fixed_base64(&payload, DEVICE_KEY_LENGTH)?;
+    Ok(Some(device_key))
+}
+
+fn decode_fixed_base64(value: &str, expected_len: usize) -> Result<Vec<u8>, String> {
+    let decoded = BASE64
+        .decode(value.trim())
+        .map_err(|_| DEVICE_KEY_INVALID_INPUT.to_string())?;
+    if decoded.len() != expected_len {
+        return Err(DEVICE_KEY_INVALID_INPUT.to_string());
+    }
+    Ok(decoded)
+}
+
+fn derive_device_protected_key_bytes(
+    argon2_output: &[u8],
+    device_key: &[u8],
+) -> Result<[u8; DERIVED_KEY_LENGTH], String> {
+    if argon2_output.len() != ARGON2_OUTPUT_LENGTH || device_key.len() != DEVICE_KEY_LENGTH {
+        return Err(DEVICE_KEY_INVALID_INPUT.to_string());
+    }
+
+    let hk = Hkdf::<Sha256>::new(Some(device_key), argon2_output);
+    let mut output = [0u8; DERIVED_KEY_LENGTH];
+    hk.expand(DEVICE_KEY_HKDF_INFO, &mut output)
+        .map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+    Ok(output)
+}
+
+fn is_valid_transfer_secret(transfer_secret: &str) -> bool {
+    transfer_secret.len() >= DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH
+}
+
+fn derive_transfer_wrapping_key(
+    transfer_secret: &[u8],
+    salt: &[u8],
+) -> Result<[u8; TRANSFER_KDF_HASH_LENGTH], String> {
+    if salt.len() != TRANSFER_SALT_LENGTH {
+        return Err(DEVICE_KEY_INVALID_INPUT.to_string());
+    }
+
+    let params = Params::new(
+        TRANSFER_KDF_MEMORY_KIB,
+        TRANSFER_KDF_ITERATIONS,
+        TRANSFER_KDF_PARALLELISM,
+        Some(TRANSFER_KDF_HASH_LENGTH),
+    )
+    .map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut output = [0u8; TRANSFER_KDF_HASH_LENGTH];
+    argon2
+        .hash_password_into(transfer_secret, salt, &mut output)
+        .map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
+    Ok(output)
+}
+
+fn parse_transfer_envelope(transfer_data: &str) -> Result<DeviceKeyTransferEnvelopeV2, String> {
+    let payload = transfer_data
+        .trim()
+        .strip_prefix(DEVICE_KEY_TRANSFER_V2_PREFIX)
+        .ok_or_else(|| DEVICE_KEY_INVALID_INPUT.to_string())?;
+    let json = BASE64
+        .decode(payload)
+        .map_err(|_| DEVICE_KEY_INVALID_INPUT.to_string())?;
+    serde_json::from_slice(&json).map_err(|_| DEVICE_KEY_INVALID_INPUT.to_string())
+}
+
+fn is_supported_transfer_envelope(envelope: &DeviceKeyTransferEnvelopeV2) -> bool {
+    envelope.version == 2
+        && envelope.kdf == "argon2id"
+        && envelope.memory == TRANSFER_KDF_MEMORY_KIB
+        && envelope.iterations == TRANSFER_KDF_ITERATIONS
+        && envelope.parallelism == TRANSFER_KDF_PARALLELISM
+}
+
 fn is_allowed_user_scoped_secret_key(key: &str, prefix: &str) -> bool {
-    key.strip_prefix(prefix)
-        .map(is_uuid_like)
-        .unwrap_or(false)
+    key.strip_prefix(prefix).map(is_uuid_like).unwrap_or(false)
 }
 
 fn is_uuid_like(value: &str) -> bool {
@@ -194,7 +524,10 @@ fn is_uuid_like(value: &str) -> bool {
     // keeps renderer-accessible keychain accounts tightly user-scoped instead
     // of accepting arbitrary UUID-looking names.
     value.as_bytes()[14] == b'4'
-        && matches!(value.as_bytes()[19], b'8' | b'9' | b'a' | b'b' | b'A' | b'B')
+        && matches!(
+            value.as_bytes()[19],
+            b'8' | b'9' | b'a' | b'b' | b'A' | b'B'
+        )
 }
 
 fn load_pkce_store() -> Result<PkceVerifierStore, String> {
@@ -210,10 +543,13 @@ fn load_pkce_store() -> Result<PkceVerifierStore, String> {
         Err(_) => match serde_json::from_str::<PkceVerifierRecord>(&payload) {
             Ok(record) => {
                 let mut store = HashMap::new();
-                store.insert(record.key, PkceVerifierStoreEntry {
-                    verifier: record.verifier,
-                    created_at_ms: record.created_at_ms,
-                });
+                store.insert(
+                    record.key,
+                    PkceVerifierStoreEntry {
+                        verifier: record.verifier,
+                        created_at_ms: record.created_at_ms,
+                    },
+                );
                 Ok(store)
             }
             Err(_) => {
@@ -259,6 +595,13 @@ fn keyring_error(error: KeyringError) -> String {
     format!("keychain operation failed: {error}")
 }
 
+fn map_keyring_error_code(error: KeyringError) -> String {
+    match error {
+        KeyringError::NoEntry => DEVICE_KEY_MISSING.to_string(),
+        _ => DEVICE_KEY_STORE_UNAVAILABLE.to_string(),
+    }
+}
+
 fn is_pkce_record_expired(created_at_ms: u128) -> Result<bool, String> {
     let now = now_millis()?;
     Ok(created_at_ms > now || now - created_at_ms > PKCE_VERIFIER_MAX_AGE_MS)
@@ -278,13 +621,33 @@ mod tests {
     #[test]
     fn local_secret_keys_allow_only_expected_user_scoped_domains() {
         assert_eq!(
-            normalize_local_secret_key("device-key:00000000-0000-4000-8000-000000000001").unwrap(),
+            normalize_local_secret_key_for_clear("device-key:00000000-0000-4000-8000-000000000001")
+                .unwrap(),
             "device-key:00000000-0000-4000-8000-000000000001",
         );
         assert_eq!(
-            normalize_local_secret_key(" vault-integrity:00000000-0000-4000-8000-000000000001 ").unwrap(),
+            normalize_local_secret_key_for_read(
+                " vault-integrity:00000000-0000-4000-8000-000000000001 "
+            )
+            .unwrap(),
             "vault-integrity:00000000-0000-4000-8000-000000000001",
         );
+    }
+
+    #[test]
+    fn local_secret_read_write_blocks_device_key_namespace() {
+        assert!(normalize_local_secret_key_for_read(
+            "device-key:00000000-0000-4000-8000-000000000001"
+        )
+        .is_err());
+        assert!(normalize_local_secret_key_for_write(
+            "device-key:00000000-0000-4000-8000-000000000001"
+        )
+        .is_err());
+        assert!(normalize_local_secret_key_for_clear(
+            "device-key:00000000-0000-4000-8000-000000000001"
+        )
+        .is_ok());
     }
 
     #[test]
@@ -298,8 +661,42 @@ mod tests {
             "device-key:00000000-0000-1000-8000-000000000001",
             "device-key:00000000-0000-4000-7000-000000000001",
         ] {
-            assert!(normalize_local_secret_key(key).is_err(), "{key} should be rejected");
+            assert!(
+                normalize_local_secret_key_for_write(key).is_err(),
+                "{key} should be rejected"
+            );
         }
+    }
+
+    #[test]
+    fn device_key_derivation_matches_js_hkdf_vector() {
+        let argon2_output: Vec<u8> = (0u8..32).collect();
+        let device_key: Vec<u8> = (0u8..32).map(|value| 255 - value).collect();
+
+        let derived = derive_device_protected_key_bytes(&argon2_output, &device_key).unwrap();
+
+        assert_eq!(
+            BASE64.encode(derived),
+            "VW/q6Mi+eLJhEtBaRtt9/aYVr4IuZR8cndy7hqtX/dg="
+        );
+    }
+
+    #[test]
+    fn device_key_derivation_rejects_wrong_lengths() {
+        assert!(derive_device_protected_key_bytes(&[1u8; 31], &[2u8; 32]).is_err());
+        assert!(derive_device_protected_key_bytes(&[1u8; 32], &[2u8; 31]).is_err());
+    }
+
+    #[test]
+    fn device_key_user_id_requires_uuid_v4() {
+        assert_eq!(
+            validate_user_id("00000000-0000-4000-8000-000000000001").unwrap(),
+            "00000000-0000-4000-8000-000000000001",
+        );
+        assert_eq!(
+            validate_user_id("00000000-0000-1000-8000-000000000001").unwrap_err(),
+            DEVICE_KEY_INVALID_USER_ID,
+        );
     }
 }
 
@@ -335,7 +732,12 @@ pub fn run() {
             clear_pkce_verifier,
             save_local_secret,
             load_local_secret,
-            clear_local_secret
+            clear_local_secret,
+            verify_device_key_available,
+            generate_and_store_device_key,
+            derive_device_protected_key,
+            export_device_key_for_transfer,
+            import_device_key_from_transfer
         ])
         .setup(|_app| {
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
@@ -366,7 +768,9 @@ fn extract_deep_link_urls(args: &[String]) -> Vec<String> {
 fn purge_stale_webview_service_worker_data(app_identifier: &str) {
     #[cfg(target_os = "windows")]
     {
-        if let Some(default_profile_dir) = resolve_windows_webview_default_profile_dir(app_identifier) {
+        if let Some(default_profile_dir) =
+            resolve_windows_webview_default_profile_dir(app_identifier)
+        {
             remove_dir_if_exists(default_profile_dir.join("Service Worker"));
             remove_dir_if_exists(default_profile_dir.join("Cache").join("Cache_Data"));
         }

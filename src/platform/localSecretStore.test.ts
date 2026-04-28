@@ -79,7 +79,7 @@ describe("localSecretStore", () => {
   });
 
   it("uses tauri invoke commands in desktop runtime", async () => {
-    const key = "device-key:00000000-0000-4000-8000-000000000001";
+    const key = "vault-integrity:00000000-0000-4000-8000-000000000001";
     runtimeState.isTauri = true;
     runtimeState.invoke.mockResolvedValueOnce(undefined);
     runtimeState.invoke.mockResolvedValueOnce("c2VjcmV0");

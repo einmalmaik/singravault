@@ -285,7 +285,7 @@
         "bullets": [
           "Tauri/Desktop stores local secrets through Rust commands in the OS secret store. The Rust layer accepts only narrow key domains such as device-key:<uuid> and vault-integrity:<uuid>; arbitrary renderer key names are rejected.",
           "Web/PWA uses IndexedDB and non-extractable WebCrypto keys as defense in depth. This is not an OS-keychain boundary: compromised same-origin JavaScript can still invoke allowed app operations.",
-          "Device-key transfer no longer uses a short PIN. Transfer blobs are sv-dk-transfer-v2 envelopes with per-transfer salt, Argon2id derivation, AES-GCM, and a transfer secret of at least 12 characters.",
+          "Device-key transfer no longer uses a short PIN. Transfer blobs are sv-dk-transfer-v2 envelopes with per-transfer salt, Argon2id derivation, AES-GCM, and a transfer secret of at least 20 characters.",
           "Legacy/raw transfer blobs are not imported. This is an intentional compatibility break because short PIN-wrapped artifacts were offline brute-forceable.",
           "Local secrets are never treated as a replacement for unlocked vault-key material. A compromised unlocked client remains a full compromise of the active session."
         ]

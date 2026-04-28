@@ -30,9 +30,9 @@ Legacy-Vaults ohne `encrypted_user_key` verwenden den KDF-Output direkt als Vaul
 |---|---|
 | Erzeugung | `generateDeviceKey()` erzeugt 32 Byte per CSPRNG. |
 | Speicherung | Tauri: OS-Keychain via `keyring`; Web/PWA: IndexedDB + nicht-extrahierbarer WebCrypto-Wrapping-Key. |
-| Laden | `getDeviceKey(userId)` lädt aus dem Local Secret Store und migriert alte IndexedDB-Device-Keys, falls möglich. |
-| Unlock | `VaultContext.unlock()` lädt den Device Key, falls lokal bekannt, und übergibt ihn an `deriveRawKey`. |
-| Vault-Key-Derivation | `deriveRawKey()` nutzt Argon2id und danach `deriveWithDeviceKey()` per HKDF-SHA-256, wenn ein Device Key vorhanden ist. |
+| Laden | Web/PWA: `getDeviceKey(userId)` lädt aus dem Browser-Secret-Store und migriert alte IndexedDB-Device-Keys, falls möglich. Tauri: JS lädt kein Device-Key-Rohmaterial; Rust lädt intern aus `local-secret::device-key:<uuid>`. |
+| Unlock | Web/PWA lädt den Device Key in JS und übergibt ihn an `deriveRawKey`. Tauri ruft `derive_device_protected_key` auf; Rust gibt nur den abgeleiteten KDF-Output zurück. |
+| Vault-Key-Derivation | Browser: `deriveRawKey()` nutzt Argon2id und danach `deriveWithDeviceKey()` per HKDF-SHA-256. Tauri: Argon2id bleibt in JS, HKDF mit Device Key läuft in Rust mit `SINGRA_DEVICE_KEY_V1`. |
 | Encryption/Decryption | Neue Daten werden mit `encryptionKey` verschlüsselt. Bei UserKey-Vaults ist das der entpackte UserKey. |
 | Auto-Lock/Logout | `clearActiveVaultSession()` setzt CryptoKey und In-Memory-Device-Key zurück; Arrays werden best-effort genullt. |
 | Gerätewechsel | Nur durch expliziten Import/Transfer des Device Keys. |
@@ -46,11 +46,11 @@ Legacy-Vaults ohne `encrypted_user_key` verwenden den KDF-Output direkt als Vaul
 | Frage | Ergebnis | Beweis |
 |---|---|---|
 | Wird der Device Key bei neuen Vaults erzeugt? | Nein, er ist optional und wird erst durch Settings-Aktivierung erzeugt. | `VaultContext.setupMasterPassword` erzeugt keinen Device Key; `enableDeviceKey` ruft `generateDeviceKey()`. |
-| Wird er bei Unlock geladen? | Ja, wenn lokal vorhanden. | `getRequiredDeviceKey()` -> `getResolvedDeviceKey()` -> `loadDeviceKey(user.id)`. |
+| Wird er bei Unlock geladen? | Ja, wenn lokal vorhanden. | Web/PWA: `getRequiredDeviceKey()` -> `getResolvedDeviceKey()` -> `loadDeviceKey(user.id)`. Tauri: `getRequiredDeviceKey()` prüft Verfügbarkeit und `derive_device_protected_key` lädt intern aus der OS-Keychain. |
 | Ist er für Decryption zwingend? | Für aktiv geschützte Vaults ja, weil Verifier/UserKey-Wrapper unter dem kombinierten KDF-Output liegt. | Tests in `deviceKeyService.test.ts` und `integration-crypto-pipeline.test.ts`. |
 | Gibt es Master-only-Fallbacks? | Kein erfolgreicher Fallback für Device-Key-geschützte Vaults gefunden. Ohne lokalen Key versucht der Client ggf. Master-only, scheitert aber an Verifier/UserKey-Decrypt. | `deriveRawKey(..., deviceKey || undefined)` plus `verifyKey`/`unwrapUserKey`. |
 | Gibt es alte Vaults ohne Device Key? | Ja, Device Key ist optional und abwärtskompatibel. | Doku und `enableDeviceKey` Legacy-Pfad. |
-| Gibt es Migration/Flag? | Migration ja; serverseitiges Required-Flag nein. | `profiles`-Abfragen enthalten kein Device-Key-Flag. UX kann fehlenden Key als falsches Passwort melden. |
+| Gibt es Migration/Flag? | Ja. | `profiles.vault_protection_mode` unterscheidet `master_only` und `device_key_required`; das Flag ist nicht sensitiv und enthält keinen Device-Key-Hash/Fingerprint. |
 | Wird neue Encryption beachtet? | Ja, weil `encryptionKey` nach Unlock der passende UserKey/finale Key ist. | Encrypt-/Decrypt-Helper verwenden Context-`encryptionKey`. |
 | Offline Snapshot | Speichert verschlüsselte Items und Unlock-Metadaten, aber keinen Device Key. | `offlineVaultService.ts` speichert Salt/Verifier/encryptedUserKey. |
 | Export/Import | Device Key wird nur explizit und verschlüsselt exportiert/importiert. | `exportDeviceKeyForTransfer`, `importDeviceKeyFromTransfer`. |
@@ -72,10 +72,11 @@ Der Claim ist nicht korrekt, wenn daraus Schutz gegen kompromittierte Browser-La
 | DK-2026-04-28-04 | P2 | Transfer UX | 12-Zeichen-Minimum war für abgefangene Offline-Envelopes zu schwach kommuniziert. | Behoben: Minimum 20, zufälliges Secret in UI. |
 | DK-2026-04-28-05 | P2 | Aktivierung | Local-Secret-Store-Verfügbarkeit wurde nicht vor serverseitiger Device-Key-Aktivierung geprüft. | Behoben: Preflight vor Migration. |
 | DK-2026-04-28-06 | P2 | UX/Architektur | Kein serverseitiges `device_key_required`-Flag; neues Gerät ohne Key bekommt ggf. generische Unlock-Fehler. | Behoben: `profiles.vault_protection_mode` + Unlock-Policy unterscheidet fehlenden lokalen Device Key von generischem Passwortfehler. |
+| DK-2026-04-28-07 | P2 | Tauri | Tauri-Keychain-Commands lieferten den Device Key an den autorisierten JS-Renderer. | Behoben: generische `load_local_secret`-/`save_local_secret`-Zugriffe blockieren `device-key:<uuid>`; Rust-Commands erzeugen/derivieren/exportieren/importieren ohne Rohmaterial-Rückgabe. |
 
 ## Restrisiken
 
 - Web/PWA ist keine OS-Keychain-Grenze.
 - Transfer-Codes sind offline brute-forcebar, wenn das Transfer Secret schwach oder zusammen mit dem Code kompromittiert wird.
 - JavaScript-Zeroization ist best-effort.
-- Tauri-Keychain-Commands liefern den Device Key weiterhin an den autorisierten Renderer; Rust-seitige Derivation ohne JS-Rohmaterial bleibt eine sinnvolle Folgeaufgabe.
+- Tauri reduziert die Exposition des langlebigen Device-Key-Rohmaterials gegenüber JS. Ein autorisierter kompromittierter Renderer kann weiterhin erlaubte Commands missbrauchen und nach erfolgreichem Unlock Vault-Daten im App-Kontext sehen; dies ist keine vollständige XSS-/Malware-Schutzgrenze.

@@ -83,7 +83,7 @@ All entries below are configured with `verify_jwt = false` in `supabase/config.t
 | Permission / command | Why needed | XSS impact | Change / Status |
 | --- | --- | --- | --- |
 | `save_refresh_token`, `load_refresh_token`, `clear_refresh_token` | Desktop refresh token in OS keychain | Renderer can request active refresh token if compromised | Existing keychain isolation; residual renderer-XSS risk documented |
-| `save_local_secret`, `load_local_secret`, `clear_local_secret` | Device key and integrity baseline local secrets | Renderer can access allowed per-user key domains | Rust allowlist restricts to `device-key:<uuid>` and `vault-integrity:<uuid>` |
+| `save_local_secret`, `load_local_secret`, `clear_local_secret` | Integrity baseline local secrets plus controlled Device-Key delete | Generic read/write no longer exposes or replaces `device-key:<uuid>`; compromised renderer can still call bounded native operations | Rust allowlist restricts names; generic read/write blocks `device-key:<uuid>`; `generate_and_store_device_key`, `derive_device_protected_key` and native transfer commands handle Device-Key material inside Rust |
 | `dialog:allow-save` + `fs:allow-write-file` | User-selected export writes | Compromised renderer can prompt and write selected file | Kept; export filenames sanitized |
 | `fs:allow-applog-write` | Desktop diagnostics log writes | Renderer can write app diagnostic log entries | Kept for diagnostics; unused `fs:allow-applog-read` removed |
 | `opener:*` | OAuth/browser links and item URL opening | `opener:default` also includes reveal-file capability | Changed to `opener:allow-open-url` + `opener:allow-default-urls`; no reveal path |

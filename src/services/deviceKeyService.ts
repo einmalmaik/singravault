@@ -25,6 +25,12 @@ import {
     saveLocalSecretBytes,
 } from '@/platform/localSecretStore';
 import { argon2id } from 'hash-wasm';
+import {
+    exportNativeDeviceKeyForTransfer,
+    hasNativeDeviceKey,
+    importNativeDeviceKeyFromTransfer,
+    isNativeDeviceKeyBridgeRuntime,
+} from './deviceKeyNativeBridge';
 
 const DEVICE_KEY_LENGTH = 32; // 256 bits
 const HKDF_INFO = 'SINGRA_DEVICE_KEY_V1';
@@ -117,6 +123,13 @@ export async function storeDeviceKey(userId: string, deviceKey: Uint8Array): Pro
  * @returns The 256-bit device key, or null if not found
  */
 export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
+    // Tauri/Desktop keeps raw Device Key material inside Rust/OS keychain.
+    // JS can query availability and request bounded native operations, but it
+    // must not receive the long-lived Device Key bytes.
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        return null;
+    }
+
     const secretKey = getDeviceKeySecretKey(userId);
 
     try {
@@ -156,6 +169,14 @@ export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
  * @returns true if a device key is stored locally
  */
 export async function hasDeviceKey(userId: string): Promise<boolean> {
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        try {
+            return await hasNativeDeviceKey(userId);
+        } catch {
+            return false;
+        }
+    }
+
     try {
         return (await getDeviceKey(userId)) !== null;
     } catch {
@@ -248,6 +269,10 @@ export async function exportDeviceKeyForTransfer(
         return null;
     }
 
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        return exportNativeDeviceKeyForTransfer(userId, pin);
+    }
+
     const deviceKey = await getDeviceKey(userId);
     if (!deviceKey) return null;
 
@@ -304,6 +329,10 @@ export async function importDeviceKeyFromTransfer(
         || transferData.length > DEVICE_KEY_TRANSFER_MAX_ENVELOPE_LENGTH
     ) {
         return false;
+    }
+
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        return importNativeDeviceKeyFromTransfer(userId, transferData, pin);
     }
 
     const existingDeviceKey = await getDeviceKey(userId);

@@ -20,7 +20,7 @@ Der Device Key schützt gegen reine Serverkompromittierung, wenn der Angreifer n
 
 Desktop/Tauri und Web/PWA sind nicht gleich stark:
 
-- Tauri/Desktop speichert `device-key:<user-uuid>` über Rust `keyring` im OS-Secret-Store. Die Tauri-Commands sind auf `device-key:<uuid>` und `vault-integrity:<uuid>` begrenzt.
+- Tauri/Desktop speichert `device-key:<user-uuid>` über Rust `keyring` im OS-Secret-Store. Der JS-Renderer liest oder schreibt diesen rohen Device Key im Unlock-/Derive- und Transfer-Pfad nicht direkt: Rust lädt ihn aus der Keychain und führt nur eng begrenzte Operationen wie `generate_and_store_device_key`, `derive_device_protected_key`, `export_device_key_for_transfer` und `import_device_key_from_transfer` aus. Generische `load_local_secret`-/`save_local_secret`-Zugriffe sind für den `device-key:`-Namespace blockiert.
 - Web/PWA speichert über IndexedDB plus nicht-extrahierbaren WebCrypto-Wrapping-Key. Das ist Defense-in-Depth gegen einfache lokale Auslese, aber keine OS-Keychain-Grenze. Same-Origin-JavaScript, XSS, Extensions oder lokale Malware können die App-Laufzeit missbrauchen.
 
 ## Erzeugung und Speicherung
@@ -74,6 +74,7 @@ Risiken bleiben: Ein abgefangener Transfer-Code kann offline gegen das Transfer 
 - "Zusätzlicher lokaler 256-Bit-Faktor."
 - "Schützt gegen reine Serverkompromittierung, wenn der Device-Key-Schutz aktiv ist."
 - "Desktop/Tauri kann OS-Keychain-gestützten Schutz bieten."
+- "Auf Desktop/Tauri reduziert die Rust-Bridge die Offenlegung des langlebigen Device-Key-Rohmaterials gegenüber dem JS-Renderer."
 - "Web/PWA ist Defense-in-Depth, aber keine OS-Keychain-Grenze."
 
 ## Nicht erlaubte Claims
@@ -81,4 +82,5 @@ Risiken bleiben: Ein abgefangener Transfer-Code kann offline gegen das Transfer 
 - "Schützt gegen XSS."
 - "Schützt gegen Malware oder bösartige Browser-Erweiterungen."
 - "Browser-Speicher ist gleich stark wie OS-Keychain."
+- "Tauri ist dadurch gegen XSS, kompromittierte Renderer oder Malware vollständig geschützt."
 - "Verlust ist serverseitig wiederherstellbar."
