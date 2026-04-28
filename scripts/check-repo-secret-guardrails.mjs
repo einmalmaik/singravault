@@ -11,7 +11,7 @@ const findings = [];
 
 const forbiddenTrackedPathPatterns = [
   /^\.env(?:\..*)?$/i,
-  /^loadtest\/(?:tokens|users)\.txt$/i,
+  /^loadtest\/(?:tokens|users)\.txt(?:\.failed\.txt)?$/i,
   /^src-tauri\/singra-vault-(?:safe-mode-)?export-\d{4}-\d{2}-\d{2}\.json$/i,
   /^src-tauri\/.*(?:backup-codes|recovery|rettung).*\.txt$/i,
   /^public\/.*(?:backup|recovery|rettung|secret|private|key).*$/i,
@@ -37,7 +37,10 @@ const ignoredDirs = new Set([
 
 for (const trackedPath of getTrackedFiles()) {
   const normalized = normalizePath(trackedPath);
-  if (forbiddenTrackedPathPatterns.some((pattern) => pattern.test(normalized))) {
+  if (
+    existsSync(path.join(repoRoot, trackedPath))
+    && forbiddenTrackedPathPatterns.some((pattern) => pattern.test(normalized))
+  ) {
     findings.push(`${normalized} is a tracked private/secret-bearing path`);
   }
 }

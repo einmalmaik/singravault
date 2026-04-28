@@ -53,14 +53,16 @@ export function useAdminPanelAccess(options?: UseAdminPanelAccessOptions): Admin
         userId: user.id,
       });
       const { access, error } = await hooks.getTeamAccess();
-      if (isCancelled || error || !access) {
+      if (isCancelled) {
+        return;
+      }
+
+      if (error || !access) {
         console.warn('[AdminAccess] Admin access lookup failed.', {
           error: error?.message ?? null,
           hasAccess: Boolean(access),
         });
-        if (!isCancelled) {
-          setState({ isAdminUser: false, showAdminButton: false });
-        }
+        setState({ isAdminUser: false, showAdminButton: false });
         return;
       }
 

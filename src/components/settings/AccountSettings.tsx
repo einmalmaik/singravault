@@ -38,6 +38,7 @@ import { saveExportFile } from '@/services/exportFileService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
 import { verifyTwoFactorChallenge } from '@/services/twoFactorService';
 import { clearLastOAuthProvider } from '@/services/socialLoginPreferenceService';
+import { invokeAuthedFunction, isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
@@ -52,7 +53,6 @@ export function AccountSettings() {
     const [showReauthDialog, setShowReauthDialog] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState('');
     const [twoFactorCode, setTwoFactorCode] = useState('');
-    const [useBackupCode, setUseBackupCode] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isLoadingDeleteContext, setIsLoadingDeleteContext] = useState(false);
@@ -116,7 +116,7 @@ export function AccountSettings() {
                 const verification = await verifyTwoFactorChallenge({
                     context: 'critical_action',
                     code: twoFactorCode,
-                    method: useBackupCode ? 'backup_code' : 'totp',
+                    method: 'totp',
                 });
                 if (!verification.success || !verification.challengeId) {
                     toast({
@@ -129,21 +129,10 @@ export function AccountSettings() {
                 twoFactorChallengeId = verification.challengeId;
             }
 
-            const { data, error: deleteError } = await supabase.rpc('delete_my_account', {
-                p_two_factor_challenge_id: twoFactorChallengeId,
+            const data = await invokeAuthedFunction<{ deleted?: boolean }>('account-delete', {
+                twoFactorChallengeId,
             });
-            if (deleteError) {
-                if (typeof deleteError.message === 'string' && deleteError.message.includes('REAUTH_REQUIRED')) {
-                    toast({
-                        title: t('common.error'),
-                        description: t('reauth.accountDeleteContext'),
-                    });
-                    setShowReauthDialog(true);
-                    return false;
-                }
-                throw deleteError;
-            }
-            if (!data || typeof data !== 'object' || !('deleted' in data) || data.deleted !== true) {
+            if (!data || data.deleted !== true) {
                 throw new Error('Account deletion verification failed');
             }
 
@@ -166,19 +155,27 @@ export function AccountSettings() {
 
             navigate('/');
             return true;
-        } catch {
+        } catch (error) {
+            if (isAccountDeleteReauthRequired(error)) {
+                toast({
+                    title: t('common.error'),
+                    description: t('reauth.accountDeleteContext'),
+                });
+                setShowReauthDialog(true);
+                return false;
+            }
+
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
                 description: t('settings.account.deleteFailed'),
             });
-            return true;
+            return false;
         } finally {
             setIsDeleting(false);
             setShowDeleteDialog(false);
             setDeleteConfirmation('');
             setTwoFactorCode('');
-            setUseBackupCode(false);
         }
     };
 
@@ -348,19 +345,12 @@ export function AccountSettings() {
                                         <Input
                                             value={twoFactorCode}
                                             onChange={(e) => setTwoFactorCode(e.target.value)}
-                                            placeholder={useBackupCode
-                                                ? t('settings.account.deleteBackupCodePlaceholder')
-                                                : t('settings.account.deleteTotpPlaceholder')}
+                                            placeholder={t('settings.account.deleteTotpPlaceholder')}
                                             autoComplete="one-time-code"
                                         />
-                                        <label className="flex items-center gap-2 text-xs">
-                                            <input
-                                                type="checkbox"
-                                                checked={useBackupCode}
-                                                onChange={(event) => setUseBackupCode(event.target.checked)}
-                                            />
-                                            {t('settings.account.deleteUseBackupCode')}
-                                        </label>
+                                        <p className="text-xs text-muted-foreground">
+                                            {t('settings.account.deleteTotpOnlyHint')}
+                                        </p>
                                     </div>
                                 )}
                             <div className="space-y-2">
@@ -406,5 +396,19 @@ export function AccountSettings() {
                 onSuccess={executeDeleteAccount}
             />
         </>
+    );
+}
+
+function isAccountDeleteReauthRequired(error: unknown): boolean {
+    if (error instanceof Error && error.message.includes('REAUTH_REQUIRED')) {
+        return true;
+    }
+
+    if (!isEdgeFunctionServiceError(error)) {
+        return false;
+    }
+
+    return Object.values(error.details ?? {}).some((value) =>
+        typeof value === 'string' && value.includes('REAUTH_REQUIRED')
     );
 }

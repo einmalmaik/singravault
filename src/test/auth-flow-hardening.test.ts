@@ -295,7 +295,12 @@ function migrationSourceForSessions(): string {
 }
 
 function migrationSourceForSecurityFollowups(): string {
-  return readFileSync("supabase/migrations/20260425120000_security_hardening_followups.sql", "utf-8");
+  return [
+    readFileSync("supabase/migrations/20260425120000_security_hardening_followups.sql", "utf-8"),
+    readFileSync("supabase/migrations/20260425120001_finish_opaque_password_reset.sql", "utf-8"),
+    readFileSync("supabase/migrations/20260425120002_finish_opaque_password_reset_function.sql", "utf-8"),
+    readFileSync("supabase/migrations/20260425120003_finish_opaque_password_reset_permissions.sql", "utf-8"),
+  ].join("\n");
 }
 
 function createRateLimitSupabaseMock({

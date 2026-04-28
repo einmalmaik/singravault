@@ -61,7 +61,7 @@ const competitors: Competitor[] = [
             clipboardClear: '30s',
             pricing: '€0 / €1,65 pro Monat',
             loginProtocol: 'OPAQUE (IETF PAKE)',
-            deviceKey: '256-bit HKDF',
+            deviceKey: '256-bit local factor',
         },
     },
     {

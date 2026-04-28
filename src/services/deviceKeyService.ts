@@ -25,12 +25,19 @@ import {
     saveLocalSecretBytes,
 } from '@/platform/localSecretStore';
 import { argon2id } from 'hash-wasm';
+import {
+    exportNativeDeviceKeyForTransfer,
+    hasNativeDeviceKey,
+    importNativeDeviceKeyFromTransfer,
+    isNativeDeviceKeyBridgeRuntime,
+} from './deviceKeyNativeBridge';
 
 const DEVICE_KEY_LENGTH = 32; // 256 bits
 const HKDF_INFO = 'SINGRA_DEVICE_KEY_V1';
 const DEVICE_KEY_SECRET_PREFIX = 'device-key:';
 const DEVICE_KEY_TRANSFER_V2_PREFIX = 'sv-dk-transfer-v2:';
-export const DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH = 12;
+export const DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH = 20;
+const DEVICE_KEY_TRANSFER_MAX_ENVELOPE_LENGTH = 16_384;
 const TRANSFER_SALT_LENGTH = 16;
 const TRANSFER_IV_LENGTH = 12;
 const TRANSFER_KDF_PARAMS = {
@@ -76,12 +83,31 @@ export function generateDeviceKey(): Uint8Array {
 }
 
 /**
+ * Generates a high-entropy transfer secret for Device Key export/import.
+ *
+ * @returns URL/QR-friendly secret with about 192 bits of randomness
+ */
+export function generateDeviceKeyTransferSecret(): string {
+    const randomBytes = crypto.getRandomValues(new Uint8Array(24));
+    try {
+        return uint8ArrayToBase64(randomBytes)
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/g, '');
+    } finally {
+        randomBytes.fill(0);
+    }
+}
+
+/**
  * Stores a Device Key in the shared local secret store.
  *
  * @param userId - The user's UUID
  * @param deviceKey - The 256-bit device key to store
  */
 export async function storeDeviceKey(userId: string, deviceKey: Uint8Array): Promise<void> {
+    assertDeviceKeyLength(deviceKey);
+
     if (!(await isLocalSecretStoreSupported())) {
         throw new Error('Secure local secret storage is not available in this runtime.');
     }
@@ -97,11 +123,22 @@ export async function storeDeviceKey(userId: string, deviceKey: Uint8Array): Pro
  * @returns The 256-bit device key, or null if not found
  */
 export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
+    // Tauri/Desktop keeps raw Device Key material inside Rust/OS keychain.
+    // JS can query availability and request bounded native operations, but it
+    // must not receive the long-lived Device Key bytes.
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        return null;
+    }
+
     const secretKey = getDeviceKeySecretKey(userId);
 
     try {
         const currentDeviceKey = await loadLocalSecretBytes(secretKey);
         if (currentDeviceKey) {
+            if (!isValidDeviceKey(currentDeviceKey)) {
+                currentDeviceKey.fill(0);
+                return null;
+            }
             return currentDeviceKey;
         }
     } catch {
@@ -111,6 +148,10 @@ export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
     try {
         const legacyDeviceKey = await loadLegacyIndexedDbDeviceKey(userId);
         if (!legacyDeviceKey) {
+            return null;
+        }
+        if (!isValidDeviceKey(legacyDeviceKey)) {
+            legacyDeviceKey.fill(0);
             return null;
         }
 
@@ -128,6 +169,14 @@ export async function getDeviceKey(userId: string): Promise<Uint8Array | null> {
  * @returns true if a device key is stored locally
  */
 export async function hasDeviceKey(userId: string): Promise<boolean> {
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        try {
+            return await hasNativeDeviceKey(userId);
+        } catch {
+            return false;
+        }
+    }
+
     try {
         return (await getDeviceKey(userId)) !== null;
     } catch {
@@ -170,6 +219,11 @@ export async function deriveWithDeviceKey(
     argon2Output: Uint8Array,
     deviceKey: Uint8Array,
 ): Promise<Uint8Array> {
+    if (argon2Output.length !== DEVICE_KEY_LENGTH) {
+        throw new Error('Argon2id output must be exactly 32 bytes.');
+    }
+    assertDeviceKeyLength(deviceKey);
+
     // Import the Argon2id output as HKDF base key material
     const baseKey = await crypto.subtle.importKey(
         'raw',
@@ -213,6 +267,10 @@ export async function exportDeviceKeyForTransfer(
 ): Promise<string | null> {
     if (!isValidTransferSecret(pin)) {
         return null;
+    }
+
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        return exportNativeDeviceKeyForTransfer(userId, pin);
     }
 
     const deviceKey = await getDeviceKey(userId);
@@ -265,7 +323,21 @@ export async function importDeviceKeyFromTransfer(
     transferData: string,
     pin: string,
 ): Promise<boolean> {
-    if (!isValidTransferSecret(pin) || !transferData.startsWith(DEVICE_KEY_TRANSFER_V2_PREFIX)) {
+    if (
+        !isValidTransferSecret(pin)
+        || !transferData.startsWith(DEVICE_KEY_TRANSFER_V2_PREFIX)
+        || transferData.length > DEVICE_KEY_TRANSFER_MAX_ENVELOPE_LENGTH
+    ) {
+        return false;
+    }
+
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        return importNativeDeviceKeyFromTransfer(userId, transferData, pin);
+    }
+
+    const existingDeviceKey = await getDeviceKey(userId);
+    if (existingDeviceKey) {
+        existingDeviceKey.fill(0);
         return false;
     }
 
@@ -466,14 +538,27 @@ function isValidTransferSecret(pin: string): boolean {
     return typeof pin === 'string' && pin.length >= DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH;
 }
 
+function isValidDeviceKey(deviceKey: Uint8Array): boolean {
+    return deviceKey.length === DEVICE_KEY_LENGTH;
+}
+
+function assertDeviceKeyLength(deviceKey: Uint8Array): void {
+    if (!isValidDeviceKey(deviceKey)) {
+        throw new Error('Device key must be exactly 32 bytes.');
+    }
+}
+
 async function deriveTransferWrappingKey(
     pin: string,
     salt: Uint8Array,
     params: { memory: number; iterations: number; parallelism: number; hashLength: number },
 ): Promise<CryptoKey> {
-    if (params.memory < TRANSFER_KDF_PARAMS.memory
-        || params.iterations < TRANSFER_KDF_PARAMS.iterations
-        || params.parallelism < 1
+    if (!Number.isSafeInteger(params.memory)
+        || !Number.isSafeInteger(params.iterations)
+        || !Number.isSafeInteger(params.parallelism)
+        || params.memory !== TRANSFER_KDF_PARAMS.memory
+        || params.iterations !== TRANSFER_KDF_PARAMS.iterations
+        || params.parallelism !== TRANSFER_KDF_PARAMS.parallelism
         || params.hashLength !== TRANSFER_KDF_PARAMS.hashLength) {
         throw new Error('Unsupported device key transfer KDF parameters.');
     }
@@ -527,9 +612,9 @@ function parseTransferEnvelopeV2(transferData: string): DeviceKeyTransferEnvelop
     if (
         envelope.version !== 2
         || envelope.kdf !== 'argon2id'
-        || typeof envelope.memory !== 'number'
-        || typeof envelope.iterations !== 'number'
-        || typeof envelope.parallelism !== 'number'
+        || !Number.isSafeInteger(envelope.memory)
+        || !Number.isSafeInteger(envelope.iterations)
+        || !Number.isSafeInteger(envelope.parallelism)
         || typeof envelope.salt !== 'string'
         || typeof envelope.iv !== 'string'
         || typeof envelope.ciphertext !== 'string'

@@ -10,10 +10,10 @@
     "deep-link:default",
     "dialog:allow-save",
     "fs:create-app-specific-dirs",
-    "fs:allow-applog-read",
     "fs:allow-applog-write",
     "fs:allow-write-file",
-    "opener:default",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
     "process:allow-restart",
     "updater:default",
     "window-state:default"

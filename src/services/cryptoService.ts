@@ -45,6 +45,7 @@ export const KDF_PARAMS: Record<number, KdfParams> = {
 const SALT_LENGTH = 16; // 128 bits
 const IV_LENGTH = 12; // 96 bits (standard for AES-GCM)
 const TAG_LENGTH = 128; // 128 bits authentication tag
+const RAW_KDF_OUTPUT_LENGTH = 32; // 256 bits
 
 /** Constant used in v3 verification hashes (no plaintext stored in DB) */
 const VERIFICATION_CONSTANT_V3 = 'SINGRA_VAULT_VERIFY_V3';
@@ -142,6 +143,11 @@ export async function deriveRawKey(
         argon2Bytes = new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
     } else {
         throw new Error('argon2id returned unsupported type');
+    }
+
+    if (argon2Bytes.length !== RAW_KDF_OUTPUT_LENGTH) {
+        argon2Bytes.fill(0);
+        throw new Error('Argon2id output must be exactly 32 bytes.');
     }
 
     // If a Device Key is provided, strengthen via HKDF-Expand.

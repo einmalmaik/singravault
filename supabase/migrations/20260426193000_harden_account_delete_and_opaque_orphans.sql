@@ -94,6 +94,7 @@ BEGIN
             WHERE id = p_two_factor_challenge_id
               AND user_id = _uid
               AND purpose = 'critical_action'
+              AND method = 'totp'
               AND verified_at IS NOT NULL
               AND consumed_at IS NOT NULL
               AND consumed_at > NOW() - INTERVAL '5 minutes'

@@ -95,6 +95,10 @@ import {
     upsertOfflineCategoryRow,
     upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
+import {
+    ENCRYPTED_CATEGORY_PREFIX,
+    neutralizeVaultItemServerMetadata,
+} from '@/services/vaultMetadataPolicy';
 
 interface Category {
     id: string;
@@ -129,8 +133,6 @@ const normalizeUrl = (url: string | undefined): string | null => {
 };
 
 type ItemFormData = z.infer<typeof itemSchema>;
-const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
-const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_TOTP_ALGORITHM: TOTPAlgorithm = 'SHA1';
 const DEFAULT_TOTP_DIGITS: TOTPDigits = 6;
@@ -577,18 +579,12 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             // Encrypt sensitive data (with entry ID as AAD)
             const encryptedData = await encryptItem(finalItemData, targetItemId);
 
-            const itemData = {
+            const itemData = neutralizeVaultItemServerMetadata({
                 id: targetItemId,
                 user_id: user.id,
                 vault_id: vaultId,
-                title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                website_url: null,
-                icon_url: null,
-                item_type: 'password' as const,
-                is_favorite: false,
                 encrypted_data: encryptedData,
-                category_id: null,
-            };
+            });
 
             let syncedOnline = false;
             let itemRowForCache = buildVaultItemRowFromInsert(itemData);

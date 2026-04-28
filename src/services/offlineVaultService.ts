@@ -10,6 +10,9 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { isTauriDevUserId, TAURI_DEV_VAULT_ID } from '@/platform/tauriDevMode';
+import { neutralizeVaultItemServerMetadata } from '@/services/vaultMetadataPolicy';
+import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
+import { VAULT_PROTECTION_MODE_MASTER_ONLY } from '@/services/deviceKeyProtectionPolicy';
 
 type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
 type VaultItemInsert = Database['public']['Tables']['vault_items']['Insert'];
@@ -52,6 +55,8 @@ export interface OfflineVaultSnapshot {
   kdfVersion?: number | null;
   /** Encrypted UserKey (profiles.encrypted_user_key) for USK-based offline unlock */
   encryptedUserKey?: string | null;
+  /** Non-secret profile.vault_protection_mode cached for offline unlock UX. */
+  vaultProtectionMode?: VaultProtectionMode | null;
   /**
    * Last online vault-unlock 2FA requirement. null/undefined means unknown,
    * which must fail closed while offline.
@@ -241,19 +246,20 @@ export function shouldUseLocalOnlyVault(userId: string | null | undefined): bool
 
 export function buildVaultItemRowFromInsert(insert: VaultItemInsert & { id: string }): VaultItemRow {
   const now = nowIso();
+  const neutralInsert = neutralizeVaultItemServerMetadata(insert);
   return {
-    id: insert.id,
-    user_id: insert.user_id,
-    vault_id: insert.vault_id,
-    title: insert.title,
-    website_url: insert.website_url ?? null,
-    icon_url: insert.icon_url ?? null,
-    item_type: (insert.item_type ?? 'password') as VaultItemRow['item_type'],
-    encrypted_data: insert.encrypted_data,
-    category_id: insert.category_id ?? null,
-    is_favorite: insert.is_favorite ?? false,
-    sort_order: insert.sort_order ?? null,
-    last_used_at: insert.last_used_at ?? null,
+    id: neutralInsert.id,
+    user_id: neutralInsert.user_id,
+    vault_id: neutralInsert.vault_id,
+    title: neutralInsert.title,
+    website_url: neutralInsert.website_url,
+    icon_url: neutralInsert.icon_url,
+    item_type: neutralInsert.item_type as VaultItemRow['item_type'],
+    encrypted_data: neutralInsert.encrypted_data,
+    category_id: neutralInsert.category_id,
+    is_favorite: neutralInsert.is_favorite,
+    sort_order: neutralInsert.sort_order,
+    last_used_at: neutralInsert.last_used_at,
     created_at: now,
     updated_at: now,
   };
@@ -307,6 +313,7 @@ function preserveLocalSecurityState(
     masterPasswordVerifier: snapshot.masterPasswordVerifier ?? existing.masterPasswordVerifier,
     kdfVersion: snapshot.kdfVersion ?? existing.kdfVersion,
     encryptedUserKey: snapshot.encryptedUserKey ?? existing.encryptedUserKey,
+    vaultProtectionMode: snapshot.vaultProtectionMode ?? existing.vaultProtectionMode ?? VAULT_PROTECTION_MODE_MASTER_ONLY,
     vaultTwoFactorRequired: snapshot.vaultTwoFactorRequired ?? existing.vaultTwoFactorRequired,
     remoteRevision: snapshot.remoteRevision ?? existing.remoteRevision ?? null,
   };
@@ -410,6 +417,7 @@ export async function saveOfflineCredentials(
   masterPasswordVerifier: string | null,
   kdfVersion?: number,
   encryptedUserKey?: string | null,
+  vaultProtectionMode: VaultProtectionMode = VAULT_PROTECTION_MODE_MASTER_ONLY,
 ): Promise<void> {
   const snapshot = await ensureSnapshot(userId);
   snapshot.encryptionSalt = encryptionSalt;
@@ -420,6 +428,7 @@ export async function saveOfflineCredentials(
   if (encryptedUserKey !== undefined) {
     snapshot.encryptedUserKey = encryptedUserKey;
   }
+  snapshot.vaultProtectionMode = vaultProtectionMode;
   snapshot.updatedAt = nowIso();
   await saveOfflineSnapshot(snapshot);
 }
@@ -429,7 +438,13 @@ export async function saveOfflineCredentials(
  */
 export async function getOfflineCredentials(
   userId: string,
-): Promise<{ salt: string; verifier: string | null; kdfVersion: number | null; encryptedUserKey: string | null } | null> {
+): Promise<{
+  salt: string;
+  verifier: string | null;
+  kdfVersion: number | null;
+  encryptedUserKey: string | null;
+  vaultProtectionMode: VaultProtectionMode;
+} | null> {
   const snapshot = await getOfflineSnapshot(userId);
   if (!snapshot?.encryptionSalt) {
     return null;
@@ -439,6 +454,7 @@ export async function getOfflineCredentials(
     verifier: snapshot.masterPasswordVerifier ?? null,
     kdfVersion: snapshot.kdfVersion ?? null,
     encryptedUserKey: snapshot.encryptedUserKey ?? null,
+    vaultProtectionMode: snapshot.vaultProtectionMode ?? VAULT_PROTECTION_MODE_MASTER_ONLY,
   };
 }
 
@@ -556,12 +572,19 @@ export async function enqueueOfflineMutation(
     return id;
   }
 
+  const normalizedMutation = mutation.type === 'upsert_item'
+    ? {
+      ...mutation,
+      payload: neutralizeVaultItemServerMetadata(mutation.payload),
+    }
+    : mutation;
+
   const fullMutation = {
-    ...mutation,
+    ...normalizedMutation,
     id,
     createdAt: nowIso(),
-    baseRemoteRevision: mutation.baseRemoteRevision
-      ?? (await getOfflineSnapshot(mutation.userId))?.remoteRevision
+    baseRemoteRevision: normalizedMutation.baseRemoteRevision
+      ?? (await getOfflineSnapshot(normalizedMutation.userId))?.remoteRevision
       ?? null,
   } as OfflineMutation;
 
@@ -804,6 +827,7 @@ function applyRecentLocalMutations(
     masterPasswordVerifier: cachedSnapshot.masterPasswordVerifier ?? remoteSnapshot.masterPasswordVerifier,
     kdfVersion: cachedSnapshot.kdfVersion ?? remoteSnapshot.kdfVersion,
     encryptedUserKey: cachedSnapshot.encryptedUserKey ?? remoteSnapshot.encryptedUserKey,
+    vaultProtectionMode: cachedSnapshot.vaultProtectionMode ?? remoteSnapshot.vaultProtectionMode ?? VAULT_PROTECTION_MODE_MASTER_ONLY,
     vaultTwoFactorRequired: cachedSnapshot.vaultTwoFactorRequired ?? remoteSnapshot.vaultTwoFactorRequired,
     remoteRevision: remoteSnapshot.remoteRevision ?? cachedSnapshot.remoteRevision ?? null,
   };

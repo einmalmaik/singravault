@@ -14,7 +14,11 @@ export type AuthRateLimitAction =
   | "critical_2fa_verify"
   | "opaque_login"
   | "opaque_reset"
-  | "opaque_register";
+  | "opaque_register"
+  | "account_delete"
+  | "webauthn_challenge"
+  | "webauthn_verify"
+  | "webauthn_manage";
 
 type AccountIdentifierKind = "email" | "user";
 
@@ -156,6 +160,26 @@ const AUTH_RATE_LIMITS: Record<AuthRateLimitAction, AuthRateLimitConfig> = {
     maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
     lockoutMs: 60 * 60 * 1000,
+  },
+  account_delete: {
+    maxAttempts: 3,
+    windowMs: 10 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
+  },
+  webauthn_challenge: {
+    maxAttempts: 10,
+    windowMs: 10 * 60 * 1000,
+    lockoutMs: 10 * 60 * 1000,
+  },
+  webauthn_verify: {
+    maxAttempts: 5,
+    windowMs: 10 * 60 * 1000,
+    lockoutMs: 30 * 60 * 1000,
+  },
+  webauthn_manage: {
+    maxAttempts: 30,
+    windowMs: 10 * 60 * 1000,
+    lockoutMs: 10 * 60 * 1000,
   },
 };
 

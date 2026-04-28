@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { languages, changeLanguage, type LanguageCode } from '@/i18n';
+import { APP_VERSION_DISPLAY } from '@/config/appVersion';
 
 export function Footer() {
   const { t, i18n } = useTranslation();
@@ -119,8 +120,9 @@ export function Footer() {
         </div>
 
         {/* Copyright */}
-        <div className="border-t mt-8 pt-8 text-center text-sm text-muted-foreground">
-          {t('landing.footer.copyright', { year: currentYear })}
+        <div className="border-t mt-8 pt-8 text-center text-sm text-muted-foreground space-y-1">
+          <p>{t('landing.footer.copyright', { year: currentYear })}</p>
+          <p>{`Singra Vault Version ${APP_VERSION_DISPLAY}`}</p>
         </div>
       </div>
     </footer>

@@ -1,10 +1,12 @@
-# Edge Function Manifest — Open Core Split
+# Edge Function Manifest - Open Core Split
 
-Dieses Manifest definiert, welche Edge Functions zum öffentlichen Core und welche zum privaten Premium-Paket (`@singra/premium`) gehören.
+Dieses Manifest definiert, welche Edge Functions zum öffentlichen Core und
+welche zum privaten Premium-Paket (`@singra/premium`) gehören.
 
 ## Core Functions (öffentlich)
 
-Diese Functions bleiben im `singra-vault` Repository:
+Diese Functions bleiben im `singra-vault` Repository und sind die einzigen
+Functions, die im Open-Core `supabase/config.toml` gelistet werden dürfen:
 
 | Function | Zweck |
 |----------|-------|
@@ -16,12 +18,16 @@ Diese Functions bleiben im `singra-vault` Repository:
 | `auth-session` | Session-Hydration, Logout und OAuth-Sync; kein Passwort-Login |
 | `webauthn` | Passkey/WebAuthn-Operationen |
 | `rate-limit` | Rate-Limiting |
-| `admin-team` | Team-Rollen & Permissions |
+| `account-delete` | Authentifizierte und gedrosselte Account-Löschung |
 
-## Premium Functions (privat → `@singra/premium`)
+Private Admin-, Support-, Billing-, Family- und Release-Functions werden nicht
+aus diesem Repository deployt und dürfen nicht als `verify_jwt=false` Core-Stubs
+in `supabase/config.toml` stehen bleiben.
 
-Diese Functions werden beim Repo-Split ins private Repository verschoben.
-Jede ist mit `// @premium` im Quellcode markiert.
+## Premium Functions (privat -> `@singra/premium`)
+
+Diese Functions gehören ins private Premium-Repository. Open-Core darf sie
+nicht nachbauen und nicht mit echten Admin-/Support-Rechten deploybar machen.
 
 ### Stripe / Abo-System
 
@@ -40,10 +46,11 @@ Jede ist mit `// @premium` im Quellcode markiert.
 | `accept-family-invitation` | Einladung annehmen |
 | `invite-emergency-access` | Notfallzugang einrichten |
 
-### Support-System
+### Admin / Support / Release
 
 | Function | Zweck |
 |----------|-------|
+| `admin-team` | Team-Rollen & Permissions |
 | `desktop-release` | Desktop-Downloads für Website/Landing bereitstellen |
 | `support-submit` | Support-Ticket erstellen |
 | `support-list` | Tickets auflisten / Details / Antworten |
@@ -57,11 +64,13 @@ Jede ist mit `// @premium` im Quellcode markiert.
 |-------|-----------|
 | `_shared/cors.ts` | Core (wird von beiden genutzt) |
 | `_shared/twoFactor.ts` | Core |
+| `_shared/authRateLimit.ts` | Core |
 
 ## Repo-Split Anleitung
 
-1. Alle Functions mit `// @premium` Header → ins Premium-Repo kopieren
-2. `supabase/config.toml` aufteilen (Core behält nur Core-Einträge)
-3. Premium-Repo bekommt eigenes `supabase/config.toml` mit den Premium-Einträgen
-4. `_shared/cors.ts` in beiden Repos vorhalten (oder als npm-Paket)
-5. Deploy: Beide Repos deployen zum selben Supabase-Projekt
+1. Premium Functions bleiben im privaten Premium-Repo.
+2. Open-Core `supabase/config.toml` enthält nur Core Functions.
+3. Premium-Repo bekommt eigenes `supabase/config.toml` mit Premium-Einträgen.
+4. Shared Security-Utilities müssen in beiden Deployments versioniert oder als
+   gemeinsames Paket konsumiert werden.
+5. Deployments werden getrennt geprüft; Core darf keine Premium-Logik enthalten.

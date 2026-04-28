@@ -226,7 +226,7 @@
   "securityWhitepaper": {
     "title": "Security Whitepaper",
     "subtitle": "A factual description of the security architecture – derived directly from the codebase and DB policies.",
-    "disclaimer": "Note: This page describes the implementation (code) – not an external audit. 100% security does not exist, but we document transparently what we do and what we do not.",
+    "disclaimer": "Note: This page describes the implementation (code), not an external audit. Security boundaries and claims without evidence are documented explicitly.",
     "privacyLink": "View privacy policy",
     "searchPlaceholder": "Search sections (e.g., Argon2id, RLS, integrity)…",
     "clearFilters": "Reset filters",
@@ -285,7 +285,7 @@
         "bullets": [
           "Tauri/Desktop stores local secrets through Rust commands in the OS secret store. The Rust layer accepts only narrow key domains such as device-key:<uuid> and vault-integrity:<uuid>; arbitrary renderer key names are rejected.",
           "Web/PWA uses IndexedDB and non-extractable WebCrypto keys as defense in depth. This is not an OS-keychain boundary: compromised same-origin JavaScript can still invoke allowed app operations.",
-          "Device-key transfer no longer uses a short PIN. Transfer blobs are sv-dk-transfer-v2 envelopes with per-transfer salt, Argon2id derivation, AES-GCM, and a transfer secret of at least 12 characters.",
+          "Device-key transfer no longer uses a short PIN. Transfer blobs are sv-dk-transfer-v2 envelopes with per-transfer salt, Argon2id derivation, AES-GCM, and a transfer secret of at least 20 characters.",
           "Legacy/raw transfer blobs are not imported. This is an intentional compatibility break because short PIN-wrapped artifacts were offline brute-forceable.",
           "Local secrets are never treated as a replacement for unlocked vault-key material. A compromised unlocked client remains a full compromise of the active session."
         ]
@@ -612,6 +612,8 @@
     "loadError": "Failed to load vault items.",
     "offlineSaved": "Saved offline. Will sync automatically when internet is available.",
     "offlineDeleteQueued": "Deleted offline. The deletion will sync when internet is available.",
+    "offlineMode": "Offline mode active: changes are stored locally.",
+    "syncingOfflineChanges": "Synchronizing offline changes...",
     "syncedAfterOffline": "{{count}} offline changes synchronized.",
     "copied": "Copied",
     "copiedPassword": "Password has been copied.",
@@ -707,6 +709,8 @@
       "confirmAcceptMissingDescription": "The missing item will be removed from the trusted local baseline. Recovery will no longer be possible unless another local copy exists.",
       "safeModeDescription": "Safe Mode works exclusively with the last trusted local snapshot. Changes are disabled.",
       "safeModeNotice": "Safe Mode is read-only. Review and export your items if needed before resetting the vault.",
+      "revalidatingEntries": "Checking entries...",
+      "revalidateAction": "Check vault again",
       "resetChallengeExpired": "The vault reset confirmation expired. Please try again.",
       "resetFailed": "The vault could not be reset."
     }
@@ -759,6 +763,10 @@
       "title": "Vault is currently locked",
       "description": "Account and billing settings remain available. Vault-related settings require unlocking your vault."
     },
+    "desktopLegal": {
+      "title": "Legal & information",
+      "description": "Privacy, imprint, and security documentation remain available on every platform."
+    },
     "account": {
       "title": "Account",
       "description": "Manage your account and login credentials.",
@@ -777,6 +785,7 @@
       "exportBeforeDelete": "Export vault before deletion",
       "deleteTwoFactorLabel": "Confirm two-factor code",
       "deleteTotpPlaceholder": "6-digit authenticator code",
+      "deleteTotpOnlyHint": "Backup codes cannot authorize account deletion.",
       "deleteBackupCodePlaceholder": "Backup code",
       "deleteUseBackupCode": "Use backup code",
       "deleteTwoFactorInvalid": "The two-factor code is invalid or expired."
@@ -1635,30 +1644,36 @@
   },
   "deviceKey": {
     "title": "Device Key",
-    "description": "An additional 256-bit key stored on your device that protects your vault even if the server is compromised.",
-    "active": "Device Key is active on this device. Your vault has additional protection.",
-    "inactive": "No Device Key on this device. Enable protection to secure your vault against server compromise.",
+    "description": "An additional 256-bit local factor. It helps against server-only compromise, but it does not protect against malware, XSS, or malicious browser extensions on this device.",
+    "active": "Device Key is active on this device. Unlock requires the master password and this local key.",
+    "inactive": "No Device Key on this device. Enable protection to add a local factor against server-only compromise.",
     "enable": "Enable protection",
     "enableTitle": "Enable Device Key",
-    "enableDesc": "A 256-bit random key will be generated and stored locally. Your vault will be re-encrypted with the combined key.",
+    "enableDesc": "A 256-bit random key will be generated and stored locally. With the UserKey vault format, the UserKey wrapper is re-encrypted with the combined key.",
     "enableWarning": "IMPORTANT: If you lose the Device Key and have no export, your vault becomes permanently unrecoverable. Create an export IMMEDIATELY after enabling!",
+    "backupAck": "I understand that Singra cannot restore this Device Key. Without this local key or a prior export, this Device-Key-protected vault cannot be decrypted.",
+    "webBoundary": "Web/PWA storage is browser-local. It helps against server-only compromise, but it does not protect against XSS, malicious extensions, malware, or deleted browser data.",
+    "desktopBoundary": "Desktop stores the Device Key in the OS keychain. This is stronger than browser storage, but it does not protect against malware or a compromised authorized app renderer.",
     "enableFailed": "Failed to enable Device Key.",
     "enableSuccess": "Device Key enabled. Create an export now for other devices!",
     "export": "Export",
     "exportTitle": "Export Device Key",
-    "exportDesc": "The Device Key is encrypted with a transfer secret. Use at least 12 random characters.",
+    "exportDesc": "The Device Key is encrypted with a transfer secret. Use the generated random secret or at least 20 random characters.",
     "exportFailed": "Export failed.",
     "exportInstructions": "Copy this code and enter it together with the transfer secret on the new device. Old short PIN transfer codes are no longer accepted.",
+    "transferWarning": "Treat the transfer code and transfer secret as sensitive. Anyone with both can import the Device Key.",
     "import": "Import",
     "importTitle": "Import Device Key",
     "importDesc": "Enter the export code and transfer secret from the other device.",
+    "importWarning": "Import only Device Keys from your own trusted devices. A wrong key will not overwrite a valid local key, but it will not unlock this vault.",
     "importSuccess": "Device Key imported successfully.",
     "importFailed": "Import failed. Check the code and transfer secret.",
     "transferPin": "Transfer secret",
-    "pinPlaceholder": "At least 12 random characters",
+    "pinPlaceholder": "At least 20 random characters",
     "transferCode": "Transfer code",
     "codePlaceholder": "Base64 code from other device",
-    "generateCode": "Generate code"
+    "generateCode": "Generate code",
+    "generateSecret": "Random"
   },
   "integrity": {
     "title": "Vault Integrity",

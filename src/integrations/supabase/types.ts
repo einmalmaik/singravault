@@ -454,6 +454,9 @@ export type Database = {
           duress_kdf_version: number | null
           duress_password_verifier: string | null
           duress_salt: string | null
+          device_key_backup_acknowledged_at: string | null
+          device_key_enabled_at: string | null
+          device_key_version: number | null
           encryption_salt: string | null
           encrypted_user_key: string | null
           hide_community_ads: boolean | null
@@ -470,6 +473,7 @@ export type Database = {
           theme: string | null
           updated_at: string
           user_id: string
+          vault_protection_mode: string
         }
         Insert: {
           auth_protocol?: string
@@ -479,6 +483,9 @@ export type Database = {
           duress_kdf_version?: number | null
           duress_password_verifier?: string | null
           duress_salt?: string | null
+          device_key_backup_acknowledged_at?: string | null
+          device_key_enabled_at?: string | null
+          device_key_version?: number | null
           encryption_salt?: string | null
           encrypted_user_key?: string | null
           hide_community_ads?: boolean | null
@@ -495,6 +502,7 @@ export type Database = {
           theme?: string | null
           updated_at?: string
           user_id: string
+          vault_protection_mode?: string
         }
         Update: {
           auth_protocol?: string
@@ -504,6 +512,9 @@ export type Database = {
           duress_kdf_version?: number | null
           duress_password_verifier?: string | null
           duress_salt?: string | null
+          device_key_backup_acknowledged_at?: string | null
+          device_key_enabled_at?: string | null
+          device_key_version?: number | null
           encryption_salt?: string | null
           encrypted_user_key?: string | null
           hide_community_ads?: boolean | null
@@ -520,6 +531,7 @@ export type Database = {
           theme?: string | null
           updated_at?: string
           user_id?: string
+          vault_protection_mode?: string
         }
         Relationships: []
       }

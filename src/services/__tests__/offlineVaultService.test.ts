@@ -396,14 +396,42 @@ describe("Offline credentials", () => {
     await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz", 2);
 
     const creds = await svc.getOfflineCredentials(USER_ID);
-    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: 2, encryptedUserKey: null });
+    expect(creds).toEqual({
+      salt: "salt-abc",
+      verifier: "verifier-xyz",
+      kdfVersion: 2,
+      encryptedUserKey: null,
+      vaultProtectionMode: "master_only",
+    });
   });
 
   it("saveOfflineCredentials without kdfVersion returns null kdfVersion", async () => {
     await svc.saveOfflineCredentials(USER_ID, "salt-abc", "verifier-xyz");
 
     const creds = await svc.getOfflineCredentials(USER_ID);
-    expect(creds).toEqual({ salt: "salt-abc", verifier: "verifier-xyz", kdfVersion: null, encryptedUserKey: null });
+    expect(creds).toEqual({
+      salt: "salt-abc",
+      verifier: "verifier-xyz",
+      kdfVersion: null,
+      encryptedUserKey: null,
+      vaultProtectionMode: "master_only",
+    });
+  });
+
+  it("round-trips required Device Key protection mode", async () => {
+    await svc.saveOfflineCredentials(
+      USER_ID,
+      "salt-abc",
+      "verifier-xyz",
+      2,
+      "encrypted-user-key",
+      "device_key_required",
+    );
+
+    await expect(svc.getOfflineCredentials(USER_ID)).resolves.toMatchObject({
+      encryptedUserKey: "encrypted-user-key",
+      vaultProtectionMode: "device_key_required",
+    });
   });
 
   it("getOfflineCredentials returns null when not saved", async () => {
@@ -562,6 +590,47 @@ describe("Mutation queue", () => {
     expect(mutations).toHaveLength(1);
     expect(mutations[0].type).toBe("upsert_item");
     expect(mutations[0].id).toBe(id);
+  });
+
+  it("neutralizes sensitive metadata before queueing an offline item upsert", async () => {
+    await svc.enqueueOfflineMutation({
+      userId: USER_ID,
+      type: "upsert_item",
+      payload: {
+        id: "item-sensitive",
+        user_id: USER_ID,
+        vault_id: VAULT_ID,
+        title: "Bank Admin",
+        website_url: "https://bank.example.test",
+        icon_url: "https://bank.example.test/favicon.ico",
+        item_type: "totp",
+        is_favorite: true,
+        category_id: "finance",
+        sort_order: 1,
+        last_used_at: "2026-04-28T10:00:00.000Z",
+        encrypted_data: "sv-vault-v1:ciphertext",
+      },
+    } as MutationInput);
+
+    const [mutation] = await svc.getOfflineMutations(USER_ID);
+    expect(mutation.type).toBe("upsert_item");
+    if (mutation.type !== "upsert_item") {
+      throw new Error("expected upsert_item mutation");
+    }
+
+    expect(mutation.payload).toMatchObject({
+      title: "Encrypted Item",
+      website_url: null,
+      icon_url: null,
+      item_type: "password",
+      is_favorite: false,
+      category_id: null,
+      sort_order: null,
+      last_used_at: null,
+    });
+    expect(JSON.stringify(mutation.payload)).not.toContain("Bank Admin");
+    expect(JSON.stringify(mutation.payload)).not.toContain("bank.example.test");
+    expect(JSON.stringify(mutation.payload)).not.toContain("finance");
   });
 
   it("tauri dev user: does not queue local-only mutations", async () => {
@@ -753,6 +822,7 @@ describe("fetchRemoteOfflineSnapshot", () => {
     expect(snapshot.masterPasswordVerifier).toBe("verifier-xyz");
     expect(snapshot.kdfVersion).toBe(2);
     expect(snapshot.encryptedUserKey).toBe("encrypted-user-key");
+    expect(snapshot.vaultProtectionMode).toBe("master_only");
     expect(snapshot.vaultTwoFactorRequired).toBe(false);
     expect(cached?.encryptionSalt).toBe("salt-abc");
     expect(cached?.masterPasswordVerifier).toBe("verifier-xyz");

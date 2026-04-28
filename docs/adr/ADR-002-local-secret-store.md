@@ -20,7 +20,8 @@ Der Core führt `src/platform/localSecretStore.ts` als gemeinsame Abstraktion ei
 
 - native Speicherung über Core-Commands mit Rust-seitiger Key-Allowlist
 - OS-Keyring als lokaler Secret-Store
-- erlaubte Secret-Domänen sind eng begrenzt (`device-key:<user-uuid>`, `vault-integrity:<user-uuid>`)
+- erlaubte Secret-Domänen sind eng begrenzt; `vault-integrity:<user-uuid>` darf generisch gelesen/geschrieben werden, `device-key:<user-uuid>` darf nicht mehr über generische Local-Secret-Reads oder -Writes an den Renderer gekoppelt werden
+- Device-Key-Ableitung, nativer Transfer-Export und nativer Transfer-Import laufen über dedizierte Rust-Commands, damit der JS-Renderer im Tauri-Pfad kein langfristiges Device-Key-Rohmaterial erhält
 
 ### Web/PWA
 
