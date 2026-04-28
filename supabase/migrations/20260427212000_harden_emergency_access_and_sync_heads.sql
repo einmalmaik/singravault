@@ -173,6 +173,10 @@ DROP POLICY IF EXISTS "Trustees can accept invite - hardened" ON public.emergenc
 DROP POLICY IF EXISTS "Trustees can accept invite" ON public.emergency_access;
 DROP POLICY IF EXISTS "Trustees can update linked emergency access" ON public.emergency_access;
 DROP POLICY IF EXISTS "Trustees can view emergency access" ON public.emergency_access;
+DROP POLICY IF EXISTS "Emergency access visible to participants" ON public.emergency_access;
+DROP POLICY IF EXISTS "Grantors can update own emergency access" ON public.emergency_access;
+DROP POLICY IF EXISTS "Trustees can accept emergency invite" ON public.emergency_access;
+DROP POLICY IF EXISTS "Trustees can progress linked emergency access" ON public.emergency_access;
 
 CREATE POLICY "Emergency access visible to participants"
     ON public.emergency_access FOR SELECT
@@ -214,6 +218,7 @@ CREATE POLICY "Trustees can progress linked emergency access"
     );
 
 DROP POLICY IF EXISTS "Trustees can view vault items of grantors" ON public.vault_items;
+DROP POLICY IF EXISTS "Trustees can view granted emergency vault items" ON public.vault_items;
 CREATE POLICY "Trustees can view granted emergency vault items"
     ON public.vault_items FOR SELECT
     TO authenticated

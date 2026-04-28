@@ -9,12 +9,28 @@
 -- user_2fa: remove the legacy plaintext TOTP secret column.
 -- ---------------------------------------------------------------------------
 
--- Preserve any unexpected legacy plaintext value by encrypting it first.
-UPDATE public.user_2fa
-SET totp_secret_enc = public.user_2fa_encrypt_secret(totp_secret),
-    totp_secret = NULL
-WHERE totp_secret IS NOT NULL
-  AND totp_secret_enc IS NULL;
+-- Preserve any unexpected legacy plaintext value by encrypting it first. Some
+-- environments already dropped this legacy column, so the reference must be
+-- guarded before the statement is parsed.
+DO $migrate_legacy_user_2fa_totp_secret$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'user_2fa'
+          AND column_name = 'totp_secret'
+    ) THEN
+        EXECUTE $sql$
+            UPDATE public.user_2fa
+            SET totp_secret_enc = public.user_2fa_encrypt_secret(totp_secret),
+                totp_secret = NULL
+            WHERE totp_secret IS NOT NULL
+              AND totp_secret_enc IS NULL
+        $sql$;
+    END IF;
+END;
+$migrate_legacy_user_2fa_totp_secret$;
 
 -- initialize_user_2fa_secret no longer writes the removed plaintext column.
 CREATE OR REPLACE FUNCTION public.initialize_user_2fa_secret(

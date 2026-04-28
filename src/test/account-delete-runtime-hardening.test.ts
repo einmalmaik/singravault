@@ -5,7 +5,12 @@ describe("account deletion and auth runtime hardening", () => {
     "supabase/migrations/20260426193000_harden_account_delete_and_opaque_orphans.sql",
     "utf-8",
   );
+  const storageApiMigration = readFileSync(
+    "supabase/migrations/20260428153000_remove_direct_storage_delete_from_account_delete.sql",
+    "utf-8",
+  );
   const accountSettings = readFileSync("src/components/settings/AccountSettings.tsx", "utf-8");
+  const accountDeleteFunction = readFileSync("supabase/functions/account-delete/index.ts", "utf-8");
   const authRegister = readFileSync("supabase/functions/auth-register/index.ts", "utf-8");
   const authOpaque = readFileSync("supabase/functions/auth-opaque/index.ts", "utf-8");
   const authErrors = readFileSync("supabase/functions/_shared/authErrors.ts", "utf-8");
@@ -48,6 +53,18 @@ describe("account deletion and auth runtime hardening", () => {
 
     expect(migration).toContain("ACCOUNT_DELETE_INCOMPLETE");
     expect(migration).toContain("DELETE FROM auth.users WHERE id = _uid");
+  });
+
+  it("keeps account deletion storage cleanup on the Storage API instead of direct storage table deletes", () => {
+    expect(storageApiMigration).toContain("CREATE OR REPLACE FUNCTION public.delete_my_account");
+    expect(storageApiMigration).not.toContain("DELETE FROM storage.objects");
+    expect(accountSettings).toContain("invokeAuthedFunction<{ deleted?: boolean }>('account-delete'");
+    expect(accountSettings).not.toContain("supabase.rpc('delete_my_account'");
+    expect(accountDeleteFunction).toContain('userClient.rpc("delete_my_account"');
+    expect(accountDeleteFunction).toContain(".storage");
+    expect(accountDeleteFunction).toContain(".remove(batch)");
+    expect(accountDeleteFunction).toContain('ATTACHMENTS_BUCKET = "vault-attachments"');
+    expect(accountDeleteFunction).toContain("storage_cleanup_failed");
   });
 
   it("keeps account-delete UI export/2FA warning outside nested paragraph descriptions", () => {

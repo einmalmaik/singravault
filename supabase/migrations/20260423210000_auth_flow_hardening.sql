@@ -12,10 +12,21 @@ ALTER TABLE public.rate_limit_attempts
             'passkey',
             'emergency',
             'password_login',
+            'recovery_request',
             'recovery_verify',
             'totp_verify',
             'backup_code_verify',
-            'opaque_login'
+            'login_totp_verify',
+            'login_backup_code_verify',
+            'password_reset_totp_verify',
+            'password_reset_backup_code_verify',
+            'vault_totp_verify',
+            'vault_backup_code_verify',
+            'disable_2fa_verify',
+            'critical_2fa_verify',
+            'opaque_login',
+            'opaque_reset',
+            'opaque_register'
         )
     );
 
