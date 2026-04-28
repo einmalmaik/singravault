@@ -228,7 +228,9 @@ describe('Security Regression Test Suite', () => {
             });
 
             const headers = getCorsHeaders(req);
-            expect(headers['Access-Control-Allow-Origin']).toBe('null');
+            expect(headers['Access-Control-Allow-Origin']).toBeUndefined();
+            expect(headers['Access-Control-Allow-Origin']).not.toBe('*');
+            expect(headers['Access-Control-Allow-Origin']).not.toBe('null');
 
             (globalThis as unknown as { Deno?: unknown }).Deno = originalDeno;
         });

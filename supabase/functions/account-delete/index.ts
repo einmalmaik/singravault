@@ -60,12 +60,8 @@ Deno.serve(async (req) => {
             p_two_factor_challenge_id: payload.twoFactorChallengeId ?? null,
         });
         if (error) {
-            return jsonResponse({
-                error: error.message,
-                code: error.code,
-                details: error.details,
-                hint: error.hint,
-            }, mapPostgrestStatus(error.message), headers);
+            const publicError = mapAccountDeleteError(error.message);
+            return jsonResponse({ error: publicError }, mapAccountDeleteStatus(publicError), headers);
         }
 
         let removedStorageObjects = 0;
@@ -165,10 +161,21 @@ function isStorageFolder(entry: { id?: string | null; metadata?: unknown }): boo
     return !entry.id && !entry.metadata;
 }
 
-function mapPostgrestStatus(message: string): number {
-    if (message.includes("AUTH_REQUIRED")) return 401;
-    if (message.includes("REAUTH_REQUIRED")) return 401;
-    if (message.includes("ACCOUNT_DELETE_2FA_REQUIRED")) return 403;
+function mapAccountDeleteError(message: string): string {
+    if (message.includes("AUTH_REQUIRED")) return "AUTH_REQUIRED";
+    if (message.includes("REAUTH_REQUIRED")) return "REAUTH_REQUIRED";
+    if (message.includes("ACCOUNT_DELETE_2FA_REQUIRED")) return "ACCOUNT_DELETE_2FA_REQUIRED";
+    if (message.includes("ACCOUNT_DELETE_INCOMPLETE")) return "ACCOUNT_DELETE_INCOMPLETE";
+    if (message.includes("AUTH_USER_DELETE_FAILED")) return "ACCOUNT_DELETE_FAILED";
+    return "ACCOUNT_DELETE_FAILED";
+}
+
+function mapAccountDeleteStatus(errorCode: string): number {
+    if (errorCode === "AUTH_REQUIRED") return 401;
+    if (errorCode === "REAUTH_REQUIRED") return 401;
+    if (errorCode === "ACCOUNT_DELETE_2FA_REQUIRED") return 403;
+    if (errorCode === "ACCOUNT_DELETE_INCOMPLETE") return 500;
+    if (errorCode === "ACCOUNT_DELETE_FAILED") return 500;
     return 400;
 }
 

@@ -55,6 +55,33 @@ describe("edge function CORS contract", () => {
     expect(headers["Vary"]).toBe("Origin");
   });
 
+  it("does not treat provider-level preview suffixes as hyphen-boundary allowlists", async () => {
+    vi.stubGlobal("Deno", {
+      env: {
+        get(key: string) {
+          switch (key) {
+            case "ALLOWED_ORIGIN":
+              return "https://singravault.mauntingstudios.de";
+            case "ALLOW_PREVIEW_ORIGINS":
+              return "true";
+            case "ALLOWED_PREVIEW_ORIGIN_SUFFIXES":
+              return "vercel.app";
+            default:
+              return "";
+          }
+        },
+      },
+    });
+
+    const { getCorsHeaders } = await import("../../supabase/functions/_shared/cors");
+    const headers = getCorsHeaders(new Request("https://example.test", {
+      headers: { Origin: "https://evil-vercel.app" },
+    }));
+
+    expect(headers["Access-Control-Allow-Origin"]).toBeUndefined();
+    expect(headers["Vary"]).toBe("Origin");
+  });
+
   it("supports account-delete method narrowing without changing origin policy", async () => {
     vi.stubGlobal("Deno", {
       env: {

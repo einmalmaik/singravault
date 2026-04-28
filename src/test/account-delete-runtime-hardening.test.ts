@@ -68,6 +68,9 @@ describe("account deletion and auth runtime hardening", () => {
     expect(accountDeleteFunction).toContain('ATTACHMENTS_BUCKET = "vault-attachments"');
     expect(accountDeleteFunction).toContain("storage_cleanup_failed");
     expect(accountDeleteFunction).toContain('allowedMethods: "POST, OPTIONS"');
+    expect(accountDeleteFunction).toContain("mapAccountDeleteError");
+    expect(accountDeleteFunction).not.toContain("details: error.details");
+    expect(accountDeleteFunction).not.toContain("hint: error.hint");
   });
 
   it("keeps account-delete UI export/2FA warning outside nested paragraph descriptions", () => {

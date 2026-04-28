@@ -89,6 +89,33 @@ describe('core edge function CORS config', () => {
         expect(headers['Vary']).toBe('Origin');
     });
 
+    it('rejects broad preview provider suffixes for hyphen-boundary matching', async () => {
+        vi.stubGlobal('Deno', {
+            env: {
+                get(key: string) {
+                    switch (key) {
+                        case 'ALLOWED_ORIGIN':
+                            return 'https://singravault.mauntingstudios.de';
+                        case 'ALLOW_PREVIEW_ORIGINS':
+                            return 'true';
+                        case 'ALLOWED_PREVIEW_ORIGIN_SUFFIXES':
+                            return 'vercel.app';
+                        default:
+                            return '';
+                    }
+                },
+            },
+        });
+
+        const { getCorsHeaders } = await import('./cors.ts');
+        const headers = getCorsHeaders(new Request('https://example.test', {
+            headers: { Origin: 'https://evil-vercel.app' },
+        }));
+
+        expect(headers['Access-Control-Allow-Origin']).toBeUndefined();
+        expect(headers['Vary']).toBe('Origin');
+    });
+
     it('rejects localhost unless local development origins are explicitly enabled', async () => {
         vi.stubGlobal('Deno', {
             env: {

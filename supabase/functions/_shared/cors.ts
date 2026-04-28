@@ -190,7 +190,10 @@ function matchesAllowedPreviewOriginSuffix(origin: string): boolean {
         return configuredPreviewOriginSuffixes.some((suffix) =>
             parsed.hostname === suffix
             || parsed.hostname.endsWith(`.${suffix}`)
-            || parsed.hostname.endsWith(`-${suffix}`)
+            || (
+                isOwnedPreviewHostnameSuffix(suffix)
+                && parsed.hostname.endsWith(`-${suffix}`)
+            )
         );
     } catch {
         return false;
@@ -209,4 +212,11 @@ function normalizeHostnameSuffix(value: string): string | null {
     }
 
     return trimmed.toLowerCase();
+}
+
+function isOwnedPreviewHostnameSuffix(suffix: string): boolean {
+    // Hyphen-delimited preview hosts such as Vercel's
+    // <project>-git-<branch>-<team>.vercel.app need the account/team-owned
+    // suffix, not a broad provider suffix like vercel.app.
+    return suffix.split(".").length >= 3;
 }
