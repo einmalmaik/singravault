@@ -31,6 +31,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
     DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH,
     exportDeviceKeyForTransfer,
+    generateDeviceKeyTransferSecret,
     importDeviceKeyFromTransfer,
 } from '@/services/deviceKeyService';
 
@@ -232,13 +233,22 @@ export function DeviceKeySettings() {
                         <>
                             <div className="space-y-2">
                                 <Label>{t('deviceKey.transferPin')}</Label>
-                                <Input
-                                    type="password"
-                                    value={pin}
-                                    onChange={(e) => setPin(e.target.value)}
-                                    placeholder={t('deviceKey.pinPlaceholder')}
-                                    minLength={DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH}
-                                />
+                                <div className="flex gap-2">
+                                    <Input
+                                        type="password"
+                                        value={pin}
+                                        onChange={(e) => setPin(e.target.value)}
+                                        placeholder={t('deviceKey.pinPlaceholder')}
+                                        minLength={DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH}
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() => setPin(generateDeviceKeyTransferSecret())}
+                                    >
+                                        {t('deviceKey.generateSecret')}
+                                    </Button>
+                                </div>
                             </div>
                             <DialogFooter>
                                 <Button variant="outline" onClick={() => setShowExportDialog(false)}>
@@ -287,13 +297,22 @@ export function DeviceKeySettings() {
                         </div>
                         <div className="space-y-2">
                             <Label>{t('deviceKey.transferPin')}</Label>
-                            <Input
-                                type="password"
-                                value={pin}
-                                onChange={(e) => setPin(e.target.value)}
-                                placeholder={t('deviceKey.pinPlaceholder')}
-                                minLength={DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH}
-                            />
+                            <div className="flex gap-2">
+                                <Input
+                                    type="password"
+                                    value={pin}
+                                    onChange={(e) => setPin(e.target.value)}
+                                    placeholder={t('deviceKey.pinPlaceholder')}
+                                    minLength={DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH}
+                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => setPin(generateDeviceKeyTransferSecret())}
+                                >
+                                    {t('deviceKey.generateSecret')}
+                                </Button>
+                            </div>
                         </div>
                     </div>
                     <DialogFooter>

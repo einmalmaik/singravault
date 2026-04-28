@@ -55,8 +55,10 @@ vi.mock("hash-wasm", () => ({
 import {
   DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH,
   deleteDeviceKey,
+  deriveWithDeviceKey,
   exportDeviceKeyForTransfer,
   generateDeviceKey,
+  generateDeviceKeyTransferSecret,
   getDeviceKey,
   hasDeviceKey,
   importDeviceKeyFromTransfer,
@@ -66,6 +68,7 @@ import {
 const LEGACY_DB_NAME = "singra_device_keys";
 const LEGACY_DB_VERSION = 1;
 const LEGACY_STORE_NAME = "keys";
+const TRANSFER_PREFIX = "sv-dk-transfer-v2:";
 
 function requestToPromise<T>(request: IDBRequest): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -139,6 +142,21 @@ async function readLegacyDeviceKeyRecord(userId: string): Promise<unknown> {
   return requestToPromise(store.get(userId));
 }
 
+function decodeTransferEnvelope(transferData: string): Record<string, unknown> {
+  const encoded = transferData.slice(TRANSFER_PREFIX.length);
+  const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+}
+
+function encodeTransferEnvelope(envelope: Record<string, unknown>): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(envelope));
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return `${TRANSFER_PREFIX}${btoa(binary)}`;
+}
+
 describe("deviceKeyService", () => {
   beforeEach(() => {
     localSecretState.supported = true;
@@ -152,6 +170,53 @@ describe("deviceKeyService", () => {
 
     await expect(getDeviceKey("user-1")).resolves.toEqual(deviceKey);
     await expect(hasDeviceKey("user-1")).resolves.toBe(true);
+  });
+
+  it("generates 32-byte random device keys", () => {
+    const first = generateDeviceKey();
+    const second = generateDeviceKey();
+
+    expect(first).toHaveLength(32);
+    expect(second).toHaveLength(32);
+    expect(first).not.toEqual(second);
+  });
+
+  it("generates strong random transfer secrets", () => {
+    const first = generateDeviceKeyTransferSecret();
+    const second = generateDeviceKeyTransferSecret();
+
+    expect(first.length).toBeGreaterThanOrEqual(DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH);
+    expect(second.length).toBeGreaterThanOrEqual(DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH);
+    expect(first).not.toBe(second);
+    expect(first).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("rejects device keys and Argon2 outputs with the wrong length", async () => {
+    await expect(storeDeviceKey("user-1", new Uint8Array(31))).rejects.toThrow(
+      "Device key must be exactly 32 bytes.",
+    );
+    await expect(deriveWithDeviceKey(new Uint8Array(32), new Uint8Array(33))).rejects.toThrow(
+      "Device key must be exactly 32 bytes.",
+    );
+    await expect(deriveWithDeviceKey(new Uint8Array(31), new Uint8Array(32))).rejects.toThrow(
+      "Argon2id output must be exactly 32 bytes.",
+    );
+  });
+
+  it("derives deterministic but factor-sensitive keys", async () => {
+    const masterDerived = new Uint8Array(32).fill(1);
+    const otherMasterDerived = new Uint8Array(32).fill(2);
+    const deviceKey = new Uint8Array(32).fill(3);
+    const otherDeviceKey = new Uint8Array(32).fill(4);
+
+    const first = await deriveWithDeviceKey(masterDerived, deviceKey);
+    const second = await deriveWithDeviceKey(masterDerived, deviceKey);
+    const differentDevice = await deriveWithDeviceKey(masterDerived, otherDeviceKey);
+    const differentMaster = await deriveWithDeviceKey(otherMasterDerived, deviceKey);
+
+    expect(first).toEqual(second);
+    expect(first).not.toEqual(differentDevice);
+    expect(first).not.toEqual(differentMaster);
   });
 
   it("rejects storing a device key when secure local storage is unavailable", async () => {
@@ -205,12 +270,12 @@ describe("deviceKeyService", () => {
     }
 
     await storeDeviceKey("user-1", original);
-    const transferData = await exportDeviceKeyForTransfer("user-1", "random-secret-123");
+    const transferData = await exportDeviceKeyForTransfer("user-1", "random-transfer-secret-123");
 
     expect(transferData).toEqual(expect.stringMatching(/^sv-dk-transfer-v2:/));
 
     await deleteDeviceKey("user-1");
-    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "random-secret-123")).resolves.toBe(true);
+    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "random-transfer-secret-123")).resolves.toBe(true);
     await expect(getDeviceKey("user-1")).resolves.toEqual(original);
   });
 
@@ -222,17 +287,61 @@ describe("deviceKeyService", () => {
       "user-1",
       "x".repeat(DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH - 1),
     )).resolves.toBeNull();
-    await expect(importDeviceKeyFromTransfer("user-1", "not-a-v2-envelope", "random-secret-123")).resolves.toBe(false);
+    await expect(importDeviceKeyFromTransfer("user-1", "not-a-v2-envelope", "random-transfer-secret-123")).resolves.toBe(false);
   });
 
   it("rejects import when the transfer secret is wrong", async () => {
     const original = new Uint8Array(32).fill(5);
     await storeDeviceKey("user-1", original);
 
-    const transferData = await exportDeviceKeyForTransfer("user-1", "random-secret-123");
+    const transferData = await exportDeviceKeyForTransfer("user-1", "random-transfer-secret-123");
     await deleteDeviceKey("user-1");
 
-    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "different-secret-456")).resolves.toBe(false);
+    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "different-transfer-secret-456")).resolves.toBe(false);
     await expect(getDeviceKey("user-1")).resolves.toBeNull();
+  });
+
+  it("does not overwrite an existing device key during import", async () => {
+    const existing = new Uint8Array(32).fill(8);
+    const imported = new Uint8Array(32).fill(9);
+
+    await storeDeviceKey("source-user", imported);
+    const transferData = await exportDeviceKeyForTransfer("source-user", "random-transfer-secret-123");
+    await storeDeviceKey("user-1", existing);
+
+    await expect(importDeviceKeyFromTransfer("user-1", transferData!, "random-transfer-secret-123")).resolves.toBe(false);
+    await expect(getDeviceKey("user-1")).resolves.toEqual(existing);
+  });
+
+  it("rejects downgraded or extreme transfer KDF parameters without storing a key", async () => {
+    const original = new Uint8Array(32).fill(5);
+    await storeDeviceKey("source-user", original);
+    const transferData = await exportDeviceKeyForTransfer("source-user", "random-transfer-secret-123");
+
+    const downgraded = decodeTransferEnvelope(transferData!);
+    downgraded.memory = 1024;
+    await expect(
+      importDeviceKeyFromTransfer("target-user", encodeTransferEnvelope(downgraded), "random-transfer-secret-123"),
+    ).resolves.toBe(false);
+
+    const extreme = decodeTransferEnvelope(transferData!);
+    extreme.memory = Number.MAX_SAFE_INTEGER;
+    await expect(
+      importDeviceKeyFromTransfer("target-user", encodeTransferEnvelope(extreme), "random-transfer-secret-123"),
+    ).resolves.toBe(false);
+
+    await expect(getDeviceKey("target-user")).resolves.toBeNull();
+  });
+
+  it("rejects malformed transfer data without overwriting an existing key", async () => {
+    const existing = new Uint8Array(32).fill(8);
+    await storeDeviceKey("user-1", existing);
+
+    await expect(importDeviceKeyFromTransfer(
+      "user-1",
+      `${TRANSFER_PREFIX}not-base64-json`,
+      "random-transfer-secret-123",
+    )).resolves.toBe(false);
+    await expect(getDeviceKey("user-1")).resolves.toEqual(existing);
   });
 });

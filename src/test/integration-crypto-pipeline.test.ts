@@ -169,6 +169,22 @@ describe("Integration: Core Cryptographic Pipeline", () => {
       b.fill(0);
     });
 
+    it("requires both master password and device key for device-key-protected ciphertexts", async () => {
+      const salt = generateSalt();
+      const deviceKey = new Uint8Array(32).fill(7);
+      const wrongDeviceKey = new Uint8Array(32).fill(8);
+      const protectedKey = await deriveKey("correct-password", salt, 1, deviceKey);
+      const masterOnlyKey = await deriveKey("correct-password", salt, 1);
+      const wrongDeviceProtectedKey = await deriveKey("correct-password", salt, 1, wrongDeviceKey);
+      const wrongPasswordProtectedKey = await deriveKey("wrong-password", salt, 1, deviceKey);
+      const ciphertext = await encrypt("device-key protected payload", protectedKey);
+
+      await expect(decrypt(ciphertext, protectedKey)).resolves.toBe("device-key protected payload");
+      await expect(decrypt(ciphertext, masterOnlyKey)).rejects.toThrow();
+      await expect(decrypt(ciphertext, wrongDeviceProtectedKey)).rejects.toThrow();
+      await expect(decrypt(ciphertext, wrongPasswordProtectedKey)).rejects.toThrow();
+    });
+
     it("should throw for unknown KDF version", async () => {
       const salt = generateSalt();
       await expect(deriveRawKey("pw", salt, 999)).rejects.toThrow(

@@ -43,6 +43,7 @@ import {
     getDeviceKey as loadDeviceKey,
     hasDeviceKey as checkHasDeviceKey,
 } from '@/services/deviceKeyService';
+import { isLocalSecretStoreSupported } from '@/platform/localSecretStore';
 import {
     isAppOnline,
     isLikelyOfflineError,
@@ -2518,7 +2519,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
      * Enables Device Key protection on this device.
      * Generates a 256-bit device key, re-encrypts the vault with the
      * combined key (Argon2id + HKDF-Expand), and stores the device key
-     * in IndexedDB.
+     * in the local secret store.
      *
      * @param masterPassword - The user's master password (needed to re-derive keys)
      */
@@ -2530,6 +2531,10 @@ export function VaultProvider({ children }: VaultProviderProps) {
         }
 
         try {
+            if (!(await isLocalSecretStoreSupported())) {
+                return { error: new Error('Secure local secret storage is not available in this runtime.') };
+            }
+
             // Generate new device key
             const newDeviceKey = generateDeviceKey();
 
@@ -2640,7 +2645,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 throw new Error(`Failed to update profile: ${updateError.message}`);
             }
 
-            // Store device key in IndexedDB
+            // Store device key in the local secret store
             await storeDeviceKey(user.id, newDeviceKey);
 
             // Update state

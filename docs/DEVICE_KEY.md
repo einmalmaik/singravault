@@ -1,78 +1,74 @@
-# Device Key (256-bit)
+# Device Key (256 Bit)
 
-> Datum: 2026-02-26
+> Stand: 2026-04-28
 
-## Zusammenfassung
+## Kurzfassung
 
-Der Device Key ist ein 256-bit zufälliger Schlüssel, der als zusätzlicher Input in die Key-Ableitung eingespeist wird, nach dem Argon2id-Schritt. Er wird lokal gespeichert: in Tauri über den OS-Keychain-Pfad, im Web/PWA über den Browser Local Secret Store.
+Der Device Key ist ein lokal gespeicherter 32-Byte-Zufallsschlüssel. Er wird nicht aus E-Mail, User-ID oder Master-Passwort abgeleitet und wird nicht auf den Server geschrieben. Wenn Device-Key-Schutz aktiv ist, fließt er nach Argon2id per HKDF-SHA-256 in die Vault-Key-Ableitung ein:
 
-Wichtig: Der Browser Local Secret Store ist Defense-in-Depth, aber keine echte OS-Secret-Boundary. Ein kompromittierter Same-Origin-Browser-Kontext kann App-Code und WebCrypto-Operationen missbrauchen. Die stärkere Device-Key-Bindung gilt nur für Desktop-Laufzeiten, in denen der Rust/Tauri-Keychain-Pfad verfügbar ist.
-
-## Architektur
-
-```
-OHNE Device Key:   VaultKey = Argon2id(MasterPW, Salt)
-MIT Device Key:    VaultKey = HKDF-SHA256(Argon2id(MasterPW, Salt), DeviceKey, "SINGRA_DEVICE_KEY_V1")
+```text
+Master-Passwort + Salt -> Argon2id -> raw KDF output
+raw KDF output + Device Key -> HKDF-SHA-256("SINGRA_DEVICE_KEY_V1") -> finaler KDF output
+finaler KDF output -> UserKey-Wrapper oder Legacy-Vault-Key
 ```
 
-### Sicherheitsgewinn
+Bei aktuellen Vaults mit `encrypted_user_key` werden Vault-Einträge nicht direkt mit dem KDF-Output verschlüsselt. Der Device Key schützt dort den Wrapper des zufälligen UserKey. Ohne Master-Passwort und Device Key kann der UserKey nicht entpackt werden. Legacy-Vaults ohne UserKey werden beim Aktivieren vollständig auf den Device-Key-geschützten Key umverschlüsselt.
 
-| Szenario | Ohne Device Key | Mit Device Key |
-|----------|----------------|---------------|
-| Server kompromittiert + schwaches PW | Vault knackbar (Brute-Force) | deutlich erschwert; bei Tauri fehlt zusätzlich der OS-Keychain-geschützte Device Key |
-| Server kompromittiert + starkes PW | Vault sicher | Vault sicher (doppelt) |
-| Gerät gestohlen (ohne PW) | Vault sicher | Vault sicher |
-| Gerät gestohlen + PW bekannt | Vault kompromittiert | Vault kompromittiert |
+## Sicherheitswirkung
 
-### Vergleich mit 1Password
+Der Device Key schützt gegen reine Serverkompromittierung, wenn der Angreifer nur Datenbank/API/Edge-Daten sieht. Er hilft nicht gegen kompromittierte Geräte, Malware, XSS, bösartige Browser-Erweiterungen oder eine kompromittierte Laufzeit nach dem Unlock.
 
-| Aspekt | Singra Device Key | 1Password Secret Key |
-|--------|-------------------|---------------------|
-| Stärke | **256-bit** | 128-bit |
-| Speicherort | Tauri: OS-Keychain; Web/PWA: Browser Local Secret Store | Keychain/Credential Store |
-| Übertragung | QR-Code + Transfer-Geheimnis | QR-Code / Emergency Kit |
-| Pflicht | Optional (Migration) | Pflicht |
+Desktop/Tauri und Web/PWA sind nicht gleich stark:
 
-## Betroffene Dateien
+- Tauri/Desktop speichert `device-key:<user-uuid>` über Rust `keyring` im OS-Secret-Store. Die Tauri-Commands sind auf `device-key:<uuid>` und `vault-integrity:<uuid>` begrenzt.
+- Web/PWA speichert über IndexedDB plus nicht-extrahierbaren WebCrypto-Wrapping-Key. Das ist Defense-in-Depth gegen einfache lokale Auslese, aber keine OS-Keychain-Grenze. Same-Origin-JavaScript, XSS, Extensions oder lokale Malware können die App-Laufzeit missbrauchen.
 
-| Datei | Änderung |
-|-------|----------|
-| `src/services/deviceKeyService.ts` | **NEU** — Kern-Service |
-| `src/services/cryptoService.ts` | `deriveKey/deriveRawKey` mit optionalem `deviceKey` |
-| `src/contexts/VaultContext.tsx` | Device Key in Setup/Unlock integriert |
-| `src/components/settings/DeviceKeySettings.tsx` | **NEU** — Settings UI |
+## Erzeugung und Speicherung
 
-## Funktionen (deviceKeyService.ts)
+- Erzeugung: `generateDeviceKey()` nutzt `crypto.getRandomValues(new Uint8Array(32))`.
+- Validierung: gespeicherte, importierte und abgeleitete Device-Key-Werte müssen exakt 32 Byte lang sein.
+- Speicherung: `storeDeviceKey(userId, key)` schreibt in `src/platform/localSecretStore.ts`.
+- Löschen: Reset/Recovery löscht Device Key, Offline-Daten und Integrity-Baseline lokal.
+- Memory-Cleanup: temporäre Byte-Arrays werden best-effort mit `fill(0)` überschrieben. JavaScript garantiert keine vollständige Speicherbereinigung.
 
-- `generateDeviceKey()` — Erzeugt 256-bit CSPRNG-Schlüssel
-- `storeDeviceKey(userId, key)` — Speichert im gemeinsamen Local Secret Store
-- `getDeviceKey(userId)` — Liest aus dem Local Secret Store, migriert alte IndexedDB-Device-Keys wenn möglich
-- `hasDeviceKey(userId)` — Prüft ob Device Key existiert
-- `deleteDeviceKey(userId)` — Löscht Device Key
-- `deriveWithDeviceKey(argon2Output, deviceKey)` — HKDF-Expand Kombination
-- `exportDeviceKeyForTransfer(userId, pin)` — Export für QR-Code (PIN-verschlüsselt)
-- `importDeviceKeyFromTransfer(userId, data, pin)` — Import von anderem Gerät
+## Unlock und Verlust
 
-## Migration
+Ein Device-Key-geschützter Vault lässt sich ohne den korrekten Device Key nicht entschlüsseln. Wenn der lokale Device Key verloren geht und kein Export/Transfer existiert, gibt es keinen serverseitigen Recovery-Pfad für die verschlüsselten Daten.
 
-- Bestehende Nutzer ohne Device Key können weiterhin normal entsperren
-- Device Key kann jederzeit in den Einstellungen aktiviert werden
-- Bei Aktivierung wird der Vault mit dem kombinierten Key re-verschlüsselt
-- Der Device Key wird lokal gespeichert — kein Server-Roundtrip
+Wichtig: Es gibt aktuell kein serverseitiges `device_key_required`-Flag. Auf einem neuen Gerät ohne lokalen Key kann der Client deshalb nicht immer zwischen "falsches Master-Passwort" und "Device Key fehlt" unterscheiden. Kryptografisch bleibt der Unlock blockiert, die UX kann aber generisch wirken.
 
-## Geräteübertragung
+## Import und Transfer
 
-1. Nutzer öffnet "Device Key exportieren" auf bestehendem Gerät
-2. Wählt ein Transfer-Geheimnis mit mindestens 12 Zeichen
-3. Erhält einen versionierten, verschlüsselten Transfer-Code
-4. Auf neuem Gerät: "Device Key importieren" → Code + Transfer-Geheimnis eingeben
-5. Device Key wird lokal gespeichert, Vault kann entsperrt werden
+Import existiert, weil der Device Key den Zugriff bewusst an ein Gerät bindet. Ein neues Gerät oder zweiter Desktop braucht den gleichen lokalen Faktor. Dieser Faktor darf nicht serverseitig im Klartext liegen, deshalb gibt es einen expliziten, nutzergestarteten Transfer.
 
-Transfer-Codes verwenden Version `sv-dk-transfer-v2` mit per-Transfer Salt, Argon2id und AES-GCM. Alte unversionierte PIN-Transfer-Blobs werden nicht mehr importiert, weil sie offline gegen kurze PINs testbar waren.
+Transferformat:
 
-## Sicherheitshinweise
+- Prefix: `sv-dk-transfer-v2:`
+- Envelope: JSON, base64-codiert
+- KDF: Argon2id, exakt `memory=65536`, `iterations=3`, `parallelism=1`, `hashLength=32`
+- Encryption: AES-256-GCM mit zufälligem 16-Byte-Salt und 12-Byte-IV
+- Transfer Secret: mindestens 20 Zeichen; die UI bietet ein zufälliges Secret an
 
-- **Device Key Verlust**: Wenn der Device Key verloren geht und kein Export existiert, ist der Vault nicht mehr entschlüsselbar. Dies ist by design — es gibt keinen Server-seitigen Recovery-Pfad.
-- **Browser-Speicher**: Browser können IndexedDB-Daten löschen (z.B. bei "Browserdaten löschen"). Nutzer sollten einen aktuellen Export ihres Device Keys haben.
-- **Web/PWA-Grenze**: Der nicht extrahierbare Browser-Wrapping-Key und IndexedDB schützen gegen einfache lokale Auslese, aber nicht gegen XSS, kompromittierte Extensions oder Same-Origin-JavaScript.
-- **Transfer-Grenze**: Während eines expliziten Exports verlässt der Device Key die lokale Laufzeit in verschlüsselter Form. Das Transfer-Geheimnis muss außerhalb des QR-/Transfer-Codes geschützt werden.
+Import-Regeln:
+
+- falsches Transfer Secret überschreibt nichts,
+- malformed Envelope überschreibt nichts,
+- Device Keys mit falscher Länge werden abgelehnt,
+- KDF-Downgrades und extreme KDF-Parameter werden abgelehnt,
+- ein vorhandener lokaler Device Key wird nicht still überschrieben.
+
+Risiken bleiben: Ein abgefangener Transfer-Code kann offline gegen das Transfer Secret geprüft werden. Deshalb muss das Transfer Secret zufällig und getrennt vom QR-/Export-Code übertragen werden. QR-Screenshots, Clipboard-History und Chat-Uploads sind unsichere Transportwege.
+
+## Erlaubte Claims
+
+- "Zusätzlicher lokaler 256-Bit-Faktor."
+- "Schützt gegen reine Serverkompromittierung, wenn der Device-Key-Schutz aktiv ist."
+- "Desktop/Tauri kann OS-Keychain-gestützten Schutz bieten."
+- "Web/PWA ist Defense-in-Depth, aber keine OS-Keychain-Grenze."
+
+## Nicht erlaubte Claims
+
+- "Schützt gegen XSS."
+- "Schützt gegen Malware oder bösartige Browser-Erweiterungen."
+- "Browser-Speicher ist gleich stark wie OS-Keychain."
+- "Verlust ist serverseitig wiederherstellbar."
