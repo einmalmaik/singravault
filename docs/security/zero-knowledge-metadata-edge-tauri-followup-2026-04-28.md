@@ -146,3 +146,48 @@ Not executed:
 
 - `cargo audit` because `cargo-audit` is not installed locally.
 - `cargo deny check` because `cargo-deny` is not installed locally.
+
+## Final DB / Deploy Pass - 2026-04-28
+
+Environment:
+
+- Linked Supabase project: `lcrtadxlojaucwapgzmy` (`SingraPW`).
+- The linked project intentionally contains private Premium/Admin/Support functions. They are not a Core leak and were not modified from this repository pass.
+
+Applied migrations:
+
+- `20260428170000_extend_rate_limit_actions_for_edge_hardening.sql` was already applied remotely at the start of this pass.
+- `20260428190000_fix_linked_db_lint_errors.sql` was applied with `supabase db push`.
+- `20260428191000_restrict_sensitive_rpc_grants.sql` was applied with `supabase db push`.
+- `20260428192000_fix_opaque_reset_conflict_target.sql` was applied with `supabase db push`.
+
+Remote schema verification:
+
+- `supabase db lint --linked` now reports `No schema errors found`.
+- `supabase migration list` shows all local migrations through `20260428192000` applied remotely.
+- A remote schema dump confirmed:
+  - `rate_limit_attempts_action_check` includes `account_delete`, `webauthn_challenge`, `webauthn_verify` and `webauthn_manage`.
+  - `enforce_opaque_vault_item_metadata_trigger` remains active on `public.vault_items`.
+  - `finish_opaque_password_reset` uses `ON CONFLICT ON CONSTRAINT user_opaque_records_user_id_key`.
+  - Sensitive helper RPCs such as `finish_opaque_password_reset`, `rotate_totp_encryption_key` and `user_2fa_decrypt_secret` are granted to `service_role` only in the dumped schema.
+
+Edge Function deploys:
+
+- `supabase functions deploy account-delete` succeeded; remote version advanced to 6.
+- `supabase functions deploy webauthn` succeeded; remote version advanced to 70.
+- Other Core auth functions were not redeployed because their source was not changed in this pass.
+- Premium/Admin/Support functions were left as-is intentionally.
+
+Schema cleanup decision:
+
+- `vault_items.title`, `website_url`, `icon_url`, `item_type`, `category_id`, `is_favorite`, `sort_order` and `last_used_at` are still present.
+- They are compatibility columns required by current generated Supabase types, offline cache rows, export fallback compatibility, sync RPC payload handling and the client-side legacy migration runner.
+- Direct and sync writes are neutralized by triggers/RPC logic, so these columns are no longer trusted as plaintext metadata for new Core writes.
+- No `DROP COLUMN` migration was created because old clients and current compatibility paths are not yet version-gated out. Dropping now would be a breaking change and could interrupt safe client-side migration for existing users.
+
+SQL data verification:
+
+- The read-only verification file remains `docs/security/sql/metadata_zero_knowledge_verification.sql`.
+- Schema-level verification was performed against the linked project through `supabase db lint --linked`, `supabase migration list` and remote schema dump.
+- Row-level data-count queries from the SQL verification file were not executed because this workstation has no `psql` binary and no `SUPABASE_DB_PASSWORD`/direct database URL configured. Running a `pg_dump --data-only` was intentionally avoided because it could write user ciphertext/account data to the local workspace.
+- Release blocker: run the SQL verification file with `psql` or the Supabase SQL editor against the linked project before merge/release, then record the row counts.

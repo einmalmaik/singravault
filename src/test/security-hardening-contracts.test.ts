@@ -77,6 +77,36 @@ describe("security hardening contracts", () => {
     }
   });
 
+  it("keeps sensitive auth and 2FA helper RPCs service-role only", () => {
+    const lintMigration = readFileSync(
+      "supabase/migrations/20260428190000_fix_linked_db_lint_errors.sql",
+      "utf-8",
+    );
+    const grantMigration = readFileSync(
+      "supabase/migrations/20260428191000_restrict_sensitive_rpc_grants.sql",
+      "utf-8",
+    );
+    const conflictMigration = readFileSync(
+      "supabase/migrations/20260428192000_fix_opaque_reset_conflict_target.sql",
+      "utf-8",
+    );
+
+    expect(lintMigration).toContain("extensions.pgp_sym_decrypt");
+    expect(lintMigration).toContain("WHERE user_id::TEXT = p_user_id::TEXT");
+    expect(conflictMigration).toContain("ON CONFLICT ON CONSTRAINT user_opaque_records_user_id_key");
+
+    for (const functionSignature of [
+      "public.finish_opaque_password_reset(UUID, UUID, TEXT)",
+      "public.revoke_user_auth_sessions(UUID)",
+      "public.rotate_totp_encryption_key(TEXT)",
+      "public.user_2fa_encrypt_secret(TEXT)",
+      "public.user_2fa_decrypt_secret(TEXT)",
+    ]) {
+      expect(grantMigration).toContain(`REVOKE ALL ON FUNCTION ${functionSignature} FROM anon`);
+      expect(grantMigration).toContain(`REVOKE ALL ON FUNCTION ${functionSignature} FROM authenticated`);
+    }
+  });
+
   it("enforces opaque vault item metadata for future database writes", () => {
     const migration = readFileSync(
       "supabase/migrations/20260427210000_enforce_opaque_vault_item_metadata.sql",

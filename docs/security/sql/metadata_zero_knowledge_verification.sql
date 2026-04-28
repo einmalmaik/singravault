@@ -3,6 +3,11 @@
 -- Run against a staging or local Supabase database after applying migrations.
 -- These queries do not mutate data. They separate legacy rows from future-write
 -- guardrail failures so operators can migrate without blind data deletion.
+-- 2026-04-28 deploy note: the linked project schema was verified with
+-- `supabase db lint --linked`, `supabase migration list`, and a remote schema
+-- dump. Execute this file with psql or the Supabase SQL editor for row-level
+-- counts before release; avoid data-only dumps because they can write user or
+-- account data to disk.
 
 -- 1. Future-write invariant: no new/neutralized vault item row should expose
 -- semantic metadata outside encrypted_data.
