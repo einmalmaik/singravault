@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSnapshotCompletenessContext,
   buildVaultIntegritySnapshot,
   canRebaselineTrustedMutation,
   decideVaultIntegrity,
@@ -60,6 +61,77 @@ describe("vaultIntegrityDecisionEngine", () => {
 
     expect(decision.mode).toBe("blocked");
     expect(decision.blockedReason).toBe("snapshot_malformed");
+  });
+
+  it("treats incomplete snapshot drift as scope_incomplete instead of item quarantine", () => {
+    const completeness = buildSnapshotCompletenessContext({
+      source: "remote",
+      snapshot: {
+        userId: "user-1",
+        vaultId: "vault-1",
+        items: [{ id: "item-1" }],
+        categories: [],
+        lastSyncedAt: "2026-04-29T10:00:00.000Z",
+        updatedAt: "2026-04-29T10:00:00.000Z",
+        completeness: {
+          kind: "scope_incomplete",
+          reason: "pagination_count_mismatch",
+          checkedAt: "2026-04-29T10:00:00.000Z",
+          source: "remote",
+          scope: {
+            kind: "private_default_vault",
+            userId: "user-1",
+            vaultId: "vault-1",
+            includesSharedCollections: false,
+          },
+          vault: { defaultVaultResolved: true },
+          items: {
+            loadedCount: 1,
+            totalCount: 2,
+            complete: false,
+            pageSize: 1000,
+          },
+          categories: {
+            loadedCount: 0,
+            totalCount: 0,
+            complete: true,
+            pageSize: 1000,
+          },
+        },
+      } as never,
+    });
+
+    const decision = decideVaultIntegrity({
+      inspection: {
+        ...healthyInspection,
+        nonTamperState: completeness.nonTamperState,
+        itemDrifts: [{ id: "item-2", reason: "missing_on_server", updatedAt: null }],
+      },
+    });
+
+    expect(decision.mode).toBe("scope_incomplete");
+    expect(decision.quarantinedItems).toEqual([]);
+    expect(decision.debugSafeReason).toBe("snapshot_scope_incomplete");
+  });
+
+  it("reports incompatible baseline versions as migration_required without all-items quarantine", () => {
+    const decision = decideVaultIntegrity({
+      inspection: {
+        ...healthyInspection,
+        nonTamperState: {
+          mode: "migration_required",
+          reason: "baseline_canonicalization_incompatible",
+        },
+        itemDrifts: [
+          { id: "item-1", reason: "ciphertext_changed", updatedAt: null },
+          { id: "item-2", reason: "missing_on_server", updatedAt: null },
+        ],
+      },
+    });
+
+    expect(decision.mode).toBe("migration_required");
+    expect(decision.quarantinedItems).toEqual([]);
+    expect(decision.debugSafeReason).toBe("baseline_canonicalization_incompatible");
   });
 
   it("canonicalizes nullable category metadata deterministically", () => {

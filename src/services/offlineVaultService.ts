@@ -25,6 +25,7 @@ const SNAPSHOTS_STORE = 'snapshots';
 const TRUSTED_SNAPSHOTS_STORE = 'trusted-snapshots';
 const MUTATIONS_STORE = 'mutations';
 const MUTATIONS_USER_INDEX = 'by_user';
+export const REMOTE_SNAPSHOT_PAGE_SIZE = 1000;
 // Keeps legitimate local writes authoritative while follow-up reads and remote
 // replication settle. The window is scoped to the exact changed row IDs.
 const LOCAL_WRITE_CACHE_TTL_MS = 60_000;
@@ -37,6 +38,40 @@ interface RecentLocalMutationWindow {
 
 const recentLocalMutationsByUser = new Map<string, RecentLocalMutationWindow>();
 
+export type OfflineVaultSnapshotCompletenessKind = 'complete' | 'unknown' | 'scope_incomplete';
+export type OfflineVaultSnapshotCompletenessReason =
+  | 'remote_page_count_verified'
+  | 'remote_with_local_mutation_overlay'
+  | 'local_cache_without_remote_verification'
+  | 'empty_local_snapshot'
+  | 'pagination_count_mismatch'
+  | 'legacy_snapshot_without_completeness';
+
+export interface OfflineVaultSnapshotTableCompleteness {
+  loadedCount: number;
+  totalCount: number | null;
+  complete: boolean;
+  pageSize: number;
+}
+
+export interface OfflineVaultSnapshotCompleteness {
+  kind: OfflineVaultSnapshotCompletenessKind;
+  reason: OfflineVaultSnapshotCompletenessReason;
+  checkedAt: string;
+  source: 'remote' | 'remote_with_local_overlay' | 'local_cache' | 'empty';
+  scope: {
+    kind: 'private_default_vault';
+    userId: string;
+    vaultId: string | null;
+    includesSharedCollections: false;
+  };
+  vault: {
+    defaultVaultResolved: boolean;
+  };
+  items: OfflineVaultSnapshotTableCompleteness;
+  categories: OfflineVaultSnapshotTableCompleteness;
+}
+
 export interface OfflineVaultSnapshot {
   userId: string;
   vaultId: string | null;
@@ -44,6 +79,7 @@ export interface OfflineVaultSnapshot {
   categories: CategoryRow[];
   lastSyncedAt: string | null;
   updatedAt: string;
+  completeness?: OfflineVaultSnapshotCompleteness;
   /**
    * Monotonic server-maintained vault revision observed during the last trusted
    * online sync. Used only as a local rollback/stale-read checkpoint.
@@ -175,6 +211,33 @@ function createEmptySnapshot(userId: string): OfflineVaultSnapshot {
     categories: [],
     lastSyncedAt: null,
     updatedAt: now,
+    completeness: {
+      kind: 'unknown',
+      reason: 'empty_local_snapshot',
+      checkedAt: now,
+      source: 'empty',
+      scope: {
+        kind: 'private_default_vault',
+        userId,
+        vaultId: isTauriDevUserId(userId) ? TAURI_DEV_VAULT_ID : null,
+        includesSharedCollections: false,
+      },
+      vault: {
+        defaultVaultResolved: isTauriDevUserId(userId),
+      },
+      items: {
+        loadedCount: 0,
+        totalCount: null,
+        complete: false,
+        pageSize: REMOTE_SNAPSHOT_PAGE_SIZE,
+      },
+      categories: {
+        loadedCount: 0,
+        totalCount: null,
+        complete: false,
+        pageSize: REMOTE_SNAPSHOT_PAGE_SIZE,
+      },
+    },
   };
 }
 
@@ -317,6 +380,126 @@ function preserveLocalSecurityState(
     vaultTwoFactorRequired: snapshot.vaultTwoFactorRequired ?? existing.vaultTwoFactorRequired,
     remoteRevision: snapshot.remoteRevision ?? existing.remoteRevision ?? null,
   };
+}
+
+function buildTableCompleteness(
+  loadedCount: number,
+  totalCount: number | null,
+): OfflineVaultSnapshotTableCompleteness {
+  return {
+    loadedCount,
+    totalCount,
+    complete: totalCount !== null && loadedCount === totalCount,
+    pageSize: REMOTE_SNAPSHOT_PAGE_SIZE,
+  };
+}
+
+function buildRemoteSnapshotCompleteness(input: {
+  userId: string;
+  vaultId: string | null;
+  checkedAt: string;
+  itemCount: number;
+  itemTotalCount: number | null;
+  categoryCount: number;
+  categoryTotalCount: number | null;
+}): OfflineVaultSnapshotCompleteness {
+  const items = buildTableCompleteness(input.itemCount, input.itemTotalCount);
+  const categories = buildTableCompleteness(input.categoryCount, input.categoryTotalCount);
+  const complete = items.complete && categories.complete;
+
+  return {
+    kind: complete ? 'complete' : 'scope_incomplete',
+    reason: complete ? 'remote_page_count_verified' : 'pagination_count_mismatch',
+    checkedAt: input.checkedAt,
+    source: 'remote',
+    scope: {
+      kind: 'private_default_vault',
+      userId: input.userId,
+      vaultId: input.vaultId,
+      includesSharedCollections: false,
+    },
+    vault: {
+      defaultVaultResolved: Boolean(input.vaultId),
+    },
+    items,
+    categories,
+  };
+}
+
+function withLocalMutationCompleteness(snapshot: OfflineVaultSnapshot): OfflineVaultSnapshotCompleteness | undefined {
+  const current = snapshot.completeness;
+  if (current?.kind !== 'complete') {
+    return current;
+  }
+
+  return {
+    ...current,
+    reason: 'remote_with_local_mutation_overlay',
+    checkedAt: nowIso(),
+    source: 'remote_with_local_overlay',
+    scope: {
+      ...current.scope,
+      vaultId: snapshot.vaultId,
+    },
+    items: {
+      ...current.items,
+      loadedCount: snapshot.items.length,
+      totalCount: snapshot.items.length,
+      complete: true,
+    },
+    categories: {
+      ...current.categories,
+      loadedCount: snapshot.categories.length,
+      totalCount: snapshot.categories.length,
+      complete: true,
+    },
+  };
+}
+
+interface PagedRowsResult<T> {
+  rows: T[];
+  totalCount: number | null;
+}
+
+interface PagedSupabaseQuery<T> {
+  range: (from: number, to: number) => PromiseLike<{
+    data: T[] | null;
+    error: { message?: string } | null;
+    count?: number | null;
+  }>;
+}
+
+async function fetchPagedRows<T>(
+  createQuery: () => PagedSupabaseQuery<T>,
+): Promise<PagedRowsResult<T>> {
+  const rows: T[] = [];
+  let totalCount: number | null = null;
+
+  for (let pageStart = 0; ; pageStart += REMOTE_SNAPSHOT_PAGE_SIZE) {
+    const pageEnd = pageStart + REMOTE_SNAPSHOT_PAGE_SIZE - 1;
+    const { data, error, count } = await createQuery().range(pageStart, pageEnd);
+    if (error) {
+      throw error;
+    }
+
+    if (typeof count === 'number') {
+      totalCount = count;
+    }
+
+    const pageRows = data ?? [];
+    rows.push(...pageRows);
+
+    if (totalCount !== null && rows.length >= totalCount) {
+      break;
+    }
+
+    if (pageRows.length < REMOTE_SNAPSHOT_PAGE_SIZE) {
+      totalCount = totalCount ?? rows.length;
+      break;
+    }
+  }
+
+  return { rows, totalCount };
 }
 
 export class OfflineSnapshotRollbackError extends Error {
@@ -499,6 +682,7 @@ export async function upsertOfflineItemRow(
   snapshot.items = [merged, ...snapshot.items.filter((item) => item.id !== row.id)];
   snapshot.vaultId = vaultIdOverride ?? snapshot.vaultId ?? row.vault_id;
   snapshot.updatedAt = nowIso();
+  snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
   markLocalSnapshotFresh(userId, { itemId: row.id });
 }
@@ -507,6 +691,7 @@ export async function removeOfflineItemRow(userId: string, itemId: string): Prom
   const snapshot = await ensureSnapshot(userId);
   snapshot.items = snapshot.items.filter((item) => item.id !== itemId);
   snapshot.updatedAt = nowIso();
+  snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
   markLocalSnapshotFresh(userId, { itemId });
 }
@@ -523,6 +708,7 @@ export async function upsertOfflineCategoryRow(userId: string, row: CategoryRow)
 
   snapshot.categories = [merged, ...snapshot.categories.filter((cat) => cat.id !== row.id)];
   snapshot.updatedAt = nowIso();
+  snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
   markLocalSnapshotFresh(userId, { categoryId: row.id });
 }
@@ -531,6 +717,7 @@ export async function removeOfflineCategoryRow(userId: string, categoryId: strin
   const snapshot = await ensureSnapshot(userId);
   snapshot.categories = snapshot.categories.filter((cat) => cat.id !== categoryId);
   snapshot.updatedAt = nowIso();
+  snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
   markLocalSnapshotFresh(userId, { categoryId });
 }
@@ -556,6 +743,7 @@ export async function applyOfflineCategoryDeletion(
   snapshot.categories = snapshot.categories.filter((cat) => cat.id !== categoryId);
   snapshot.vaultId = options.vaultIdOverride ?? snapshot.vaultId;
   snapshot.updatedAt = nowIso();
+  snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
 
   for (const itemId of new Set([...updatedItemIds, ...deletedItemIds])) {
@@ -767,29 +955,22 @@ async function fetchRemoteOfflineSnapshotUncached(
 
   const vaultId = sanitizeOptionalUuid(vault?.id ?? null);
 
-  const { data: categories, error: categoriesError } = await supabase
+  const categoriesPage = await fetchPagedRows<CategoryRow>(() => supabase
     .from('categories')
-    .select('*')
+    .select('*', { count: 'exact' })
     .eq('user_id', userId)
-    .order('sort_order', { ascending: true });
-
-  if (categoriesError) {
-    throw categoriesError;
-  }
+    .order('sort_order', { ascending: true }) as unknown as PagedSupabaseQuery<CategoryRow>);
 
   let items: VaultItemRow[] = [];
+  let itemTotalCount: number | null = 0;
   if (vaultId) {
-    const { data: vaultItems, error: itemsError } = await supabase
+    const itemsPage = await fetchPagedRows<VaultItemRow>(() => supabase
       .from('vault_items')
-      .select('*')
+      .select('*', { count: 'exact' })
       .eq('vault_id', vaultId)
-      .order('updated_at', { ascending: false });
-
-    if (itemsError) {
-      throw itemsError;
-    }
-
-    items = (vaultItems ?? []) as VaultItemRow[];
+      .order('updated_at', { ascending: false }) as unknown as PagedSupabaseQuery<VaultItemRow>);
+    items = itemsPage.rows;
+    itemTotalCount = itemsPage.totalCount;
   }
 
   const now = nowIso();
@@ -797,9 +978,18 @@ async function fetchRemoteOfflineSnapshotUncached(
     userId,
     vaultId,
     items,
-    categories: (categories ?? []) as CategoryRow[],
+    categories: categoriesPage.rows,
     lastSyncedAt: now,
     updatedAt: now,
+    completeness: buildRemoteSnapshotCompleteness({
+      userId,
+      vaultId,
+      checkedAt: now,
+      itemCount: items.length,
+      itemTotalCount,
+      categoryCount: categoriesPage.rows.length,
+      categoryTotalCount: categoriesPage.totalCount,
+    }),
   };
   const cachedSnapshot = await getOfflineSnapshot(userId);
   const remoteRevision = await fetchRemoteVaultRevision(vaultId);
@@ -841,7 +1031,7 @@ function applyRecentLocalMutations(
     }
   }
 
-  return {
+  const mergedSnapshot: OfflineVaultSnapshot = {
     ...remoteSnapshot,
     items: [...itemsById.values()],
     categories: [...categoriesById.values()],
@@ -854,6 +1044,8 @@ function applyRecentLocalMutations(
     vaultTwoFactorRequired: cachedSnapshot.vaultTwoFactorRequired ?? remoteSnapshot.vaultTwoFactorRequired,
     remoteRevision: remoteSnapshot.remoteRevision ?? cachedSnapshot.remoteRevision ?? null,
   };
+  mergedSnapshot.completeness = withLocalMutationCompleteness(mergedSnapshot);
+  return mergedSnapshot;
 }
 
 export async function loadVaultSnapshot(userId: string): Promise<{

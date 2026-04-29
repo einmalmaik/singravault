@@ -1,9 +1,9 @@
 import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import {
   VaultIntegrityBaselineError,
+  isNonTamperIntegrityMode,
   persistIntegrityBaseline,
   persistTrustedMutationIntegrityBaseline,
-  type VaultIntegrityAssessment,
   type VaultIntegrityBaselineInspection,
   type VaultIntegrityBlockedReason,
   type VaultIntegritySnapshot,
@@ -17,6 +17,7 @@ import {
   hasTrustedDrift,
   hasTrustedMutationScope,
   normalizeTrustedVaultMutation,
+  type VaultIntegrityAssessment,
   type TrustedVaultMutation,
 } from '@/services/vaultIntegrityDecisionEngine';
 import { loadCurrentVaultIntegritySnapshot } from '@/services/offlineVaultRuntimeService';
@@ -42,8 +43,11 @@ export function canPersistIntegrityBaselineImmediately(
   assessment: VaultIntegrityAssessment,
   snapshot: OfflineVaultSnapshot,
 ): boolean {
-  return assessment.inspection.baselineKind !== 'missing'
-    || (snapshot.items.length === 0 && snapshot.categories.length === 0);
+  return !assessment.inspection.nonTamperState
+    && (
+      assessment.inspection.baselineKind !== 'missing'
+      || (snapshot.items.length === 0 && snapshot.categories.length === 0)
+    );
 }
 
 export async function persistMissingOrLegacyBaseline(input: {
@@ -51,14 +55,15 @@ export async function persistMissingOrLegacyBaseline(input: {
   integritySnapshot: VaultIntegritySnapshot;
   activeKey: CryptoKey;
   inspection: VaultIntegrityBaselineInspection;
+  vaultId?: string | null;
 }): Promise<void> {
-  const { userId, integritySnapshot, activeKey, inspection } = input;
-  if (inspection.snapshotValidationError || inspection.legacyBaselineMismatch) {
+  const { userId, integritySnapshot, activeKey, inspection, vaultId } = input;
+  if (inspection.snapshotValidationError || inspection.nonTamperState || inspection.legacyBaselineMismatch) {
     return;
   }
 
   if (inspection.baselineKind === 'missing' || inspection.baselineKind === 'v1') {
-    await persistIntegrityBaseline(userId, integritySnapshot, activeKey, inspection.digest);
+    await persistIntegrityBaseline(userId, integritySnapshot, activeKey, inspection.digest, { vaultId });
   }
 }
 
@@ -82,6 +87,7 @@ export async function finalizeVaultUnlockIntegrity(input: {
       userId,
       snapshot: snapshotBundle.rawSnapshot,
       activeKey,
+      source: snapshotBundle.source,
     });
     const integrityResult = integrityAssessment.result;
     callbacks.applyIntegrityResultState(integrityResult);
@@ -106,6 +112,7 @@ export async function finalizeVaultUnlockIntegrity(input: {
           integritySnapshot: snapshotBundle.integritySnapshot,
           activeKey,
           inspection: integrityAssessment.inspection,
+          vaultId: snapshotBundle.rawSnapshot.vaultId,
         });
         callbacks.applyTrustedRecoveryState(
           await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
@@ -153,13 +160,15 @@ export async function refreshVaultIntegrityBaseline(input: {
     userId,
     snapshot: snapshotBundle.rawSnapshot,
     activeKey: encryptionKey,
+    source: snapshotBundle.source,
   });
   const integrityResult = integrityAssessment.result;
   const trustedRebaselineAllowed = canRebaselineTrustedMutation(
     integrityAssessment,
     normalizedTrustedMutation,
   );
-  const trustedFirstBaselineAllowed = integrityAssessment.inspection.baselineKind === 'missing'
+  const trustedFirstBaselineAllowed = integrityResult.mode === 'healthy'
+    && integrityAssessment.inspection.baselineKind === 'missing'
     && snapshotBundle.rawSnapshot.items.every((item) => normalizedTrustedMutation.itemIds.has(item.id))
     && snapshotBundle.rawSnapshot.categories.every((category) => normalizedTrustedMutation.categoryIds.has(category.id));
 
@@ -174,12 +183,14 @@ export async function refreshVaultIntegrityBaseline(input: {
       snapshotBundle.integritySnapshot,
       encryptionKey,
       normalizedTrustedMutation,
+      { vaultId: snapshotBundle.rawSnapshot.vaultId },
     );
     if (selectiveDigest) {
       const reassessment = await assessVaultIntegritySnapshot({
         userId,
         snapshot: snapshotBundle.rawSnapshot,
         activeKey: encryptionKey,
+        source: snapshotBundle.source,
       });
       const reassessedResult = reassessment.result;
       if (reassessedResult.mode === 'quarantine') {
@@ -223,6 +234,12 @@ export async function refreshVaultIntegrityBaseline(input: {
     return;
   }
 
+  if (isNonTamperIntegrityMode(integrityResult.mode) && !trustedRebaselineAllowed && !trustedFirstBaselineAllowed) {
+    callbacks.applyIntegrityResultState(integrityResult);
+    callbacks.applyTrustedRecoveryState(await loadTrustedRecoverySnapshotState(userId));
+    return;
+  }
+
   if (integrityAssessment.inspection.baselineKind === 'missing' && !trustedFirstBaselineAllowed) {
     callbacks.applyIntegrityResultState(integrityResult);
     return;
@@ -233,6 +250,7 @@ export async function refreshVaultIntegrityBaseline(input: {
     snapshotBundle.integritySnapshot,
     encryptionKey,
     integrityAssessment.inspection.digest,
+    { vaultId: snapshotBundle.rawSnapshot.vaultId },
   );
   callbacks.applyTrustedRecoveryState(
     await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
@@ -254,9 +272,10 @@ export async function verifyVaultIntegrity(input: {
   userId: string;
   encryptionKey: CryptoKey;
   snapshot?: OfflineVaultSnapshot;
+  source?: 'remote' | 'cache' | 'empty';
   callbacks: VaultIntegrityRuntimeCallbacks;
 }): Promise<VaultIntegrityVerificationResult | null> {
-  const { userId, encryptionKey, snapshot, callbacks } = input;
+  const { userId, encryptionKey, snapshot, source, callbacks } = input;
 
   try {
     const loadedSnapshotBundle = snapshot
@@ -275,6 +294,7 @@ export async function verifyVaultIntegrity(input: {
       userId,
       snapshot: rawSnapshot,
       activeKey: encryptionKey,
+      source: source ?? (snapshot ? undefined : loadedSnapshotBundle?.source),
     });
     const result = integrityAssessment.result;
     const recentLocalRebaselineAllowed = canRebaselineRecentLocalMutation(userId, integrityAssessment);
@@ -293,6 +313,7 @@ export async function verifyVaultIntegrity(input: {
         buildVaultIntegritySnapshot(rawSnapshot),
         encryptionKey,
         integrityAssessment.inspection.digest,
+        { vaultId: rawSnapshot.vaultId },
       );
       callbacks.applyTrustedRecoveryState(await persistTrustedRecoverySnapshot(rawSnapshot));
       const trustedResult: VaultIntegrityVerificationResult = {
@@ -317,6 +338,7 @@ export async function verifyVaultIntegrity(input: {
           integritySnapshot: buildVaultIntegritySnapshot(rawSnapshot),
           activeKey: encryptionKey,
           inspection: integrityAssessment.inspection,
+          vaultId: rawSnapshot.vaultId,
         });
         callbacks.applyTrustedRecoveryState(await persistTrustedRecoverySnapshot(rawSnapshot));
       }
@@ -329,7 +351,16 @@ export async function verifyVaultIntegrity(input: {
     if (!(error instanceof VaultIntegrityBaselineError)) {
       const level = isLikelyOfflineError(error) ? 'warn' : 'error';
       console[level]('Vault integrity revalidation failed without changing integrity state:', error);
-      return null;
+      return {
+        valid: false,
+        isFirstCheck: false,
+        computedRoot: '',
+        itemCount: 0,
+        categoryCount: 0,
+        mode: 'revalidation_failed',
+        nonTamperReason: 'revalidation_failed',
+        quarantinedItems: [],
+      };
     }
 
     console.error('Vault integrity verification error:', error);

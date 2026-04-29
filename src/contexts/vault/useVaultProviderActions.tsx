@@ -473,7 +473,7 @@ export function useVaultProviderActions(): VaultContextType {
 
   const verifyIntegrity = useCallback(async (
     snapshot?: OfflineVaultSnapshot,
-    _options?: { source?: VaultSnapshotSource },
+    options?: { source?: VaultSnapshotSource },
   ): Promise<VaultIntegrityVerificationResult | null> => {
     if (!user || !state.encryptionKey) {
       return null;
@@ -483,6 +483,7 @@ export function useVaultProviderActions(): VaultContextType {
       userId: user.id,
       encryptionKey: state.encryptionKey,
       snapshot,
+      source: options?.source,
       callbacks: integrityCallbacks(),
     });
   }, [integrityCallbacks, state.encryptionKey, user]);

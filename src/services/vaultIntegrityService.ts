@@ -10,6 +10,8 @@ import {
 } from './integrityBaselineStore';
 
 const INTEGRITY_SECRET_PREFIX = 'vault-integrity:';
+export const INTEGRITY_BASELINE_SCHEMA_VERSION = 2;
+export const INTEGRITY_CANONICALIZATION_VERSION = 1;
 
 export interface VaultIntegritySnapshot {
   items: Array<{
@@ -26,15 +28,28 @@ export interface VaultIntegritySnapshot {
   }>;
 }
 
-export type VaultIntegrityMode = 'healthy' | 'quarantine' | 'blocked';
+export type VaultIntegrityNonTamperMode =
+  | 'integrity_unknown'
+  | 'revalidation_failed'
+  | 'migration_required'
+  | 'scope_incomplete';
+export type VaultIntegrityMode = 'healthy' | 'quarantine' | 'blocked' | VaultIntegrityNonTamperMode;
 export type VaultIntegrityBlockedReason =
   | 'baseline_unreadable'
   | 'legacy_baseline_mismatch'
+  | 'baseline_scope_mismatch'
   | 'category_structure_mismatch'
   | 'snapshot_malformed'
   | 'vault_key_unavailable'
   | 'device_key_required'
   | 'unknown_integrity_failure';
+export type VaultIntegrityNonTamperReason =
+  | 'snapshot_completeness_unknown'
+  | 'snapshot_scope_incomplete'
+  | 'snapshot_source_not_authoritative'
+  | 'revalidation_failed'
+  | 'baseline_schema_incompatible'
+  | 'baseline_canonicalization_incompatible';
 export type VaultIntegrityItemIssueReason =
   | 'ciphertext_changed'
   | 'missing_on_server'
@@ -57,8 +72,20 @@ export interface VaultIntegrityVerificationResult {
   categoryCount: number;
   mode: VaultIntegrityMode;
   blockedReason?: VaultIntegrityBlockedReason;
+  nonTamperReason?: VaultIntegrityNonTamperReason;
   quarantinedItems: QuarantinedVaultItem[];
   driftedCategoryIds?: string[];
+}
+
+export interface VaultIntegrityNonTamperState {
+  mode: VaultIntegrityNonTamperMode;
+  reason: VaultIntegrityNonTamperReason;
+}
+
+export interface VaultIntegritySnapshotCompletenessContext {
+  isComplete: boolean;
+  canVerifyDrift: boolean;
+  nonTamperState?: VaultIntegrityNonTamperState;
 }
 
 export interface VaultIntegrityBaselineInspection {
@@ -68,6 +95,7 @@ export interface VaultIntegrityBaselineInspection {
   baselineKind: 'missing' | 'v1' | 'v2';
   storedRoot?: string;
   snapshotValidationError?: VaultIntegrityBlockedReason;
+  nonTamperState?: VaultIntegrityNonTamperState;
   legacyBaselineMismatch: boolean;
   itemDrifts: QuarantinedVaultItem[];
   categoryDriftIds: string[];
@@ -93,6 +121,9 @@ interface StoredIntegrityBaselineV2 {
   vaultId?: string | null;
   source?: 'core' | 'legacy-migration' | 'trusted-mutation';
   schemaVersion?: number;
+  canonicalizationVersion?: number;
+  scopeKind?: 'private_default_vault';
+  includesSharedCollections?: boolean;
 }
 
 type StoredIntegrityBaseline = StoredIntegrityBaselineV1 | StoredIntegrityBaselineV2;
@@ -121,18 +152,31 @@ export async function verifyVaultSnapshotIntegrity(
   userId: string,
   snapshot: VaultIntegritySnapshot,
   vaultKey: CryptoKey,
+  options: {
+    vaultId?: string | null;
+    completeness?: VaultIntegritySnapshotCompletenessContext;
+  } = {},
 ): Promise<VaultIntegrityVerificationResult> {
-  const inspection = await inspectVaultSnapshotIntegrity(userId, snapshot, vaultKey);
+  const inspection = await inspectVaultSnapshotIntegrity(userId, snapshot, vaultKey, options);
   const result = toVaultIntegrityVerificationResult(inspection);
 
-  if (inspection.baselineKind === 'missing' && !inspection.snapshotValidationError) {
-    await persistIntegrityBaseline(userId, snapshot, vaultKey, inspection.digest);
+  if (
+    inspection.baselineKind === 'missing'
+    && !inspection.snapshotValidationError
+    && !inspection.nonTamperState
+  ) {
+    await persistIntegrityBaseline(userId, snapshot, vaultKey, inspection.digest, {
+      vaultId: options.vaultId,
+    });
   } else if (
     inspection.baselineKind === 'v1'
     && !inspection.snapshotValidationError
+    && !inspection.nonTamperState
     && !inspection.legacyBaselineMismatch
   ) {
-    await persistIntegrityBaseline(userId, snapshot, vaultKey, inspection.digest);
+    await persistIntegrityBaseline(userId, snapshot, vaultKey, inspection.digest, {
+      vaultId: options.vaultId,
+    });
   }
 
   return result;
@@ -142,6 +186,10 @@ export async function inspectVaultSnapshotIntegrity(
   userId: string,
   snapshot: VaultIntegritySnapshot,
   vaultKey: CryptoKey,
+  options: {
+    vaultId?: string | null;
+    completeness?: VaultIntegritySnapshotCompletenessContext;
+  } = {},
 ): Promise<VaultIntegrityBaselineInspection> {
   const digest = await computeVaultSnapshotDigest(snapshot);
   const snapshotValidationError = validateSnapshotStructure(snapshot);
@@ -152,6 +200,7 @@ export async function inspectVaultSnapshotIntegrity(
       categoryCount: snapshot.categories.length,
       baselineKind: 'missing',
       snapshotValidationError,
+      nonTamperState: undefined,
       legacyBaselineMismatch: false,
       itemDrifts: [],
       categoryDriftIds: [],
@@ -165,6 +214,7 @@ export async function inspectVaultSnapshotIntegrity(
       itemCount: snapshot.items.length,
       categoryCount: snapshot.categories.length,
       baselineKind: 'missing',
+      nonTamperState: options.completeness?.nonTamperState,
       legacyBaselineMismatch: false,
       itemDrifts: [],
       categoryDriftIds: [],
@@ -178,7 +228,58 @@ export async function inspectVaultSnapshotIntegrity(
       categoryCount: snapshot.categories.length,
       baselineKind: 'v1',
       storedRoot: storedBaseline.digest,
+      nonTamperState: options.completeness?.nonTamperState,
       legacyBaselineMismatch: storedBaseline.digest !== digest,
+      itemDrifts: [],
+      categoryDriftIds: [],
+    };
+  }
+
+  const baselineCompatibilityIssue = inspectStoredBaselineCompatibility(
+    storedBaseline,
+    userId,
+    options.vaultId ?? null,
+  );
+  if (baselineCompatibilityIssue?.mode === 'blocked') {
+    return {
+      digest,
+      itemCount: snapshot.items.length,
+      categoryCount: snapshot.categories.length,
+      baselineKind: 'v2',
+      storedRoot: storedBaseline.snapshotDigest,
+      snapshotValidationError: baselineCompatibilityIssue.blockedReason,
+      nonTamperState: undefined,
+      legacyBaselineMismatch: false,
+      itemDrifts: [],
+      categoryDriftIds: [],
+    };
+  }
+  if (baselineCompatibilityIssue?.mode === 'migration_required') {
+    return {
+      digest,
+      itemCount: snapshot.items.length,
+      categoryCount: snapshot.categories.length,
+      baselineKind: 'v2',
+      storedRoot: storedBaseline.snapshotDigest,
+      nonTamperState: {
+        mode: 'migration_required',
+        reason: baselineCompatibilityIssue.reason,
+      },
+      legacyBaselineMismatch: false,
+      itemDrifts: [],
+      categoryDriftIds: [],
+    };
+  }
+
+  if (options.completeness?.nonTamperState) {
+    return {
+      digest,
+      itemCount: snapshot.items.length,
+      categoryCount: snapshot.categories.length,
+      baselineKind: 'v2',
+      storedRoot: storedBaseline.snapshotDigest,
+      nonTamperState: options.completeness.nonTamperState,
+      legacyBaselineMismatch: false,
       itemDrifts: [],
       categoryDriftIds: [],
     };
@@ -186,6 +287,27 @@ export async function inspectVaultSnapshotIntegrity(
 
   const itemDigests = buildItemDigestMap(snapshot);
   const categoryDigests = buildCategoryDigestMap(snapshot);
+  const rawItemDrifts = detectItemDigestDrift(snapshot, storedBaseline.itemDigests, itemDigests);
+  const itemDrifts = filterItemDriftsByBaselineScopeProof(rawItemDrifts, storedBaseline);
+  const suppressedScopeDrift = itemDrifts.length !== rawItemDrifts.length;
+  const categoryDriftIds = detectCategoryDigestDriftIds(storedBaseline.categoryDigests, categoryDigests);
+
+  if (suppressedScopeDrift && itemDrifts.length === 0 && categoryDriftIds.length === 0) {
+    return {
+      digest,
+      itemCount: snapshot.items.length,
+      categoryCount: snapshot.categories.length,
+      baselineKind: 'v2',
+      storedRoot: storedBaseline.snapshotDigest,
+      nonTamperState: {
+        mode: 'scope_incomplete',
+        reason: 'snapshot_scope_incomplete',
+      },
+      legacyBaselineMismatch: false,
+      itemDrifts: [],
+      categoryDriftIds: [],
+    };
+  }
 
   return {
     digest,
@@ -194,8 +316,8 @@ export async function inspectVaultSnapshotIntegrity(
     baselineKind: 'v2',
     storedRoot: storedBaseline.snapshotDigest,
     legacyBaselineMismatch: false,
-    itemDrifts: detectItemDigestDrift(snapshot, storedBaseline.itemDigests, itemDigests),
-    categoryDriftIds: detectCategoryDigestDriftIds(storedBaseline.categoryDigests, categoryDigests),
+    itemDrifts,
+    categoryDriftIds,
   };
 }
 
@@ -211,6 +333,20 @@ export function toVaultIntegrityVerificationResult(
       categoryCount: inspection.categoryCount,
       mode: 'blocked',
       blockedReason: inspection.snapshotValidationError,
+      quarantinedItems: [],
+    };
+  }
+
+  if (inspection.nonTamperState) {
+    return {
+      valid: false,
+      isFirstCheck: inspection.baselineKind === 'missing',
+      computedRoot: inspection.digest,
+      storedRoot: inspection.storedRoot,
+      itemCount: inspection.itemCount,
+      categoryCount: inspection.categoryCount,
+      mode: inspection.nonTamperState.mode,
+      nonTamperReason: inspection.nonTamperState.reason,
       quarantinedItems: [],
     };
   }
@@ -286,6 +422,7 @@ export async function persistIntegrityBaseline(
   snapshot: VaultIntegritySnapshot,
   vaultKey: CryptoKey,
   precomputedDigest?: string,
+  options: { vaultId?: string | null } = {},
 ): Promise<string> {
   const digest = precomputedDigest ?? await computeVaultSnapshotDigest(snapshot);
   const payload: StoredIntegrityBaselineV2 = {
@@ -297,9 +434,12 @@ export async function persistIntegrityBaseline(
     categoryCount: snapshot.categories.length,
     recordedAt: new Date().toISOString(),
     userId,
-    vaultId: null,
+    vaultId: options.vaultId ?? null,
     source: 'core',
-    schemaVersion: 2,
+    schemaVersion: INTEGRITY_BASELINE_SCHEMA_VERSION,
+    canonicalizationVersion: INTEGRITY_CANONICALIZATION_VERSION,
+    scopeKind: 'private_default_vault',
+    includesSharedCollections: false,
   };
 
   const encryptedPayload = await encrypt(JSON.stringify(payload), vaultKey);
@@ -315,6 +455,7 @@ export async function persistTrustedMutationIntegrityBaseline(
     itemIds?: Iterable<string>;
     categoryIds?: Iterable<string>;
   },
+  options: { vaultId?: string | null } = {},
 ): Promise<string | null> {
   const storedBaseline = await loadStoredIntegrityBaseline(userId, vaultKey);
   if (!storedBaseline || storedBaseline.version !== 2) {
@@ -355,6 +496,8 @@ export async function persistTrustedMutationIntegrityBaseline(
     itemCount: Object.keys(nextItemDigests).length,
     categoryCount: Object.keys(nextCategoryDigests).length,
     recordedAt: new Date().toISOString(),
+    schemaVersion: INTEGRITY_BASELINE_SCHEMA_VERSION,
+    canonicalizationVersion: INTEGRITY_CANONICALIZATION_VERSION,
   };
   const digestBuffer = await crypto.subtle.digest(
     'SHA-256',
@@ -365,9 +508,12 @@ export async function persistTrustedMutationIntegrityBaseline(
     ...payloadWithoutRoot,
     snapshotDigest,
     userId,
-    vaultId: null,
+    vaultId: options.vaultId ?? storedBaseline.vaultId ?? null,
     source: 'trusted-mutation',
-    schemaVersion: 2,
+    schemaVersion: INTEGRITY_BASELINE_SCHEMA_VERSION,
+    canonicalizationVersion: INTEGRITY_CANONICALIZATION_VERSION,
+    scopeKind: storedBaseline.scopeKind ?? 'private_default_vault',
+    includesSharedCollections: storedBaseline.includesSharedCollections ?? false,
   };
 
   const encryptedPayload = await encrypt(JSON.stringify(payload), vaultKey);
@@ -502,6 +648,49 @@ async function loadStoredIntegrityBaseline(
   throw new VaultIntegrityBaselineError('Stored integrity baseline is malformed.');
 }
 
+export function isNonTamperIntegrityMode(
+  mode: VaultIntegrityMode,
+): mode is VaultIntegrityNonTamperMode {
+  return mode === 'integrity_unknown'
+    || mode === 'revalidation_failed'
+    || mode === 'migration_required'
+    || mode === 'scope_incomplete';
+}
+
+type BaselineCompatibilityIssue =
+  | { mode: 'blocked'; blockedReason: VaultIntegrityBlockedReason }
+  | { mode: 'migration_required'; reason: VaultIntegrityNonTamperReason };
+
+function inspectStoredBaselineCompatibility(
+  baseline: StoredIntegrityBaselineV2,
+  userId: string,
+  vaultId: string | null,
+): BaselineCompatibilityIssue | null {
+  if (baseline.userId && baseline.userId !== userId) {
+    return { mode: 'blocked', blockedReason: 'baseline_scope_mismatch' };
+  }
+
+  if (baseline.vaultId && vaultId && baseline.vaultId !== vaultId) {
+    return { mode: 'blocked', blockedReason: 'baseline_scope_mismatch' };
+  }
+
+  if (
+    typeof baseline.schemaVersion === 'number'
+    && baseline.schemaVersion !== INTEGRITY_BASELINE_SCHEMA_VERSION
+  ) {
+    return { mode: 'migration_required', reason: 'baseline_schema_incompatible' };
+  }
+
+  if (
+    typeof baseline.canonicalizationVersion === 'number'
+    && baseline.canonicalizationVersion !== INTEGRITY_CANONICALIZATION_VERSION
+  ) {
+    return { mode: 'migration_required', reason: 'baseline_canonicalization_incompatible' };
+  }
+
+  return null;
+}
+
 function getIntegrityStorageKey(userId: string): string {
   return `${INTEGRITY_SECRET_PREFIX}${userId}`;
 }
@@ -621,6 +810,20 @@ function detectItemDigestDrift(
     const rightDate = right.updatedAt ?? '';
     return rightDate.localeCompare(leftDate) || left.id.localeCompare(right.id);
   });
+}
+
+function filterItemDriftsByBaselineScopeProof(
+  itemDrifts: QuarantinedVaultItem[],
+  baseline: StoredIntegrityBaselineV2,
+): QuarantinedVaultItem[] {
+  if (
+    baseline.scopeKind === 'private_default_vault'
+    && baseline.includesSharedCollections === false
+  ) {
+    return itemDrifts;
+  }
+
+  return itemDrifts.filter((item) => item.reason === 'ciphertext_changed');
 }
 
 function detectCategoryDigestDriftIds(

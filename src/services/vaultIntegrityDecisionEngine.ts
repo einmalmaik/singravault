@@ -2,14 +2,19 @@ import { decrypt } from './cryptoService';
 import {
   inspectVaultSnapshotIntegrity,
   toVaultIntegrityVerificationResult,
+  isNonTamperIntegrityMode,
   type QuarantinedVaultItem,
   type VaultIntegrityBaselineInspection,
   type VaultIntegrityBlockedReason,
   type VaultIntegrityMode,
+  type VaultIntegrityNonTamperReason,
+  type VaultIntegritySnapshotCompletenessContext,
   type VaultIntegritySnapshot,
   type VaultIntegrityVerificationResult,
 } from './vaultIntegrityService';
 import { isRecentLocalVaultMutation, type OfflineVaultSnapshot } from './offlineVaultService';
+
+export type VaultIntegritySnapshotSource = 'remote' | 'cache' | 'empty';
 
 export interface VaultIntegrityDecision {
   mode: VaultIntegrityMode;
@@ -20,7 +25,8 @@ export interface VaultIntegrityDecision {
   uiSafeMessageCode:
     | 'vault_integrity_healthy'
     | 'vault_item_quarantine'
-    | 'vault_integrity_blocked';
+    | 'vault_integrity_blocked'
+    | 'vault_integrity_not_verified';
   debugSafeReason: string;
 }
 
@@ -46,6 +52,58 @@ export interface VaultIntegrityAssessmentLike {
 
 export interface VaultIntegrityAssessment extends VaultIntegrityAssessmentLike {
   result: VaultIntegrityVerificationResult;
+}
+
+export function buildSnapshotCompletenessContext(input: {
+  snapshot: OfflineVaultSnapshot;
+  source?: VaultIntegritySnapshotSource;
+}): VaultIntegritySnapshotCompletenessContext {
+  const { snapshot, source } = input;
+  const completeness = snapshot.completeness;
+  const authoritativeSource = source === 'remote'
+    || completeness?.source === 'remote_with_local_overlay';
+
+  if (!completeness) {
+    return {
+      isComplete: false,
+      canVerifyDrift: false,
+      nonTamperState: {
+        mode: 'integrity_unknown',
+        reason: 'snapshot_completeness_unknown',
+      },
+    };
+  }
+
+  if (!authoritativeSource) {
+    return {
+      isComplete: false,
+      canVerifyDrift: false,
+      nonTamperState: {
+        mode: source === 'empty' ? 'integrity_unknown' : 'scope_incomplete',
+        reason: 'snapshot_source_not_authoritative',
+      },
+    };
+  }
+
+  if (completeness.kind === 'complete') {
+    return {
+      isComplete: true,
+      canVerifyDrift: true,
+    };
+  }
+
+  const reason: VaultIntegrityNonTamperReason = completeness.kind === 'scope_incomplete'
+    ? 'snapshot_scope_incomplete'
+    : 'snapshot_completeness_unknown';
+
+  return {
+    isComplete: false,
+    canVerifyDrift: false,
+    nonTamperState: {
+      mode: completeness.kind === 'scope_incomplete' ? 'scope_incomplete' : 'integrity_unknown',
+      reason,
+    },
+  };
 }
 
 export function buildVaultIntegritySnapshot(snapshot: {
@@ -100,11 +158,19 @@ export async function assessVaultIntegritySnapshot(input: {
   userId: string;
   snapshot: OfflineVaultSnapshot;
   activeKey: CryptoKey;
+  source?: VaultIntegritySnapshotSource;
 }): Promise<VaultIntegrityAssessment> {
   const inspection = await inspectVaultSnapshotIntegrity(
     input.userId,
     buildVaultIntegritySnapshot(input.snapshot),
     input.activeKey,
+    {
+      vaultId: input.snapshot.vaultId,
+      completeness: buildSnapshotCompletenessContext({
+        snapshot: input.snapshot,
+        source: input.source,
+      }),
+    },
   );
   const baseResult = toVaultIntegrityVerificationResult(inspection);
 
@@ -113,6 +179,17 @@ export async function assessVaultIntegritySnapshot(input: {
       inspection,
       unreadableCategoryReason: null,
       result: baseResult,
+    };
+  }
+
+  if (isNonTamperIntegrityMode(baseResult.mode)) {
+    return {
+      inspection,
+      unreadableCategoryReason: null,
+      result: {
+        ...baseResult,
+        quarantinedItems: [],
+      },
     };
   }
 
@@ -178,6 +255,7 @@ export function canRebaselineTrustedMutation(
 
   if (
     assessment.inspection.snapshotValidationError
+    || assessment.inspection.nonTamperState
     || assessment.inspection.legacyBaselineMismatch
   ) {
     return false;
@@ -211,6 +289,7 @@ export function canRebaselineRecentLocalMutation(
   if (
     assessment.unreadableCategoryReason
     || assessment.inspection.snapshotValidationError
+    || assessment.inspection.nonTamperState
     || assessment.inspection.legacyBaselineMismatch
   ) {
     return false;
@@ -249,6 +328,18 @@ export function decideVaultIntegrity(input: VaultIntegrityDecisionInput): VaultI
       recoverableFromTrustedSnapshot: false,
       uiSafeMessageCode: 'vault_integrity_blocked',
       debugSafeReason: result.blockedReason ?? 'unknown_integrity_failure',
+    };
+  }
+
+  if (isNonTamperIntegrityMode(result.mode)) {
+    return {
+      mode: result.mode,
+      blockedReason: null,
+      quarantinedItems: [],
+      driftedCategoryIds: [],
+      recoverableFromTrustedSnapshot: false,
+      uiSafeMessageCode: 'vault_integrity_not_verified',
+      debugSafeReason: result.nonTamperReason ?? 'integrity_not_verified',
     };
   }
 

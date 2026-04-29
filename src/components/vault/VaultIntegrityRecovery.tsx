@@ -40,6 +40,8 @@ function getBlockedReasonMessage(reason: ReturnType<typeof useVault>['integrityB
       return 'Die lokale Integritäts-Baseline ist unlesbar oder beschädigt.';
     case 'legacy_baseline_mismatch':
       return 'Die alte Integritäts-Baseline passt nicht mehr zum aktuellen Tresorstand.';
+    case 'baseline_scope_mismatch':
+      return 'Die lokale Integritäts-Baseline gehört nicht eindeutig zu diesem Tresor.';
     case 'category_structure_mismatch':
       return 'Die verschlüsselten Kategorien wurden außerhalb des vertrauenswürdigen Änderungswegs verändert.';
     case 'snapshot_malformed':

@@ -212,6 +212,56 @@ function createSelectQueryMock(
   return query;
 }
 
+function withCompleteSnapshot<T extends {
+  userId?: string;
+  vaultId?: string | null;
+  items: unknown[];
+  categories: unknown[];
+  lastSyncedAt?: string | null;
+  updatedAt?: string;
+}>(
+  snapshot: T,
+  source: "remote" | "remote_with_local_overlay" = "remote",
+): T & { completeness: Record<string, unknown> } {
+  const checkedAt = snapshot.updatedAt ?? "2026-04-29T10:00:00.000Z";
+  const userId = snapshot.userId ?? mockUser.id;
+  const vaultId = snapshot.vaultId ?? "vault-123";
+  return {
+    ...snapshot,
+    userId,
+    vaultId,
+    lastSyncedAt: snapshot.lastSyncedAt ?? checkedAt,
+    updatedAt: snapshot.updatedAt ?? checkedAt,
+    completeness: {
+      kind: "complete",
+      reason: source === "remote_with_local_overlay"
+        ? "remote_with_local_mutation_overlay"
+        : "remote_page_count_verified",
+      checkedAt,
+      source,
+      scope: {
+        kind: "private_default_vault",
+        userId,
+        vaultId,
+        includesSharedCollections: false,
+      },
+      vault: { defaultVaultResolved: Boolean(vaultId) },
+      items: {
+        loadedCount: snapshot.items.length,
+        totalCount: snapshot.items.length,
+        complete: true,
+        pageSize: 1000,
+      },
+      categories: {
+        loadedCount: snapshot.categories.length,
+        totalCount: snapshot.categories.length,
+        complete: true,
+        pageSize: 1000,
+      },
+    },
+  };
+}
+
 // ============ Test Suite ============
 
 describe("VaultContext", () => {
@@ -227,14 +277,14 @@ describe("VaultContext", () => {
     mockSaveOfflineVaultTwoFactorRequirement.mockResolvedValue(undefined);
     mockIsAppOnline.mockReturnValue(true);
     mockSaveOfflineCredentials.mockResolvedValue(undefined);
-    mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+    mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
       userId: mockUser.id,
       vaultId: "vault-123",
       items: [],
       categories: [],
       lastSyncedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    });
+    }));
     mockGetOfflineSnapshot.mockResolvedValue(null);
     mockGetTrustedOfflineSnapshot.mockResolvedValue(null);
     mockIsRecentLocalVaultMutation.mockReturnValue(false);
@@ -244,10 +294,10 @@ describe("VaultContext", () => {
     mockLoadDeviceKey.mockResolvedValue(null);
     mockCheckHasDeviceKey.mockResolvedValue(false);
     mockLoadVaultSnapshot.mockResolvedValue({
-      snapshot: {
+      snapshot: withCompleteSnapshot({
         items: [],
         categories: [],
-      },
+      }, "remote_with_local_overlay"),
       source: "cache",
     });
     mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
@@ -853,7 +903,7 @@ describe("VaultContext", () => {
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
       mockDecrypt.mockResolvedValue("QA Kategorie");
-      mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
         userId: devUserId,
         vaultId: "vault-regular",
         items: [],
@@ -872,7 +922,7 @@ describe("VaultContext", () => {
         ],
         lastSyncedAt: null,
         updatedAt: "2026-04-22T11:00:00.000Z",
-      });
+      }));
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
 
@@ -898,7 +948,7 @@ describe("VaultContext", () => {
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
-      mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
         userId: mockUser.id,
         vaultId: "vault-123",
         items: [
@@ -919,7 +969,7 @@ describe("VaultContext", () => {
         categories: [],
         lastSyncedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      });
+      }));
       mockDecryptVaultItem.mockRejectedValue(new Error("OperationError"));
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
@@ -1001,7 +1051,7 @@ describe("VaultContext", () => {
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
-      mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
         userId: mockUser.id,
         vaultId: "vault-123",
         items: [],
@@ -1020,7 +1070,7 @@ describe("VaultContext", () => {
         ],
         lastSyncedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      });
+      }));
       mockDecrypt.mockRejectedValue(new Error("OperationError"));
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
@@ -1119,7 +1169,7 @@ describe("VaultContext", () => {
         await result.current.setupMasterPassword("CorrectPassword!");
       });
 
-      const trustedSnapshot = {
+      const trustedSnapshot = withCompleteSnapshot({
         userId: mockUser.id,
         vaultId: "vault-123",
         items: [
@@ -1152,7 +1202,7 @@ describe("VaultContext", () => {
         ],
         lastSyncedAt: "2026-04-22T11:00:00.000Z",
         updatedAt: "2026-04-22T11:00:00.000Z",
-      };
+      }, "remote_with_local_overlay");
 
       mockLoadVaultSnapshot.mockResolvedValue({
         snapshot: trustedSnapshot,
@@ -1195,7 +1245,7 @@ describe("VaultContext", () => {
         await result.current.setupMasterPassword("CorrectPassword!");
       });
 
-      const mergedSnapshot = {
+      const mergedSnapshot = withCompleteSnapshot({
         userId: mockUser.id,
         vaultId: "vault-123",
         items: [],
@@ -1214,7 +1264,7 @@ describe("VaultContext", () => {
         ],
         lastSyncedAt: "2026-04-22T11:00:00.000Z",
         updatedAt: "2026-04-22T11:00:00.000Z",
-      };
+      }, "remote_with_local_overlay");
 
       mockLoadVaultSnapshot.mockClear();
       mockSaveTrustedOfflineSnapshot.mockClear();

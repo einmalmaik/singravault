@@ -1,4 +1,8 @@
-import type { QuarantinedVaultItem, VaultIntegrityVerificationResult } from './vaultIntegrityService';
+import {
+  isNonTamperIntegrityMode,
+  type QuarantinedVaultItem,
+  type VaultIntegrityVerificationResult,
+} from './vaultIntegrityService';
 
 export interface VaultQuarantineSummary {
   quarantinedItems: QuarantinedVaultItem[];
@@ -58,6 +62,13 @@ export function buildDisplayedIntegrityResult(
       categoryCount: 0,
       mode: 'quarantine',
       quarantinedItems: runtimeUnreadableItems,
+    };
+  }
+
+  if (isNonTamperIntegrityMode(result.mode)) {
+    return {
+      ...result,
+      quarantinedItems: [],
     };
   }
 

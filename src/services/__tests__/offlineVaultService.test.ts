@@ -185,7 +185,7 @@ function createChainable(resolvedValue: unknown = { data: null, error: null }) {
   const chain: Record<string, (...args: unknown[]) => unknown> = {};
   const methods = [
     "select", "insert", "update", "delete", "upsert",
-    "eq", "in", "single", "maybeSingle", "limit", "order",
+    "eq", "in", "single", "maybeSingle", "limit", "order", "range",
   ];
   for (const m of methods) {
     chain[m] = vi.fn().mockReturnValue(chain);
@@ -780,6 +780,41 @@ describe("fetchRemoteOfflineSnapshot", () => {
     // Should be persisted in IndexedDB
     const cached = await svc.getOfflineSnapshot(USER_ID);
     expect(cached).toEqual(snapshot);
+  });
+
+  it("fetches all item pages before marking a remote snapshot complete", async () => {
+    const firstPageItems = Array.from({ length: svc.REMOTE_SNAPSHOT_PAGE_SIZE }, (_, index) =>
+      makeItemRow({ id: `item-${index + 1}` }));
+    const secondPageItems = [makeItemRow({ id: "item-1001" })];
+    const vaultChain = createChainable({ data: { id: VAULT_ID }, error: null });
+    const catChain = createChainable({ data: [], error: null, count: 0 });
+    const firstItemChain = createChainable({
+      data: firstPageItems,
+      error: null,
+      count: svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1,
+    });
+    const secondItemChain = createChainable({
+      data: secondPageItems,
+      error: null,
+      count: svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1,
+    });
+
+    mockSupabase._setChains([vaultChain, catChain, firstItemChain, secondItemChain]);
+
+    const snapshot = await svc.fetchRemoteOfflineSnapshot(USER_ID);
+
+    expect(snapshot.items).toHaveLength(svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1);
+    expect(snapshot.completeness?.kind).toBe("complete");
+    expect(snapshot.completeness?.items).toMatchObject({
+      loadedCount: svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1,
+      totalCount: svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1,
+      complete: true,
+    });
+    expect(firstItemChain.range).toHaveBeenCalledWith(0, svc.REMOTE_SNAPSHOT_PAGE_SIZE - 1);
+    expect(secondItemChain.range).toHaveBeenCalledWith(
+      svc.REMOTE_SNAPSHOT_PAGE_SIZE,
+      (svc.REMOTE_SNAPSHOT_PAGE_SIZE * 2) - 1,
+    );
   });
 
   it("stores the remote vault revision and rejects a lower later revision", async () => {

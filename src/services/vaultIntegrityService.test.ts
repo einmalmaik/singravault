@@ -220,6 +220,123 @@ describe("vaultIntegrityService", () => {
     ]);
   });
 
+  it("does not classify missing baseline items when snapshot completeness is not proven", async () => {
+    const {
+      inspectVaultSnapshotIntegrity,
+      toVaultIntegrityVerificationResult,
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+
+    await verifyVaultSnapshotIntegrity("user-1", {
+      items: [
+        { id: "item-1", encrypted_data: "cipher-1" },
+        { id: "item-2", encrypted_data: "cipher-2" },
+      ],
+      categories: [],
+    }, key);
+
+    const inspection = await inspectVaultSnapshotIntegrity("user-1", {
+      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
+      categories: [],
+    }, key, {
+      completeness: {
+        isComplete: false,
+        canVerifyDrift: false,
+        nonTamperState: {
+          mode: "scope_incomplete",
+          reason: "snapshot_scope_incomplete",
+        },
+      },
+    });
+    const result = toVaultIntegrityVerificationResult(inspection);
+
+    expect(result.mode).toBe("scope_incomplete");
+    expect(result.nonTamperReason).toBe("snapshot_scope_incomplete");
+    expect(result.quarantinedItems).toEqual([]);
+  });
+
+  it("reports incompatible baseline canonicalization as migration_required", async () => {
+    const {
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+    const { encrypt } = await import("./cryptoService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    const incompatibleBaseline = await encrypt(JSON.stringify({
+      version: 2,
+      snapshotDigest: "stored-root",
+      itemDigests: { "item-1": "legacy-digest" },
+      categoryDigests: {},
+      itemCount: 1,
+      categoryCount: 0,
+      recordedAt: new Date().toISOString(),
+      userId: "user-1",
+      schemaVersion: 2,
+      canonicalizationVersion: 999,
+    }), key);
+    secretStoreState.baselineEnvelopes.set("user-1", incompatibleBaseline);
+
+    const result = await verifyVaultSnapshotIntegrity("user-1", {
+      items: [{ id: "item-1", encrypted_data: "cipher-1" }],
+      categories: [],
+    }, key);
+
+    expect(result.mode).toBe("migration_required");
+    expect(result.nonTamperReason).toBe("baseline_canonicalization_incompatible");
+    expect(result.quarantinedItems).toEqual([]);
+  });
+
+  it("does not treat missing or unknown items from an unscoped legacy V2 baseline as tamper", async () => {
+    const {
+      computeVaultSnapshotDigest,
+      verifyVaultSnapshotIntegrity,
+    } = await import("./vaultIntegrityService");
+    const { encrypt } = await import("./cryptoService");
+
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    const baselineSnapshot = {
+      items: [
+        { id: "item-1", encrypted_data: "cipher-1" },
+        { id: "item-2", encrypted_data: "cipher-2" },
+      ],
+      categories: [],
+    };
+    const legacyUnscopedBaseline = await encrypt(JSON.stringify({
+      version: 2,
+      snapshotDigest: await computeVaultSnapshotDigest(baselineSnapshot),
+      itemDigests: {
+        "item-1": JSON.stringify({ id: "item-1", encrypted_data: "cipher-1" }),
+        "item-2": JSON.stringify({ id: "item-2", encrypted_data: "cipher-2" }),
+      },
+      categoryDigests: {},
+      itemCount: 2,
+      categoryCount: 0,
+      recordedAt: new Date().toISOString(),
+      userId: "user-1",
+      schemaVersion: 2,
+      canonicalizationVersion: 1,
+    }), key);
+    secretStoreState.baselineEnvelopes.set("user-1", legacyUnscopedBaseline);
+
+    const result = await verifyVaultSnapshotIntegrity("user-1", {
+      items: [
+        { id: "item-1", encrypted_data: "cipher-1" },
+        { id: "item-3", encrypted_data: "cipher-3" },
+      ],
+      categories: [],
+    }, key, {
+      completeness: {
+        isComplete: true,
+        canVerifyDrift: true,
+      },
+    });
+
+    expect(result.mode).toBe("scope_incomplete");
+    expect(result.quarantinedItems).toEqual([]);
+  });
+
   it("inspects category drift together with item drift for trusted re-baselining decisions", async () => {
     const {
       inspectVaultSnapshotIntegrity,

@@ -59,6 +59,7 @@ function sameIntegrityResult(
     && left.categoryCount === right.categoryCount
     && left.mode === right.mode
     && left.blockedReason === right.blockedReason
+    && left.nonTamperReason === right.nonTamperReason
     && sameQuarantinedItems(left.quarantinedItems ?? [], right.quarantinedItems ?? []);
 }
 
