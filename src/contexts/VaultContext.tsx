@@ -374,6 +374,8 @@ interface VaultContextType {
     lock: () => void;
     /** Enables Device Key protection: generates key, re-encrypts vault */
     enableDeviceKey: (masterPassword: string) => Promise<{ error: Error | null }>;
+    /** Refreshes whether a Device Key is available on the current device */
+    refreshDeviceKeyState: () => Promise<void>;
 
     // Passkey support
     /** Whether the browser supports WebAuthn */
@@ -642,6 +644,27 @@ export function VaultProvider({ children }: VaultProviderProps) {
             setHasPasskeyUnlock(false);
         }
     }, [user, authReady]); // authReady required â€” stale closure fix
+
+    const refreshDeviceKeyState = useCallback(async (): Promise<void> => {
+        if (!user) {
+            setDeviceKeyActive(false);
+            setCurrentDeviceKey(null);
+            return;
+        }
+
+        try {
+            const hasDK = await checkHasDeviceKey(user.id);
+            setDeviceKeyActive(hasDK);
+            if (hasDK && !isNativeDeviceKeyBridgeRuntime()) {
+                setCurrentDeviceKey(await loadDeviceKey(user.id));
+            } else {
+                setCurrentDeviceKey(null);
+            }
+        } catch {
+            setDeviceKeyActive(false);
+            setCurrentDeviceKey(null);
+        }
+    }, [user]);
 
     const applyCachedVaultCredentials = useCallback(async (userId: string): Promise<boolean> => {
         const cached = await getOfflineCredentials(userId);
@@ -2715,7 +2738,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                                 vault_protection_mode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
                                 device_key_version: 1,
                                 device_key_enabled_at: enabledAt,
-                                device_key_backup_acknowledged_at: enabledAt,
+                                device_key_backup_acknowledged_at: null,
                             } as Record<string, unknown>)
                             .eq('user_id', user.id);
                         if (updateError) {
@@ -2795,7 +2818,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                             vault_protection_mode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
                             device_key_version: 1,
                             device_key_enabled_at: enabledAt,
-                            device_key_backup_acknowledged_at: enabledAt,
+                            device_key_backup_acknowledged_at: null,
                         } as Record<string, unknown>)
                         .eq('user_id', user.id);
 
@@ -2872,7 +2895,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                         vault_protection_mode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
                         device_key_version: 1,
                         device_key_enabled_at: enabledAt,
-                        device_key_backup_acknowledged_at: enabledAt,
+                        device_key_backup_acknowledged_at: null,
                     } as Record<string, unknown>)
                     .eq('user_id', user.id);
                 if (updateError) {
@@ -2961,7 +2984,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                     vault_protection_mode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
                     device_key_version: 1,
                     device_key_enabled_at: enabledAt,
-                    device_key_backup_acknowledged_at: enabledAt,
+                    device_key_backup_acknowledged_at: null,
                 } as Record<string, unknown>)
                 .eq('user_id', user.id);
 
@@ -3354,6 +3377,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 unlockWithPasskey,
                 lock,
                 enableDeviceKey,
+                refreshDeviceKeyState,
                 webAuthnAvailable,
                 hasPasskeyUnlock,
                 refreshPasskeyUnlockStatus,

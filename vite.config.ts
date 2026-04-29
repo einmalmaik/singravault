@@ -108,6 +108,10 @@ function cspMetaPlugin(mode: string) {
 
 // https://vitejs.dev/config/
 export default defineConfig(async ({ mode }) => {
+  if (mode !== "development" && process.env.VITE_E2E_TEST_MODE === "true") {
+    throw new Error("VITE_E2E_TEST_MODE must not be enabled in production builds.");
+  }
+
   const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "package.json"), "utf-8")) as {
     version?: string;
   };

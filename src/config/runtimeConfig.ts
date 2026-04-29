@@ -1,8 +1,12 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
+import { assertNoUnsafeE2ETestMode } from "./testMode";
+
 const MISSING_SUPABASE_URL = "https://missing-supabase-url.invalid";
 const MISSING_SUPABASE_PUBLISHABLE_KEY = "missing-supabase-publishable-key";
+
+assertNoUnsafeE2ETestMode();
 
 function readEnv(name: "VITE_SUPABASE_URL" | "VITE_SUPABASE_PUBLISHABLE_KEY" | "VITE_OPAQUE_SERVER_STATIC_PUBLIC_KEY"): string {
   return String(import.meta.env[name] ?? "").trim();

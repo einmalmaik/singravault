@@ -332,7 +332,11 @@ export async function importDeviceKeyFromTransfer(
     }
 
     if (isNativeDeviceKeyBridgeRuntime()) {
-        return importNativeDeviceKeyFromTransfer(userId, transferData, pin);
+        try {
+            return await importNativeDeviceKeyFromTransfer(userId, transferData, pin);
+        } catch {
+            return false;
+        }
     }
 
     const existingDeviceKey = await getDeviceKey(userId);

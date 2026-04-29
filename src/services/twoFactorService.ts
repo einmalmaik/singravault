@@ -521,6 +521,39 @@ export async function getTwoFactorRequirement(input: {
     userId: string;
     context: TwoFactorContext;
 }): Promise<TwoFactorRequirement> {
+    const requirementFromLoadedStatus = (
+        loaded: TwoFactorStatusLoadResult,
+    ): TwoFactorRequirement | null => {
+        if (loaded.status === 'unavailable') {
+            return null;
+        }
+
+        const status = loaded.data;
+        if (!status?.isEnabled) {
+            return {
+                context: input.context,
+                required: false,
+                status: 'loaded',
+            };
+        }
+
+        if (input.context === 'vault_unlock') {
+            return {
+                context: input.context,
+                required: status.vaultTwoFactorEnabled,
+                status: 'loaded',
+                reason: status.vaultTwoFactorEnabled ? 'vault_2fa_enabled' : undefined,
+            };
+        }
+
+        return {
+            context: input.context,
+            required: true,
+            status: 'loaded',
+            reason: 'account_2fa_enabled',
+        };
+    };
+
     try {
         const { data, error } = await invokeAuth2FA<{
             required?: boolean;
@@ -540,52 +573,31 @@ export async function getTwoFactorRequirement(input: {
             };
         }
     } catch {
-        // Fall through to fail-closed for unlock-sensitive contexts.
-    }
-
-    if (input.context === 'vault_unlock') {
-        return {
-            context: input.context,
-            required: true,
-            status: 'unavailable',
-            reason: 'status_unavailable',
-        };
+        // Fall through to a direct status read. A transient Edge Function
+        // problem must not turn a definitively disabled VaultFA flag into a
+        // false 2FA requirement.
     }
 
     const loaded = await loadTwoFactorStatus(input.userId);
-
-    if (loaded.status === 'unavailable') {
-        return {
-            context: input.context,
-            required: true,
-            status: 'unavailable',
-            reason: 'status_unavailable',
-        };
-    }
-
-    const status = loaded.data;
-    if (!status?.isEnabled) {
-        return {
-            context: input.context,
-            required: false,
-            status: 'loaded',
-        };
+    const loadedRequirement = requirementFromLoadedStatus(loaded);
+    if (loadedRequirement) {
+        return loadedRequirement;
     }
 
     if (input.context === 'vault_unlock') {
         return {
             context: input.context,
-            required: status.vaultTwoFactorEnabled,
-            status: 'loaded',
-            reason: status.vaultTwoFactorEnabled ? 'vault_2fa_enabled' : undefined,
+            required: true,
+            status: 'unavailable',
+            reason: 'status_unavailable',
         };
     }
 
     return {
         context: input.context,
         required: true,
-        status: 'loaded',
-        reason: 'account_2fa_enabled',
+        status: 'unavailable',
+        reason: 'status_unavailable',
     };
 }
 

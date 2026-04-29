@@ -10,12 +10,13 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { KeyRound, QrCode, Upload, Shield, AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Copy, Download, Eye, EyeOff, KeyRound, QrCode, Shield, Upload } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
     Dialog,
     DialogContent,
@@ -29,6 +30,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { isTauriRuntime } from '@/platform/runtime';
 import {
     DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH,
@@ -40,7 +42,7 @@ import {
 export function DeviceKeySettings() {
     const { t } = useTranslation();
     const { toast } = useToast();
-    const { deviceKeyActive, enableDeviceKey, isLocked } = useVault();
+    const { deviceKeyActive, enableDeviceKey, isLocked, refreshDeviceKeyState } = useVault();
     const { user } = useAuth();
 
     const [showEnableDialog, setShowEnableDialog] = useState(false);
@@ -52,6 +54,7 @@ export function DeviceKeySettings() {
     const [importData, setImportData] = useState('');
     const [loading, setLoading] = useState(false);
     const [backupAcknowledged, setBackupAcknowledged] = useState(false);
+    const [showTransferSecret, setShowTransferSecret] = useState(false);
     const isDesktopRuntime = isTauriRuntime();
 
     const handleEnable = async () => {
@@ -90,6 +93,10 @@ export function DeviceKeySettings() {
         setLoading(false);
         if (data) {
             setExportedData(data);
+            await supabase
+                .from('profiles')
+                .update({ device_key_backup_acknowledged_at: new Date().toISOString() } as Record<string, unknown>)
+                .eq('user_id', user.id);
         } else {
             toast({
                 variant: 'destructive',
@@ -103,7 +110,12 @@ export function DeviceKeySettings() {
         if (!user || !importData || pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH) return;
         setLoading(true);
 
-        const success = await importDeviceKeyFromTransfer(user.id, importData, pin);
+        let success = false;
+        try {
+            success = await importDeviceKeyFromTransfer(user.id, importData, pin);
+        } catch {
+            success = false;
+        }
 
         setLoading(false);
         setShowImportDialog(false);
@@ -115,6 +127,7 @@ export function DeviceKeySettings() {
                 title: t('common.success'),
                 description: t('deviceKey.importSuccess'),
             });
+            await refreshDeviceKeyState();
         } else {
             toast({
                 variant: 'destructive',
@@ -122,6 +135,52 @@ export function DeviceKeySettings() {
                 description: t('deviceKey.importFailed'),
             });
         }
+    };
+
+    const handleImportFile = async (file: File | undefined) => {
+        if (!file) return;
+        const text = await file.text();
+        setImportData(text.trim());
+    };
+
+    const copyTransferSecret = async () => {
+        if (!pin) return;
+        await navigator.clipboard.writeText(pin);
+        toast({
+            title: t('common.success'),
+            description: t('deviceKey.secretCopied', 'Transfer secret copied.'),
+        });
+    };
+
+    const copyExportedData = async () => {
+        if (!exportedData) return;
+        await navigator.clipboard.writeText(exportedData);
+        toast({
+            title: t('common.success'),
+            description: t('deviceKey.exportCopied', 'Device Key transfer data copied.'),
+        });
+    };
+
+    const downloadTextFile = (filename: string, contents: string) => {
+        const blob = new Blob([contents], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    };
+
+    const downloadTransferFile = () => {
+        if (!exportedData) return;
+        downloadTextFile('singra-device-key.singra-device-key', `${exportedData}\n`);
+    };
+
+    const downloadTransferSecret = () => {
+        if (!pin) return;
+        downloadTextFile('singra-device-key-transfer-secret.txt', `${pin}\n`);
     };
 
     return (
@@ -243,7 +302,7 @@ export function DeviceKeySettings() {
             {/* Export Dialog */}
             <Dialog open={showExportDialog} onOpenChange={(open) => {
                 setShowExportDialog(open);
-                if (!open) { setExportedData(''); setPin(''); }
+                if (!open) { setExportedData(''); setPin(''); setShowTransferSecret(false); }
             }}>
                 <DialogContent>
                     <DialogHeader>
@@ -264,7 +323,7 @@ export function DeviceKeySettings() {
                                 <Label>{t('deviceKey.transferPin')}</Label>
                                 <div className="flex gap-2">
                                     <Input
-                                        type="password"
+                                        type={showTransferSecret ? 'text' : 'password'}
                                         value={pin}
                                         onChange={(e) => setPin(e.target.value)}
                                         placeholder={t('deviceKey.pinPlaceholder')}
@@ -273,11 +332,32 @@ export function DeviceKeySettings() {
                                     <Button
                                         type="button"
                                         variant="outline"
+                                        size="icon"
+                                        onClick={() => setShowTransferSecret((value) => !value)}
+                                        aria-label={showTransferSecret ? t('common.hide', 'Hide') : t('common.show', 'Show')}
+                                    >
+                                        {showTransferSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
                                         onClick={() => setPin(generateDeviceKeyTransferSecret())}
                                     >
                                         {t('deviceKey.generateSecret')}
                                     </Button>
                                 </div>
+                                {pin && (
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button type="button" variant="outline" size="sm" onClick={copyTransferSecret}>
+                                            <Copy className="w-4 h-4 mr-2" />
+                                            {t('common.copy', 'Copy')}
+                                        </Button>
+                                        <Button type="button" variant="outline" size="sm" onClick={downloadTransferSecret}>
+                                            <Download className="w-4 h-4 mr-2" />
+                                            {t('deviceKey.downloadSecret', 'Download secret')}
+                                        </Button>
+                                    </div>
+                                )}
                             </div>
                             <DialogFooter>
                                 <Button variant="outline" onClick={() => setShowExportDialog(false)}>
@@ -290,8 +370,23 @@ export function DeviceKeySettings() {
                         </>
                     ) : (
                         <div className="space-y-4">
-                            <div className="p-4 rounded-lg bg-muted font-mono text-xs break-all select-all">
-                                {exportedData}
+                            <div className="space-y-2">
+                                <Label>{t('deviceKey.transferCode')}</Label>
+                                <Textarea
+                                    readOnly
+                                    value={exportedData}
+                                    className="min-h-32 font-mono text-xs"
+                                />
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <Button type="button" variant="outline" onClick={copyExportedData}>
+                                    <Copy className="w-4 h-4 mr-2" />
+                                    {t('common.copy', 'Copy')}
+                                </Button>
+                                <Button type="button" variant="outline" onClick={downloadTransferFile}>
+                                    <Download className="w-4 h-4 mr-2" />
+                                    {t('deviceKey.downloadExport', 'Download export')}
+                                </Button>
                             </div>
                             <p className="text-sm text-muted-foreground">
                                 {t('deviceKey.exportInstructions')}
@@ -307,7 +402,10 @@ export function DeviceKeySettings() {
             </Dialog>
 
             {/* Import Dialog */}
-            <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+            <Dialog open={showImportDialog} onOpenChange={(open) => {
+                setShowImportDialog(open);
+                if (!open) { setImportData(''); setPin(''); setShowTransferSecret(false); }
+            }}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>{t('deviceKey.importTitle')}</DialogTitle>
@@ -324,22 +422,37 @@ export function DeviceKeySettings() {
                     <div className="space-y-4">
                         <div className="space-y-2">
                             <Label>{t('deviceKey.transferCode')}</Label>
-                            <Input
+                            <Textarea
                                 value={importData}
                                 onChange={(e) => setImportData(e.target.value)}
                                 placeholder={t('deviceKey.codePlaceholder')}
+                                className="min-h-28 font-mono text-xs"
+                            />
+                            <Input
+                                type="file"
+                                accept=".singra-device-key,application/json,text/plain"
+                                onChange={(event) => void handleImportFile(event.target.files?.[0])}
                             />
                         </div>
                         <div className="space-y-2">
                             <Label>{t('deviceKey.transferPin')}</Label>
                             <div className="flex gap-2">
                                 <Input
-                                    type="password"
+                                    type={showTransferSecret ? 'text' : 'password'}
                                     value={pin}
                                     onChange={(e) => setPin(e.target.value)}
                                     placeholder={t('deviceKey.pinPlaceholder')}
                                     minLength={DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH}
                                 />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() => setShowTransferSecret((value) => !value)}
+                                    aria-label={showTransferSecret ? t('common.hide', 'Hide') : t('common.show', 'Show')}
+                                >
+                                    {showTransferSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </Button>
                                 <Button
                                     type="button"
                                     variant="outline"

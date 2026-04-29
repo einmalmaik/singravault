@@ -584,6 +584,45 @@ describe("getTwoFactorRequirement", () => {
       reason: "status_unavailable",
     });
   });
+
+  it("does not turn an Edge Function failure into vault 2FA when VaultFA is disabled", async () => {
+    mockSupabase.functions.invoke.mockRejectedValueOnce(new Error("network unavailable"));
+    setupFromChain([
+      {
+        table: "user_2fa",
+        data: { is_enabled: true, vault_2fa_enabled: false, last_verified_at: null },
+      },
+    ]);
+
+    const result = await getTwoFactorRequirement({
+      userId: TEST_USER_ID,
+      context: "vault_unlock",
+    });
+
+    expect(result).toEqual({
+      context: "vault_unlock",
+      required: false,
+      status: "loaded",
+      reason: undefined,
+    });
+  });
+
+  it("does not require vault 2FA when no 2FA row exists after Edge Function failure", async () => {
+    mockSupabase.functions.invoke.mockRejectedValueOnce(new Error("network unavailable"));
+    setupFromChain([{ table: "user_2fa", data: null }]);
+
+    const result = await getTwoFactorRequirement({
+      userId: TEST_USER_ID,
+      context: "vault_unlock",
+    });
+
+    expect(result).toEqual({
+      context: "vault_unlock",
+      required: false,
+      status: "loaded",
+      reason: undefined,
+    });
+  });
 });
 
 describe("setVaultTwoFactor", () => {
