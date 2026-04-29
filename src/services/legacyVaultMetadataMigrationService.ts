@@ -99,3 +99,43 @@ export async function migrateLegacyVaultItemMetadata(
     migrated: true,
   };
 }
+
+export async function migrateLegacyVaultItemEncryptionAndMetadata(
+  input: LegacyVaultMetadataMigrationInput,
+): Promise<LegacyVaultMetadataMigrationResult> {
+  const mergedDecryptedData = hasLegacyVaultItemServerMetadata(input.item)
+    ? mergeLegacyVaultItemMetadataIntoPayload(input.decryptedData, input.item)
+    : input.decryptedData;
+  const migratedEncryptedData = await input.encryptItem(mergedDecryptedData, input.item.id);
+  const neutralPayload = neutralizeVaultItemServerMetadata({
+    id: input.item.id,
+    user_id: input.item.user_id,
+    vault_id: input.item.vault_id,
+    encrypted_data: migratedEncryptedData,
+  });
+  const updatedAt = (input.now ?? (() => new Date()))().toISOString();
+
+  const { error } = await supabase
+    .from('vault_items')
+    .update(neutralPayload)
+    .eq('id', input.item.id)
+    .eq('user_id', input.userId);
+
+  if (error) {
+    throw error;
+  }
+
+  const migratedItem: VaultItemRow = {
+    ...input.item,
+    ...neutralPayload,
+    updated_at: updatedAt,
+  };
+
+  await upsertOfflineItemRow(input.userId, migratedItem, input.vaultId);
+
+  return {
+    item: migratedItem,
+    decryptedData: mergedDecryptedData,
+    migrated: true,
+  };
+}

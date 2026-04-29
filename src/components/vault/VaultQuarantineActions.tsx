@@ -16,6 +16,10 @@ import { Button } from '@/components/ui/button';
 import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
+import {
+  VaultQuarantineRestoreProgressDialog,
+  type VaultQuarantineRestoreProgressStatus,
+} from './VaultQuarantineRestoreProgressDialog';
 
 type PendingConfirmation = 'delete' | 'accept-missing' | null;
 
@@ -37,6 +41,15 @@ export function VaultQuarantineActions({
     restoreQuarantinedItem,
   } = useVault();
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation>(null);
+  const [restoreProgress, setRestoreProgress] = useState<{
+    open: boolean;
+    status: VaultQuarantineRestoreProgressStatus;
+    lastError: string | null;
+  }>({
+    open: false,
+    status: 'running',
+    lastError: null,
+  });
 
   const resolution = quarantineResolutionById[item.id];
   const buttonSize = compact ? 'sm' : 'default';
@@ -75,8 +88,19 @@ export function VaultQuarantineActions({
   }
 
   const handleRestore = async () => {
+    setRestoreProgress({
+      open: true,
+      status: 'running',
+      lastError: null,
+    });
+
     const result = await restoreQuarantinedItem(item.id);
     if (result.error) {
+      setRestoreProgress({
+        open: true,
+        status: 'failed',
+        lastError: result.error.message,
+      });
       toast({
         variant: 'destructive',
         title: t('common.error'),
@@ -85,6 +109,11 @@ export function VaultQuarantineActions({
       return;
     }
 
+    setRestoreProgress({
+      open: true,
+      status: 'success',
+      lastError: null,
+    });
     toast({
       title: t('common.success'),
       description: t('vault.integrity.restoreSuccess', {
@@ -244,6 +273,22 @@ export function VaultQuarantineActions({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <VaultQuarantineRestoreProgressDialog
+        open={restoreProgress.open}
+        status={restoreProgress.status}
+        total={1}
+        completed={restoreProgress.status === 'success' ? 1 : 0}
+        failed={restoreProgress.status === 'failed' ? 1 : 0}
+        currentItemId={item.id}
+        lastError={restoreProgress.lastError}
+        onContinue={() => {
+          setRestoreProgress((current) => ({
+            ...current,
+            open: false,
+          }));
+        }}
+      />
     </>
   );
 }

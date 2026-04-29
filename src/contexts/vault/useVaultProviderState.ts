@@ -157,6 +157,23 @@ export function useVaultProviderState() {
     applyDisplayedIntegrityState(baseIntegrityResultRef.current, items);
   }, [applyDisplayedIntegrityState]);
 
+  const removeRuntimeUnreadableItems = useCallback((itemIds: Iterable<string>): void => {
+    const idsToRemove = new Set(itemIds);
+    if (idsToRemove.size === 0) {
+      return;
+    }
+
+    const nextRuntimeUnreadableItems = runtimeUnreadableItemsRef.current.filter(
+      (item) => !idsToRemove.has(item.id),
+    );
+    if (nextRuntimeUnreadableItems.length === runtimeUnreadableItemsRef.current.length) {
+      return;
+    }
+
+    runtimeUnreadableItemsRef.current = nextRuntimeUnreadableItems;
+    applyDisplayedIntegrityState(baseIntegrityResultRef.current, nextRuntimeUnreadableItems);
+  }, [applyDisplayedIntegrityState]);
+
   const clearActiveVaultSession = useCallback(() => {
     setEncryptionKey(null);
     setCurrentDeviceKey((existingKey) => {
@@ -314,6 +331,7 @@ export function useVaultProviderState() {
     applyDisplayedIntegrityState,
     applyIntegrityResultState,
     reportUnreadableItems,
+    removeRuntimeUnreadableItems,
     clearActiveVaultSession,
     resetVaultState,
     runQuarantineAction,

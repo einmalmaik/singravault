@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { EyeOff, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { EyeOff, RotateCcw, ShieldAlert, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,9 @@ interface VaultQuarantinePanelProps {
   ignoredItems?: QuarantinedVaultItem[];
   onIgnoreItem?: (item: QuarantinedVaultItem) => void;
   onIgnoreAll?: () => void;
+  onRestoreAll?: () => void;
+  restoreAllCount?: number;
+  restoreAllDisabled?: boolean;
 }
 
 function VaultQuarantineEntry({
@@ -86,6 +89,9 @@ export function VaultQuarantinePanel({
   ignoredItems = [],
   onIgnoreItem,
   onIgnoreAll,
+  onRestoreAll,
+  restoreAllCount = 0,
+  restoreAllDisabled = false,
 }: VaultQuarantinePanelProps) {
   const { t } = useTranslation();
   const hasIgnoredItems = ignoredItems.length > 0;
@@ -104,19 +110,35 @@ export function VaultQuarantinePanel({
               defaultValue: 'Einträge in Quarantäne',
             })}
           </CardTitle>
-          {onIgnoreAll && items.length > 0 && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="border-amber-500/35 bg-background/70 text-amber-800 hover:bg-amber-500/10 dark:text-amber-200"
-              onClick={onIgnoreAll}
-            >
-              {t('vault.integrity.ignoreSummaryAction', {
-                defaultValue: 'Alle sichtbaren ignorieren',
-              })}
-            </Button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {onRestoreAll && restoreAllCount > 0 && (
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                disabled={restoreAllDisabled}
+                onClick={onRestoreAll}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                {t('vault.integrity.restoreAllAction', {
+                  defaultValue: 'Alle wiederherstellbaren wiederherstellen',
+                })}
+              </Button>
+            )}
+            {onIgnoreAll && items.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-amber-500/35 bg-background/70 text-amber-800 hover:bg-amber-500/10 dark:text-amber-200"
+                onClick={onIgnoreAll}
+              >
+                {t('vault.integrity.ignoreSummaryAction', {
+                  defaultValue: 'Alle sichtbaren ignorieren',
+                })}
+              </Button>
+            )}
+          </div>
         </div>
         <p className="text-sm text-muted-foreground">
           {description || t('vault.integrity.quarantineDescription', {

@@ -11,22 +11,39 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Eye, KeyRound, Loader2, Plus, RefreshCw, Shield, TriangleAlert } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { getServiceHooks } from '@/extensions/registry';
 import { cn } from '@/lib/utils';
 import { ItemFilter, ViewMode } from '@/pages/VaultPage';
-import { VaultItemData } from '@/services/cryptoService';
+import { isCurrentVaultItemEnvelope, VaultItemData } from '@/services/cryptoService';
 import {
   isAppOnline,
   loadVaultSnapshot,
 } from '@/services/offlineVaultService';
-import { migrateLegacyVaultItemMetadata } from '@/services/legacyVaultMetadataMigrationService';
+import {
+  migrateLegacyVaultItemEncryptionAndMetadata,
+  migrateLegacyVaultItemMetadata,
+} from '@/services/legacyVaultMetadataMigrationService';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
 import { VaultItemCard } from './VaultItemCard';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
+import {
+  VaultQuarantineRestoreProgressDialog,
+  type VaultQuarantineRestoreProgressStatus,
+} from './VaultQuarantineRestoreProgressDialog';
 
 const DECRYPT_BATCH_SIZE = 25;
 const QUARANTINE_SUMMARY_THRESHOLD = 2;
@@ -57,6 +74,16 @@ interface VaultItemListProps {
 type RenderableVaultListEntry =
   | { kind: 'item'; item: VaultItem }
   | { kind: 'quarantined'; item: VaultItem; quarantine: QuarantinedVaultItem };
+
+interface BulkRestoreProgress {
+  open: boolean;
+  status: VaultQuarantineRestoreProgressStatus;
+  total: number;
+  completed: number;
+  failed: number;
+  currentItemId: string | null;
+  lastError: string | null;
+}
 
 function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
   return `${item.reason}:${item.updatedAt ?? ''}`;
@@ -96,11 +123,14 @@ export function VaultItemList({
   const userId = user?.id ?? null;
   const {
     decryptItem,
+    decryptItemForLegacyMigration,
     encryptItem,
     isDuressMode,
     lastIntegrityResult,
+    quarantineResolutionById,
     reportUnreadableItems,
     refreshIntegrityBaseline,
+    restoreQuarantinedItem,
     verifyIntegrity,
     vaultDataVersion,
   } = useVault();
@@ -110,6 +140,16 @@ export function VaultItemList({
   const [decrypting, setDecrypting] = useState(false);
   const [ignoredQuarantineById, setIgnoredQuarantineById] = useState<Record<string, string>>({});
   const [showIgnoredQuarantine, setShowIgnoredQuarantine] = useState(false);
+  const [bulkRestoreConfirmOpen, setBulkRestoreConfirmOpen] = useState(false);
+  const [bulkRestoreProgress, setBulkRestoreProgress] = useState<BulkRestoreProgress>({
+    open: false,
+    status: 'running',
+    total: 0,
+    completed: 0,
+    failed: 0,
+    currentItemId: null,
+    lastError: null,
+  });
   const [revalidating, setRevalidating] = useState(false);
   const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
@@ -117,6 +157,7 @@ export function VaultItemList({
   const revalidatingRef = useRef(false);
   const fetchItemsRef = useRef(false);
   const decryptItemRef = useRef(decryptItem);
+  const decryptItemForLegacyMigrationRef = useRef(decryptItemForLegacyMigration);
   const encryptItemRef = useRef(encryptItem);
   const reportUnreadableItemsRef = useRef(reportUnreadableItems);
   const verifyIntegrityRef = useRef(verifyIntegrity);
@@ -124,11 +165,12 @@ export function VaultItemList({
 
   useEffect(() => {
     decryptItemRef.current = decryptItem;
+    decryptItemForLegacyMigrationRef.current = decryptItemForLegacyMigration;
     encryptItemRef.current = encryptItem;
     reportUnreadableItemsRef.current = reportUnreadableItems;
     verifyIntegrityRef.current = verifyIntegrity;
     refreshIntegrityBaselineRef.current = refreshIntegrityBaseline;
-  }, [decryptItem, encryptItem, refreshIntegrityBaseline, reportUnreadableItems, verifyIntegrity]);
+  }, [decryptItem, decryptItemForLegacyMigration, encryptItem, refreshIntegrityBaseline, reportUnreadableItems, verifyIntegrity]);
 
   useEffect(() => {
     failedDecryptPayloadByItemIdRef.current.clear();
@@ -171,6 +213,16 @@ export function VaultItemList({
           && integrityResult.isFirstCheck
           && source === 'remote'
           && isAppOnline();
+        const canPersistLegacyEncryptionMigration = source === 'remote'
+          && isAppOnline()
+          && (
+            integrityResult?.mode === 'healthy'
+            || (
+              integrityResult?.mode === 'quarantine'
+              && integrityResult.quarantinedItems.length > 0
+              && integrityResult.quarantinedItems.every((item) => item.reason === 'decrypt_failed')
+            )
+          );
 
         const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
         let integrityBaselineDirty = false;
@@ -206,15 +258,68 @@ export function VaultItemList({
                 trustedItemIds.add(item.id);
               }
 
+              if (canPersistLegacyEncryptionMigration && !isCurrentVaultItemEnvelope(migration.item.encrypted_data)) {
+                const encryptionMigration = await migrateLegacyVaultItemEncryptionAndMetadata({
+                  userId,
+                  vaultId: snapshot.vaultId,
+                  item: migration.item,
+                  decryptedData: migration.decryptedData,
+                  canPersistRemote: true,
+                  encryptItem: encryptItemRef.current,
+                });
+                integrityBaselineDirty = true;
+                trustedItemIds.add(item.id);
+                decryptableItemIds.add(item.id);
+                failedDecryptPayloadByItemIdRef.current.delete(item.id);
+
+                return {
+                  ...encryptionMigration.item,
+                  decryptedData: encryptionMigration.decryptedData,
+                };
+              }
+
               return {
                 ...migration.item,
                 decryptedData: migration.decryptedData,
               };
             } catch {
+              if (canPersistLegacyEncryptionMigration) {
+                try {
+                  const legacyMigrationDecrypt = await decryptItemForLegacyMigrationRef.current(
+                    item.encrypted_data,
+                    item.id,
+                  );
+                  if (!legacyMigrationDecrypt.legacyNoAadFallbackUsed) {
+                    throw new Error('No legacy encryption migration required.');
+                  }
+
+                  const migration = await migrateLegacyVaultItemEncryptionAndMetadata({
+                    userId,
+                    vaultId: snapshot.vaultId,
+                    item,
+                    decryptedData: legacyMigrationDecrypt.data,
+                    canPersistRemote: true,
+                    encryptItem: encryptItemRef.current,
+                  });
+                  integrityBaselineDirty = true;
+                  trustedItemIds.add(item.id);
+                  decryptableItemIds.add(item.id);
+                  failedDecryptPayloadByItemIdRef.current.delete(item.id);
+
+                  return {
+                    ...migration.item,
+                    decryptedData: migration.decryptedData,
+                  };
+                } catch {
+                  // A failed explicit legacy migration is not enough evidence
+                  // to trust plaintext; keep the normal quarantine path.
+                }
+              }
+
               failedDecryptPayloadByItemIdRef.current.set(item.id, item.encrypted_data);
               unreadableItems.push({
                 id: item.id,
-                reason: 'ciphertext_changed',
+                reason: 'decrypt_failed',
                 updatedAt: item.updated_at ?? null,
                 itemType: item.item_type ?? null,
               });
@@ -234,9 +339,7 @@ export function VaultItemList({
           },
         );
 
-        if (unreadableItems.length > 0) {
-          reportUnreadableItemsRef.current(unreadableItems);
-        }
+        reportUnreadableItemsRef.current(unreadableItems);
 
         const canPersistTrustedFirstBaseline = integrityResult?.mode === 'healthy'
           && integrityResult.isFirstCheck
@@ -244,7 +347,10 @@ export function VaultItemList({
           && isAppOnline()
           && unreadableItems.length === 0;
 
-        if ((integrityBaselineDirty && canPersistMigrations) || canPersistTrustedFirstBaseline) {
+        if (
+          (integrityBaselineDirty && (canPersistMigrations || canPersistLegacyEncryptionMigration))
+          || canPersistTrustedFirstBaseline
+        ) {
           await refreshIntegrityBaselineRef.current({
             itemIds: new Set([...decryptableItemIds, ...trustedItemIds]),
             categoryIds: snapshot.categories.map((category) => category.id),
@@ -468,6 +574,12 @@ export function VaultItemList({
       quarantinedItems,
     ],
   );
+  const restorablePanelItems = useMemo(
+    () => panelQuarantinedItems.filter(
+      (item) => quarantineResolutionById[item.id]?.canRestore,
+    ),
+    [panelQuarantinedItems, quarantineResolutionById],
+  );
 
   const handleIgnoreGroupedQuarantine = useCallback(() => {
     persistIgnoredQuarantine({
@@ -478,6 +590,58 @@ export function VaultItemList({
     });
     setShowIgnoredQuarantine(false);
   }, [ignoredQuarantineById, panelQuarantinedItems, persistIgnoredQuarantine]);
+
+  const handleRestoreAllVisible = useCallback(async () => {
+    const itemsToRestore = restorablePanelItems;
+    if (itemsToRestore.length === 0) {
+      setBulkRestoreConfirmOpen(false);
+      return;
+    }
+
+    setBulkRestoreConfirmOpen(false);
+    setBulkRestoreProgress({
+      open: true,
+      status: 'running',
+      total: itemsToRestore.length,
+      completed: 0,
+      failed: 0,
+      currentItemId: itemsToRestore[0].id,
+      lastError: null,
+    });
+
+    let completed = 0;
+    let failed = 0;
+    let lastError: string | null = null;
+
+    for (const item of itemsToRestore) {
+      setBulkRestoreProgress((current) => ({
+        ...current,
+        currentItemId: item.id,
+      }));
+
+      const result = await restoreQuarantinedItem(item.id);
+      if (result.error) {
+        failed += 1;
+        lastError = result.error.message;
+      } else {
+        completed += 1;
+      }
+
+      setBulkRestoreProgress((current) => ({
+        ...current,
+        completed,
+        failed,
+        lastError,
+      }));
+    }
+
+    setBulkRestoreProgress((current) => ({
+      ...current,
+      status: failed > 0 ? 'failed' : 'success',
+      currentItemId: null,
+      lastError,
+    }));
+  }, [restorablePanelItems, restoreQuarantinedItem]);
 
   const renderableItemCount = items.filter((item) => item.decryptedData).length;
 
@@ -579,6 +743,13 @@ export function VaultItemList({
         items={panelQuarantinedItems}
         ignoredItems={showIgnoredQuarantine ? activeIgnoredQuarantinedItems : []}
         onIgnoreItem={handleIgnoreQuarantineItem}
+        onRestoreAll={
+          restorablePanelItems.length > 0
+            ? () => setBulkRestoreConfirmOpen(true)
+            : undefined
+        }
+        restoreAllCount={restorablePanelItems.length}
+        restoreAllDisabled={bulkRestoreProgress.open && bulkRestoreProgress.status === 'running'}
         onIgnoreAll={
           hasGroupedQuarantine && canRenderGroupedQuarantine && panelQuarantinedItems.length > 0
             ? handleIgnoreGroupedQuarantine
@@ -640,6 +811,60 @@ export function VaultItemList({
           ))}
         </div>
       )}
+
+      <AlertDialog
+        open={bulkRestoreConfirmOpen}
+        onOpenChange={setBulkRestoreConfirmOpen}
+      >
+        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('vault.integrity.confirmBulkRestoreTitle', {
+                defaultValue: '{{count}} Einträge wiederherstellen?',
+                count: restorablePanelItems.length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="leading-relaxed">
+              {t('vault.integrity.confirmBulkRestoreDescription', {
+                defaultValue: 'Es werden nur Einträge wiederhergestellt, für die auf diesem Gerät eine vertrauenswürdige lokale Kopie verfügbar ist. Jeder Eintrag wird einzeln geprüft und danach verifiziert.',
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {t('common.cancel', {
+                defaultValue: 'Abbrechen',
+              })}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleRestoreAllVisible();
+              }}
+            >
+              {t('vault.integrity.confirmBulkRestoreAction', {
+                defaultValue: 'Wiederherstellen',
+              })}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <VaultQuarantineRestoreProgressDialog
+        open={bulkRestoreProgress.open}
+        status={bulkRestoreProgress.status}
+        total={bulkRestoreProgress.total}
+        completed={bulkRestoreProgress.completed}
+        failed={bulkRestoreProgress.failed}
+        currentItemId={bulkRestoreProgress.currentItemId}
+        lastError={bulkRestoreProgress.lastError}
+        onContinue={() => {
+          setBulkRestoreProgress((current) => ({
+            ...current,
+            open: false,
+          }));
+        }}
+      />
     </div>
   );
 }

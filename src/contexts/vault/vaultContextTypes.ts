@@ -39,6 +39,10 @@ export interface VaultContextType {
     decryptBinary: (encrypted: string, aad?: string) => Promise<Uint8Array>;
     encryptItem: (data: VaultItemData, entryId: string) => Promise<string>;
     decryptItem: (encryptedData: string, entryId: string) => Promise<VaultItemData>;
+    decryptItemForLegacyMigration: (
+        encryptedData: string,
+        entryId: string,
+    ) => Promise<{ data: VaultItemData; legacyEnvelopeUsed: boolean; legacyNoAadFallbackUsed: boolean }>;
     autoLockTimeout: number;
     setAutoLockTimeout: (timeout: number) => void;
     verifyIntegrity: (

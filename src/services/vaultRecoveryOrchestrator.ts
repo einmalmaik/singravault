@@ -1,4 +1,4 @@
-import { decryptVaultItem } from '@/services/cryptoService';
+import { decryptVaultItem, decryptVaultItemForMigration, encryptVaultItem } from '@/services/cryptoService';
 import { isAppOnline, type OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import {
   deleteQuarantinedItemFromVault,
@@ -8,6 +8,10 @@ import {
 } from '@/services/vaultQuarantineRecoveryService';
 import { getTrustedOfflineSnapshot, saveTrustedOfflineSnapshot } from '@/services/offlineVaultService';
 import { resetUserVaultState } from '@/services/vaultRecoveryService';
+import {
+  hasLegacyVaultItemServerMetadata,
+  mergeLegacyVaultItemMetadataIntoPayload,
+} from '@/services/vaultMetadataPolicy';
 
 export interface TrustedRecoverySnapshotState {
   trustedRecoveryAvailable: boolean;
@@ -44,22 +48,40 @@ export async function restoreQuarantinedVaultItem(input: {
   itemId: string;
   activeKey: CryptoKey;
   trustedSnapshotItem: TrustedSnapshotItem;
+  refreshIntegrityBaseline: (mutation: { itemIds: string[] }) => Promise<void>;
   verifyIntegrity: () => Promise<{ quarantinedItems: Array<{ id: string }> } | null>;
 }): Promise<void> {
+  let trustedSnapshotItem = input.trustedSnapshotItem;
   try {
-    await decryptVaultItem(input.trustedSnapshotItem.encrypted_data, input.activeKey, input.itemId);
+    const migrationDecrypt = await decryptVaultItemForMigration(
+      input.trustedSnapshotItem.encrypted_data,
+      input.activeKey,
+      input.itemId,
+    );
+    if (migrationDecrypt.legacyEnvelopeUsed) {
+      const decryptedData = hasLegacyVaultItemServerMetadata(input.trustedSnapshotItem)
+        ? mergeLegacyVaultItemMetadataIntoPayload(migrationDecrypt.data, input.trustedSnapshotItem)
+        : migrationDecrypt.data;
+      trustedSnapshotItem = {
+        ...input.trustedSnapshotItem,
+        encrypted_data: await encryptVaultItem(decryptedData, input.activeKey, input.itemId),
+      };
+    } else {
+      await decryptVaultItem(input.trustedSnapshotItem.encrypted_data, input.activeKey, input.itemId);
+    }
   } catch {
     throw new Error('Die lokale Wiederherstellungskopie für diesen Eintrag ist nicht mehr entschlüsselbar.');
   }
 
   const { syncedOnline } = await restoreQuarantinedItemFromTrustedSnapshot(
     input.userId,
-    input.trustedSnapshotItem,
+    trustedSnapshotItem,
   );
   if (isAppOnline() && !syncedOnline) {
     throw new Error('Die Wiederherstellung konnte nicht mit dem Server synchronisiert werden.');
   }
 
+  await input.refreshIntegrityBaseline({ itemIds: [input.itemId] });
   const integrityResult = await input.verifyIntegrity();
   if (integrityResult?.quarantinedItems.some((quarantinedItem) => quarantinedItem.id === input.itemId)) {
     throw new Error('Die Wiederherstellung konnte nicht bestätigt werden. Der Eintrag bleibt in Quarantäne.');

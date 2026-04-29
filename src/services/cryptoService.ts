@@ -435,6 +435,48 @@ export async function decryptVaultItem(
     return JSON.parse(json) as VaultItemData;
 }
 
+export interface VaultItemMigrationDecryptResult {
+    data: VaultItemData;
+    legacyEnvelopeUsed: boolean;
+    legacyNoAadFallbackUsed: boolean;
+}
+
+/**
+ * Decrypts an item only for an explicit migration path. Runtime reads must use
+ * decryptVaultItem(), which fails closed for legacy no-AAD payloads.
+ */
+export async function decryptVaultItemForMigration(
+    encryptedData: string,
+    key: CryptoKey,
+    entryId: string,
+): Promise<VaultItemMigrationDecryptResult> {
+    const envelope = parseVaultItemEnvelope(encryptedData);
+    try {
+        return {
+            data: await decryptVaultItem(encryptedData, key, entryId),
+            legacyEnvelopeUsed: envelope.version === 'legacy',
+            legacyNoAadFallbackUsed: false,
+        };
+    } catch (error) {
+        if (envelope.version !== 'legacy') {
+            throw error;
+        }
+    }
+
+    console.warn(`Legacy entry without AAD detected: ${entryId}`);
+    _legacyDecryptCount++;
+    const json = await decrypt(envelope.payload, key);
+    return {
+        data: JSON.parse(json) as VaultItemData,
+        legacyEnvelopeUsed: true,
+        legacyNoAadFallbackUsed: true,
+    };
+}
+
+export function isCurrentVaultItemEnvelope(encryptedData: string): boolean {
+    return parseVaultItemEnvelope(encryptedData).version === 1;
+}
+
 type VersionedCipherEnvelope =
     | { version: 1; payload: string }
     | { version: 'legacy'; payload: string };

@@ -3,6 +3,7 @@ import {
   decrypt,
   decryptBytes,
   decryptVaultItem,
+  decryptVaultItemForMigration,
   encrypt,
   encryptBytes,
   encryptVaultItem,
@@ -513,11 +514,16 @@ export function useVaultProviderActions(): VaultContextType {
         itemId,
         activeKey: state.encryptionKey!,
         trustedSnapshotItem,
-        verifyIntegrity,
+        refreshIntegrityBaseline: (mutation) => refreshIntegrityBaseline(mutation),
+        verifyIntegrity: () => {
+          state.removeRuntimeUnreadableItems([itemId]);
+          return verifyIntegrity();
+        },
       });
       state.bumpVaultDataVersion();
     });
   }, [
+    refreshIntegrityBaseline,
     state,
     user,
     verifyIntegrity,
@@ -647,6 +653,16 @@ export function useVaultProviderActions(): VaultContextType {
     return decryptVaultItem(encryptedData, state.encryptionKey, entryId);
   }, [state.encryptionKey, state.quarantinedItems]);
 
+  const decryptItemForLegacyMigration = useCallback(async (
+    encryptedData: string,
+    entryId: string,
+  ): Promise<{ data: VaultItemData; legacyEnvelopeUsed: boolean; legacyNoAadFallbackUsed: boolean }> => {
+    if (!state.encryptionKey) {
+      throw new Error('Vault is locked');
+    }
+    return decryptVaultItemForMigration(encryptedData, state.encryptionKey, entryId);
+  }, [state.encryptionKey]);
+
   return buildVaultContextValue(state, {
     setupMasterPassword,
     unlock,
@@ -663,6 +679,7 @@ export function useVaultProviderActions(): VaultContextType {
     decryptBinary,
     encryptItem,
     decryptItem,
+    decryptItemForLegacyMigration,
     verifyIntegrity,
     updateIntegrity,
     refreshIntegrityBaseline,

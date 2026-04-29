@@ -21,6 +21,7 @@ export interface VaultProviderActionBindings {
   decryptBinary: (encrypted: string, aad?: string) => Promise<Uint8Array>;
   encryptItem: (data: VaultItemData, entryId: string) => Promise<string>;
   decryptItem: (encryptedData: string, entryId: string) => Promise<VaultItemData>;
+  decryptItemForLegacyMigration: VaultContextType['decryptItemForLegacyMigration'];
   verifyIntegrity: (
     snapshot?: Parameters<VaultContextType['verifyIntegrity']>[0],
     options?: { source?: VaultSnapshotSource },
@@ -62,6 +63,7 @@ export function buildVaultContextValue(
     decryptBinary: actions.decryptBinary,
     encryptItem: actions.encryptItem,
     decryptItem: actions.decryptItem,
+    decryptItemForLegacyMigration: actions.decryptItemForLegacyMigration,
     autoLockTimeout: state.autoLockTimeout,
     setAutoLockTimeout: state.setAutoLockTimeout,
     pendingSessionRestore: state.pendingSessionRestore,

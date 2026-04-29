@@ -44,13 +44,16 @@ vi.mock('react-i18next', () => ({
 }));
 
 const mockDecryptItem = vi.fn();
+const mockDecryptItemForLegacyMigration = vi.fn();
 const mockEncryptItem = vi.fn();
 const mockVerifyIntegrity = vi.fn();
 const mockRefreshIntegrityBaseline = vi.fn();
 const mockReportUnreadableItems = vi.fn();
+const mockMigrateLegacyVaultItemEncryptionAndMetadata = vi.fn();
 
 const mockVaultContext = {
   decryptItem: (...args: unknown[]) => mockDecryptItem(...args),
+  decryptItemForLegacyMigration: (...args: unknown[]) => mockDecryptItemForLegacyMigration(...args),
   encryptItem: (...args: unknown[]) => mockEncryptItem(...args),
   verifyIntegrity: (...args: unknown[]) => mockVerifyIntegrity(...args),
   refreshIntegrityBaseline: (...args: unknown[]) => mockRefreshIntegrityBaseline(...args),
@@ -71,9 +74,10 @@ const mockVaultContext = {
   lastIntegrityResult: null as
     | null
     | {
+        mode?: 'healthy' | 'quarantine' | 'blocked';
         quarantinedItems: Array<{
           id: string;
-          reason: 'ciphertext_changed' | 'missing_on_server' | 'unknown_on_server';
+          reason: 'ciphertext_changed' | 'missing_on_server' | 'unknown_on_server' | 'decrypt_failed';
           updatedAt: string | null;
           itemType?: 'password' | 'note' | 'totp' | 'card' | null;
         }>;
@@ -102,6 +106,16 @@ vi.mock('@/services/offlineVaultService', () => ({
   })),
   isAppOnline: vi.fn().mockImplementation(() => snapshotState.online),
   upsertOfflineItemRow: vi.fn(),
+}));
+
+vi.mock('@/services/legacyVaultMetadataMigrationService', () => ({
+  migrateLegacyVaultItemMetadata: vi.fn(async (input: { item: SnapshotItem; decryptedData: unknown }) => ({
+    item: input.item,
+    decryptedData: input.decryptedData,
+    migrated: false,
+  })),
+  migrateLegacyVaultItemEncryptionAndMetadata: (...args: unknown[]) =>
+    mockMigrateLegacyVaultItemEncryptionAndMetadata(...args),
 }));
 
 vi.mock('@/components/vault/VaultItemCard', () => ({
@@ -165,7 +179,23 @@ describe.sequential('VaultItemList', () => {
     mockVaultContext.lastIntegrityResult = null;
     mockVaultContext.vaultDataVersion = 0;
     mockVaultContext.quarantineResolutionById = {};
+    mockVaultContext.restoreQuarantinedItem.mockResolvedValue({ error: null });
+    mockVaultContext.deleteQuarantinedItem.mockResolvedValue({ error: null });
+    mockVaultContext.acceptMissingQuarantinedItem.mockResolvedValue({ error: null });
     mockEncryptItem.mockResolvedValue('encrypted');
+    mockDecryptItemForLegacyMigration.mockRejectedValue(new Error('not legacy'));
+    mockMigrateLegacyVaultItemEncryptionAndMetadata.mockImplementation(async (input: {
+      item: SnapshotItem;
+      decryptedData: unknown;
+    }) => ({
+      item: {
+        ...input.item,
+        encrypted_data: 'aad-bound-cipher',
+        updated_at: '2026-02-18T11:00:00.000Z',
+      },
+      decryptedData: input.decryptedData,
+      migrated: true,
+    }));
     mockRefreshIntegrityBaseline.mockResolvedValue(undefined);
     mockVerifyIntegrity.mockResolvedValue(null);
     mockReportUnreadableItems.mockClear();
@@ -218,7 +248,7 @@ describe.sequential('VaultItemList', () => {
     expect(mockReportUnreadableItems).toHaveBeenCalledWith([
       expect.objectContaining({
         id: 'item-bad',
-        reason: 'ciphertext_changed',
+        reason: 'decrypt_failed',
       }),
     ]);
   });
@@ -394,5 +424,169 @@ describe.sequential('VaultItemList', () => {
       expect(mockVerifyIntegrity).toHaveBeenCalledWith();
     });
     expect(mockVerifyIntegrity).toHaveBeenCalledWith(expect.any(Object), { source: 'cache' });
+  });
+
+  it('migrates a healthy legacy no-AAD item instead of reporting quarantine', async () => {
+    snapshotState.online = true;
+    snapshotState.source = 'remote';
+    snapshotState.items = [itemBad];
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'healthy',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+    mockDecryptItemForLegacyMigration.mockResolvedValue({
+      data: {
+        title: 'Legacy Visible Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryId: null,
+      },
+      legacyEnvelopeUsed: true,
+      legacyNoAadFallbackUsed: true,
+    });
+
+    render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('Legacy Visible Item');
+
+    expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        vaultId: 'vault-1',
+        item: itemBad,
+      }),
+    );
+    expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
+    expect(mockRefreshIntegrityBaseline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        itemIds: expect.any(Set),
+      }),
+    );
+  });
+
+  it('migrates legacy no-AAD items from runtime decrypt-failed quarantine', async () => {
+    snapshotState.online = true;
+    snapshotState.source = 'remote';
+    snapshotState.items = [itemBad];
+    const runtimeDecryptFailedItems = [
+      {
+        id: 'item-bad',
+        reason: 'decrypt_failed' as const,
+        updatedAt: '2026-02-18T09:00:00.000Z',
+        itemType: 'password' as const,
+      },
+    ];
+    mockVaultContext.lastIntegrityResult = {
+      mode: 'quarantine',
+      quarantinedItems: runtimeDecryptFailedItems,
+    };
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'quarantine',
+      quarantinedItems: runtimeDecryptFailedItems,
+      isFirstCheck: false,
+    });
+    mockDecryptItemForLegacyMigration.mockResolvedValue({
+      data: {
+        title: 'Recovered Legacy Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryId: null,
+      },
+      legacyEnvelopeUsed: true,
+      legacyNoAadFallbackUsed: true,
+    });
+
+    render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).toHaveBeenCalled();
+    });
+
+    expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        vaultId: 'vault-1',
+        item: itemBad,
+      }),
+    );
+    expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
+    expect(mockRefreshIntegrityBaseline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        itemIds: expect.any(Set),
+      }),
+    );
+  });
+
+  it('confirms and restores all visible restorable quarantine entries one by one', async () => {
+    snapshotState.items = [itemOk, itemBad, itemBadTotp];
+    mockVaultContext.lastIntegrityResult = {
+      mode: 'quarantine',
+      quarantinedItems: [
+        { id: 'item-bad', reason: 'ciphertext_changed', updatedAt: null, itemType: 'password' },
+        { id: 'item-bad-totp', reason: 'ciphertext_changed', updatedAt: null, itemType: 'totp' },
+      ],
+    };
+    mockVaultContext.quarantineResolutionById = {
+      'item-bad': {
+        canRestore: true,
+        canDelete: true,
+        canAcceptMissing: false,
+        hasTrustedLocalCopy: true,
+        isBusy: false,
+        lastError: null,
+      },
+      'item-bad-totp': {
+        canRestore: true,
+        canDelete: true,
+        canAcceptMissing: false,
+        hasTrustedLocalCopy: true,
+        isBusy: false,
+        lastError: null,
+      },
+    };
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'quarantine',
+      quarantinedItems: mockVaultContext.lastIntegrityResult.quarantinedItems,
+    });
+
+    render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Alle wiederherstellbaren wiederherstellen',
+    }));
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Wiederherstellen',
+    }));
+
+    await waitFor(() => {
+      expect(mockVaultContext.restoreQuarantinedItem).toHaveBeenCalledWith('item-bad');
+      expect(mockVaultContext.restoreQuarantinedItem).toHaveBeenCalledWith('item-bad-totp');
+    });
+    expect(await screen.findByText('2 Einträge wurden wiederhergestellt')).toBeInTheDocument();
   });
 });
