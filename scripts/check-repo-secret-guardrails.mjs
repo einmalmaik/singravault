@@ -3,7 +3,7 @@
 // Licensed under the Business Source License 1.1 - see LICENSE
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = process.cwd();
@@ -37,11 +37,16 @@ const ignoredDirs = new Set([
 
 for (const trackedPath of getTrackedFiles()) {
   const normalized = normalizePath(trackedPath);
+  const absolutePath = path.join(repoRoot, trackedPath);
   if (
-    existsSync(path.join(repoRoot, trackedPath))
+    existsSync(absolutePath)
     && forbiddenTrackedPathPatterns.some((pattern) => pattern.test(normalized))
   ) {
     findings.push(`${normalized} is a tracked private/secret-bearing path`);
+  }
+
+  if (existsSync(absolutePath)) {
+    scanTrackedFileContent(normalized, absolutePath);
   }
 }
 
@@ -95,6 +100,43 @@ function scanWorkspace(relativeDir) {
       findings.push(`${normalized} exists in the workspace and must not be shipped or committed`);
     }
   }
+}
+
+function scanTrackedFileContent(normalizedPath, absolutePath) {
+  if (statSync(absolutePath).size > 1024 * 1024) return;
+
+  let content = "";
+  try {
+    content = readFileSync(absolutePath, 'utf8');
+  } catch {
+    return;
+  }
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(/^\s*(VITE_(?:E2E_TEST|DEV_TEST).*PASSWORD|SINGRA_DEV_TEST_(?:PASSWORD|MASTER_PASSWORD)|SUPABASE_SERVICE_ROLE_KEY)\s*=\s*(.*)$/i);
+    if (!match) continue;
+    if (normalizedPath === 'env.example') continue;
+
+    const value = normalizeEnvAssignmentValue(match[2]);
+    if (!value || isPlaceholderEnvValue(value)) continue;
+
+    findings.push(`${normalizedPath} contains a forbidden committed dev-test secret assignment`);
+  }
+
+  if (/import\.meta\.env\.VITE_(?:E2E_TEST|DEV_TEST).*PASSWORD/.test(content)) {
+    findings.push(`${normalizedPath} reads a dev-test password from the client environment`);
+  }
+}
+
+function normalizeEnvAssignmentValue(rawValue) {
+  return rawValue
+    .replace(/\s+#.*$/, '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim();
+}
+
+function isPlaceholderEnvValue(value) {
+  return /^(?:your-|example|placeholder|change-me|local-only|test-|dev-test|xxx|todo)/i.test(value);
 }
 
 function normalizePath(filePath) {

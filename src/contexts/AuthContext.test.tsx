@@ -151,7 +151,7 @@ describe("AuthContext", () => {
             expect(result.current.authReady).toBe(true);
         });
 
-        it("uses the Tauri dev bypass only when explicitly requested", async () => {
+        it("ignores the removed Tauri dev auth bypass query flag", async () => {
             Object.defineProperty(window, "__TAURI_INTERNALS__", {
                 value: {},
                 configurable: true,
@@ -164,18 +164,18 @@ describe("AuthContext", () => {
                 expect(result.current.loading).toBe(false);
             });
 
-            expect(result.current.user?.email).toBe("tauri-dev@singra.local");
-            expect(result.current.authMode).toBe("offline");
-            expect(mockSupabase.auth.onAuthStateChange).not.toHaveBeenCalled();
+            expect(result.current.user).toBeNull();
+            expect(result.current.authMode).toBe("unauthenticated");
+            expect(localStorage.getItem("singra:tauri-dev-auth-bypass")).toBeNull();
+            expect(mockSupabase.auth.onAuthStateChange).toHaveBeenCalled();
         });
 
-        it("does not keep the Tauri dev bypass after it is disabled by query param", async () => {
+        it("clears a legacy Tauri dev bypass marker without authenticating", async () => {
             Object.defineProperty(window, "__TAURI_INTERNALS__", {
                 value: {},
                 configurable: true,
             });
             localStorage.setItem("singra:tauri-dev-auth-bypass", "1");
-            window.history.replaceState(null, "", "/?tauriDevAuth=0");
 
             const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -235,26 +235,6 @@ describe("AuthContext", () => {
             consoleError.mockRestore();
         });
 
-        it("disables the Tauri dev bypass on explicit signOut", async () => {
-            Object.defineProperty(window, "__TAURI_INTERNALS__", {
-                value: {},
-                configurable: true,
-            });
-            window.history.replaceState(null, "", "/?tauriDevAuth=1");
-
-            const { result } = renderHook(() => useAuth(), { wrapper });
-
-            await waitFor(() => expect(result.current.authMode).toBe("offline"));
-
-            await act(async () => {
-                await result.current.signOut();
-            });
-
-            expect(result.current.user).toBeNull();
-            expect(result.current.authMode).toBe("unauthenticated");
-            expect(localStorage.getItem("singra:tauri-dev-auth-bypass")).toBeNull();
-            expect(mockSupabase.auth.signOut).not.toHaveBeenCalled();
-        });
     });
 
     describe("Auth state changes", () => {

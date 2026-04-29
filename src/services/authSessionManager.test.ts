@@ -172,6 +172,21 @@ describe("authSessionManager", () => {
     expect(result.offlineIdentity).toBeNull();
   });
 
+  it("does not hydrate a web session from token-free offline identity while online", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 401 }));
+    localStorage.setItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY, JSON.stringify({
+      userId: "old-web-user",
+      email: "old-web@example.com",
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const result = await hydrateAuthSession();
+
+    expect(result.mode).toBe("unauthenticated");
+    expect(result.user).toBeNull();
+    expect(result.offlineIdentity).toBeNull();
+  });
+
   it("keeps the desktop callback path unauthenticated until the deep link is applied", async () => {
     runtimeState.isTauri = true;
     runtimeState.deepLinks = ["singravault://auth/callback?code=desktop-code"];

@@ -108,8 +108,11 @@ function cspMetaPlugin(mode: string) {
 
 // https://vitejs.dev/config/
 export default defineConfig(async ({ mode }) => {
-  if (mode !== "development" && process.env.VITE_E2E_TEST_MODE === "true") {
-    throw new Error("VITE_E2E_TEST_MODE must not be enabled in production builds.");
+  if (mode !== "development" && process.env.VITE_DEV_TEST_ACCOUNT_UI === "true") {
+    throw new Error("VITE_DEV_TEST_ACCOUNT_UI must not be enabled in production builds.");
+  }
+  if (mode !== "development" && process.env.SINGRA_DEV_TEST_ACCOUNT_ENABLED === "true") {
+    throw new Error("SINGRA_DEV_TEST_ACCOUNT_ENABLED must not be enabled in production builds.");
   }
 
   const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "package.json"), "utf-8")) as {

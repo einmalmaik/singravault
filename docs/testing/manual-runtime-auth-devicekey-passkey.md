@@ -7,13 +7,17 @@ Nur lokale/dev/test Umgebungen verwenden. Keine echten Produktions-Credentials.
 Env-Beispiel:
 
 ```env
-VITE_E2E_TEST_MODE=false
-VITE_E2E_TEST_EMAIL=test@example.local
-VITE_E2E_TEST_PASSWORD=
-VITE_E2E_TEST_MASTER_PASSWORD=
+VITE_DEV_TEST_ACCOUNT_UI=false
+SINGRA_DEV_TEST_ACCOUNT_ENABLED=false
+SINGRA_DEV_TEST_EMAIL=
+SINGRA_DEV_TEST_PASSWORD=
+SINGRA_DEV_TEST_MASTER_PASSWORD=
+SINGRA_DEV_TEST_CREATE_USER=false
+SINGRA_DEV_TEST_AUTO_CONFIRM=false
+SUPABASE_SERVICE_ROLE_KEY=
 ```
 
-`VITE_E2E_TEST_MODE=true` darf in Production-Builds nicht gesetzt sein; der Client bricht dann beim Build/Start ab.
+Passwörter und Service-Role-Key dürfen nie in `VITE_*` stehen. `SINGRA_DEV_TEST_ACCOUNT_ENABLED=true` darf nur lokal in `.env.local` gesetzt sein; Production-Builds brechen damit ab.
 
 ## Browser
 

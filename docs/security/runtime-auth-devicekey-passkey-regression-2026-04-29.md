@@ -16,7 +16,7 @@ Arbeitsstand: Branch `feat/device-passkey-fixes`, Basis `v0.4.3` / `origin/main`
 | PK-02 | Passkey | Web lokal | Passkey Login mit PRF | Nur 32-Byte PRF/Vault-Key-Material akzeptieren | Längenvalidierung war nicht strikt an allen Grenzen | behoben |
 | PK-03 | Passkey | Tauri/PWA | Passkey hinzufügen/Login | RP-ID/Origin muss zur Oberfläche passen | Server unterscheidet Origin/RP; manuelle Plattformprüfung steht aus | offen: manuell |
 | AUTH-01 | Auth-State | Web lokal | Login, Refresh, `/vault/settings` direkt öffnen | Nicht gleichzeitig eingeloggt/ausgeloggt | Auth/Vault sind getrennt; keine zentrale Runtime-State-API vorhanden | teilweise offen |
-| AUTH-02 | Dev/Test | Web/Tauri | Production-Build mit `VITE_E2E_TEST_MODE=true` | Build muss hart fehlschlagen | Guardrail fehlte | behoben |
+| AUTH-02 | Dev/Test | Web/Tauri | Production-Build mit `SINGRA_DEV_TEST_ACCOUNT_ENABLED=true` oder `VITE_DEV_TEST_ACCOUNT_UI=true` | Build muss hart fehlschlagen | Guardrail fehlte | behoben |
 | 2FA-01 | Vault Unlock | Web lokal | Account ohne VaultFA, Edge Function transient fehlerhaft | Kein falsches Vault-2FA, wenn DB eindeutig disabled sagt | Client fiel fail-closed auf Vault-2FA | behoben |
 | 2FA-02 | Vault Unlock | Web lokal | Device-Key-required ohne lokalen Key | Device-Key-Fehler, kein 2FA-Fehler | Device-Key-Check läuft vor 2FA-Key-Release | verifiziert per Code |
 | LOCK-01 | Vault Lock | Web lokal | Unlock, Lock, erneuter Unlock | Account-Session bleibt, Vault-Key-State wird gelöscht | bestehender Code trennt `lock()`/`signOut()` | verifiziert per Code, manuell offen |

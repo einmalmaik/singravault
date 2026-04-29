@@ -19,12 +19,7 @@ import {
   persistAuthenticatedSession,
 } from "@/services/authSessionManager";
 import { isTauriRuntime } from "@/platform/runtime";
-import {
-  disableTauriDevAuthBypass,
-  isTauriDevAuthBypassEnabled,
-  TAURI_DEV_USER_EMAIL,
-  TAURI_DEV_USER_ID,
-} from "@/platform/tauriDevMode";
+import { disableTauriDevAuthBypass } from "@/platform/tauriDevMode";
 import { runtimeConfig } from "@/config/runtimeConfig";
 
 interface AuthContextType {
@@ -38,29 +33,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-function createTauriDevSession(): Session {
-  const nowIso = new Date().toISOString();
-  const user = {
-    id: TAURI_DEV_USER_ID,
-    aud: "authenticated",
-    role: "authenticated",
-    email: TAURI_DEV_USER_EMAIL,
-    app_metadata: { provider: "tauri-dev", providers: ["tauri-dev"] },
-    user_metadata: { name: "Tauri Dev" },
-    created_at: nowIso,
-    updated_at: nowIso,
-  } as User;
-
-  return {
-    access_token: "tauri-dev-local-session",
-    refresh_token: "tauri-dev-local-refresh",
-    expires_in: 60 * 60 * 24,
-    expires_at: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
-    token_type: "bearer",
-    user,
-  } as Session;
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -78,13 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if (isTauriDevAuthBypassEnabled()) {
-      const devSession = createTauriDevSession();
-      applySessionState(devSession, devSession.user, "offline");
-      setLoading(false);
-      setAuthReady(true);
-      return;
-    }
+    disableTauriDevAuthBypass();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, currentSession) => {
@@ -129,12 +95,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = async () => {
-    if (isTauriDevAuthBypassEnabled()) {
-      disableTauriDevAuthBypass();
-      applySessionState(null, null, "unauthenticated");
-      return;
-    }
-
     await clearPersistentSession();
 
     const { error: signOutError } = await supabase.auth.signOut();

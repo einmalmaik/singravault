@@ -8,7 +8,7 @@
     "node": ">=20.19.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev/ensure-dev-test-account.mjs && vite",
     "dev:core-only": "node scripts/run-with-premium-disabled.mjs vite",
     "build": "vite build",
     "build:core-only": "node scripts/run-with-premium-disabled.mjs vite build",
@@ -20,7 +20,7 @@
     "release:check-artifacts": "node scripts/check-release-artifacts.mjs",
     "test:watch": "vitest",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "node scripts/dev/ensure-dev-test-account.mjs && tauri dev",
     "tauri:dev:core-only": "node scripts/run-with-premium-disabled.mjs tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:core-only": "node scripts/run-with-premium-disabled.mjs tauri build",

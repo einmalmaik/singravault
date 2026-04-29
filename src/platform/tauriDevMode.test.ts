@@ -35,33 +35,33 @@ describe('tauriDevMode', () => {
     expect(window.localStorage.getItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY)).toBeNull();
   });
 
-  it('keeps Tauri dev regular accounts on the normal auth path unless bypass is requested', () => {
+  it('keeps Tauri dev accounts on the normal auth path', () => {
     setTauriRuntimeMarker(true);
 
     expect(isTauriDevAuthBypassEnabled()).toBe(false);
   });
 
-  it('enables and persists account bypass from an explicit Tauri dev query flag', () => {
+  it('ignores the removed Tauri dev auth query flag', () => {
     setTauriRuntimeMarker(true);
     window.history.replaceState(null, '', '/?tauriDevAuth=1');
 
-    expect(isTauriDevAuthBypassEnabled()).toBe(true);
+    expect(isTauriDevAuthBypassEnabled()).toBe(false);
+    expect(window.localStorage.getItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY)).toBeNull();
 
     window.history.replaceState(null, '', '/vault');
-    expect(isTauriDevAuthBypassEnabled()).toBe(true);
+    expect(isTauriDevAuthBypassEnabled()).toBe(false);
   });
 
-  it('disables persisted account bypass from an explicit Tauri dev query flag', () => {
+  it('clears any legacy persisted account bypass marker', () => {
     setTauriRuntimeMarker(true);
     window.localStorage.setItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY, '1');
-    window.history.replaceState(null, '', '/?tauriDevAuth=0');
 
     expect(isTauriDevAuthBypassEnabled()).toBe(false);
     expect(window.localStorage.getItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY)).toBeNull();
   });
 
-  it('identifies only the dedicated Tauri dev user ID as the local test identity', () => {
-    expect(isTauriDevUserId(TAURI_DEV_USER_ID)).toBe(true);
+  it('does not treat the legacy hardcoded Tauri dev user as a privileged local identity', () => {
+    expect(isTauriDevUserId(TAURI_DEV_USER_ID)).toBe(false);
     expect(isTauriDevUserId('regular-user-id')).toBe(false);
     expect(isTauriDevUserId(null)).toBe(false);
   });

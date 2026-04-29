@@ -16,8 +16,9 @@ const base: AuthRuntimeStateInput = {
 describe("deriveAuthRuntimeState", () => {
   it("separates anonymous, locked and unlocked states", () => {
     expect(deriveAuthRuntimeState({ ...base, hasUser: false })).toBe("anonymous");
-    expect(deriveAuthRuntimeState(base)).toBe("authenticated_locked");
-    expect(deriveAuthRuntimeState({ ...base, vaultUnlocked: true })).toBe("authenticated_unlocked");
+    expect(deriveAuthRuntimeState(base)).toBe("vault_locked");
+    expect(deriveAuthRuntimeState({ ...base, vaultUnlocking: true })).toBe("vault_unlocking");
+    expect(deriveAuthRuntimeState({ ...base, vaultUnlocked: true })).toBe("vault_unlocked");
   });
 
   it("keeps auth initialization distinct from vault lock", () => {
@@ -34,6 +35,11 @@ describe("deriveAuthRuntimeState", () => {
       requiresDeviceKey: true,
       requiresTwoFactor: true,
     })).toBe("requires_device_key");
+  });
+
+  it("keeps quarantine and integrity blocks separate from auth failures", () => {
+    expect(deriveAuthRuntimeState({ ...base, hasItemQuarantine: true })).toBe("item_quarantine");
+    expect(deriveAuthRuntimeState({ ...base, integrityBlocked: true })).toBe("integrity_blocked");
   });
 
   it("prioritizes explicit errors", () => {

@@ -118,6 +118,7 @@ import {
     type QuarantineResolutionState,
     type TrustedSnapshotItemsById,
 } from '@/services/vaultQuarantineRecoveryService';
+import { buildVaultQuarantineSummary } from '@/services/vaultQuarantineOrchestrator';
 import { isTauriDevUserId, TAURI_DEV_VAULT_ID } from '@/platform/tauriDevMode';
 
 // Auto-lock timeout in milliseconds (default 15 minutes)
@@ -315,45 +316,6 @@ function canPersistIntegrityBaselineImmediately(
 ): boolean {
     return assessment.inspection.baselineKind !== 'missing'
         || (snapshot.items.length === 0 && snapshot.categories.length === 0);
-}
-
-async function buildDecryptableRemoteRebaselineMutation(
-    assessment: VaultIntegrityAssessment,
-    snapshot: OfflineVaultSnapshot,
-    activeKey: CryptoKey,
-): Promise<TrustedVaultMutation | null> {
-    if (
-        assessment.unreadableCategoryReason
-        || assessment.inspection.snapshotValidationError
-        || assessment.inspection.legacyBaselineMismatch
-        || assessment.inspection.categoryDriftIds.length > 0
-        || assessment.inspection.itemDrifts.length === 0
-    ) {
-        return null;
-    }
-
-    const itemsById = new Map(snapshot.items.map((item) => [item.id, item]));
-    const trustedItemIds: string[] = [];
-
-    for (const drift of assessment.inspection.itemDrifts) {
-        if (drift.reason === 'missing_on_server') {
-            return null;
-        }
-
-        const item = itemsById.get(drift.id);
-        if (!item) {
-            return null;
-        }
-
-        try {
-            await decryptVaultItem(item.encrypted_data, activeKey, item.id);
-            trustedItemIds.push(item.id);
-        } catch {
-            return null;
-        }
-    }
-
-    return { itemIds: trustedItemIds };
 }
 
 interface VaultContextType {
@@ -795,8 +757,8 @@ export function VaultProvider({ children }: VaultProviderProps) {
         categories: snapshot.categories.map((category) => ({
             id: category.id,
             name: category.name,
-            icon: category.icon,
-            color: category.color,
+            icon: typeof category.icon === 'string' ? category.icon : null,
+            color: typeof category.color === 'string' ? category.color : null,
         })),
     }), []);
 
@@ -1186,42 +1148,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
 
             const integrityAssessment = await assessVaultIntegrity(snapshotBundle.rawSnapshot, activeKey);
             const integrityResult = integrityAssessment.result;
-
-            if (integrityResult.mode === 'quarantine' && snapshotBundle.source === 'remote') {
-                const trustedRemoteMutation = await buildDecryptableRemoteRebaselineMutation(
-                    integrityAssessment,
-                    snapshotBundle.rawSnapshot,
-                    activeKey,
-                );
-                if (trustedRemoteMutation) {
-                    const digest = await persistIntegrityBaseline(
-                        user.id,
-                        snapshotBundle.integritySnapshot,
-                        activeKey,
-                        integrityAssessment.inspection.digest,
-                    );
-                    await persistTrustedIntegritySnapshot(snapshotBundle.rawSnapshot);
-                    applyIntegrityResultState({
-                        valid: true,
-                        isFirstCheck: false,
-                        computedRoot: digest,
-                        storedRoot: digest,
-                        itemCount: snapshotBundle.integritySnapshot.items.length,
-                        categoryCount: snapshotBundle.integritySnapshot.categories.length,
-                        mode: 'healthy',
-                        quarantinedItems: [],
-                    });
-                    setEncryptionKey(activeKey);
-                    setIsLocked(false);
-                    setIsDuressMode(false);
-                    setIntegrityBlockedReason(null);
-                    setLastActivity(Date.now());
-                    sessionStorage.setItem(SESSION_KEY, 'active');
-                    sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
-                    setPendingSessionRestore(false);
-                    return { error: null };
-                }
-            }
 
             applyIntegrityResultState(integrityResult);
 
@@ -3027,7 +2953,7 @@ export function VaultProvider({ children }: VaultProviderProps) {
      */
     const verifyIntegrity = useCallback(async (
         snapshot?: OfflineVaultSnapshot,
-        options?: { source?: VaultSnapshotSource },
+        _options?: { source?: VaultSnapshotSource },
     ): Promise<VaultIntegrityVerificationResult | null> => {
         if (!user || !encryptionKey) {
             return null;
@@ -3051,8 +2977,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 user.id,
                 integrityAssessment,
             );
-            const source = options?.source ?? loadedSnapshotBundle?.source;
-
             if (result.mode === 'blocked' && !recentLocalRebaselineAllowed) {
                 await setBlockedIntegrityState(
                     encryptionKey,
@@ -3082,35 +3006,6 @@ export function VaultProvider({ children }: VaultProviderProps) {
                 };
                 applyIntegrityResultState(trustedResult);
                 return trustedResult;
-            }
-
-            if (result.mode === 'quarantine' && source === 'remote') {
-                const trustedRemoteMutation = await buildDecryptableRemoteRebaselineMutation(
-                    integrityAssessment,
-                    rawSnapshot,
-                    encryptionKey,
-                );
-                if (trustedRemoteMutation) {
-                    const digest = await persistIntegrityBaseline(
-                        user.id,
-                        buildIntegritySnapshot(rawSnapshot),
-                        encryptionKey,
-                        integrityAssessment.inspection.digest,
-                    );
-                    await persistTrustedIntegritySnapshot(rawSnapshot);
-                    const trustedResult: VaultIntegrityVerificationResult = {
-                        valid: true,
-                        isFirstCheck: false,
-                        computedRoot: digest,
-                        storedRoot: digest,
-                        itemCount: rawSnapshot.items.length,
-                        categoryCount: rawSnapshot.categories.length,
-                        mode: 'healthy',
-                        quarantinedItems: [],
-                    };
-                    applyIntegrityResultState(trustedResult);
-                    return trustedResult;
-                }
             }
 
             applyIntegrityResultState(result);
@@ -3361,8 +3256,12 @@ export function VaultProvider({ children }: VaultProviderProps) {
         if (!encryptionKey) {
             throw new Error('Vault is locked');
         }
+        const quarantineSummary = buildVaultQuarantineSummary(quarantinedItems, [entryId]);
+        if (!quarantineSummary.decryptableItemIds.includes(entryId)) {
+            throw new Error('Vault item is quarantined and will not be decrypted.');
+        }
         return decryptVaultItem(encryptedData, encryptionKey, entryId);
-    }, [encryptionKey]);
+    }, [encryptionKey, quarantinedItems]);
 
     return (
         <VaultContext.Provider

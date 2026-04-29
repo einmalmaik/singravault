@@ -2,10 +2,8 @@
 // Licensed under the Business Source License 1.1 - see LICENSE
 
 export interface E2ETestModeConfig {
-  enabled: boolean;
+  uiEnabled: boolean;
   email: string | null;
-  passwordConfigured: boolean;
-  masterPasswordConfigured: boolean;
 }
 
 function readBooleanEnv(value: unknown): boolean {
@@ -18,12 +16,12 @@ function readStringEnv(value: unknown): string | null {
 }
 
 export function isE2ETestModeEnabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_E2E_TEST_MODE);
+  return readBooleanEnv(import.meta.env.VITE_DEV_TEST_ACCOUNT_UI);
 }
 
 export function assertNoUnsafeE2ETestMode(): void {
-  if (isUnsafeE2ETestMode(import.meta.env.PROD, import.meta.env.VITE_E2E_TEST_MODE)) {
-    throw new Error("VITE_E2E_TEST_MODE must not be enabled in production builds.");
+  if (isUnsafeE2ETestMode(import.meta.env.PROD, import.meta.env.VITE_DEV_TEST_ACCOUNT_UI)) {
+    throw new Error("VITE_DEV_TEST_ACCOUNT_UI must not be enabled in production builds.");
   }
 }
 
@@ -35,9 +33,7 @@ export function getE2ETestModeConfig(): E2ETestModeConfig {
   assertNoUnsafeE2ETestMode();
 
   return {
-    enabled: isE2ETestModeEnabled(),
-    email: readStringEnv(import.meta.env.VITE_E2E_TEST_EMAIL),
-    passwordConfigured: readStringEnv(import.meta.env.VITE_E2E_TEST_PASSWORD) !== null,
-    masterPasswordConfigured: readStringEnv(import.meta.env.VITE_E2E_TEST_MASTER_PASSWORD) !== null,
+    uiEnabled: isE2ETestModeEnabled(),
+    email: readStringEnv(import.meta.env.VITE_DEV_TEST_EMAIL),
   };
 }

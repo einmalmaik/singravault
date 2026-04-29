@@ -31,11 +31,15 @@ export type VaultIntegrityBlockedReason =
   | 'baseline_unreadable'
   | 'legacy_baseline_mismatch'
   | 'category_structure_mismatch'
-  | 'snapshot_malformed';
+  | 'snapshot_malformed'
+  | 'vault_key_unavailable'
+  | 'device_key_required'
+  | 'unknown_integrity_failure';
 export type VaultIntegrityItemIssueReason =
   | 'ciphertext_changed'
   | 'missing_on_server'
-  | 'unknown_on_server';
+  | 'unknown_on_server'
+  | 'decrypt_failed';
 
 export interface QuarantinedVaultItem {
   id: string;
@@ -85,6 +89,10 @@ interface StoredIntegrityBaselineV2 {
   itemCount: number;
   categoryCount: number;
   recordedAt: string;
+  userId?: string;
+  vaultId?: string | null;
+  source?: 'core' | 'legacy-migration' | 'trusted-mutation';
+  schemaVersion?: number;
 }
 
 type StoredIntegrityBaseline = StoredIntegrityBaselineV1 | StoredIntegrityBaselineV2;
@@ -288,6 +296,10 @@ export async function persistIntegrityBaseline(
     itemCount: snapshot.items.length,
     categoryCount: snapshot.categories.length,
     recordedAt: new Date().toISOString(),
+    userId,
+    vaultId: null,
+    source: 'core',
+    schemaVersion: 2,
   };
 
   const encryptedPayload = await encrypt(JSON.stringify(payload), vaultKey);
@@ -352,6 +364,10 @@ export async function persistTrustedMutationIntegrityBaseline(
   const payload: StoredIntegrityBaselineV2 = {
     ...payloadWithoutRoot,
     snapshotDigest,
+    userId,
+    vaultId: null,
+    source: 'trusted-mutation',
+    schemaVersion: 2,
   };
 
   const encryptedPayload = await encrypt(JSON.stringify(payload), vaultKey);
@@ -431,17 +447,12 @@ export async function computeVaultSnapshotDigest(snapshot: VaultIntegritySnapsho
     items: [...snapshot.items]
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((item) => ({
-        id: item.id,
-        encrypted_data: item.encrypted_data,
+        id: canonicalText(item.id),
+        encrypted_data: canonicalText(item.encrypted_data),
       })),
     categories: [...snapshot.categories]
       .sort((left, right) => left.id.localeCompare(right.id))
-      .map((category) => ({
-        id: category.id,
-        name: category.name,
-        icon: category.icon,
-        color: category.color,
-      })),
+      .map(canonicalCategoryForDigest),
   });
 
   const digestBuffer = await crypto.subtle.digest(
@@ -523,7 +534,11 @@ function bytesToBase64(bytes: Uint8Array): string {
 function buildItemDigestMap(snapshot: VaultIntegritySnapshot): Record<string, string> {
   const digests: Record<string, string> = {};
   for (const item of snapshot.items) {
-    digests[item.id] = `${item.id}:${item.encrypted_data}`;
+    const itemId = canonicalText(item.id);
+    digests[itemId] = JSON.stringify({
+      id: itemId,
+      encrypted_data: canonicalText(item.encrypted_data),
+    });
   }
 
   return digests;
@@ -532,15 +547,32 @@ function buildItemDigestMap(snapshot: VaultIntegritySnapshot): Record<string, st
 function buildCategoryDigestMap(snapshot: VaultIntegritySnapshot): Record<string, string> {
   const digests: Record<string, string> = {};
   for (const category of snapshot.categories) {
-    digests[category.id] = JSON.stringify({
-      id: category.id,
-      name: category.name,
-      icon: category.icon,
-      color: category.color,
-    });
+    const canonicalCategory = canonicalCategoryForDigest(category);
+    digests[canonicalCategory.id] = JSON.stringify(canonicalCategory);
   }
 
   return digests;
+}
+
+function canonicalCategoryForDigest(category: VaultIntegritySnapshot['categories'][number]) {
+  return {
+    id: canonicalText(category.id),
+    name: canonicalText(category.name),
+    icon: canonicalNullableText(category.icon),
+    color: canonicalNullableText(category.color),
+  };
+}
+
+function canonicalText(value: string): string {
+  return value.normalize('NFC');
+}
+
+function canonicalNullableText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  return value.normalize('NFC');
 }
 
 function detectItemDigestDrift(
@@ -614,11 +646,12 @@ function validateSnapshotStructure(
       return 'snapshot_malformed';
     }
 
-    if (itemIds.has(item.id)) {
+    const itemId = canonicalText(item.id);
+    if (itemIds.has(itemId)) {
       return 'snapshot_malformed';
     }
 
-    itemIds.add(item.id);
+    itemIds.add(itemId);
   }
 
   const categoryIds = new Set<string>();
@@ -634,11 +667,12 @@ function validateSnapshotStructure(
       return 'snapshot_malformed';
     }
 
-    if (categoryIds.has(category.id)) {
+    const categoryId = canonicalText(category.id);
+    if (categoryIds.has(categoryId)) {
       return 'snapshot_malformed';
     }
 
-    categoryIds.add(category.id);
+    categoryIds.add(categoryId);
   }
 
   return null;

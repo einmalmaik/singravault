@@ -366,7 +366,7 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
     });
 
-    it("uses the local setup path only for the dedicated Tauri dev user", async () => {
+    it("does not grant the legacy Tauri dev user a local setup bypass", async () => {
       mockUseAuth.mockReturnValue({
         user: { id: "00000000-0000-4000-8000-000000000001", email: "tauri-dev@singra.local" },
         authReady: true,
@@ -386,7 +386,7 @@ describe("VaultContext", () => {
 
       expect(result.current.isSetupRequired).toBe(false);
       expect(mockGetOfflineCredentials).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000001");
-      expect(mockSupabase.from).not.toHaveBeenCalled();
+      expect(mockSupabase.from).toHaveBeenCalledWith("profiles");
     });
 
     it("should load existing vault setup from profile", async () => {
@@ -824,11 +824,25 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
     });
 
-    it("tauri dev unlock verifies the local snapshot without server reads", async () => {
+    it("legacy Tauri dev user unlock uses the normal remote snapshot path", async () => {
       const devUserId = "00000000-0000-4000-8000-000000000001";
       mockUseAuth.mockReturnValue({
         user: { id: devUserId, email: "tauri-dev@singra.local" },
         authReady: true,
+      });
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "dev-salt",
+            master_password_verifier: "dev-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "dev-encrypted-user-key",
+            vault_protection_mode: "master_only",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
       });
       mockGetOfflineCredentials.mockResolvedValue({
         salt: "dev-salt",
@@ -839,28 +853,25 @@ describe("VaultContext", () => {
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
       mockDecrypt.mockResolvedValue("QA Kategorie");
-      mockLoadVaultSnapshot.mockResolvedValue({
-        snapshot: {
-          userId: devUserId,
-          vaultId: "00000000-0000-4000-8000-000000000002",
-          items: [],
-          categories: [
-            {
-              id: "cat-1",
-              user_id: devUserId,
-              name: "enc:cat:v1:category-cipher",
-              icon: null,
-              color: "enc:cat:v1:color-cipher",
-              parent_id: null,
-              sort_order: null,
-              created_at: "2026-04-22T10:00:00.000Z",
-              updated_at: "2026-04-22T11:00:00.000Z",
-            },
-          ],
-          lastSyncedAt: null,
-          updatedAt: "2026-04-22T11:00:00.000Z",
-        },
-        source: "cache",
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+        userId: devUserId,
+        vaultId: "vault-regular",
+        items: [],
+        categories: [
+          {
+            id: "cat-1",
+            user_id: devUserId,
+            name: "enc:cat:v1:category-cipher",
+            icon: null,
+            color: "enc:cat:v1:color-cipher",
+            parent_id: null,
+            sort_order: null,
+            created_at: "2026-04-22T10:00:00.000Z",
+            updated_at: "2026-04-22T11:00:00.000Z",
+          },
+        ],
+        lastSyncedAt: null,
+        updatedAt: "2026-04-22T11:00:00.000Z",
       });
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
@@ -877,9 +888,9 @@ describe("VaultContext", () => {
       expect(unlockResult?.error).toBeNull();
       expect(result.current.isLocked).toBe(false);
       expect(result.current.integrityMode).toBe("healthy");
-      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(devUserId);
-      expect(mockFetchRemoteOfflineSnapshot).not.toHaveBeenCalled();
-      expect(mockSupabase.from).not.toHaveBeenCalled();
+      expect(mockFetchRemoteOfflineSnapshot).toHaveBeenCalledWith(devUserId, { persist: false });
+      expect(mockLoadVaultSnapshot).not.toHaveBeenCalledWith(devUserId);
+      expect(mockSupabase.from).toHaveBeenCalledWith("profiles");
     });
 
     it("keeps unlock digest-based and accepts deferred unreadable item quarantine", async () => {

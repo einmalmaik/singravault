@@ -1,10 +1,14 @@
 export type AuthRuntimeState =
   | "initializing"
   | "anonymous"
-  | "authenticated_locked"
-  | "authenticated_unlocked"
+  | "account_authenticated"
+  | "vault_locked"
+  | "vault_unlocking"
+  | "vault_unlocked"
   | "requires_2fa"
   | "requires_device_key"
+  | "item_quarantine"
+  | "integrity_blocked"
   | "error";
 
 export interface AuthRuntimeStateInput {
@@ -12,9 +16,12 @@ export interface AuthRuntimeStateInput {
   authLoading: boolean;
   hasUser: boolean;
   vaultLoading: boolean;
+  vaultUnlocking?: boolean;
   vaultUnlocked: boolean;
   requiresTwoFactor: boolean;
   requiresDeviceKey: boolean;
+  hasItemQuarantine?: boolean;
+  integrityBlocked?: boolean;
   hasError: boolean;
 }
 
@@ -31,6 +38,10 @@ export function deriveAuthRuntimeState(input: AuthRuntimeStateInput): AuthRuntim
     return "anonymous";
   }
 
+  if (input.integrityBlocked) {
+    return "integrity_blocked";
+  }
+
   if (input.requiresDeviceKey) {
     return "requires_device_key";
   }
@@ -39,5 +50,17 @@ export function deriveAuthRuntimeState(input: AuthRuntimeStateInput): AuthRuntim
     return "requires_2fa";
   }
 
-  return input.vaultUnlocked ? "authenticated_unlocked" : "authenticated_locked";
+  if (input.hasItemQuarantine) {
+    return "item_quarantine";
+  }
+
+  if (input.vaultUnlocking) {
+    return "vault_unlocking";
+  }
+
+  if (input.vaultUnlocked) {
+    return "vault_unlocked";
+  }
+
+  return "vault_locked";
 }

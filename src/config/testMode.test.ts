@@ -8,27 +8,21 @@ afterEach(() => {
 
 describe("testMode", () => {
   it("keeps E2E mode disabled by default", () => {
-    vi.stubEnv("VITE_E2E_TEST_MODE", "false");
+    vi.stubEnv("VITE_DEV_TEST_ACCOUNT_UI", "false");
 
     expect(getE2ETestModeConfig()).toEqual({
-      enabled: false,
+      uiEnabled: false,
       email: null,
-      passwordConfigured: false,
-      masterPasswordConfigured: false,
     });
   });
 
-  it("reports only whether test credentials are configured without exposing them", () => {
-    vi.stubEnv("VITE_E2E_TEST_MODE", "true");
-    vi.stubEnv("VITE_E2E_TEST_EMAIL", "test@example.local");
-    vi.stubEnv("VITE_E2E_TEST_PASSWORD", "not-logged");
-    vi.stubEnv("VITE_E2E_TEST_MASTER_PASSWORD", "not-logged-either");
+  it("exposes only non-sensitive dev test account UI metadata", () => {
+    vi.stubEnv("VITE_DEV_TEST_ACCOUNT_UI", "true");
+    vi.stubEnv("VITE_DEV_TEST_EMAIL", "test@example.local");
 
     expect(getE2ETestModeConfig()).toEqual({
-      enabled: true,
+      uiEnabled: true,
       email: "test@example.local",
-      passwordConfigured: true,
-      masterPasswordConfigured: true,
     });
   });
 
