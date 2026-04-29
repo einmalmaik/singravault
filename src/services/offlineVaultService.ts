@@ -731,6 +731,29 @@ export async function fetchRemoteOfflineSnapshot(
   userId: string,
   options?: { persist?: boolean },
 ): Promise<OfflineVaultSnapshot> {
+  const cacheKey = `${userId}:${options?.persist === false ? 'no-persist' : 'persist'}`;
+  const existing = remoteSnapshotRequests.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const request = fetchRemoteOfflineSnapshotUncached(userId, options).finally(() => {
+    remoteSnapshotRequests.delete(cacheKey);
+  });
+  remoteSnapshotRequests.set(cacheKey, request);
+  return request;
+}
+
+const remoteSnapshotRequests = new Map<string, Promise<OfflineVaultSnapshot>>();
+const vaultSnapshotRequests = new Map<string, Promise<{
+  snapshot: OfflineVaultSnapshot;
+  source: 'remote' | 'cache' | 'empty';
+}>>();
+
+async function fetchRemoteOfflineSnapshotUncached(
+  userId: string,
+  options?: { persist?: boolean },
+): Promise<OfflineVaultSnapshot> {
   const { data: vault, error: vaultError } = await supabase
     .from('vaults')
     .select('id')
@@ -834,6 +857,22 @@ function applyRecentLocalMutations(
 }
 
 export async function loadVaultSnapshot(userId: string): Promise<{
+  snapshot: OfflineVaultSnapshot;
+  source: 'remote' | 'cache' | 'empty';
+}> {
+  const existing = vaultSnapshotRequests.get(userId);
+  if (existing) {
+    return existing;
+  }
+
+  const request = loadVaultSnapshotUncached(userId).finally(() => {
+    vaultSnapshotRequests.delete(userId);
+  });
+  vaultSnapshotRequests.set(userId, request);
+  return request;
+}
+
+async function loadVaultSnapshotUncached(userId: string): Promise<{
   snapshot: OfflineVaultSnapshot;
   source: 'remote' | 'cache' | 'empty';
 }> {

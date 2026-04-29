@@ -93,6 +93,7 @@ export function VaultItemList({
 }: VaultItemListProps) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const userId = user?.id ?? null;
   const {
     decryptItem,
     encryptItem,
@@ -114,14 +115,28 @@ export function VaultItemList({
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
   const revalidationRequestIdRef = useRef(0);
   const revalidatingRef = useRef(false);
+  const fetchItemsRef = useRef(false);
+  const decryptItemRef = useRef(decryptItem);
+  const encryptItemRef = useRef(encryptItem);
+  const reportUnreadableItemsRef = useRef(reportUnreadableItems);
+  const verifyIntegrityRef = useRef(verifyIntegrity);
+  const refreshIntegrityBaselineRef = useRef(refreshIntegrityBaseline);
+
+  useEffect(() => {
+    decryptItemRef.current = decryptItem;
+    encryptItemRef.current = encryptItem;
+    reportUnreadableItemsRef.current = reportUnreadableItems;
+    verifyIntegrityRef.current = verifyIntegrity;
+    refreshIntegrityBaselineRef.current = refreshIntegrityBaseline;
+  }, [decryptItem, encryptItem, refreshIntegrityBaseline, reportUnreadableItems, verifyIntegrity]);
 
   useEffect(() => {
     failedDecryptPayloadByItemIdRef.current.clear();
     loggedDecryptFailuresRef.current.clear();
-  }, [user?.id, isDuressMode]);
+  }, [userId, isDuressMode]);
 
   const revalidateRemoteIntegrity = useCallback(async () => {
-    if (!user || revalidatingRef.current) {
+    if (!userId || revalidatingRef.current) {
       return;
     }
 
@@ -130,23 +145,24 @@ export function VaultItemList({
     revalidatingRef.current = true;
     setRevalidating(true);
     try {
-      await verifyIntegrity();
+      await verifyIntegrityRef.current();
     } finally {
       if (revalidationRequestIdRef.current === requestId) {
         revalidatingRef.current = false;
         setRevalidating(false);
       }
     }
-  }, [user, verifyIntegrity]);
+  }, [userId]);
 
   useEffect(() => {
     async function fetchItems() {
-      if (!user) return;
+      if (!userId || fetchItemsRef.current) return;
 
+      fetchItemsRef.current = true;
       setLoading(true);
       try {
-        const { snapshot, source } = await loadVaultSnapshot(user.id);
-        const integrityResult = await verifyIntegrity(snapshot, { source });
+        const { snapshot, source } = await loadVaultSnapshot(userId);
+        const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
         if (integrityResult?.mode === 'blocked') {
           setItems([]);
           return;
@@ -173,17 +189,17 @@ export function VaultItemList({
             }
 
             try {
-              const decryptedData = await decryptItem(item.encrypted_data, item.id);
+              const decryptedData = await decryptItemRef.current(item.encrypted_data, item.id);
               decryptableItemIds.add(item.id);
               failedDecryptPayloadByItemIdRef.current.delete(item.id);
 
               const migration = await migrateLegacyVaultItemMetadata({
-                userId: user.id,
+                userId,
                 vaultId: snapshot.vaultId,
                 item,
                 decryptedData,
                 canPersistRemote: canPersistMigrations,
-                encryptItem,
+                encryptItem: encryptItemRef.current,
               });
               if (migration.migrated) {
                 integrityBaselineDirty = true;
@@ -219,7 +235,7 @@ export function VaultItemList({
         );
 
         if (unreadableItems.length > 0) {
-          reportUnreadableItems(unreadableItems);
+          reportUnreadableItemsRef.current(unreadableItems);
         }
 
         const canPersistTrustedFirstBaseline = integrityResult?.mode === 'healthy'
@@ -229,7 +245,7 @@ export function VaultItemList({
           && unreadableItems.length === 0;
 
         if ((integrityBaselineDirty && canPersistMigrations) || canPersistTrustedFirstBaseline) {
-          await refreshIntegrityBaseline({
+          await refreshIntegrityBaselineRef.current({
             itemIds: new Set([...decryptableItemIds, ...trustedItemIds]),
             categoryIds: snapshot.categories.map((category) => category.id),
           });
@@ -246,6 +262,7 @@ export function VaultItemList({
       } catch (err) {
         console.error('Error fetching vault items:', err);
       } finally {
+        fetchItemsRef.current = false;
         setLoading(false);
         setDecrypting(false);
       }
@@ -253,16 +270,11 @@ export function VaultItemList({
 
     void fetchItems();
   }, [
-    user,
-    decryptItem,
-    encryptItem,
     refreshKey,
     isDuressMode,
-    reportUnreadableItems,
-    refreshIntegrityBaseline,
     revalidateRemoteIntegrity,
+    userId,
     vaultDataVersion,
-    verifyIntegrity,
   ]);
 
   const quarantinedItems = useMemo(

@@ -736,6 +736,10 @@
       "safeModeNotice": "Safe Mode ist schreibgeschützt. Prüfe deine Einträge und exportiere sie bei Bedarf, bevor du den Tresor zurücksetzt.",
       "revalidatingEntries": "Prüfe Einträge...",
       "revalidateAction": "Tresor erneut prüfen",
+      "quarantineSummary": "{{count}} Einträge sind in Quarantäne.",
+      "ignoreEntryAction": "Hinweis ausblenden",
+      "revalidationHint": "Prüfe den Tresor erneut, wenn die Verbindung wieder stabil ist.",
+      "ignoreSummaryAction": "Alle Hinweise ausblenden",
       "resetChallengeExpired": "Die Sicherheitsbestätigung für den Tresor-Reset ist abgelaufen. Bitte versuche es erneut.",
       "resetFailed": "Der Tresor konnte nicht zurückgesetzt werden."
     }

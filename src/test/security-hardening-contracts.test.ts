@@ -187,7 +187,9 @@ describe("security hardening contracts", () => {
       "supabase/migrations/20260428203000_add_vault_protection_mode.sql",
       "utf-8",
     );
-    const vaultContext = readFileSync("src/contexts/VaultContext.tsx", "utf-8");
+    const deviceKeyActivation = readFileSync("src/services/deviceKeyActivationService.ts", "utf-8");
+    const deviceKeyUnlock = readFileSync("src/services/deviceKeyUnlockOrchestrator.ts", "utf-8");
+    const vaultMasterUnlock = readFileSync("src/services/vaultMasterUnlockService.ts", "utf-8");
 
     expect(migration).toContain("vault_protection_mode");
     expect(migration).toContain("'master_only'");
@@ -197,10 +199,10 @@ describe("security hardening contracts", () => {
     expect(migration).not.toMatch(/device_key_(hash|fingerprint|secret|value|material)/i);
     expect(migration).not.toContain("encrypted_device_key");
 
-    expect(vaultContext).toContain("VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED");
-    expect(vaultContext).toContain("requiresDeviceKey(vaultProtectionMode)");
-    expect(vaultContext).not.toContain("device_key_hash");
-    expect(vaultContext).not.toContain("device_key_fingerprint");
+    expect(deviceKeyActivation).toContain("VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED");
+    expect(`${deviceKeyUnlock}\n${vaultMasterUnlock}`).toContain("requiresDeviceKey");
+    expect(deviceKeyActivation).not.toContain("device_key_hash");
+    expect(deviceKeyActivation).not.toContain("device_key_fingerprint");
   });
 
   it("keeps Tauri Device Key raw material out of generic renderer reads", () => {

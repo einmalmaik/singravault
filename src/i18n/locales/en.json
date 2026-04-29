@@ -711,6 +711,10 @@
       "safeModeNotice": "Safe Mode is read-only. Review and export your items if needed before resetting the vault.",
       "revalidatingEntries": "Checking entries...",
       "revalidateAction": "Check vault again",
+      "quarantineSummary": "{{count}} items are in quarantine.",
+      "ignoreEntryAction": "Hide notice",
+      "revalidationHint": "Check the vault again when the connection is stable.",
+      "ignoreSummaryAction": "Hide all notices",
       "resetChallengeExpired": "The vault reset confirmation expired. Please try again.",
       "resetFailed": "The vault could not be reset."
     }
