@@ -49,6 +49,7 @@ import {
 
 const DECRYPT_BATCH_SIZE = 25;
 const QUARANTINE_SUMMARY_THRESHOLD = 2;
+const CLOUD_SYNC_REFRESH_INTERVAL_MS = 10_000;
 
 interface VaultItem {
   id: string;
@@ -153,6 +154,7 @@ export function VaultItemList({
     lastError: null,
   });
   const [revalidating, setRevalidating] = useState(false);
+  const [cloudSyncTick, setCloudSyncTick] = useState(0);
   const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
   const revalidationRequestIdRef = useRef(0);
@@ -179,6 +181,47 @@ export function VaultItemList({
     failedDecryptPayloadByItemIdRef.current.clear();
     loggedDecryptFailuresRef.current.clear();
   }, [userId, isDuressMode]);
+
+  useEffect(() => {
+    if (!userId) {
+      return undefined;
+    }
+
+    const requestCloudSync = () => {
+      if (!isAppOnline()) {
+        return;
+      }
+
+      setCloudSyncTick((tick) => tick + 1);
+    };
+
+    const requestVisibleCloudSync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      requestCloudSync();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        requestCloudSync();
+      }
+    };
+
+    window.addEventListener('focus', requestVisibleCloudSync);
+    window.addEventListener('online', requestVisibleCloudSync);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const intervalId = window.setInterval(requestVisibleCloudSync, CLOUD_SYNC_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.removeEventListener('focus', requestVisibleCloudSync);
+      window.removeEventListener('online', requestVisibleCloudSync);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [userId]);
 
   const revalidateRemoteIntegrity = useCallback(async () => {
     if (!userId || revalidatingRef.current) {
@@ -422,6 +465,7 @@ export function VaultItemList({
     void fetchItems();
   }, [
     refreshKey,
+    cloudSyncTick,
     isDuressMode,
     revalidateRemoteIntegrity,
     userId,

@@ -144,6 +144,8 @@ function markLocalSnapshotFresh(
   userId: string,
   mutation: { itemId?: string; categoryId?: string },
 ): void {
+  invalidateSnapshotRequestCache(userId);
+
   const current = recentLocalMutationsByUser.get(userId);
   const next: RecentLocalMutationWindow = {
     freshUntil: Date.now() + LOCAL_WRITE_CACHE_TTL_MS,
@@ -160,6 +162,15 @@ function markLocalSnapshotFresh(
   }
 
   recentLocalMutationsByUser.set(userId, next);
+}
+
+function invalidateSnapshotRequestCache(userId: string): void {
+  vaultSnapshotRequests.delete(userId);
+  for (const key of remoteSnapshotRequests.keys()) {
+    if (key === userId || key.startsWith(`${userId}:`)) {
+      remoteSnapshotRequests.delete(key);
+    }
+  }
 }
 
 function getRecentLocalMutationWindow(userId: string): RecentLocalMutationWindow | null {
@@ -1000,7 +1011,17 @@ async function fetchRemoteOfflineSnapshotUncached(
   const snapshot = preserveLocalSecurityState(remoteSnapshot, cachedSnapshot);
   snapshot.remoteRevision = remoteRevision ?? cachedSnapshot?.remoteRevision ?? null;
 
+  const recent = getRecentLocalMutationWindow(userId);
   if (options?.persist !== false) {
+    if (recent) {
+      const latestCachedSnapshot = await getOfflineSnapshot(userId);
+      if (latestCachedSnapshot) {
+        const mergedSnapshot = applyRecentLocalMutations(snapshot, latestCachedSnapshot, recent);
+        await saveOfflineSnapshot(mergedSnapshot);
+        return mergedSnapshot;
+      }
+    }
+
     await saveOfflineSnapshot(snapshot);
   }
   return snapshot;

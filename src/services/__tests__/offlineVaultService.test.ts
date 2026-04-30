@@ -964,6 +964,24 @@ describe("loadVaultSnapshot", () => {
     expect(snapshot.categories.map((category) => category.id)).toEqual(["cat-existing"]);
   });
 
+  it("online: does not let a stale remote refresh resurrect a locally deleted item", async () => {
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+
+    await svc.upsertOfflineItemRow(USER_ID, makeItemRow() as VaultItemRow);
+    await svc.removeOfflineItemRow(USER_ID, "item-1");
+
+    const vaultChain = createChainable({ data: { id: VAULT_ID }, error: null });
+    const catChain = createChainable({ data: [], error: null });
+    const itemChain = createChainable({ data: [makeItemRow()], error: null });
+    mockSupabase._setChains([vaultChain, catChain, itemChain]);
+
+    const refreshedSnapshot = await svc.fetchRemoteOfflineSnapshot(USER_ID);
+    const cachedSnapshot = await svc.getOfflineSnapshot(USER_ID);
+
+    expect(refreshedSnapshot.items).toEqual([]);
+    expect(cachedSnapshot?.items).toEqual([]);
+  });
+
   it("online: keeps cached snapshot authoritative while offline mutations are pending", async () => {
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
 

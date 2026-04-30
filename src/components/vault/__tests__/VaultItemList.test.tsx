@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { VaultItemList } from '../VaultItemList';
 import { loadVaultSnapshot } from '@/services/offlineVaultService';
@@ -433,6 +433,38 @@ describe.sequential('VaultItemList', () => {
       expect(mockVerifyIntegrity).toHaveBeenCalledWith();
     });
     expect(mockVerifyIntegrity).toHaveBeenCalledWith(expect.any(Object), { source: 'cache' });
+  });
+
+  it('refreshes the vault list from the cloud when the window regains focus online', async () => {
+    snapshotState.source = 'remote';
+    snapshotState.online = true;
+    snapshotState.items = [itemOk];
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'healthy',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+
+    render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('Visible Item');
+    expect(loadVaultSnapshot).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    await waitFor(() => {
+      expect(loadVaultSnapshot).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('migrates a healthy legacy no-AAD item instead of reporting quarantine', async () => {

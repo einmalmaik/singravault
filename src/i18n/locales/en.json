@@ -702,6 +702,7 @@
       "reasonUnknownOnServer": "An unknown item was found without a trusted baseline.",
       "reasonUnknown": "This item could no longer be confirmed as trustworthy.",
       "restoreAction": "Restore",
+      "restoreAllAction": "Restore all recoverable",
       "restoreSuccess": "The last trusted local version was restored.",
       "deleteEntry": "Delete permanently",
       "deleteSuccess": "The quarantined item was removed.",

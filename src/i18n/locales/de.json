@@ -727,6 +727,7 @@
       "reasonUnknownOnServer": "Ein unbekannter Eintrag wurde ohne vertrauenswürdige Baseline gefunden.",
       "reasonUnknown": "Der Eintrag konnte nicht mehr als vertrauenswürdig bestätigt werden.",
       "restoreAction": "Wiederherstellen",
+      "restoreAllAction": "Alle wiederherstellbaren wiederherstellen",
       "restoreSuccess": "Die letzte vertrauenswürdige lokale Version wurde wiederhergestellt.",
       "deleteEntry": "Endgültig löschen",
       "deleteSuccess": "Der Quarantäne-Eintrag wurde entfernt.",

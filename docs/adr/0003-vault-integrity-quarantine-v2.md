@@ -22,6 +22,7 @@ Vault Integrity V2 introduces a central service layer under `src/services/vaultI
 - Snapshot Trust V2: trusted snapshots can be created only from a normal verified state.
 - Restore V2: restore requires a matching trusted snapshot, writes a new Item-Envelope V2, updates Manifest V2, and requires re-verification.
 - Delete V2: legitimate item deletes are represented by Manifest V2 tombstones so they are not reclassified as missing remote or active quarantine.
+- Cross-device R3/V2 bridge: same-vault V2 envelope rewrites observed through the legacy baseline path are revalidation work, not active quarantine, until an authenticated Manifest V2 revision proves the new state.
 - Migration V2: migration is idempotent, requires a verified vault key, rejects active quarantine, rejects ambiguous duplicate rows, and blocks legacy v1/no-AAD rows until they are explicitly re-encrypted.
 
 Operationalization adds three product adapters:
@@ -52,6 +53,8 @@ Migration cannot silently bless legacy or suspicious state. Existing legacy rows
 Restore is intentionally narrow. It restores only from a trusted local snapshot and re-encrypts through Item-AAD V2. It never uses suspicious remote ciphertext as the source.
 
 Server persistence uses two layers. `vault_integrity_manifests` stores the encrypted envelope and non-secret revision metadata under owner-scoped RLS. `apply_vault_mutation_v2` is the transaction/CAS path: it locks the sync head and manifest row, checks expected base revision, expected manifest revision, and expected manifest hash, then writes the item/category/restore/delete mutation and Manifest V2 envelope together. A stale revision/hash result is conflict or sync-pending state, not evidence of item tampering. Product paths that still perform direct row writes plus trusted manifest refresh are compatibility bridges until they are fully moved to the RPC.
+
+The R3/V2 bridge exists only to prevent cross-device restore ping-pong during migration. It recognizes the narrow case where every untrusted active R3 `ciphertext_changed` finding points at a well-formed V2 envelope bound to the same vault, user, and item ids. The same rule applies to local-mutation-overlay snapshots after create/update/delete; the explicitly trusted deleted item may appear as `missing_on_server` without making unrelated V2 envelope rewrites active quarantine. The result is `revalidation_failed`, not normal, not trusted, and not rebaselined. True active V2 quarantine still requires Manifest V2 evidence.
 
 ## Tests
 

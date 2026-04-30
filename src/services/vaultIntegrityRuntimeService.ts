@@ -59,23 +59,27 @@ export function shouldDowngradeCrossDeviceV2BaselineDrift(input: {
   assessment: VaultIntegrityAssessment;
   snapshot: OfflineVaultSnapshot;
   source?: 'remote' | 'cache' | 'empty';
+  trustedItemIds?: Iterable<string>;
 }): boolean {
   const result = input.assessment.result;
-  if (input.source !== 'remote' || result.mode !== 'quarantine') {
+  if (input.source === 'empty' || result.mode !== 'quarantine') {
     return false;
   }
+
+  const trustedItemIds = new Set(input.trustedItemIds ?? []);
+  const untrustedQuarantinedItems = result.quarantinedItems.filter((item) => !trustedItemIds.has(item.id));
 
   if (
     input.assessment.unreadableCategoryReason
     || input.assessment.inspection.categoryDriftIds.length > 0
-    || result.quarantinedItems.length === 0
-    || result.quarantinedItems.some((item) => item.reason !== 'ciphertext_changed')
+    || untrustedQuarantinedItems.length === 0
+    || untrustedQuarantinedItems.some((item) => item.reason !== 'ciphertext_changed')
   ) {
     return false;
   }
 
   const itemsById = new Map(input.snapshot.items.map((item) => [item.id, item]));
-  return result.quarantinedItems.every((quarantinedItem) => {
+  return untrustedQuarantinedItems.every((quarantinedItem) => {
     const item = itemsById.get(quarantinedItem.id);
     if (!item) {
       return false;
@@ -267,6 +271,21 @@ export async function refreshVaultIntegrityBaseline(input: {
     source: snapshotBundle.source,
   });
   const integrityResult = integrityAssessment.result;
+  if (shouldDowngradeCrossDeviceV2BaselineDrift({
+    assessment: integrityAssessment,
+    snapshot: snapshotBundle.rawSnapshot,
+    source: snapshotBundle.source,
+    trustedItemIds: normalizedTrustedMutation.itemIds,
+  })) {
+    const revalidationResult = buildCrossDeviceRevalidationResult(
+      snapshotBundle.rawSnapshot,
+      integrityAssessment,
+    );
+    callbacks.applyIntegrityResultState(revalidationResult);
+    callbacks.applyTrustedRecoveryState(await loadTrustedRecoverySnapshotState(userId));
+    callbacks.bumpVaultDataVersion();
+    return;
+  }
   const trustedRebaselineAllowed = canRebaselineTrustedMutation(
     integrityAssessment,
     normalizedTrustedMutation,
