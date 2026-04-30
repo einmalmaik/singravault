@@ -1,0 +1,154 @@
+ README.md                                          |    4 +-
+ docs/ARCHITECTURE.md                               |   49 +
+ docs/SECURITY.md                                   |   43 +
+ .../2026-02-19-supabase-jwt-rls-hardening.md       |    0
+ .../2026-03-05-non-vault-access-step-up-reauth.md  |    0
+ .../2026-03-05-subscription-emails.md              |    0
+ docs/{ => archive}/ADMIN_TEAM_ACCESS.md            |    0
+ .../AUTHENTICATOR_AND_SHARED_COLLECTIONS_FIX.md    |    0
+ docs/{ => archive}/AUTH_COMPONENTS.md              |    0
+ docs/{ => archive}/AUTH_CONTEXT.md                 |    0
+ docs/{ => archive}/CRYPTO_SERVICE.md               |    0
+ docs/{ => archive}/DEVICE_KEY.md                   |    5 +
+ docs/{ => archive}/EMERGENCY_ACCESS.md             |    0
+ .../FAMILY_AND_SHARED_COLLECTIONS_ANALYSIS.md      |    0
+ .../FAMILY_COLLECTIONS_IMPLEMENTATION.md           |    0
+ docs/{ => archive}/OFFLINE_VAULT_SERVICE.md        |    0
+ docs/{ => archive}/OPAQUE_PROTOCOL.md              |    0
+ docs/{ => archive}/PASSKEY_HARDENING_FIXES.md      |    0
+ docs/{ => archive}/PASSWORD_GENERATOR.md           |    0
+ docs/{ => archive}/PASSWORD_STRENGTH_SERVICE.md    |    0
+ docs/archive/README.md                             |   15 +
+ docs/{ => archive}/SECURITY_HARDENING_PLAN.md      |    0
+ docs/{ => archive}/SETTINGS_COMPONENTS.md          |    0
+ .../{ => archive}/SHARED_COLLECTIONS_ENCRYPTION.md |    0
+ docs/{ => archive}/SUPPORT_SYSTEM.md               |    0
+ docs/{ => archive}/TESTPLAN.md                     |    0
+ docs/{ => archive}/THEME_PROVIDER.md               |    0
+ docs/{ => archive}/TOTP_SERVICE.md                 |    0
+ docs/{ => archive}/TWO_FACTOR_SERVICE.md           |    0
+ docs/{ => archive}/VAULT_COMPONENTS.md             |    0
+ docs/{ => archive}/VAULT_CONTEXT.md                |    0
+ docs/{ => archive}/account-vault-settings-split.md |    0
+ .../admin-permission-audit-2026-03-08.md           |    0
+ .../adr/ADR-001-core-vault-integrity.md            |    0
+ .../adr/ADR-002-local-secret-store.md              |    0
+ .../architecture/vault-runtime-architecture.md     |   43 +
+ .../architecture/vault-runtime-refactor-map.md     |   44 +
+ .../vaultcontext-refactor-completion-map.md        |   22 +
+ docs/{ => archive}/auth-session-otp-fix.md         |    0
+ docs/{ => archive}/crypto-hardening-2026-02-25.md  |    0
+ docs/{ => archive}/desktop-release-process.md      |    0
+ docs/{ => archive}/edge-function-auth-hardening.md |    0
+ docs/{ => archive}/iframe-auth-fallback.md         |    0
+ docs/{ => archive}/post-quantum-default-path.md    |    0
+ docs/{ => archive}/premium-file-upload-e2ee.md     |    0
+ docs/{ => archive}/premium-loading.md              |    0
+ .../premium-service-boundary-2026-03.md            |    0
+ docs/{ => archive}/security-audit-2026-02-26.md    |    0
+ docs/{ => archive}/security-fixes-2026-02-26.md    |    0
+ docs/{ => archive}/security-fixes-2026-03-06.md    |    0
+ .../{ => archive}/security-hardening-2026-02-18.md |    0
+ .../{ => archive}/security-hardening-2026-02-19.md |    0
+ docs/{ => archive}/security-standard-v1.md         |    0
+ docs/{ => archive}/security/HARDENING_PLAN.md      |    0
+ docs/{ => archive}/security/SECURITY_MODEL_V2.md   |    0
+ .../{ => archive}/security/WEB_PWA_THREAT_MODEL.md |    0
+ docs/{ => archive}/security/central-2fa-vaultfa.md |    0
+ .../device-key-security-review-2026-04-28.md       |    0
+ .../security/p0-p1-remediation-2026-04-27.md       |    0
+ ...auth-devicekey-passkey-regression-2026-04-29.md |   37 +
+ ...ntime-refactor-quarantine-devtest-2026-04-29.md |   52 +
+ docs/archive/security/security-architecture.md     |   31 +
+ .../sql/metadata_zero_knowledge_verification.sql   |    0
+ .../zero-knowledge-branch-audit-2026-04-28.md      |    0
+ ...edge-metadata-edge-tauri-followup-2026-04-28.md |    0
+ .../session-and-browser-boundaries-2026-04-27.md   |    0
+ .../stripe-edge-function-import-fix.md             |    0
+ ...ubscription-access-security-audit-2026-02-19.md |    0
+ .../subscription-system-audit-2026-02-11.md        |    0
+ docs/{ => archive}/subscriptions.md                |    0
+ ...al-runtime-auth-devicekey-passkey-quarantine.md |   72 +
+ .../manual-runtime-auth-devicekey-passkey.md       |   89 +
+ ...ltcontext-refactor-completion-map-2026-04-29.md |   20 +
+ .../xss-same-origin-hardening-2026-04-28.md        |    0
+ .../zero-knowledge-verification-and-comparison.md  |    0
+ env.example                                        |   14 +
+ package.json                                       |    4 +-
+ scripts/check-repo-secret-guardrails.mjs           |   46 +-
+ scripts/dev/ensure-dev-test-account.mjs            |  140 +
+ src/components/settings/DeviceKeySettings.tsx      |  133 +-
+ src/components/vault/VaultIntegrityRecovery.tsx    |    2 +
+ src/components/vault/VaultItemList.tsx             |  285 +-
+ src/components/vault/VaultQuarantineActions.tsx    |   45 +
+ src/components/vault/VaultQuarantinePanel.tsx      |   50 +-
+ .../vault/VaultQuarantineRestoreProgressDialog.tsx |  154 +
+ src/components/vault/VaultSidebar.tsx              |   59 +-
+ .../vault/__tests__/VaultItemList.test.tsx         |  198 +-
+ src/config/devTestAccountConfig.ts                 |   14 +
+ src/config/runtimeConfig.ts                        |    4 +
+ src/config/testMode.test.ts                        |   34 +
+ src/config/testMode.ts                             |   37 +
+ src/contexts/AuthContext.test.tsx                  |   32 +-
+ src/contexts/AuthContext.tsx                       |   44 +-
+ src/contexts/VaultContext.tsx                      | 3386 +-------------------
+ src/contexts/__tests__/VaultContext.test.tsx       |  143 +-
+ src/contexts/vault/buildVaultContextValue.ts       |   89 +
+ src/contexts/vault/useVaultLifecycleEffects.ts     |  228 ++
+ src/contexts/vault/useVaultProviderActions.tsx     |  694 ++++
+ src/contexts/vault/useVaultProviderState.ts        |  342 ++
+ src/contexts/vault/vaultContextTypes.ts            |   69 +
+ src/i18n/locales/de.json                           |    4 +
+ src/i18n/locales/en.json                           |    4 +
+ src/pages/SecurityWhitepaper.tsx                   |   26 +-
+ src/platform/tauriDevMode.test.ts                  |   16 +-
+ src/platform/tauriDevMode.ts                       |   21 +-
+ .../__tests__/accountVaultRoutePolicy.test.ts      |   31 +
+ .../__tests__/deviceKeyUnlockOrchestrator.test.ts  |   64 +
+ src/services/__tests__/offlineVaultService.test.ts |   54 +-
+ .../__tests__/twoFactorService.mock.test.ts        |   39 +
+ src/services/__tests__/vaultErrorMapper.test.ts    |   23 +
+ .../__tests__/vaultIntegrityDecisionEngine.test.ts |  173 +
+ .../__tests__/vaultQuarantineOrchestrator.test.ts  |   17 +
+ .../__tests__/vaultRuntimeCleanupService.test.ts   |   45 +
+ src/services/__tests__/vaultRuntimeFacade.test.ts  |   25 +
+ .../__tests__/vaultSessionStateMachine.test.ts     |   37 +
+ .../__tests__/vaultUnlockOrchestrator.test.ts      |   55 +
+ src/services/accountVaultRoutePolicy.ts            |   53 +
+ src/services/authRuntimeState.test.ts              |   48 +
+ src/services/authRuntimeState.ts                   |   66 +
+ src/services/authSessionManager.test.ts            |   15 +
+ src/services/authSessionManager.ts                 |    2 +-
+ src/services/cryptoService.ts                      |   42 +
+ src/services/deviceKeyActivationService.ts         |  343 ++
+ src/services/deviceKeyService.ts                   |    6 +-
+ src/services/deviceKeyUnlockOrchestrator.ts        |   98 +
+ .../legacyVaultMetadataMigrationService.test.ts    |   48 +-
+ .../legacyVaultMetadataMigrationService.ts         |   40 +
+ src/services/legacyVaultRepairService.ts           |  297 ++
+ src/services/offlineVaultRuntimeService.ts         |  152 +
+ src/services/offlineVaultService.ts                |  267 +-
+ src/services/passkeyService.ts                     |   24 +-
+ src/services/passwordGenerator.ts                  |    3 +
+ src/services/twoFactorService.ts                   |   74 +-
+ src/services/vaultErrorMapper.ts                   |   91 +
+ src/services/vaultIntegrityDecisionEngine.ts       |  367 +++
+ src/services/vaultIntegrityRuntimeService.ts       |  381 +++
+ src/services/vaultIntegrityService.test.ts         |  117 +
+ src/services/vaultIntegrityService.ts              |  293 +-
+ src/services/vaultKdfRepairService.ts              |  175 +
+ src/services/vaultMasterUnlockService.ts           |  431 +++
+ src/services/vaultPasskeyUnlockService.ts          |  213 ++
+ src/services/vaultQuarantineOrchestrator.ts        |  107 +
+ src/services/vaultRecoveryOrchestrator.test.ts     |  160 +
+ src/services/vaultRecoveryOrchestrator.ts          |  128 +
+ src/services/vaultRuntimeCleanupService.ts         |   70 +
+ src/services/vaultRuntimeFacade.ts                 |   29 +
+ src/services/vaultSessionStateMachine.ts           |   61 +
+ src/services/vaultSetupOrchestrator.ts             |  155 +
+ src/services/vaultUnlockOrchestrator.ts            |   58 +
+ src/services/vaultUserKeyMigrationService.ts       |  120 +
+ src/test/integration-crypto-pipeline.test.ts       |   20 +
+ src/test/security-hardening-contracts.test.ts      |   12 +-
+ vite.config.ts                                     |    7 +
+ 153 files changed, 8281 insertions(+), 3698 deletions(-)

@@ -17,6 +17,7 @@ const password = readString(process.env.SINGRA_DEV_TEST_PASSWORD);
 const masterPassword = readString(process.env.SINGRA_DEV_TEST_MASTER_PASSWORD);
 const supabaseUrl = readString(process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL);
 const serviceRoleKey = readString(process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SINGRA_SUPABASE_SERVICE_ROLE_KEY);
+const SUPABASE_DEV_PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"|<>?,./`~]).+$/;
 
 if (!enabled) {
   safeLog("Dev test account disabled.");
@@ -27,6 +28,14 @@ assertDevOnly();
 
 if (!email || !password || !masterPassword) {
   safeLog("Dev test account env is incomplete; skipping account provisioning.");
+  process.exit(0);
+}
+
+if (!isValidSupabaseDevPassword(password)) {
+  safeLog(
+    "Dev test account password does not satisfy the local Supabase password policy; "
+    + "skipping account provisioning so the dev server can start.",
+  );
   process.exit(0);
 }
 
@@ -133,6 +142,10 @@ function readBoolean(value) {
 function readString(value) {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function isValidSupabaseDevPassword(value) {
+  return SUPABASE_DEV_PASSWORD_PATTERN.test(value);
 }
 
 function safeLog(message) {

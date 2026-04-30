@@ -10,7 +10,7 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Copy, Download, Eye, EyeOff, KeyRound, QrCode, Shield, Upload } from 'lucide-react';
+import { AlertTriangle, Copy, Download, Eye, EyeOff, KeyRound, QrCode, Shield, ShieldOff, Upload } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,7 @@ import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { isTauriRuntime } from '@/platform/runtime';
+import { saveExportFile } from '@/services/exportFileService';
 import {
     DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH,
     exportDeviceKeyForTransfer,
@@ -42,13 +43,18 @@ import {
 export function DeviceKeySettings() {
     const { t } = useTranslation();
     const { toast } = useToast();
-    const { deviceKeyActive, enableDeviceKey, isLocked, refreshDeviceKeyState } = useVault();
+    const { deviceKeyActive, enableDeviceKey, disableDeviceKey, isLocked, refreshDeviceKeyState } = useVault();
     const { user } = useAuth();
 
     const [showEnableDialog, setShowEnableDialog] = useState(false);
     const [showExportDialog, setShowExportDialog] = useState(false);
     const [showImportDialog, setShowImportDialog] = useState(false);
+    const [showDisableDialog, setShowDisableDialog] = useState(false);
     const [masterPassword, setMasterPassword] = useState('');
+    const [disableMasterPassword, setDisableMasterPassword] = useState('');
+    const [disableTwoFactorCode, setDisableTwoFactorCode] = useState('');
+    const [disablePhrase, setDisablePhrase] = useState('');
+    const [disableAcknowledged, setDisableAcknowledged] = useState(false);
     const [pin, setPin] = useState('');
     const [exportedData, setExportedData] = useState('');
     const [importData, setImportData] = useState('');
@@ -56,6 +62,7 @@ export function DeviceKeySettings() {
     const [backupAcknowledged, setBackupAcknowledged] = useState(false);
     const [showTransferSecret, setShowTransferSecret] = useState(false);
     const isDesktopRuntime = isTauriRuntime();
+    const disableConfirmationPhrase = t('deviceKey.disableConfirmPhrase');
 
     const handleEnable = async () => {
         if (!masterPassword) return;
@@ -143,6 +150,33 @@ export function DeviceKeySettings() {
         setImportData(text.trim());
     };
 
+    const handleDisable = async () => {
+        if (!disableMasterPassword || disablePhrase !== disableConfirmationPhrase || !disableAcknowledged) return;
+        setLoading(true);
+
+        const { error } = await disableDeviceKey(disableMasterPassword, disableTwoFactorCode);
+
+        setLoading(false);
+        if (error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.disableFailed'),
+            });
+            return;
+        }
+
+        setShowDisableDialog(false);
+        setDisableMasterPassword('');
+        setDisableTwoFactorCode('');
+        setDisablePhrase('');
+        setDisableAcknowledged(false);
+        toast({
+            title: t('common.success'),
+            description: t('deviceKey.disableSuccess'),
+        });
+    };
+
     const copyTransferSecret = async () => {
         if (!pin) return;
         await navigator.clipboard.writeText(pin);
@@ -161,26 +195,38 @@ export function DeviceKeySettings() {
         });
     };
 
-    const downloadTextFile = (filename: string, contents: string) => {
-        const blob = new Blob([contents], { type: 'application/json;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-    };
-
-    const downloadTransferFile = () => {
+    const downloadTransferFile = async () => {
         if (!exportedData) return;
-        downloadTextFile('singra-device-key.singra-device-key', `${exportedData}\n`);
+        try {
+            await saveExportFile({
+                name: 'singra-device-key.singra-device-key',
+                mime: 'text/plain;charset=utf-8',
+                content: `${exportedData}\n`,
+            });
+        } catch {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.exportFailed'),
+            });
+        }
     };
 
-    const downloadTransferSecret = () => {
+    const downloadTransferSecret = async () => {
         if (!pin) return;
-        downloadTextFile('singra-device-key-transfer-secret.txt', `${pin}\n`);
+        try {
+            await saveExportFile({
+                name: 'singra-device-key-transfer-secret.txt',
+                mime: 'text/plain;charset=utf-8',
+                content: `${pin}\n`,
+            });
+        } catch {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.exportFailed'),
+            });
+        }
     };
 
     return (
@@ -213,6 +259,15 @@ export function DeviceKeySettings() {
                             >
                                 <QrCode className="w-4 h-4" />
                                 {t('deviceKey.export')}
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                onClick={() => setShowDisableDialog(true)}
+                                disabled={isLocked}
+                                className="gap-2"
+                            >
+                                <ShieldOff className="w-4 h-4" />
+                                {t('deviceKey.disable')}
                             </Button>
                         </div>
                     </>
@@ -294,6 +349,89 @@ export function DeviceKeySettings() {
                         </Button>
                         <Button onClick={handleEnable} disabled={!masterPassword || !backupAcknowledged || loading}>
                             {t('deviceKey.enable')}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Disable Dialog */}
+            <Dialog open={showDisableDialog} onOpenChange={(open) => {
+                setShowDisableDialog(open);
+                if (!open) {
+                    setDisableMasterPassword('');
+                    setDisableTwoFactorCode('');
+                    setDisablePhrase('');
+                    setDisableAcknowledged(false);
+                }
+            }}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{t('deviceKey.disableTitle')}</DialogTitle>
+                        <DialogDescription>
+                            {t('deviceKey.disableDesc')}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <Alert variant="destructive">
+                        <AlertTriangle className="w-4 h-4" />
+                        <AlertDescription>
+                            {t('deviceKey.disableWarning')}
+                        </AlertDescription>
+                    </Alert>
+                    <div className="space-y-2">
+                        <Label>{t('auth.unlock.password')}</Label>
+                        <Input
+                            type="password"
+                            value={disableMasterPassword}
+                            onChange={(e) => setDisableMasterPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>{t('deviceKey.disableTwoFactorCode')}</Label>
+                        <Input
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            value={disableTwoFactorCode}
+                            onChange={(e) => setDisableTwoFactorCode(e.target.value)}
+                            placeholder={t('deviceKey.disableTwoFactorPlaceholder')}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            {t('deviceKey.disableTwoFactorHelp')}
+                        </p>
+                    </div>
+                    <div className="space-y-2">
+                        <Label>{t('deviceKey.disableConfirmLabel', { phrase: disableConfirmationPhrase })}</Label>
+                        <Input
+                            value={disablePhrase}
+                            onChange={(e) => setDisablePhrase(e.target.value)}
+                            placeholder={disableConfirmationPhrase}
+                        />
+                    </div>
+                    <div className="flex items-start gap-2">
+                        <Checkbox
+                            id="device-key-disable-ack"
+                            checked={disableAcknowledged}
+                            onCheckedChange={(checked) => setDisableAcknowledged(checked === true)}
+                        />
+                        <Label htmlFor="device-key-disable-ack" className="text-sm font-normal leading-snug">
+                            {t('deviceKey.disableAck')}
+                        </Label>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowDisableDialog(false)}>
+                            {t('common.cancel')}
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            onClick={handleDisable}
+                            disabled={
+                                !disableMasterPassword
+                                || disablePhrase !== disableConfirmationPhrase
+                                || !disableAcknowledged
+                                || loading
+                            }
+                        >
+                            {t('deviceKey.disable')}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

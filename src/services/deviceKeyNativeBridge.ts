@@ -44,6 +44,11 @@ export async function generateAndStoreNativeDeviceKey(userId: string): Promise<v
     await invoke<void>('generate_and_store_device_key', { userId });
 }
 
+export async function deleteNativeDeviceKey(userId: string): Promise<void> {
+    const invoke = await requireNativeInvoke();
+    await invoke<void>('delete_native_device_key', { userId });
+}
+
 export async function deriveNativeDeviceProtectedKey(
     userId: string,
     argon2Output: Uint8Array,

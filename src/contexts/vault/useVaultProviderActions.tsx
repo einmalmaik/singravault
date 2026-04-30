@@ -31,6 +31,7 @@ import { markVaultSessionActive, clearVaultSessionMarkers } from '@/services/vau
 import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
 import { setupInitialVault } from '@/services/vaultSetupOrchestrator';
 import { activateDeviceKeyProtection } from '@/services/deviceKeyActivationService';
+import { deactivateDeviceKeyProtection } from '@/services/deviceKeyDeactivationService';
 import {
   finalizeVaultUnlockIntegrity,
   refreshVaultIntegrityBaseline,
@@ -427,6 +428,7 @@ export function useVaultProviderActions(): VaultContextType {
       kdfVersion,
       encryptionKey,
       encryptedUserKey,
+      verificationHash: state.verificationHash,
       currentDeviceKey,
     });
 
@@ -436,6 +438,7 @@ export function useVaultProviderActions(): VaultContextType {
       }
       setEncryptedUserKey(result.state.encryptedUserKey);
       setVerificationHash(result.state.verificationHash);
+      setKdfVersion(result.state.kdfVersion);
       setCurrentDeviceKey(result.state.currentDeviceKey);
       setDeviceKeyActive(result.state.deviceKeyActive);
       setVaultProtectionMode(result.state.vaultProtectionMode);
@@ -452,8 +455,55 @@ export function useVaultProviderActions(): VaultContextType {
     setDeviceKeyActive,
     setEncryptedUserKey,
     setEncryptionKey,
+    setKdfVersion,
     setVaultProtectionMode,
     setVerificationHash,
+    user,
+  ]);
+
+  const disableDeviceKey = useCallback(async (
+    masterPassword: string,
+    twoFactorCode?: string,
+  ): Promise<{ error: Error | null }> => {
+    if (!user || !salt || state.isLocked) {
+      return { error: new Error('Vault must be unlocked') };
+    }
+    if (!encryptedUserKey) {
+      return { error: createUserKeyMigrationRequiredError() };
+    }
+
+    const result = await deactivateDeviceKeyProtection({
+      userId: user.id,
+      masterPassword,
+      salt,
+      kdfVersion,
+      encryptedUserKey,
+      currentDeviceKey,
+      twoFactorCode,
+    });
+
+    if (result.state) {
+      setEncryptedUserKey(result.state.encryptedUserKey);
+      setVerificationHash(result.state.verificationHash);
+      setKdfVersion(result.state.kdfVersion);
+      setCurrentDeviceKey(result.state.currentDeviceKey);
+      setDeviceKeyActive(result.state.deviceKeyActive);
+      setVaultProtectionMode(result.state.vaultProtectionMode);
+    }
+
+    return { error: result.error };
+  }, [
+    currentDeviceKey,
+    encryptedUserKey,
+    kdfVersion,
+    salt,
+    setCurrentDeviceKey,
+    setDeviceKeyActive,
+    setEncryptedUserKey,
+    setKdfVersion,
+    setVaultProtectionMode,
+    setVerificationHash,
+    state.isLocked,
     user,
   ]);
 
@@ -669,6 +719,7 @@ export function useVaultProviderActions(): VaultContextType {
     unlockWithPasskey,
     lock,
     enableDeviceKey,
+    disableDeviceKey,
     refreshDeviceKeyState,
     webAuthnAvailable,
     refreshPasskeyUnlockStatus,

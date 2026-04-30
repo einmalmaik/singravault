@@ -18,7 +18,9 @@ This is the canonical active architecture document. Older files under `docs/` ar
 | Initial vault setup | `src/services/vaultSetupOrchestrator.ts` |
 | Route policy | `src/services/accountVaultRoutePolicy.ts` |
 | Device Key activation and rewrap | `src/services/deviceKeyActivationService.ts` |
+| Device Key deactivation and downgrade checks | `src/services/deviceKeyDeactivationService.ts` |
 | Device-Key-required unlock preconditions | `src/services/deviceKeyUnlockOrchestrator.ts` |
+| Device-Key state names and transitions | `src/services/deviceKeyStateMachine.ts` |
 | Vault 2FA gate | `src/services/vaultUnlockOrchestrator.ts` |
 | Master-password unlock flow | `src/services/vaultMasterUnlockService.ts` |
 | Passkey unlock and wrapping material | `src/services/vaultPasskeyUnlockService.ts` |

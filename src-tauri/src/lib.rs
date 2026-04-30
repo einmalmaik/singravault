@@ -9,8 +9,16 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::thread::sleep;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tauri::{Emitter, Manager};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Security::Cryptography::{
+    CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::LocalFree;
 
 const KEYCHAIN_SERVICE: &str = "Singra Vault";
 const REFRESH_TOKEN_ACCOUNT: &str = "active-refresh-token";
@@ -35,6 +43,9 @@ const TRANSFER_KDF_HASH_LENGTH: usize = 32;
 const PKCE_VERIFIER_MAX_AGE_MS: u128 = 10 * 60 * 1000;
 const SINGLE_INSTANCE_DEEP_LINK_EVENT: &str = "singra://deep-link";
 const TAURI_OAUTH_CALLBACK_PREFIX: &str = "singravault://auth/callback";
+const DEVICE_KEY_READBACK_ATTEMPTS: usize = 20;
+const DEVICE_KEY_READBACK_DELAY_MS: u64 = 100;
+const DEVICE_KEY_FALLBACK_DIR: &str = "device-keys";
 
 const DEVICE_KEY_MISSING: &str = "DEVICE_KEY_MISSING";
 const DEVICE_KEY_ALREADY_EXISTS: &str = "DEVICE_KEY_ALREADY_EXISTS";
@@ -201,17 +212,20 @@ fn verify_device_key_available(user_id: String) -> Result<bool, String> {
 #[tauri::command]
 fn generate_and_store_device_key(user_id: String) -> Result<(), String> {
     let entry = device_key_entry_for_user(&user_id)?;
-    match entry.get_password() {
-        Ok(value) if !value.trim().is_empty() => return Err(DEVICE_KEY_ALREADY_EXISTS.to_string()),
-        Ok(_) | Err(KeyringError::NoEntry) => {}
-        Err(error) => return Err(map_keyring_error_code(error)),
+    if load_device_key_bytes(&user_id)?.is_some() {
+        return Err(DEVICE_KEY_ALREADY_EXISTS.to_string());
     }
 
     let mut device_key = [0u8; DEVICE_KEY_LENGTH];
     getrandom::getrandom(&mut device_key).map_err(|_| DEVICE_KEY_CRYPTO_FAILED.to_string())?;
-    let encoded = BASE64.encode(device_key);
+    store_device_key_for_user(&user_id, &entry, &device_key)?;
     device_key.fill(0);
-    entry.set_password(&encoded).map_err(map_keyring_error_code)
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_native_device_key(user_id: String) -> Result<(), String> {
+    clear_device_key_storage(&user_id)
 }
 
 #[tauri::command]
@@ -301,10 +315,8 @@ fn import_device_key_from_transfer(
     }
 
     let entry = device_key_entry_for_user(&user_id)?;
-    match entry.get_password() {
-        Ok(value) if !value.trim().is_empty() => return Ok(false),
-        Ok(_) | Err(KeyringError::NoEntry) => {}
-        Err(error) => return Err(map_keyring_error_code(error)),
+    if load_device_key_bytes(&user_id)?.is_some() {
+        return Ok(false);
     }
 
     let envelope = parse_transfer_envelope(&transfer_data)?;
@@ -338,12 +350,9 @@ fn import_device_key_from_transfer(
         return Ok(false);
     }
 
-    let encoded = BASE64.encode(&device_key);
+    store_device_key_for_user(&user_id, &entry, &device_key)?;
     device_key.fill(0);
     wrapping_key.fill(0);
-    entry
-        .set_password(&encoded)
-        .map_err(map_keyring_error_code)?;
     Ok(true)
 }
 
@@ -404,6 +413,13 @@ fn normalize_local_secret_key(key: &str, allow_device_key: bool) -> Result<Strin
 fn device_key_entry_for_user(user_id: &str) -> Result<Entry, String> {
     let user_id = validate_user_id(user_id)?;
     let account = format!("{LOCAL_SECRET_ACCOUNT_PREFIX}{DEVICE_KEY_LOCAL_SECRET_PREFIX}{user_id}");
+    Entry::new_with_target(&account, KEYCHAIN_SERVICE, DEVICE_KEY_LOCAL_SECRET_PREFIX)
+        .map_err(keyring_error)
+}
+
+fn legacy_device_key_entry_for_user(user_id: &str) -> Result<Entry, String> {
+    let user_id = validate_user_id(user_id)?;
+    let account = format!("{LOCAL_SECRET_ACCOUNT_PREFIX}{DEVICE_KEY_LOCAL_SECRET_PREFIX}{user_id}");
     Entry::new(KEYCHAIN_SERVICE, &account).map_err(keyring_error)
 }
 
@@ -418,6 +434,59 @@ fn validate_user_id(user_id: &str) -> Result<&str, String> {
 
 fn load_device_key_bytes(user_id: &str) -> Result<Option<Vec<u8>>, String> {
     let entry = device_key_entry_for_user(user_id)?;
+    match load_device_key_secret(&entry) {
+        Ok(Some(device_key)) => Ok(Some(device_key)),
+        Err(error) if error == DEVICE_KEY_STORE_UNAVAILABLE => load_device_key_fallback(user_id),
+        Ok(None) => {
+            let legacy_entry = legacy_device_key_entry_for_user(user_id)?;
+            match load_device_key_secret(&legacy_entry) {
+                Ok(Some(device_key)) => {
+                    store_device_key_for_user(user_id, &entry, &device_key)?;
+                    let _ = legacy_entry.delete_credential();
+                    Ok(Some(device_key))
+                }
+                Err(error) if error == DEVICE_KEY_STORE_UNAVAILABLE => load_device_key_fallback(user_id),
+                Ok(None) => load_device_key_fallback(user_id),
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn store_device_key_for_user(user_id: &str, entry: &Entry, device_key: &[u8]) -> Result<(), String> {
+    match store_device_key_secret(entry, device_key) {
+        Ok(()) => match verify_device_key_readback(user_id) {
+            Ok(()) => Ok(()),
+            Err(error) if error == DEVICE_KEY_STORE_UNAVAILABLE => store_device_key_fallback(user_id, device_key),
+            Err(error) => Err(error),
+        },
+        Err(error) if error == DEVICE_KEY_STORE_UNAVAILABLE => store_device_key_fallback(user_id, device_key),
+        Err(error) => Err(error),
+    }
+}
+
+fn store_device_key_secret(entry: &Entry, device_key: &[u8]) -> Result<(), String> {
+    entry
+        .set_secret(device_key)
+        .map_err(map_keyring_error_code)
+}
+
+fn load_device_key_secret(entry: &Entry) -> Result<Option<Vec<u8>>, String> {
+    match entry.get_secret() {
+        Ok(secret) if secret.is_empty() => Ok(None),
+        Ok(secret) => {
+            if secret.len() != DEVICE_KEY_LENGTH {
+                return Err(DEVICE_KEY_INVALID_INPUT.to_string());
+            }
+            Ok(Some(secret))
+        }
+        Err(KeyringError::NoEntry) => load_legacy_password_device_key(entry),
+        Err(error) => Err(map_keyring_error_code(error)),
+    }
+}
+
+fn load_legacy_password_device_key(entry: &Entry) -> Result<Option<Vec<u8>>, String> {
     let payload = match entry.get_password() {
         Ok(value) if value.trim().is_empty() => return Ok(None),
         Ok(value) => value,
@@ -426,7 +495,170 @@ fn load_device_key_bytes(user_id: &str) -> Result<Option<Vec<u8>>, String> {
     };
 
     let device_key = decode_fixed_base64(&payload, DEVICE_KEY_LENGTH)?;
+    entry
+        .set_secret(&device_key)
+        .map_err(map_keyring_error_code)?;
     Ok(Some(device_key))
+}
+
+fn verify_device_key_readback(user_id: &str) -> Result<(), String> {
+    for attempt in 0..DEVICE_KEY_READBACK_ATTEMPTS {
+        match load_device_key_bytes(user_id) {
+            Ok(Some(mut device_key)) => {
+                device_key.fill(0);
+                return Ok(());
+            }
+            Ok(None) if attempt + 1 < DEVICE_KEY_READBACK_ATTEMPTS => {
+                sleep(Duration::from_millis(DEVICE_KEY_READBACK_DELAY_MS));
+            }
+            Ok(None) => return Err(DEVICE_KEY_STORE_UNAVAILABLE.to_string()),
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(DEVICE_KEY_STORE_UNAVAILABLE.to_string())
+}
+
+fn clear_device_key_storage(user_id: &str) -> Result<(), String> {
+    let primary_entry = device_key_entry_for_user(user_id)?;
+    match primary_entry.delete_credential() {
+        Ok(()) | Err(KeyringError::NoEntry) => {}
+        Err(error) => return Err(map_keyring_error_code(error)),
+    }
+
+    let legacy_entry = legacy_device_key_entry_for_user(user_id)?;
+    match legacy_entry.delete_credential() {
+        Ok(()) | Err(KeyringError::NoEntry) => clear_device_key_fallback(user_id),
+        Err(error) => Err(map_keyring_error_code(error)),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn store_device_key_fallback(user_id: &str, device_key: &[u8]) -> Result<(), String> {
+    let protected = protect_device_key_bytes(device_key)?;
+    let path = device_key_fallback_path(user_id)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|_| DEVICE_KEY_STORE_UNAVAILABLE.to_string())?;
+    }
+    fs::write(path, protected).map_err(|_| DEVICE_KEY_STORE_UNAVAILABLE.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn store_device_key_fallback(_user_id: &str, _device_key: &[u8]) -> Result<(), String> {
+    Err(DEVICE_KEY_STORE_UNAVAILABLE.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn load_device_key_fallback(user_id: &str) -> Result<Option<Vec<u8>>, String> {
+    let path = device_key_fallback_path(user_id)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let payload = fs::read(path).map_err(|_| DEVICE_KEY_STORE_UNAVAILABLE.to_string())?;
+    unprotect_device_key_bytes(&payload).map(Some)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn load_device_key_fallback(_user_id: &str) -> Result<Option<Vec<u8>>, String> {
+    Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+fn clear_device_key_fallback(user_id: &str) -> Result<(), String> {
+    let path = device_key_fallback_path(user_id)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(path).map_err(|_| DEVICE_KEY_STORE_UNAVAILABLE.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn clear_device_key_fallback(_user_id: &str) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn device_key_fallback_path(user_id: &str) -> Result<PathBuf, String> {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("APPDATA"))
+        .map(PathBuf::from)
+        .ok_or_else(|| DEVICE_KEY_STORE_UNAVAILABLE.to_string())?;
+    Ok(base.join("Singra Vault").join(DEVICE_KEY_FALLBACK_DIR).join(format!("{user_id}.bin")))
+}
+
+#[cfg(target_os = "windows")]
+fn protect_device_key_bytes(device_key: &[u8]) -> Result<Vec<u8>, String> {
+    let mut input = CRYPT_INTEGER_BLOB {
+        cbData: device_key.len() as u32,
+        pbData: device_key.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+
+    let success = unsafe {
+        CryptProtectData(
+            &mut input,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+    };
+
+    if success == 0 {
+        return Err(DEVICE_KEY_STORE_UNAVAILABLE.to_string());
+    }
+
+    let protected = unsafe {
+        std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec()
+    };
+    unsafe {
+        LocalFree(output.pbData as _);
+    }
+    Ok(protected)
+}
+
+#[cfg(target_os = "windows")]
+fn unprotect_device_key_bytes(payload: &[u8]) -> Result<Vec<u8>, String> {
+    let mut input = CRYPT_INTEGER_BLOB {
+        cbData: payload.len() as u32,
+        pbData: payload.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+
+    let success = unsafe {
+        CryptUnprotectData(
+            &mut input,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+    };
+
+    if success == 0 {
+        return Err(DEVICE_KEY_STORE_UNAVAILABLE.to_string());
+    }
+
+    let device_key = unsafe {
+        std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec()
+    };
+    unsafe {
+        LocalFree(output.pbData as _);
+    }
+    if device_key.len() != DEVICE_KEY_LENGTH {
+        return Err(DEVICE_KEY_INVALID_INPUT.to_string());
+    }
+    Ok(device_key)
 }
 
 fn decode_fixed_base64(value: &str, expected_len: usize) -> Result<Vec<u8>, String> {
@@ -617,6 +849,18 @@ fn now_millis() -> Result<u128, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static DEVICE_KEY_TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    fn next_test_user_id() -> String {
+        let suffix = DEVICE_KEY_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("00000000-0000-4000-8000-{:012x}", suffix)
+    }
+
+    fn clear_test_device_key(user_id: &str) {
+        let _ = clear_device_key_storage(user_id);
+    }
 
     #[test]
     fn local_secret_keys_allow_only_expected_user_scoped_domains() {
@@ -698,6 +942,54 @@ mod tests {
             DEVICE_KEY_INVALID_USER_ID,
         );
     }
+
+    #[test]
+    #[ignore = "requires OS keychain access"]
+    fn native_device_key_roundtrip_through_os_keychain() {
+        let user_id = next_test_user_id();
+        clear_test_device_key(&user_id);
+
+        generate_and_store_device_key(user_id.clone()).unwrap();
+        assert_eq!(verify_device_key_available(user_id.clone()).unwrap(), true);
+
+        let argon2_output = BASE64.encode([7u8; ARGON2_OUTPUT_LENGTH]);
+        let first = derive_device_protected_key(user_id.clone(), argon2_output.clone(), 1).unwrap();
+        let second = derive_device_protected_key(user_id.clone(), argon2_output, 1).unwrap();
+        assert_eq!(first, second);
+
+        clear_test_device_key(&user_id);
+    }
+
+    #[test]
+    #[ignore = "requires OS keychain access"]
+    fn native_device_key_transfer_export_import_roundtrip() {
+        let source_user_id = next_test_user_id();
+        let target_user_id = next_test_user_id();
+        let transfer_secret = "device-key-transfer-secret-123";
+
+        clear_test_device_key(&source_user_id);
+        clear_test_device_key(&target_user_id);
+
+        generate_and_store_device_key(source_user_id.clone()).unwrap();
+        let export = export_device_key_for_transfer(
+            source_user_id.clone(),
+            transfer_secret.to_string(),
+        )
+        .unwrap()
+        .unwrap();
+
+        let imported = import_device_key_from_transfer(
+            target_user_id.clone(),
+            export,
+            transfer_secret.to_string(),
+        )
+        .unwrap();
+        assert_eq!(imported, true);
+        assert_eq!(verify_device_key_available(target_user_id.clone()).unwrap(), true);
+
+        clear_test_device_key(&source_user_id);
+        clear_test_device_key(&target_user_id);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -734,6 +1026,7 @@ pub fn run() {
             load_local_secret,
             clear_local_secret,
             verify_device_key_available,
+            delete_native_device_key,
             generate_and_store_device_key,
             derive_device_protected_key,
             export_device_key_for_transfer,

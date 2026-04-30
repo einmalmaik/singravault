@@ -959,7 +959,8 @@ async function fetchRemoteOfflineSnapshotUncached(
     .from('categories')
     .select('*', { count: 'exact' })
     .eq('user_id', userId)
-    .order('sort_order', { ascending: true }) as unknown as PagedSupabaseQuery<CategoryRow>);
+    .order('sort_order', { ascending: true, nullsFirst: false })
+    .order('id', { ascending: true }) as unknown as PagedSupabaseQuery<CategoryRow>);
 
   let items: VaultItemRow[] = [];
   let itemTotalCount: number | null = 0;
@@ -968,7 +969,8 @@ async function fetchRemoteOfflineSnapshotUncached(
       .from('vault_items')
       .select('*', { count: 'exact' })
       .eq('vault_id', vaultId)
-      .order('updated_at', { ascending: false }) as unknown as PagedSupabaseQuery<VaultItemRow>);
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .order('id', { ascending: true }) as unknown as PagedSupabaseQuery<VaultItemRow>);
     items = itemsPage.rows;
     itemTotalCount = itemsPage.totalCount;
   }

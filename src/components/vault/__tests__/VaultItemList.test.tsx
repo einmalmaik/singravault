@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { VaultItemList } from '../VaultItemList';
+import { loadVaultSnapshot } from '@/services/offlineVaultService';
 
 type SnapshotItem = {
   id: string;
@@ -50,6 +51,13 @@ const mockVerifyIntegrity = vi.fn();
 const mockRefreshIntegrityBaseline = vi.fn();
 const mockReportUnreadableItems = vi.fn();
 const mockMigrateLegacyVaultItemEncryptionAndMetadata = vi.fn();
+
+const MockLegacyVaultMetadataMigrationPersistenceError = vi.hoisted(() => class extends Error {
+  constructor(public readonly itemId: string) {
+    super(`Could not persist legacy metadata migration for item ${itemId}.`);
+    this.name = 'LegacyVaultMetadataMigrationPersistenceError';
+  }
+});
 
 const mockVaultContext = {
   decryptItem: (...args: unknown[]) => mockDecryptItem(...args),
@@ -109,6 +117,7 @@ vi.mock('@/services/offlineVaultService', () => ({
 }));
 
 vi.mock('@/services/legacyVaultMetadataMigrationService', () => ({
+  LegacyVaultMetadataMigrationPersistenceError: MockLegacyVaultMetadataMigrationPersistenceError,
   migrateLegacyVaultItemMetadata: vi.fn(async (input: { item: SnapshotItem; decryptedData: unknown }) => ({
     item: input.item,
     decryptedData: input.decryptedData,
@@ -532,6 +541,118 @@ describe.sequential('VaultItemList', () => {
         itemIds: expect.any(Set),
       }),
     );
+  });
+
+  it('replays exactly one fetch when refresh changes during an in-flight load', async () => {
+    let resolveFirstLoad: (value: unknown) => void = () => undefined;
+    vi.mocked(loadVaultSnapshot)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveFirstLoad = resolve;
+      }) as ReturnType<typeof loadVaultSnapshot>)
+      .mockImplementationOnce(async () => ({
+        source: 'remote',
+        snapshot: {
+          vaultId: 'vault-1',
+          categories: [],
+          items: [itemOk],
+        },
+      }));
+
+    const { rerender } = render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+        refreshKey={0}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(loadVaultSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+        refreshKey={1}
+      />,
+    );
+
+    expect(loadVaultSnapshot).toHaveBeenCalledTimes(1);
+
+    resolveFirstLoad({
+      source: 'remote',
+      snapshot: {
+        vaultId: 'vault-1',
+        categories: [],
+        items: [itemOk],
+      },
+    });
+
+    await waitFor(() => {
+      expect(loadVaultSnapshot).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText('Visible Item')).toBeInTheDocument();
+  });
+
+  it('does not poison decrypt-failed cache when legacy encryption migration persistence fails', async () => {
+    snapshotState.online = true;
+    snapshotState.source = 'remote';
+    snapshotState.items = [itemBad];
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'healthy',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+    mockDecryptItemForLegacyMigration.mockResolvedValue({
+      data: {
+        title: 'Readable Legacy Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryId: null,
+      },
+      legacyEnvelopeUsed: true,
+      legacyNoAadFallbackUsed: true,
+    });
+    mockMigrateLegacyVaultItemEncryptionAndMetadata.mockRejectedValue(
+      new MockLegacyVaultMetadataMigrationPersistenceError('item-bad'),
+    );
+
+    const { rerender } = render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+        refreshKey={0}
+      />,
+    );
+
+    await screen.findByText('Readable Legacy Item');
+    expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
+
+    rerender(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+        refreshKey={1}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockDecryptItemForLegacyMigration).toHaveBeenCalledTimes(2);
+    });
+    expect(mockReportUnreadableItems).toHaveBeenLastCalledWith([]);
   });
 
   it('confirms and restores all visible restorable quarantine entries one by one', async () => {

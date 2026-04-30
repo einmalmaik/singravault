@@ -20,7 +20,10 @@ import { getUnlockCooldown, recordFailedAttempt, resetUnlockAttempts } from '@/s
 import { saveOfflineCredentials } from '@/services/offlineVaultService';
 import { supabase } from '@/integrations/supabase/client';
 import { isTauriDevUserId } from '@/platform/tauriDevMode';
-import { repairBrokenKdfUpgradeIfNeeded } from '@/services/vaultKdfRepairService';
+import {
+  KdfRepairPersistenceError,
+  repairBrokenKdfUpgradeIfNeeded,
+} from '@/services/vaultKdfRepairService';
 import {
   backfillVerificationHashForVault,
   migrateLegacyPrivateKeys,
@@ -76,10 +79,13 @@ export async function unlockVaultWithMasterPassword(
     return await unlockWithPrimaryVaultKey(input);
   } catch (error) {
     console.error('Error unlocking vault:', error);
-    recordFailedAttempt();
     if (error instanceof DeviceKeyUnlockError) {
       return { error };
     }
+    if (error instanceof KdfRepairPersistenceError) {
+      return { error };
+    }
+    recordFailedAttempt();
     return {
       error: requiresDeviceKey(input.vaultProtectionMode)
         ? createDeviceKeyInvalidError()

@@ -28,6 +28,7 @@ export interface VaultContextType {
     unlockWithPasskey: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
     lock: () => void;
     enableDeviceKey: (masterPassword: string) => Promise<{ error: Error | null }>;
+    disableDeviceKey: (masterPassword: string, twoFactorCode?: string) => Promise<{ error: Error | null }>;
     refreshDeviceKeyState: () => Promise<void>;
     webAuthnAvailable: boolean;
     hasPasskeyUnlock: boolean;

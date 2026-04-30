@@ -12,6 +12,18 @@ const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
 type VaultItemCipherRow = { id: string; encrypted_data: string };
 type CategoryCipherRow = { id: string; name: string; icon: string | null; color: string | null };
 
+export class KdfRepairPersistenceError extends Error {
+  constructor(
+    message: string,
+    public readonly rowKind: 'vault_item' | 'category',
+    public readonly rowId: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'KdfRepairPersistenceError';
+  }
+}
+
 export async function repairBrokenKdfUpgradeIfNeeded(input: {
   userId: string;
   masterPassword: string;
@@ -26,32 +38,46 @@ export async function repairBrokenKdfUpgradeIfNeeded(input: {
   }
 
   try {
-    const { data: probeItems } = await supabase
+    const { data: probeItems, error: probeItemsError } = await supabase
       .from('vault_items')
       .select('id, encrypted_data')
       .eq('user_id', userId)
       .order('created_at', { ascending: true })
       .limit(5);
-    const { data: probeCategories } = await supabase
+    if (probeItemsError) {
+      throw probeItemsError;
+    }
+
+    const { data: probeCategories, error: probeCategoriesError } = await supabase
       .from('categories')
       .select('id, name, icon, color')
       .eq('user_id', userId)
       .order('created_at', { ascending: true })
       .limit(5);
+    if (probeCategoriesError) {
+      throw probeCategoriesError;
+    }
 
     if (!(await needsFullRepair(probeItems || [], probeCategories || [], activeKey))) {
       return;
     }
 
     console.warn(`Detected broken KDF upgrade in sample${formatContext(contextLabel)}. Starting full vault scan and repair...`);
-    const { data: allItems } = await supabase
+    const { data: allItems, error: allItemsError } = await supabase
       .from('vault_items')
       .select('id, encrypted_data')
       .eq('user_id', userId);
-    const { data: allCategories } = await supabase
+    if (allItemsError) {
+      throw allItemsError;
+    }
+
+    const { data: allCategories, error: allCategoriesError } = await supabase
       .from('categories')
       .select('id, name, icon, color')
       .eq('user_id', userId);
+    if (allCategoriesError) {
+      throw allCategoriesError;
+    }
 
     const brokenItems = await findBrokenItems(allItems || [], activeKey);
     const brokenCategories = await findBrokenCategories(allCategories || [], activeKey);
@@ -74,12 +100,18 @@ export async function repairBrokenKdfUpgradeIfNeeded(input: {
           + `${repairResult.itemsReEncrypted} items, ${repairResult.categoriesReEncrypted} categories.`,
         );
         break;
-      } catch {
+      } catch (error) {
+        if (error instanceof KdfRepairPersistenceError) {
+          throw error;
+        }
         continue;
       }
     }
   } catch (error) {
     console.error(`KDF repair check failed${formatContext(contextLabel)}:`, error);
+    if (error instanceof KdfRepairPersistenceError) {
+      throw error;
+    }
   }
 }
 
@@ -154,19 +186,35 @@ async function persistRepairResult(
   repairResult: Awaited<ReturnType<typeof reEncryptVault>>,
 ): Promise<void> {
   for (const itemUpdate of repairResult.itemUpdates) {
-    await supabase
+    const { error } = await supabase
       .from('vault_items')
       .update({ encrypted_data: itemUpdate.encrypted_data })
       .eq('id', itemUpdate.id)
       .eq('user_id', userId);
+    if (error) {
+      throw new KdfRepairPersistenceError(
+        `KDF repair could not persist vault item ${itemUpdate.id}. Repair is incomplete and retryable.`,
+        'vault_item',
+        itemUpdate.id,
+        error,
+      );
+    }
   }
 
   for (const categoryUpdate of repairResult.categoryUpdates) {
-    await supabase
+    const { error } = await supabase
       .from('categories')
       .update({ name: categoryUpdate.name, icon: categoryUpdate.icon, color: categoryUpdate.color })
       .eq('id', categoryUpdate.id)
       .eq('user_id', userId);
+    if (error) {
+      throw new KdfRepairPersistenceError(
+        `KDF repair could not persist category ${categoryUpdate.id}. Repair is incomplete and retryable.`,
+        'category',
+        categoryUpdate.id,
+        error,
+      );
+    }
   }
 }
 

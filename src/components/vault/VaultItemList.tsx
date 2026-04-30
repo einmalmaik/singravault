@@ -33,6 +33,7 @@ import {
   loadVaultSnapshot,
 } from '@/services/offlineVaultService';
 import {
+  LegacyVaultMetadataMigrationPersistenceError,
   migrateLegacyVaultItemEncryptionAndMetadata,
   migrateLegacyVaultItemMetadata,
 } from '@/services/legacyVaultMetadataMigrationService';
@@ -156,6 +157,7 @@ export function VaultItemList({
   const revalidationRequestIdRef = useRef(0);
   const revalidatingRef = useRef(false);
   const fetchItemsRef = useRef(false);
+  const pendingFetchItemsRef = useRef(false);
   const decryptItemRef = useRef(decryptItem);
   const decryptItemForLegacyMigrationRef = useRef(decryptItemForLegacyMigration);
   const encryptItemRef = useRef(encryptItem);
@@ -198,7 +200,11 @@ export function VaultItemList({
 
   useEffect(() => {
     async function fetchItems() {
-      if (!userId || fetchItemsRef.current) return;
+      if (!userId) return;
+      if (fetchItemsRef.current) {
+        pendingFetchItemsRef.current = true;
+        return;
+      }
 
       fetchItemsRef.current = true;
       setLoading(true);
@@ -240,79 +246,55 @@ export function VaultItemList({
               return { ...item, decryptedData: undefined };
             }
 
+            let decryptedData: VaultItemData | null = null;
             try {
-              const decryptedData = await decryptItemRef.current(item.encrypted_data, item.id);
-              decryptableItemIds.add(item.id);
-              failedDecryptPayloadByItemIdRef.current.delete(item.id);
-
-              const migration = await migrateLegacyVaultItemMetadata({
-                userId,
-                vaultId: snapshot.vaultId,
-                item,
-                decryptedData,
-                canPersistRemote: canPersistMigrations,
-                encryptItem: encryptItemRef.current,
-              });
-              if (migration.migrated) {
-                integrityBaselineDirty = true;
-                trustedItemIds.add(item.id);
-              }
-
-              if (canPersistLegacyEncryptionMigration && !isCurrentVaultItemEnvelope(migration.item.encrypted_data)) {
-                const encryptionMigration = await migrateLegacyVaultItemEncryptionAndMetadata({
-                  userId,
-                  vaultId: snapshot.vaultId,
-                  item: migration.item,
-                  decryptedData: migration.decryptedData,
-                  canPersistRemote: true,
-                  encryptItem: encryptItemRef.current,
-                });
-                integrityBaselineDirty = true;
-                trustedItemIds.add(item.id);
-                decryptableItemIds.add(item.id);
-                failedDecryptPayloadByItemIdRef.current.delete(item.id);
-
-                return {
-                  ...encryptionMigration.item,
-                  decryptedData: encryptionMigration.decryptedData,
-                };
-              }
-
-              return {
-                ...migration.item,
-                decryptedData: migration.decryptedData,
-              };
+              decryptedData = await decryptItemRef.current(item.encrypted_data, item.id);
             } catch {
               if (canPersistLegacyEncryptionMigration) {
+                let legacyMigrationDecrypt: Awaited<ReturnType<typeof decryptItemForLegacyMigrationRef.current>> | null = null;
                 try {
-                  const legacyMigrationDecrypt = await decryptItemForLegacyMigrationRef.current(
+                  legacyMigrationDecrypt = await decryptItemForLegacyMigrationRef.current(
                     item.encrypted_data,
                     item.id,
                   );
                   if (!legacyMigrationDecrypt.legacyNoAadFallbackUsed) {
                     throw new Error('No legacy encryption migration required.');
                   }
-
-                  const migration = await migrateLegacyVaultItemEncryptionAndMetadata({
-                    userId,
-                    vaultId: snapshot.vaultId,
-                    item,
-                    decryptedData: legacyMigrationDecrypt.data,
-                    canPersistRemote: true,
-                    encryptItem: encryptItemRef.current,
-                  });
-                  integrityBaselineDirty = true;
-                  trustedItemIds.add(item.id);
-                  decryptableItemIds.add(item.id);
-                  failedDecryptPayloadByItemIdRef.current.delete(item.id);
-
-                  return {
-                    ...migration.item,
-                    decryptedData: migration.decryptedData,
-                  };
                 } catch {
-                  // A failed explicit legacy migration is not enough evidence
-                  // to trust plaintext; keep the normal quarantine path.
+                  legacyMigrationDecrypt = null;
+                }
+
+                if (legacyMigrationDecrypt) {
+                  try {
+                    const migration = await migrateLegacyVaultItemEncryptionAndMetadata({
+                      userId,
+                      vaultId: snapshot.vaultId,
+                      item,
+                      decryptedData: legacyMigrationDecrypt.data,
+                      canPersistRemote: true,
+                      encryptItem: encryptItemRef.current,
+                    });
+                    integrityBaselineDirty = true;
+                    trustedItemIds.add(item.id);
+                    decryptableItemIds.add(item.id);
+                    failedDecryptPayloadByItemIdRef.current.delete(item.id);
+
+                    return {
+                      ...migration.item,
+                      decryptedData: migration.decryptedData,
+                    };
+                  } catch (migrationError) {
+                    if (migrationError instanceof LegacyVaultMetadataMigrationPersistenceError) {
+                      console.warn('Legacy vault item encryption migration could not be persisted; will retry later.', item.id);
+                      decryptableItemIds.add(item.id);
+                      failedDecryptPayloadByItemIdRef.current.delete(item.id);
+                      return {
+                        ...item,
+                        decryptedData: legacyMigrationDecrypt.data,
+                      };
+                    }
+                    throw migrationError;
+                  }
                 }
               }
 
@@ -336,6 +318,61 @@ export function VaultItemList({
 
               return { ...item, decryptedData: undefined };
             }
+            if (!decryptedData) {
+              throw new Error('Vault item decrypt returned no data.');
+            }
+
+            decryptableItemIds.add(item.id);
+            failedDecryptPayloadByItemIdRef.current.delete(item.id);
+
+            const migration = await migrateLegacyVaultItemMetadata({
+              userId,
+              vaultId: snapshot.vaultId,
+              item,
+              decryptedData,
+              canPersistRemote: canPersistMigrations,
+              encryptItem: encryptItemRef.current,
+            });
+            if (migration.migrated) {
+              integrityBaselineDirty = true;
+              trustedItemIds.add(item.id);
+            }
+
+            if (canPersistLegacyEncryptionMigration && !isCurrentVaultItemEnvelope(migration.item.encrypted_data)) {
+              try {
+                const encryptionMigration = await migrateLegacyVaultItemEncryptionAndMetadata({
+                  userId,
+                  vaultId: snapshot.vaultId,
+                  item: migration.item,
+                  decryptedData: migration.decryptedData,
+                  canPersistRemote: true,
+                  encryptItem: encryptItemRef.current,
+                });
+                integrityBaselineDirty = true;
+                trustedItemIds.add(item.id);
+                decryptableItemIds.add(item.id);
+                failedDecryptPayloadByItemIdRef.current.delete(item.id);
+
+                return {
+                  ...encryptionMigration.item,
+                  decryptedData: encryptionMigration.decryptedData,
+                };
+              } catch (migrationError) {
+                if (migrationError instanceof LegacyVaultMetadataMigrationPersistenceError) {
+                  console.warn('Legacy vault item encryption migration could not be persisted; will retry later.', item.id);
+                  return {
+                    ...migration.item,
+                    decryptedData: migration.decryptedData,
+                  };
+                }
+                throw migrationError;
+              }
+            }
+
+            return {
+              ...migration.item,
+              decryptedData: migration.decryptedData,
+            };
           },
         );
 
@@ -369,6 +406,11 @@ export function VaultItemList({
         console.error('Error fetching vault items:', err);
       } finally {
         fetchItemsRef.current = false;
+        if (pendingFetchItemsRef.current) {
+          pendingFetchItemsRef.current = false;
+          void fetchItems();
+          return;
+        }
         setLoading(false);
         setDecrypting(false);
       }

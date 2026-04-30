@@ -26,6 +26,7 @@ import {
 } from '@/platform/localSecretStore';
 import { argon2id } from 'hash-wasm';
 import {
+    deleteNativeDeviceKey,
     exportNativeDeviceKeyForTransfer,
     hasNativeDeviceKey,
     importNativeDeviceKeyFromTransfer,
@@ -190,6 +191,11 @@ export async function hasDeviceKey(userId: string): Promise<boolean> {
  * @param userId - The user's UUID
  */
 export async function deleteDeviceKey(userId: string): Promise<void> {
+    if (isNativeDeviceKeyBridgeRuntime()) {
+        await deleteNativeDeviceKey(userId);
+        return;
+    }
+
     await removeLocalSecret(getDeviceKeySecretKey(userId));
 
     try {

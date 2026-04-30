@@ -18,6 +18,22 @@ The master password derives KDF output. Modern vaults unwrap a User Symmetric Ke
 
 Device-Key activation lives in `src/services/deviceKeyActivationService.ts`. Unlock preconditions live in `src/services/deviceKeyUnlockOrchestrator.ts` and are consumed by the master-password and passkey unlock flows. React provider hooks must not duplicate or weaken those checks.
 
+The Device-Key state machine is documented in code by `src/services/deviceKeyStateMachine.ts`. The security-relevant states are `unsupported`, `not_configured`, `activation_in_progress`, `active_on_this_device`, `active_but_missing_on_this_device`, `import_required`, `recovery_required`, `activation_failed`, `unlock_failed`, and `unlocked`.
+
+Activation on an already unlocked vault provisions a high-entropy Device Key first, stores it locally, validates readback/derivation, rewraps the UserKey or re-encrypts legacy vault rows, and only then writes `device_key_required` plus the new verifier/wrapper to the profile. A local `DEVICE_KEY_MISSING` during first activation is an activation failure unless provisioning and readback have completed; it must not mark the remote profile protected and must not fall back to a dummy or master-password-only key.
+
+Deactivation lives in `src/services/deviceKeyDeactivationService.ts` and is only allowed from an unlocked device that already has the local Device Key. The flow verifies the current master password plus Device Key by unwrapping and rewrapping the UserKey to master-password-only KDF output. If vault 2FA is enabled, only a current TOTP challenge is accepted; backup codes are not valid for this downgrade. The local Device Key is deleted only after the profile and offline credentials have been persisted as `master_only`.
+
+Unlock for a Device-Key-protected vault requires both the master-password KDF path and local Device-Key availability. Authentication, a Supabase session, or the master password alone only reaches the locked "Device Key required" state. Vault item loading, repair, migration, export, trusted recovery mutation, and quarantine restore require a real unlocked vault key and must not run on missing Device-Key state.
+
+Tauri stores Device Keys through native commands backed by the OS keychain via Rust `keyring`. On Windows, if the keychain cannot store binary secrets reliably, the desktop runtime uses a DPAPI-protected file under the user's local Singra Vault app data as a fallback. The identifier is scoped by user id and survives normal app updates; deleting app data, resetting the OS keychain, reinstalling in a way that removes local data, or changing OS credentials can require Device-Key import/recovery.
+
+Web and PWA store Device Keys in the browser local secret store: a non-extractable WebCrypto wrapping key in IndexedDB wraps the Device Key payload stored in IndexedDB. This is weaker than an OS keychain and is scoped to the origin/browser profile/PWA storage partition. Another browser profile, private mode, cleared site data, or a PWA/browser storage reset has no Device Key and must import it explicitly.
+
+Device-Key transfer uses a versioned encrypted envelope plus a high-entropy transfer secret. The transfer secret and envelope must never be logged, sent to telemetry, embedded in URLs, or stored server-side in plaintext. Import refuses malformed, downgraded, extreme-KDF, wrong-secret, and overwrite attempts.
+
+Server compromise limits: the client preserves a locally known `device_key_required` state when a later remote profile attempts to downgrade it to `master_only`, and remote snapshot revision rollback is rejected when a local checkpoint exists. A brand-new device with no local cache cannot cryptographically know that a compromised server hid historical Device-Key metadata. Full protection against that class needs authenticated vault metadata or a server-independent signed/AEAD-bound protection-mode record carried with the encrypted UserKey metadata.
+
 ## Passkey/WebAuthn
 
 Passkeys are scoped to RP ID and origin. Web, PWA, and Tauri are not assumed to share one passkey surface. PRF support is checked before registration, but actual registration and authentication remain the source of truth.

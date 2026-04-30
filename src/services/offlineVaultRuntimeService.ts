@@ -138,13 +138,19 @@ export async function loadRemoteVaultProfile(
     };
   }
 
+  const remoteProtectionMode = normalizeVaultProtectionMode(profile.vault_protection_mode);
+  const cachedCredentials = await getOfflineCredentials(userId);
+  const vaultProtectionMode: VaultProtectionMode = cachedCredentials?.vaultProtectionMode === 'device_key_required'
+    ? 'device_key_required'
+    : remoteProtectionMode;
+
   return {
     credentials: {
       salt: profile.encryption_salt as string,
       verificationHash: (profile.master_password_verifier as string) || null,
       kdfVersion: (profile.kdf_version as number) ?? 1,
       encryptedUserKey: (profile.encrypted_user_key as string) || null,
-      vaultProtectionMode: normalizeVaultProtectionMode(profile.vault_protection_mode),
+      vaultProtectionMode,
     },
     setupRequired: false,
     setupCheckFailed: false,

@@ -1,11 +1,15 @@
 import {
   createVerificationHash,
+  CURRENT_KDF_VERSION,
   deriveKey,
   deriveRawKey,
   importMasterKey,
+  KDF_PARAMS,
+  migrateToUserKey,
   reEncryptVault,
   rewrapUserKey,
   unwrapUserKey,
+  verifyKey,
 } from '@/services/cryptoService';
 import {
   deleteDeviceKey,
@@ -27,6 +31,13 @@ import { saveOfflineCredentials } from '@/services/offlineVaultService';
 import { isLocalSecretStoreSupported } from '@/platform/localSecretStore';
 import { supabase } from '@/integrations/supabase/client';
 
+class DeviceKeyActivationRewrapError extends Error {
+  constructor() {
+    super('Could not unwrap the current vault UserKey with the supplied master password and known KDF parameters.');
+    this.name = 'DeviceKeyActivationRewrapError';
+  }
+}
+
 export interface DeviceKeyActivationInput {
   userId: string;
   masterPassword: string;
@@ -34,6 +45,7 @@ export interface DeviceKeyActivationInput {
   kdfVersion: number;
   encryptionKey: CryptoKey;
   encryptedUserKey: string | null;
+  verificationHash: string | null;
   currentDeviceKey: Uint8Array | null;
 }
 
@@ -43,6 +55,7 @@ export interface DeviceKeyActivationState {
   verificationHash: string;
   currentDeviceKey: Uint8Array | null;
   deviceKeyActive: boolean;
+  kdfVersion: number;
   vaultProtectionMode: VaultProtectionMode;
 }
 
@@ -81,6 +94,7 @@ async function activateNativeDeviceKeyProtection(
 ): Promise<DeviceKeyActivationResult> {
   const { userId, masterPassword, salt, kdfVersion, encryptionKey, encryptedUserKey } = input;
   let nativeDeviceKeyStored = false;
+  const targetKdfVersion = Math.max(kdfVersion, CURRENT_KDF_VERSION);
 
   try {
     if (await checkHasDeviceKey(userId)) {
@@ -91,7 +105,7 @@ async function activateNativeDeviceKeyProtection(
     nativeDeviceKeyStored = true;
 
     const deriveNativeKdfOutput = async (): Promise<Uint8Array> => {
-      const argon2Output = await deriveRawKey(masterPassword, salt, kdfVersion);
+      const argon2Output = await deriveRawKey(masterPassword, salt, targetKdfVersion);
       try {
         return await deriveNativeDeviceProtectedKey(userId, argon2Output);
       } finally {
@@ -99,17 +113,18 @@ async function activateNativeDeviceKeyProtection(
       }
     };
 
-    const oldKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion);
     const newKdfOutputBytes = await deriveNativeKdfOutput();
     let newEncryptedUserKey: string;
     try {
-      newEncryptedUserKey = await rewrapUserKey(
-        encryptedUserKey!,
-        oldKdfOutputBytes,
+      newEncryptedUserKey = await rewrapUserKeyForDeviceActivation({
+        encryptedUserKey: encryptedUserKey!,
+        masterPassword,
+        salt,
+        kdfVersion,
         newKdfOutputBytes,
-      );
+        verificationHash: input.verificationHash,
+      });
     } finally {
-      oldKdfOutputBytes.fill(0);
       newKdfOutputBytes.fill(0);
     }
 
@@ -124,6 +139,7 @@ async function activateNativeDeviceKeyProtection(
 
     await persistDeviceKeyProfileState({
       userId,
+      kdfVersion: targetKdfVersion,
       newVerifier,
       newEncryptedUserKey,
     });
@@ -131,7 +147,7 @@ async function activateNativeDeviceKeyProtection(
       userId,
       salt,
       newVerifier,
-      kdfVersion,
+      targetKdfVersion,
       newEncryptedUserKey,
       VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
     );
@@ -145,6 +161,7 @@ async function activateNativeDeviceKeyProtection(
         verificationHash: newVerifier,
         currentDeviceKey: null,
         deviceKeyActive: true,
+        kdfVersion: targetKdfVersion,
         vaultProtectionMode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
       },
     };
@@ -173,23 +190,26 @@ async function activateBrowserDeviceKeyProtection(
     currentDeviceKey,
   } = input;
   const newDeviceKey = generateDeviceKey();
+  const targetKdfVersion = Math.max(kdfVersion, CURRENT_KDF_VERSION);
 
   if (encryptedUserKey) {
-    const oldKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, currentDeviceKey || undefined);
-    const newKdfOutputBytes = await deriveRawKey(masterPassword, salt, kdfVersion, newDeviceKey);
+    const newKdfOutputBytes = await deriveRawKey(masterPassword, salt, targetKdfVersion, newDeviceKey);
     let newEncryptedUserKey: string;
     try {
-      newEncryptedUserKey = await rewrapUserKey(
+      newEncryptedUserKey = await rewrapUserKeyForDeviceActivation({
         encryptedUserKey,
-        oldKdfOutputBytes,
+        masterPassword,
+        salt,
+        kdfVersion,
         newKdfOutputBytes,
-      );
+        verificationHash: input.verificationHash,
+        currentDeviceKey,
+      });
     } finally {
-      oldKdfOutputBytes.fill(0);
       newKdfOutputBytes.fill(0);
     }
 
-    const verifierKdfOutput = await deriveRawKey(masterPassword, salt, kdfVersion, newDeviceKey);
+    const verifierKdfOutput = await deriveRawKey(masterPassword, salt, targetKdfVersion, newDeviceKey);
     let newVerifier: string;
     try {
       const newUserKey = await unwrapUserKey(newEncryptedUserKey, verifierKdfOutput);
@@ -202,6 +222,7 @@ async function activateBrowserDeviceKeyProtection(
     try {
       await persistDeviceKeyProfileState({
         userId,
+        kdfVersion: targetKdfVersion,
         newVerifier,
         newEncryptedUserKey,
       });
@@ -218,7 +239,7 @@ async function activateBrowserDeviceKeyProtection(
       userId,
       salt,
       newVerifier,
-      kdfVersion,
+      targetKdfVersion,
       newEncryptedUserKey,
       VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
     );
@@ -232,12 +253,13 @@ async function activateBrowserDeviceKeyProtection(
         verificationHash: newVerifier,
         currentDeviceKey: newDeviceKey,
         deviceKeyActive: true,
+        kdfVersion: targetKdfVersion,
         vaultProtectionMode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
       },
     };
   }
 
-  const newKey = await deriveKey(masterPassword, salt, kdfVersion, newDeviceKey);
+  const newKey = await deriveKey(masterPassword, salt, targetKdfVersion, newDeviceKey);
   const newVerifier = await createVerificationHash(newKey);
   const { data: vaultItems } = await supabase
     .from('vault_items')
@@ -253,6 +275,7 @@ async function activateBrowserDeviceKeyProtection(
   await storeDeviceKey(userId, newDeviceKey);
   await persistDeviceKeyProfileState({
     userId,
+    kdfVersion: targetKdfVersion,
     newVerifier,
     newEncryptedUserKey: null,
   });
@@ -260,7 +283,7 @@ async function activateBrowserDeviceKeyProtection(
     userId,
     salt,
     newVerifier,
-    kdfVersion,
+    targetKdfVersion,
     null,
     VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
   );
@@ -277,20 +300,135 @@ async function activateBrowserDeviceKeyProtection(
       verificationHash: newVerifier,
       currentDeviceKey: newDeviceKey,
       deviceKeyActive: true,
+      kdfVersion: targetKdfVersion,
       vaultProtectionMode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
     },
   };
 }
 
+async function rewrapUserKeyForDeviceActivation(input: {
+  encryptedUserKey: string;
+  masterPassword: string;
+  salt: string;
+  kdfVersion: number;
+  newKdfOutputBytes: Uint8Array;
+  verificationHash: string | null;
+  currentDeviceKey?: Uint8Array | null;
+}): Promise<string> {
+  const candidateVersions = getDeviceActivationKdfCandidates(input.kdfVersion);
+  let lastUnwrapFailure: unknown = null;
+
+  for (const candidateVersion of candidateVersions) {
+    const oldKdfOutputBytes = await deriveRawKey(
+      input.masterPassword,
+      input.salt,
+      candidateVersion,
+      input.currentDeviceKey || undefined,
+    );
+    try {
+      return await rewrapUserKey(
+        input.encryptedUserKey,
+        oldKdfOutputBytes,
+        input.newKdfOutputBytes,
+      );
+    } catch (error) {
+      if (!isUserKeyUnwrapFailure(error)) {
+        throw error;
+      }
+      lastUnwrapFailure = error;
+      // Try the next known KDF parameter set. This covers stale profile
+      // metadata without ever accepting master-password-only unlock for a
+      // Device-Key-protected vault.
+    } finally {
+      oldKdfOutputBytes.fill(0);
+    }
+  }
+
+  if (input.verificationHash) {
+    const recovered = await rewrapDeterministicMigratedUserKeyForActivation({
+      masterPassword: input.masterPassword,
+      salt: input.salt,
+      candidateVersions,
+      verificationHash: input.verificationHash,
+      newKdfOutputBytes: input.newKdfOutputBytes,
+      currentDeviceKey: input.currentDeviceKey,
+    });
+    if (recovered) {
+      return recovered;
+    }
+  }
+
+  if (lastUnwrapFailure && isUserKeyUnwrapFailure(lastUnwrapFailure)) {
+    throw new DeviceKeyActivationRewrapError();
+  }
+  throw new DeviceKeyActivationRewrapError();
+}
+
+async function rewrapDeterministicMigratedUserKeyForActivation(input: {
+  masterPassword: string;
+  salt: string;
+  candidateVersions: number[];
+  verificationHash: string;
+  newKdfOutputBytes: Uint8Array;
+  currentDeviceKey?: Uint8Array | null;
+}): Promise<string | null> {
+  for (const candidateVersion of input.candidateVersions) {
+    const oldKdfOutputBytes = await deriveRawKey(
+      input.masterPassword,
+      input.salt,
+      candidateVersion,
+      input.currentDeviceKey || undefined,
+    );
+    try {
+      const migrated = await migrateToUserKey(oldKdfOutputBytes);
+      if (!(await verifyKey(input.verificationHash, migrated.userKey))) {
+        continue;
+      }
+
+      return await rewrapUserKey(
+        migrated.encryptedUserKey,
+        oldKdfOutputBytes,
+        input.newKdfOutputBytes,
+      );
+    } catch (error) {
+      if (!isUserKeyUnwrapFailure(error)) {
+        throw error;
+      }
+    } finally {
+      oldKdfOutputBytes.fill(0);
+    }
+  }
+
+  return null;
+}
+
+function getDeviceActivationKdfCandidates(profileKdfVersion: number): number[] {
+  const knownVersions = Object.keys(KDF_PARAMS)
+    .map(Number)
+    .filter((version) => Number.isFinite(version))
+    .sort((a, b) => b - a);
+  const preferred = [profileKdfVersion, CURRENT_KDF_VERSION]
+    .filter((version) => KDF_PARAMS[version]);
+
+  return [...new Set([...preferred, ...knownVersions])];
+}
+
+function isUserKeyUnwrapFailure(error: unknown): boolean {
+  return error instanceof DOMException
+    && (error.name === 'OperationError' || error.name === 'DataError');
+}
+
 async function persistDeviceKeyProfileState(input: {
   userId: string;
+  kdfVersion: number;
   newVerifier: string;
   newEncryptedUserKey: string | null;
 }): Promise<void> {
-  const { userId, newVerifier, newEncryptedUserKey } = input;
+  const { userId, kdfVersion, newVerifier, newEncryptedUserKey } = input;
   const enabledAt = new Date().toISOString();
   const updatePayload: Record<string, unknown> = {
     master_password_verifier: newVerifier,
+    kdf_version: kdfVersion,
     vault_protection_mode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
     device_key_version: 1,
     device_key_enabled_at: enabledAt,

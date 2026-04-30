@@ -29,6 +29,17 @@ export interface LegacyVaultMetadataMigrationResult {
   migrated: boolean;
 }
 
+export class LegacyVaultMetadataMigrationPersistenceError extends Error {
+  constructor(
+    public readonly itemId: string,
+    message = `Could not persist legacy metadata migration for item ${itemId}.`,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'LegacyVaultMetadataMigrationPersistenceError';
+  }
+}
+
 /**
  * Migrates one legacy item after the vault is already unlocked. The function
  * never drops item payload data: it first merges server-visible legacy metadata
@@ -122,7 +133,7 @@ export async function migrateLegacyVaultItemEncryptionAndMetadata(
     .eq('user_id', input.userId);
 
   if (error) {
-    throw error;
+    throw new LegacyVaultMetadataMigrationPersistenceError(input.item.id, undefined, error);
   }
 
   const migratedItem: VaultItemRow = {

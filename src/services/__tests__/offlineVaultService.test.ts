@@ -815,6 +815,12 @@ describe("fetchRemoteOfflineSnapshot", () => {
       svc.REMOTE_SNAPSHOT_PAGE_SIZE,
       (svc.REMOTE_SNAPSHOT_PAGE_SIZE * 2) - 1,
     );
+    expect(catChain.order).toHaveBeenNthCalledWith(1, "sort_order", { ascending: true, nullsFirst: false });
+    expect(catChain.order).toHaveBeenNthCalledWith(2, "id", { ascending: true });
+    expect(firstItemChain.order).toHaveBeenNthCalledWith(1, "updated_at", { ascending: false, nullsFirst: false });
+    expect(firstItemChain.order).toHaveBeenNthCalledWith(2, "id", { ascending: true });
+    expect(secondItemChain.order).toHaveBeenNthCalledWith(1, "updated_at", { ascending: false, nullsFirst: false });
+    expect(secondItemChain.order).toHaveBeenNthCalledWith(2, "id", { ascending: true });
   });
 
   it("stores the remote vault revision and rejects a lower later revision", async () => {

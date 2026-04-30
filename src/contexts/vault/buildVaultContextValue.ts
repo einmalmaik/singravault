@@ -11,6 +11,7 @@ export interface VaultProviderActionBindings {
   unlockWithPasskey: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
   lock: () => void;
   enableDeviceKey: (masterPassword: string) => Promise<{ error: Error | null }>;
+  disableDeviceKey: (masterPassword: string, twoFactorCode?: string) => Promise<{ error: Error | null }>;
   refreshDeviceKeyState: () => Promise<void>;
   webAuthnAvailable: boolean;
   refreshPasskeyUnlockStatus: () => Promise<void>;
@@ -52,6 +53,7 @@ export function buildVaultContextValue(
     unlockWithPasskey: actions.unlockWithPasskey,
     lock: actions.lock,
     enableDeviceKey: actions.enableDeviceKey,
+    disableDeviceKey: actions.disableDeviceKey,
     refreshDeviceKeyState: actions.refreshDeviceKeyState,
     webAuthnAvailable: actions.webAuthnAvailable,
     hasPasskeyUnlock: state.hasPasskeyUnlock,
