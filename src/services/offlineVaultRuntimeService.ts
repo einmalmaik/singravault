@@ -138,11 +138,7 @@ export async function loadRemoteVaultProfile(
     };
   }
 
-  const remoteProtectionMode = normalizeVaultProtectionMode(profile.vault_protection_mode);
-  const cachedCredentials = await getOfflineCredentials(userId);
-  const vaultProtectionMode: VaultProtectionMode = cachedCredentials?.vaultProtectionMode === 'device_key_required'
-    ? 'device_key_required'
-    : remoteProtectionMode;
+  const vaultProtectionMode = normalizeVaultProtectionMode(profile.vault_protection_mode);
 
   return {
     credentials: {

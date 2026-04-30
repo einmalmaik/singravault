@@ -40,12 +40,14 @@ import {
     importDeviceKeyFromTransfer,
 } from '@/services/deviceKeyService';
 import { DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD } from '@/services/deviceKeyDeactivationPolicy';
+import { requiresDeviceKey } from '@/services/deviceKeyProtectionPolicy';
+import { loadRemoteVaultProfile } from '@/services/offlineVaultRuntimeService';
 import { getTwoFactorRequirement } from '@/services/twoFactorService';
 
 export function DeviceKeySettings() {
     const { t } = useTranslation();
     const { toast } = useToast();
-    const { deviceKeyActive, enableDeviceKey, disableDeviceKey, isLocked, refreshDeviceKeyState } = useVault();
+    const { deviceKeyActive, enableDeviceKey, disableDeviceKey, isLocked, refreshDeviceKeyState, vaultProtectionMode } = useVault();
     const { user } = useAuth();
 
     const [showEnableDialog, setShowEnableDialog] = useState(false);
@@ -67,6 +69,8 @@ export function DeviceKeySettings() {
     const isDesktopRuntime = isTauriRuntime();
     const disableConfirmationPhrase = DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD;
     const disableVaultTwoFactorRequired = disableVaultTwoFactorState === 'required';
+    const deviceKeyRequired = requiresDeviceKey(vaultProtectionMode);
+    const canExportOrDisable = deviceKeyRequired && deviceKeyActive;
 
     useEffect(() => {
         if (!showDisableDialog || !user) {
@@ -125,6 +129,21 @@ export function DeviceKeySettings() {
 
     const handleExport = async () => {
         if (!user || !pin || pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH) return;
+        const profile = await loadRemoteVaultProfile(user.id);
+        const remoteRequiresDeviceKey = profile.credentials
+            ? requiresDeviceKey(profile.credentials.vaultProtectionMode)
+            : false;
+        if (!remoteRequiresDeviceKey || !deviceKeyActive) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.exportFailed'),
+            });
+            setShowExportDialog(false);
+            setPin('');
+            await refreshDeviceKeyState();
+            return;
+        }
         setLoading(true);
 
         const data = await exportDeviceKeyForTransfer(user.id, pin);
@@ -277,7 +296,7 @@ export function DeviceKeySettings() {
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                {deviceKeyActive ? (
+                {canExportOrDisable ? (
                     <>
                         <Alert>
                             <Shield className="w-4 h-4" />
@@ -307,6 +326,26 @@ export function DeviceKeySettings() {
                             </Button>
                         </div>
                     </>
+                ) : deviceKeyRequired ? (
+                    <>
+                        <Alert>
+                            <AlertTriangle className="w-4 h-4" />
+                            <AlertDescription>
+                                {t('deviceKey.importRequired', 'Device Key protection is active for this vault, but this device does not have the local Device Key. Import it from a trusted device.')}
+                            </AlertDescription>
+                        </Alert>
+
+                        <div className="flex flex-col sm:flex-row gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => setShowImportDialog(true)}
+                                className="gap-2"
+                            >
+                                <Upload className="w-4 h-4" />
+                                {t('deviceKey.import')}
+                            </Button>
+                        </div>
+                    </>
                 ) : (
                     <>
                         <Alert>
@@ -324,15 +363,6 @@ export function DeviceKeySettings() {
                             >
                                 <KeyRound className="w-4 h-4" />
                                 {t('deviceKey.enable')}
-                            </Button>
-
-                            <Button
-                                variant="outline"
-                                onClick={() => setShowImportDialog(true)}
-                                className="gap-2"
-                            >
-                                <Upload className="w-4 h-4" />
-                                {t('deviceKey.import')}
                             </Button>
                         </div>
                     </>

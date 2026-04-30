@@ -10,6 +10,7 @@ import {
   type VaultItemData,
 } from '@/services/cryptoService';
 import {
+  deleteDeviceKey,
   getDeviceKey as loadDeviceKey,
   hasDeviceKey as checkHasDeviceKey,
 } from '@/services/deviceKeyService';
@@ -18,6 +19,7 @@ import {
   VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
   createUserKeyMigrationRequiredError,
   normalizeVaultProtectionMode,
+  requiresDeviceKey,
   type VaultProtectionMode,
 } from '@/services/deviceKeyProtectionPolicy';
 import { listPasskeys, isWebAuthnAvailable } from '@/services/passkeyService';
@@ -38,6 +40,7 @@ import {
   verifyVaultIntegrity,
   type VaultIntegrityRuntimeCallbacks,
 } from '@/services/vaultIntegrityRuntimeService';
+import { wipeRuntimeDeviceKey } from '@/services/vaultRuntimeCleanupService';
 import {
   acceptMissingQuarantinedVaultItem,
   deleteQuarantinedVaultItem,
@@ -57,6 +60,8 @@ import type {
   VaultIntegrityVerificationResult,
 } from '@/services/vaultIntegrityService';
 import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
+import { isAppOnline, saveOfflineCredentials } from '@/services/offlineVaultService';
+import { loadRemoteVaultProfile, type VaultRuntimeCredentials } from '@/services/offlineVaultRuntimeService';
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import { buildVaultContextValue } from './buildVaultContextValue';
 import { useVaultProviderState } from './useVaultProviderState';
@@ -69,11 +74,45 @@ export function useVaultProviderActions(): VaultContextType {
   const state = useVaultProviderState();
   const webAuthnAvailable = isWebAuthnAvailable();
   const {
+    applyCredentialsToState,
     applyTrustedRecoveryState, clearActiveVaultSession, currentDeviceKey, encryptedUserKey,
-    encryptionKey, kdfVersion, salt, setCurrentDeviceKey, setDeviceKeyActive,
+    encryptionKey, isLocked, kdfVersion, salt, setCurrentDeviceKey, setDeviceKeyActive,
     setEncryptedUserKey, setEncryptionKey, setHasPasskeyUnlock, setIsLoading,
     setKdfVersion, setVaultProtectionMode, setVerificationHash, vaultProtectionMode,
   } = state;
+  const vaultProtectionModeRef = useRef<VaultProtectionMode>(vaultProtectionMode);
+  vaultProtectionModeRef.current = vaultProtectionMode;
+  const isLockedRef = useRef(isLocked);
+  isLockedRef.current = isLocked;
+
+  const clearCurrentDeviceKey = useCallback((): void => {
+    setCurrentDeviceKey((existingKey) => {
+      wipeRuntimeDeviceKey(existingKey);
+      return null;
+    });
+  }, [setCurrentDeviceKey]);
+
+  const refreshRemoteCredentials = useCallback(async (): Promise<VaultRuntimeCredentials | null> => {
+    if (!authReady || !user || !isAppOnline()) {
+      return null;
+    }
+
+    const profile = await loadRemoteVaultProfile(user.id);
+    if (!profile.credentials) {
+      return null;
+    }
+
+    applyCredentialsToState(profile.credentials);
+    await saveOfflineCredentials(
+      user.id,
+      profile.credentials.salt,
+      profile.credentials.verificationHash,
+      profile.credentials.kdfVersion ?? undefined,
+      profile.credentials.encryptedUserKey,
+      profile.credentials.vaultProtectionMode,
+    );
+    return profile.credentials;
+  }, [applyCredentialsToState, authReady, user]);
 
   const refreshPasskeyUnlockStatus = useCallback(async (): Promise<void> => {
     if (!authReady || !user) {
@@ -94,23 +133,44 @@ export function useVaultProviderActions(): VaultContextType {
   const refreshDeviceKeyState = useCallback(async (): Promise<void> => {
     if (!user) {
       setDeviceKeyActive(false);
-      setCurrentDeviceKey(null);
+      clearCurrentDeviceKey();
       return;
     }
 
     try {
+      const remoteCredentials = await refreshRemoteCredentials();
+      const effectiveProtectionMode = remoteCredentials?.vaultProtectionMode ?? vaultProtectionModeRef.current;
+      if (!requiresDeviceKey(effectiveProtectionMode)) {
+        setDeviceKeyActive(false);
+        clearCurrentDeviceKey();
+        try {
+          await deleteDeviceKey(user.id);
+        } catch {
+          // Best-effort stale local cleanup only. Remote policy remains authoritative.
+        }
+        return;
+      }
+
       const hasDeviceKey = await checkHasDeviceKey(user.id);
       setDeviceKeyActive(hasDeviceKey);
-      if (hasDeviceKey && !isNativeDeviceKeyBridgeRuntime()) {
+      if (hasDeviceKey && !isNativeDeviceKeyBridgeRuntime() && isLockedRef.current) {
         setCurrentDeviceKey(await loadDeviceKey(user.id));
+      } else if (!hasDeviceKey) {
+        clearCurrentDeviceKey();
       } else {
-        setCurrentDeviceKey(null);
+        setCurrentDeviceKey((existingKey) => existingKey);
       }
     } catch {
       setDeviceKeyActive(false);
-      setCurrentDeviceKey(null);
+      clearCurrentDeviceKey();
     }
-  }, [setCurrentDeviceKey, setDeviceKeyActive, user]);
+  }, [
+    clearCurrentDeviceKey,
+    refreshRemoteCredentials,
+    setCurrentDeviceKey,
+    setDeviceKeyActive,
+    user,
+  ]);
 
   const getRequiredDeviceKey = useCallback(async () => {
     let loadedDeviceKey: Uint8Array | null = null;
@@ -303,18 +363,38 @@ export function useVaultProviderActions(): VaultContextType {
       return { error: new Error('Vault not set up') };
     }
 
-    return unlockVaultWithMasterPassword({
-      userId: user.id,
-      masterPassword,
+    const remoteCredentials = await refreshRemoteCredentials();
+    const credentials = remoteCredentials ?? {
       salt: state.salt,
       verificationHash: state.verificationHash,
       kdfVersion: state.kdfVersion,
-      duressConfig: state.duressConfig,
       encryptedUserKey: state.encryptedUserKey,
       vaultProtectionMode: state.vaultProtectionMode,
+    };
+    if (!requiresDeviceKey(credentials.vaultProtectionMode)) {
+      setDeviceKeyActive(false);
+      clearCurrentDeviceKey();
+    }
+
+    return unlockVaultWithMasterPassword({
+      userId: user.id,
+      masterPassword,
+      salt: credentials.salt,
+      verificationHash: credentials.verificationHash,
+      kdfVersion: credentials.kdfVersion ?? state.kdfVersion,
+      duressConfig: state.duressConfig,
+      encryptedUserKey: credentials.encryptedUserKey,
+      vaultProtectionMode: credentials.vaultProtectionMode,
       options,
       getRequiredDeviceKey,
-      deriveVaultKdfOutput,
+      deriveVaultKdfOutput: (password, deviceKey, deviceKeyAvailable) => deriveVaultKdfOutputWithDeviceKey({
+        masterPassword: password,
+        salt: credentials.salt,
+        kdfVersion: credentials.kdfVersion ?? state.kdfVersion,
+        userId: user.id,
+        deviceKey,
+        deviceKeyAvailable,
+      }),
       enforceVaultTwoFactorBeforeKeyRelease,
       finalizeVaultUnlock,
       openDuressVault,
@@ -322,11 +402,13 @@ export function useVaultProviderActions(): VaultContextType {
     });
   }, [
     applyCredentialUpdates,
-    deriveVaultKdfOutput,
     enforceVaultTwoFactorBeforeKeyRelease,
     finalizeVaultUnlock,
     getRequiredDeviceKey,
     openDuressVault,
+    refreshRemoteCredentials,
+    setCurrentDeviceKey,
+    setDeviceKeyActive,
     state.duressConfig,
     state.encryptedUserKey,
     state.kdfVersion,
@@ -344,13 +426,22 @@ export function useVaultProviderActions(): VaultContextType {
       return { error: new Error('User session not ready. Please wait a moment.') };
     }
 
-    return unlockVaultWithPasskey({
-      userId: user.id,
+    const remoteCredentials = await refreshRemoteCredentials();
+    const credentials = remoteCredentials ?? {
       salt: state.salt,
-      kdfVersion: state.kdfVersion,
       verificationHash: state.verificationHash,
+      kdfVersion: state.kdfVersion,
       encryptedUserKey: state.encryptedUserKey,
       vaultProtectionMode: state.vaultProtectionMode,
+    };
+
+    return unlockVaultWithPasskey({
+      userId: user.id,
+      salt: credentials.salt,
+      kdfVersion: credentials.kdfVersion ?? state.kdfVersion,
+      verificationHash: credentials.verificationHash,
+      encryptedUserKey: credentials.encryptedUserKey,
+      vaultProtectionMode: credentials.vaultProtectionMode,
       options,
       getRequiredDeviceKey,
       enforceVaultTwoFactorBeforeKeyRelease,
@@ -362,6 +453,7 @@ export function useVaultProviderActions(): VaultContextType {
     enforceVaultTwoFactorBeforeKeyRelease,
     finalizeVaultUnlock,
     getRequiredDeviceKey,
+    refreshRemoteCredentials,
     state.encryptedUserKey,
     state.kdfVersion,
     state.salt,
@@ -451,6 +543,7 @@ export function useVaultProviderActions(): VaultContextType {
     currentDeviceKey,
     encryptedUserKey,
     encryptionKey,
+    clearCurrentDeviceKey,
     kdfVersion,
     salt,
     setCurrentDeviceKey,

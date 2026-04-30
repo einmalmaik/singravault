@@ -65,6 +65,20 @@ export function buildDisplayedIntegrityResult(
     };
   }
 
+  if (
+    result.itemCount >= 2
+    && runtimeUnreadableItems.length >= result.itemCount
+  ) {
+    return {
+      ...result,
+      valid: false,
+      mode: 'revalidation_failed',
+      nonTamperReason: 'revalidation_failed',
+      blockedReason: undefined,
+      quarantinedItems: [],
+    };
+  }
+
   if (isNonTamperIntegrityMode(result.mode)) {
     return {
       ...result,

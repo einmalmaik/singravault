@@ -36,7 +36,7 @@ Device-Key import is available from account security after account login, before
 
 Device-Key transfer uses a versioned encrypted envelope plus a high-entropy transfer secret. The transfer secret and envelope must never be logged, sent to telemetry, embedded in URLs, or stored server-side in plaintext. Import refuses malformed, downgraded, extreme-KDF, wrong-secret, and overwrite attempts.
 
-Server compromise limits: the client preserves a locally known `device_key_required` state when a later remote profile attempts to downgrade it to `master_only`, and remote snapshot revision rollback is rejected when a local checkpoint exists. A brand-new device with no local cache cannot cryptographically know that a compromised server hid historical Device-Key metadata. Full protection against that class needs authenticated vault metadata or a server-independent signed/AEAD-bound protection-mode record carried with the encrypted UserKey metadata.
+Server compromise limits: `profiles.vault_protection_mode` is the authoritative account/vault-wide Device-Key policy so intentional deactivation on one authorized device is visible to Web, PWA, Tauri, and future clients after refetch/login/focus. Local Device-Key material only proves that this client may possess an old local factor; it must not keep the policy active, enable export, or force Device-Key unlock when the server policy is `master_only`. A compromised server that maliciously downgrades this metadata is still a residual risk; full protection against that class needs authenticated vault metadata or a server-independent signed/AEAD-bound protection-mode record carried with the encrypted UserKey metadata.
 
 ## Passkey/WebAuthn
 
@@ -49,6 +49,8 @@ Passkey unlock is an authentication convenience, not an exception to Device-Key 
 Category drift blocks the vault. Item drift quarantines affected items and those items must not be decrypted. Baseline read failures block the vault. There is no auto-rebaseline for untrusted remote drift, category drift, malformed snapshots, or unreadable baselines.
 
 Trusted recovery and Safe Mode use only locally trusted snapshots. Recovery code must not accept manipulated remote data as a trusted source. Quarantine is an integrity state, not an authentication failure; Device-Key-missing is a Device-Key state, not a 2FA failure.
+
+Runtime item decrypt failures are treated separately from persisted integrity drift. A single unreadable item can be shown as item quarantine, but all-item runtime decrypt failure is treated as a likely key/state mismatch and must not create a mass-quarantine state.
 
 ## Runtime Cleanup
 

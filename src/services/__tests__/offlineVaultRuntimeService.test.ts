@@ -31,7 +31,7 @@ describe('offlineVaultRuntimeService', () => {
     offlineVaultServiceMock.getOfflineCredentials.mockResolvedValue(null);
   });
 
-  it('keeps locally known Device-Key-required mode when a remote profile is downgraded', async () => {
+  it('treats the remote profile as authoritative when Device Key was disabled elsewhere', async () => {
     const { loadRemoteVaultProfile } = await import('../offlineVaultRuntimeService');
     supabaseMock.from.mockReturnValue(createProfileChain({
       encryption_salt: 'salt',
@@ -50,7 +50,7 @@ describe('offlineVaultRuntimeService', () => {
 
     await expect(loadRemoteVaultProfile('user-1')).resolves.toMatchObject({
       credentials: {
-        vaultProtectionMode: 'device_key_required',
+        vaultProtectionMode: 'master_only',
       },
     });
   });

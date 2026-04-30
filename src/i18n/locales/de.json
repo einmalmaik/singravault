@@ -1692,6 +1692,7 @@
     "description": "Ein zusätzlicher lokaler 256-Bit-Faktor. Er hilft gegen reine Server-Kompromittierung, schützt aber nicht gegen Malware, XSS oder bösartige Browser-Erweiterungen auf diesem Gerät.",
     "active": "Device Key ist auf diesem Gerät aktiv. Das Entsperren braucht Master-Passwort und diesen lokalen Schlüssel.",
     "inactive": "Kein Device Key auf diesem Gerät. Aktiviere den Schutz, um einen lokalen Faktor gegen reine Server-Kompromittierung hinzuzufügen.",
+    "importRequired": "Der Geräteschlüssel-Schutz ist für diesen Tresor aktiv, aber dieses Gerät besitzt den lokalen Geräteschlüssel nicht. Importiere ihn von einem vertrauenswürdigen Gerät.",
     "enable": "Schutz aktivieren",
     "enableTitle": "Device Key aktivieren",
     "enableDesc": "Ein 256-Bit-Zufallsschlüssel wird generiert und lokal gespeichert. Beim UserKey-Tresorformat wird der UserKey-Wrapper mit dem kombinierten Schlüssel neu verschlüsselt.",

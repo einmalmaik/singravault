@@ -1671,6 +1671,7 @@
     "description": "An additional 256-bit local factor. It helps against server-only compromise, but it does not protect against malware, XSS, or malicious browser extensions on this device.",
     "active": "Device Key is active on this device. Unlock requires the master password and this local key.",
     "inactive": "No Device Key on this device. Enable protection to add a local factor against server-only compromise.",
+    "importRequired": "Device Key protection is active for this vault, but this device does not have the local Device Key. Import it from a trusted device.",
     "enable": "Enable protection",
     "enableTitle": "Enable Device Key",
     "enableDesc": "A 256-bit random key will be generated and stored locally. With the UserKey vault format, the UserKey wrapper is re-encrypted with the combined key.",

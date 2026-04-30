@@ -1,4 +1,4 @@
-import { useEffect, type MutableRefObject } from 'react';
+import { useEffect, useRef, type MutableRefObject } from 'react';
 import { getServiceHooks } from '@/extensions/registry';
 import { saveOfflineCredentials, isAppOnline } from '@/services/offlineVaultService';
 import {
@@ -49,6 +49,10 @@ export function useVaultLifecycleEffects(input: VaultLifecycleEffectsInput): voi
     setIsSetupRequired,
     setLastActivity,
   } = state;
+  const encryptionKeyRef = useRef(encryptionKey);
+  const isLockedRef = useRef(isLocked);
+  encryptionKeyRef.current = encryptionKey;
+  isLockedRef.current = isLocked;
 
   useEffect(() => {
     const currentUserId = user?.id ?? null;
@@ -63,8 +67,20 @@ export function useVaultLifecycleEffects(input: VaultLifecycleEffectsInput): voi
 
   useEffect(() => {
     const refreshSetupState = () => setConnectivityCheckNonce((value) => value + 1);
+    const refreshVisibleSetupState = () => {
+      if (document.visibilityState === 'visible') {
+        refreshSetupState();
+      }
+    };
+
     window.addEventListener('online', refreshSetupState);
-    return () => window.removeEventListener('online', refreshSetupState);
+    window.addEventListener('focus', refreshSetupState);
+    document.addEventListener('visibilitychange', refreshVisibleSetupState);
+    return () => {
+      window.removeEventListener('online', refreshSetupState);
+      window.removeEventListener('focus', refreshSetupState);
+      document.removeEventListener('visibilitychange', refreshVisibleSetupState);
+    };
   }, [setConnectivityCheckNonce]);
 
   useEffect(() => {
@@ -113,6 +129,10 @@ export function useVaultLifecycleEffects(input: VaultLifecycleEffectsInput): voi
       try {
         const profile = await loadRemoteVaultProfile(user.id);
         if (!profile.credentials) {
+          if (encryptionKeyRef.current && !isLockedRef.current) {
+            setIsLoading(false);
+            return;
+          }
           const cached = await loadCachedVaultCredentials(user.id);
           if (cached) {
             applyCredentialsToState(cached);
@@ -153,6 +173,10 @@ export function useVaultLifecycleEffects(input: VaultLifecycleEffectsInput): voi
         }
       } catch (error) {
         console.error('Error checking vault setup:', error);
+        if (encryptionKeyRef.current && !isLockedRef.current) {
+          setIsLoading(false);
+          return;
+        }
         const cached = await loadCachedVaultCredentials(user.id);
         if (cached) {
           applyCredentialsToState(cached);
