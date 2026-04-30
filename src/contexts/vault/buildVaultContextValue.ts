@@ -11,7 +11,7 @@ export interface VaultProviderActionBindings {
   unlockWithPasskey: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
   lock: () => void;
   enableDeviceKey: (masterPassword: string) => Promise<{ error: Error | null }>;
-  disableDeviceKey: (masterPassword: string, twoFactorCode?: string) => Promise<{ error: Error | null }>;
+  disableDeviceKey: (masterPassword: string, twoFactorCode: string | undefined, confirmationWord: string) => Promise<{ error: Error | null }>;
   refreshDeviceKeyState: () => Promise<void>;
   webAuthnAvailable: boolean;
   refreshPasskeyUnlockStatus: () => Promise<void>;

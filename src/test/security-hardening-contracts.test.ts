@@ -225,6 +225,32 @@ describe("security hardening contracts", () => {
     expect(deviceKeyService).toContain("return null;");
   });
 
+  it("checks Device Key deactivation confirmation and VaultFA in auth-2fa before profile persistence", () => {
+    const auth2fa = readFileSync("supabase/functions/auth-2fa/index.ts", "utf-8");
+    const deactivationService = readFileSync("src/services/deviceKeyDeactivationService.ts", "utf-8");
+    const migration = readFileSync(
+      "supabase/migrations/20260430133000_guard_device_key_deactivation_profile_update.sql",
+      "utf-8",
+    );
+
+    expect(auth2fa).toContain('DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD = "DISABLE DEVICE KEY"');
+    expect(auth2fa).toContain('action === "complete-device-key-deactivation"');
+    expect(auth2fa).toContain('confirmationWord !== DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD');
+    expect(auth2fa).toContain('getTwoFactorRequirementServer(supabaseAdmin, userId, "vault_unlock")');
+    expect(auth2fa).toContain('method: "totp"');
+    expect(auth2fa).toContain('.eq("vault_protection_mode", "device_key_required")');
+    expect(auth2fa).not.toMatch(/confirmationWord[\s\S]{0,120}\.toLowerCase\(/);
+
+    expect(deactivationService).toContain("complete-device-key-deactivation");
+    expect(deactivationService).not.toContain(".from('profiles')\n    .update({");
+
+    expect(migration).toContain("prevent_direct_device_key_deactivation");
+    expect(migration).toContain("auth.role() <> 'service_role'");
+    expect(migration).toContain("OLD.vault_protection_mode = 'device_key_required'");
+    expect(migration).toContain("NEW.vault_protection_mode = 'master_only'");
+    expect(migration).toContain("device_key_deactivation_requires_server_validation");
+  });
+
   it("centralizes server-visible vault item metadata neutralization for new writes", () => {
     const policy = readFileSync("src/services/vaultMetadataPolicy.ts", "utf-8");
     const itemDialog = readFileSync("src/components/vault/VaultItemDialog.tsx", "utf-8");

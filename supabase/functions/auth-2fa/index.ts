@@ -13,6 +13,7 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD = "DISABLE DEVICE KEY";
 
 Deno.serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -54,6 +55,10 @@ Deno.serve(async (req) => {
       return await handleDisableTwoFactor(req, userId, body, headers);
     }
 
+    if (action === "complete-device-key-deactivation") {
+      return await handleCompleteDeviceKeyDeactivation(req, userId, body, headers);
+    }
+
     return new Response(JSON.stringify({ error: "Unknown action" }), { status: 400, headers });
   } catch (error) {
     console.error("auth-2fa error:", error);
@@ -81,6 +86,83 @@ async function handleRequirement(userId: string, body: Record<string, unknown>, 
     status: "loaded",
     reason: requirement.reason,
   }), { status: 200, headers });
+}
+
+async function handleCompleteDeviceKeyDeactivation(
+  req: Request,
+  userId: string,
+  body: Record<string, unknown>,
+  headers: Headers,
+): Promise<Response> {
+  const confirmationWord = typeof body.confirmationWord === "string" ? body.confirmationWord : "";
+  const twoFactorCode = typeof body.twoFactorCode === "string" ? body.twoFactorCode : "";
+  const encryptedUserKey = typeof body.encryptedUserKey === "string" ? body.encryptedUserKey : "";
+  const verificationHash = typeof body.verificationHash === "string" ? body.verificationHash : "";
+  const kdfVersion = typeof body.kdfVersion === "number" && Number.isInteger(body.kdfVersion)
+    ? body.kdfVersion
+    : null;
+  const targetProtectionMode = typeof body.targetProtectionMode === "string" ? body.targetProtectionMode : "";
+
+  if (
+    !encryptedUserKey ||
+    !verificationHash ||
+    !kdfVersion ||
+    targetProtectionMode !== "master_only"
+  ) {
+    return new Response(JSON.stringify({ error: "Invalid request payload" }), { status: 400, headers });
+  }
+
+  if (confirmationWord !== DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD) {
+    return new Response(JSON.stringify({
+      error: "Invalid request payload",
+      errorCode: "INVALID_CONFIRMATION",
+    }), { status: 400, headers });
+  }
+
+  const requirement = await getTwoFactorRequirementServer(supabaseAdmin, userId, "vault_unlock");
+  if (requirement.status === "unavailable") {
+    return new Response(JSON.stringify({ error: "Verification temporarily unavailable" }), { status: 503, headers });
+  }
+
+  if (requirement.required) {
+    if (!twoFactorCode) {
+      return new Response(JSON.stringify({ error: "Invalid or expired verification code" }), { status: 400, headers });
+    }
+
+    const result = await verifyTwoFactorServer({
+      supabaseAdmin,
+      req,
+      userId,
+      purpose: "critical_action",
+      method: "totp",
+      code: twoFactorCode,
+    });
+
+    if (!result.ok) {
+      return twoFactorFailureResponse(result, headers);
+    }
+  }
+
+  const { error } = await supabaseAdmin
+    .from("profiles")
+    .update({
+      master_password_verifier: verificationHash,
+      kdf_version: kdfVersion,
+      encrypted_user_key: encryptedUserKey,
+      vault_protection_mode: "master_only",
+      device_key_version: null,
+      device_key_enabled_at: null,
+      device_key_backup_acknowledged_at: null,
+    })
+    .eq("user_id", userId)
+    .eq("vault_protection_mode", "device_key_required");
+
+  if (error) {
+    console.error("Failed to complete Device Key deactivation:", error);
+    return new Response(JSON.stringify({ error: "Device Key protection state could not be updated" }), { status: 503, headers });
+  }
+
+  return new Response(JSON.stringify({ success: true }), { status: 200, headers });
 }
 
 async function handleCreateChallenge(userId: string, body: Record<string, unknown>, headers: Headers): Promise<Response> {

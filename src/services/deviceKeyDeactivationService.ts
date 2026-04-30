@@ -22,7 +22,7 @@ import {
   type VaultProtectionMode,
 } from '@/services/deviceKeyProtectionPolicy';
 import { saveOfflineCredentials } from '@/services/offlineVaultService';
-import { get2FAStatus, verifyTwoFactorCode } from '@/services/twoFactorService';
+import { getTwoFactorRequirement } from '@/services/twoFactorService';
 import { supabase } from '@/integrations/supabase/client';
 
 export class DeviceKeyDeactivationError extends Error {
@@ -31,6 +31,7 @@ export class DeviceKeyDeactivationError extends Error {
       | 'LOCAL_DEVICE_KEY_REQUIRED'
       | 'TWO_FACTOR_REQUIRED'
       | 'TWO_FACTOR_FAILED'
+      | 'SECURITY_WORD_FAILED'
       | 'USER_KEY_REWRAP_FAILED'
       | 'PROFILE_PERSIST_FAILED',
     message: string,
@@ -48,6 +49,7 @@ export interface DeviceKeyDeactivationInput {
   encryptedUserKey: string | null;
   currentDeviceKey: Uint8Array | null;
   twoFactorCode?: string | null;
+  confirmationWord: string;
 }
 
 export interface DeviceKeyDeactivationState {
@@ -73,7 +75,7 @@ export async function deactivateDeviceKeyProtection(
     }
 
     await requireLocalDeviceKey(input);
-    await verifyVaultTwoFactorIfRequired(input.userId, input.twoFactorCode);
+    await requireVaultTwoFactorInputIfNeeded(input.userId, input.twoFactorCode);
 
     const targetKdfVersion = Math.max(input.kdfVersion, CURRENT_KDF_VERSION);
     const newKdfOutputBytes = await deriveRawKey(input.masterPassword, input.salt, targetKdfVersion);
@@ -102,6 +104,8 @@ export async function deactivateDeviceKeyProtection(
       kdfVersion: targetKdfVersion,
       newVerifier,
       newEncryptedUserKey,
+      confirmationWord: input.confirmationWord,
+      twoFactorCode: input.twoFactorCode,
     });
     await saveOfflineCredentials(
       input.userId,
@@ -148,9 +152,20 @@ async function requireLocalDeviceKey(input: DeviceKeyDeactivationInput): Promise
   }
 }
 
-async function verifyVaultTwoFactorIfRequired(userId: string, twoFactorCode: string | null | undefined): Promise<void> {
-  const status = await get2FAStatus(userId);
-  if (!status?.isEnabled || !status.vaultTwoFactorEnabled) {
+async function requireVaultTwoFactorInputIfNeeded(userId: string, twoFactorCode: string | null | undefined): Promise<void> {
+  const requirement = await getTwoFactorRequirement({
+    userId,
+    context: 'vault_unlock',
+  });
+
+  if (requirement.status === 'unavailable') {
+    throw new DeviceKeyDeactivationError(
+      'TWO_FACTOR_REQUIRED',
+      'Vault 2FA status is unavailable. Device Key protection was not changed.',
+    );
+  }
+
+  if (!requirement.required) {
     return;
   }
 
@@ -161,19 +176,7 @@ async function verifyVaultTwoFactorIfRequired(userId: string, twoFactorCode: str
     );
   }
 
-  const result = await verifyTwoFactorCode({
-    userId,
-    context: 'critical_action',
-    code: twoFactorCode,
-    method: 'totp',
-  });
-
-  if (!result.success) {
-    throw new DeviceKeyDeactivationError(
-      'TWO_FACTOR_FAILED',
-      result.error || 'Current authenticator code could not be verified.',
-    );
-  }
+  // The actual TOTP check is performed by auth-2fa during profile persistence.
 }
 
 async function rewrapUserKeyForDeviceKeyDeactivation(input: {
@@ -261,24 +264,25 @@ async function persistMasterOnlyProfileState(input: {
   kdfVersion: number;
   newVerifier: string;
   newEncryptedUserKey: string;
+  confirmationWord: string;
+  twoFactorCode?: string | null;
 }): Promise<void> {
-  const { error } = await supabase
-    .from('profiles')
-    .update({
-      master_password_verifier: input.newVerifier,
-      kdf_version: input.kdfVersion,
-      encrypted_user_key: input.newEncryptedUserKey,
-      vault_protection_mode: VAULT_PROTECTION_MODE_MASTER_ONLY,
-      device_key_version: null,
-      device_key_enabled_at: null,
-      device_key_backup_acknowledged_at: null,
-    } as Record<string, unknown>)
-    .eq('user_id', input.userId);
+  const { data, error } = await supabase.functions.invoke<{ success?: boolean; error?: string; errorCode?: string }>('auth-2fa', {
+    body: {
+      action: 'complete-device-key-deactivation',
+      confirmationWord: input.confirmationWord,
+      twoFactorCode: input.twoFactorCode ?? null,
+      encryptedUserKey: input.newEncryptedUserKey,
+      verificationHash: input.newVerifier,
+      kdfVersion: input.kdfVersion,
+      targetProtectionMode: VAULT_PROTECTION_MODE_MASTER_ONLY,
+    },
+  });
 
-  if (error) {
+  if (error || !data?.success) {
     throw new DeviceKeyDeactivationError(
-      'PROFILE_PERSIST_FAILED',
-      `Failed to update profile: ${error.message}`,
+      data?.errorCode === 'INVALID_CONFIRMATION' ? 'SECURITY_WORD_FAILED' : 'PROFILE_PERSIST_FAILED',
+      data?.error || error?.message || 'Failed to update Device Key protection state.',
     );
   }
 }

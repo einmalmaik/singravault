@@ -8,7 +8,7 @@
  * key from another device.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Copy, Download, Eye, EyeOff, KeyRound, QrCode, Shield, ShieldOff, Upload } from 'lucide-react';
 
@@ -39,6 +39,8 @@ import {
     generateDeviceKeyTransferSecret,
     importDeviceKeyFromTransfer,
 } from '@/services/deviceKeyService';
+import { DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD } from '@/services/deviceKeyDeactivationPolicy';
+import { getTwoFactorRequirement } from '@/services/twoFactorService';
 
 export function DeviceKeySettings() {
     const { t } = useTranslation();
@@ -53,6 +55,7 @@ export function DeviceKeySettings() {
     const [masterPassword, setMasterPassword] = useState('');
     const [disableMasterPassword, setDisableMasterPassword] = useState('');
     const [disableTwoFactorCode, setDisableTwoFactorCode] = useState('');
+    const [disableVaultTwoFactorState, setDisableVaultTwoFactorState] = useState<'idle' | 'loading' | 'required' | 'not_required' | 'unavailable'>('idle');
     const [disablePhrase, setDisablePhrase] = useState('');
     const [disableAcknowledged, setDisableAcknowledged] = useState(false);
     const [pin, setPin] = useState('');
@@ -62,7 +65,36 @@ export function DeviceKeySettings() {
     const [backupAcknowledged, setBackupAcknowledged] = useState(false);
     const [showTransferSecret, setShowTransferSecret] = useState(false);
     const isDesktopRuntime = isTauriRuntime();
-    const disableConfirmationPhrase = t('deviceKey.disableConfirmPhrase');
+    const disableConfirmationPhrase = DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD;
+    const disableVaultTwoFactorRequired = disableVaultTwoFactorState === 'required';
+
+    useEffect(() => {
+        if (!showDisableDialog || !user) {
+            setDisableVaultTwoFactorState('idle');
+            return;
+        }
+
+        let cancelled = false;
+        setDisableVaultTwoFactorState('loading');
+        void getTwoFactorRequirement({ userId: user.id, context: 'vault_unlock' })
+            .then((requirement) => {
+                if (cancelled) return;
+                setDisableVaultTwoFactorState(
+                    requirement.status === 'unavailable'
+                        ? 'unavailable'
+                        : requirement.required ? 'required' : 'not_required',
+                );
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setDisableVaultTwoFactorState('unavailable');
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [showDisableDialog, user]);
 
     const handleEnable = async () => {
         if (!masterPassword) return;
@@ -154,7 +186,11 @@ export function DeviceKeySettings() {
         if (!disableMasterPassword || disablePhrase !== disableConfirmationPhrase || !disableAcknowledged) return;
         setLoading(true);
 
-        const { error } = await disableDeviceKey(disableMasterPassword, disableTwoFactorCode);
+        const { error } = await disableDeviceKey(
+            disableMasterPassword,
+            disableVaultTwoFactorRequired ? disableTwoFactorCode : undefined,
+            disablePhrase,
+        );
 
         setLoading(false);
         if (error) {
@@ -362,6 +398,7 @@ export function DeviceKeySettings() {
                     setDisableTwoFactorCode('');
                     setDisablePhrase('');
                     setDisableAcknowledged(false);
+                    setDisableVaultTwoFactorState('idle');
                 }
             }}>
                 <DialogContent>
@@ -386,19 +423,34 @@ export function DeviceKeySettings() {
                             placeholder="••••••••••••"
                         />
                     </div>
-                    <div className="space-y-2">
-                        <Label>{t('deviceKey.disableTwoFactorCode')}</Label>
-                        <Input
-                            inputMode="numeric"
-                            autoComplete="one-time-code"
-                            value={disableTwoFactorCode}
-                            onChange={(e) => setDisableTwoFactorCode(e.target.value)}
-                            placeholder={t('deviceKey.disableTwoFactorPlaceholder')}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                            {t('deviceKey.disableTwoFactorHelp')}
+                    {disableVaultTwoFactorState === 'loading' && (
+                        <p className="text-sm text-muted-foreground">
+                            {t('deviceKey.disableTwoFactorChecking')}
                         </p>
-                    </div>
+                    )}
+                    {disableVaultTwoFactorState === 'unavailable' && (
+                        <Alert variant="destructive">
+                            <AlertTriangle className="w-4 h-4" />
+                            <AlertDescription>
+                                {t('deviceKey.disableTwoFactorUnavailable')}
+                            </AlertDescription>
+                        </Alert>
+                    )}
+                    {disableVaultTwoFactorRequired && (
+                        <div className="space-y-2">
+                            <Label>{t('deviceKey.disableTwoFactorCode')}</Label>
+                            <Input
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                value={disableTwoFactorCode}
+                                onChange={(e) => setDisableTwoFactorCode(e.target.value)}
+                                placeholder={t('deviceKey.disableTwoFactorPlaceholder')}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                {t('deviceKey.disableTwoFactorHelp')}
+                            </p>
+                        </div>
+                    )}
                     <div className="space-y-2">
                         <Label>{t('deviceKey.disableConfirmLabel', { phrase: disableConfirmationPhrase })}</Label>
                         <Input
@@ -406,6 +458,9 @@ export function DeviceKeySettings() {
                             onChange={(e) => setDisablePhrase(e.target.value)}
                             placeholder={disableConfirmationPhrase}
                         />
+                        <p className="text-xs text-muted-foreground">
+                            {t('deviceKey.disableConfirmHelp')}
+                        </p>
                     </div>
                     <div className="flex items-start gap-2">
                         <Checkbox
@@ -427,6 +482,9 @@ export function DeviceKeySettings() {
                             disabled={
                                 !disableMasterPassword
                                 || disablePhrase !== disableConfirmationPhrase
+                                || disableVaultTwoFactorState === 'loading'
+                                || disableVaultTwoFactorState === 'unavailable'
+                                || (disableVaultTwoFactorRequired && !disableTwoFactorCode.trim())
                                 || !disableAcknowledged
                                 || loading
                             }

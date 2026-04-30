@@ -464,6 +464,7 @@ export function useVaultProviderActions(): VaultContextType {
   const disableDeviceKey = useCallback(async (
     masterPassword: string,
     twoFactorCode?: string,
+    confirmationWord?: string,
   ): Promise<{ error: Error | null }> => {
     if (!user || !salt || state.isLocked) {
       return { error: new Error('Vault must be unlocked') };
@@ -480,6 +481,7 @@ export function useVaultProviderActions(): VaultContextType {
       encryptedUserKey,
       currentDeviceKey,
       twoFactorCode,
+      confirmationWord: confirmationWord ?? '',
     });
 
     if (result.state) {

@@ -25,13 +25,12 @@ const nativeBridgeMocks = vi.hoisted(() => ({
 }));
 
 const twoFactorMocks = vi.hoisted(() => ({
-  get2FAStatus: vi.fn(async () => ({
-    isEnabled: true,
-    vaultTwoFactorEnabled: true,
-    lastVerifiedAt: null,
-    backupCodesRemaining: 5,
+  getTwoFactorRequirement: vi.fn(async () => ({
+    context: 'vault_unlock',
+    required: true,
+    status: 'loaded',
+    reason: 'vault_2fa_enabled',
   })),
-  verifyTwoFactorCode: vi.fn(async () => ({ success: true })),
 }));
 
 const offlineVaultMocks = vi.hoisted(() => ({
@@ -44,6 +43,9 @@ const supabaseMock = vi.hoisted(() => {
   profileUpdateChain.eq = vi.fn(async () => ({ error: null }));
   return {
     from: vi.fn(() => profileUpdateChain),
+    functions: {
+      invoke: vi.fn(async () => ({ data: { success: true }, error: null })),
+    },
     _profileUpdateChain: profileUpdateChain,
   };
 });
@@ -62,15 +64,15 @@ describe('deviceKeyDeactivationService', () => {
     deviceKeyServiceMocks.getDeviceKey.mockResolvedValue(new Uint8Array(32).fill(9));
     nativeBridgeMocks.isNativeDeviceKeyBridgeRuntime.mockReturnValue(true);
     nativeBridgeMocks.deriveNativeDeviceProtectedKey.mockResolvedValue(new Uint8Array(32).fill(7));
-    twoFactorMocks.get2FAStatus.mockResolvedValue({
-      isEnabled: true,
-      vaultTwoFactorEnabled: true,
-      lastVerifiedAt: null,
-      backupCodesRemaining: 5,
+    twoFactorMocks.getTwoFactorRequirement.mockResolvedValue({
+      context: 'vault_unlock',
+      required: true,
+      status: 'loaded',
+      reason: 'vault_2fa_enabled',
     });
-    twoFactorMocks.verifyTwoFactorCode.mockResolvedValue({ success: true });
     cryptoMocks.rewrapUserKey.mockResolvedValue('master-only-encrypted-user-key');
     supabaseMock._profileUpdateChain.eq.mockResolvedValue({ error: null });
+    supabaseMock.functions.invoke.mockResolvedValue({ data: { success: true }, error: null });
   });
 
   it('rewraps a native Device-Key-protected UserKey to master-only before deleting the local key', async () => {
@@ -84,14 +86,19 @@ describe('deviceKeyDeactivationService', () => {
       encryptedUserKey: 'device-protected-user-key',
       currentDeviceKey: null,
       twoFactorCode: '123456',
+      confirmationWord: 'DISABLE DEVICE KEY',
     });
 
     expect(result.error).toBeNull();
-    expect(twoFactorMocks.verifyTwoFactorCode).toHaveBeenCalledWith({
-      userId: 'user-1',
-      context: 'critical_action',
-      code: '123456',
-      method: 'totp',
+    expect(supabaseMock.functions.invoke).toHaveBeenCalledWith('auth-2fa', {
+      body: expect.objectContaining({
+        action: 'complete-device-key-deactivation',
+        confirmationWord: 'DISABLE DEVICE KEY',
+        twoFactorCode: '123456',
+        encryptedUserKey: 'master-only-encrypted-user-key',
+        verificationHash: 'master-only-verifier',
+        kdfVersion: 2,
+      }),
     });
     expect(nativeBridgeMocks.deriveNativeDeviceProtectedKey).toHaveBeenCalledWith('user-1', expect.any(Uint8Array));
     expect(cryptoMocks.rewrapUserKey).toHaveBeenCalledWith(
@@ -99,13 +106,7 @@ describe('deviceKeyDeactivationService', () => {
       expect.any(Uint8Array),
       expect.any(Uint8Array),
     );
-    expect(supabaseMock._profileUpdateChain.update).toHaveBeenCalledWith(expect.objectContaining({
-      encrypted_user_key: 'master-only-encrypted-user-key',
-      vault_protection_mode: 'master_only',
-      device_key_version: null,
-      device_key_enabled_at: null,
-      device_key_backup_acknowledged_at: null,
-    }));
+    expect(supabaseMock._profileUpdateChain.update).not.toHaveBeenCalled();
     expect(offlineVaultMocks.saveOfflineCredentials).toHaveBeenCalledWith(
       'user-1',
       'salt',
@@ -137,6 +138,7 @@ describe('deviceKeyDeactivationService', () => {
       encryptedUserKey: 'device-protected-user-key',
       currentDeviceKey: null,
       twoFactorCode: '123456',
+      confirmationWord: 'DISABLE DEVICE KEY',
     });
 
     expect(result.error).toMatchObject({ code: 'DEVICE_KEY_REQUIRED_BUT_MISSING' });
@@ -155,17 +157,18 @@ describe('deviceKeyDeactivationService', () => {
       encryptedUserKey: 'device-protected-user-key',
       currentDeviceKey: null,
       twoFactorCode: '',
+      confirmationWord: 'DISABLE DEVICE KEY',
     });
 
     expect(result.error).toMatchObject({ name: 'DeviceKeyDeactivationError', code: 'TWO_FACTOR_REQUIRED' });
-    expect(twoFactorMocks.verifyTwoFactorCode).not.toHaveBeenCalled();
+    expect(supabaseMock.functions.invoke).not.toHaveBeenCalled();
     expect(supabaseMock._profileUpdateChain.update).not.toHaveBeenCalled();
     expect(deviceKeyServiceMocks.deleteDeviceKey).not.toHaveBeenCalled();
   });
 
   it('does not delete the local Device Key when profile persistence fails', async () => {
     const { deactivateDeviceKeyProtection } = await import('../deviceKeyDeactivationService');
-    supabaseMock._profileUpdateChain.eq.mockResolvedValue({ error: { message: 'RLS rejected update' } });
+    supabaseMock.functions.invoke.mockResolvedValue({ data: null, error: { message: 'RLS rejected update' } });
 
     const result = await deactivateDeviceKeyProtection({
       userId: 'user-1',
@@ -175,6 +178,7 @@ describe('deviceKeyDeactivationService', () => {
       encryptedUserKey: 'device-protected-user-key',
       currentDeviceKey: null,
       twoFactorCode: '123456',
+      confirmationWord: 'DISABLE DEVICE KEY',
     });
 
     expect(result.error).toMatchObject({ name: 'DeviceKeyDeactivationError', code: 'PROFILE_PERSIST_FAILED' });
@@ -184,11 +188,10 @@ describe('deviceKeyDeactivationService', () => {
   it('uses the browser Device Key bytes instead of exporting native key material', async () => {
     const { deactivateDeviceKeyProtection } = await import('../deviceKeyDeactivationService');
     nativeBridgeMocks.isNativeDeviceKeyBridgeRuntime.mockReturnValue(false);
-    twoFactorMocks.get2FAStatus.mockResolvedValue({
-      isEnabled: false,
-      vaultTwoFactorEnabled: false,
-      lastVerifiedAt: null,
-      backupCodesRemaining: 0,
+    twoFactorMocks.getTwoFactorRequirement.mockResolvedValue({
+      context: 'vault_unlock',
+      required: false,
+      status: 'loaded',
     });
     const localDeviceKey = new Uint8Array(32).fill(8);
 
@@ -199,11 +202,38 @@ describe('deviceKeyDeactivationService', () => {
       kdfVersion: 2,
       encryptedUserKey: 'device-protected-user-key',
       currentDeviceKey: localDeviceKey,
+      confirmationWord: 'DISABLE DEVICE KEY',
     });
 
     expect(result.error).toBeNull();
     expect(cryptoMocks.deriveRawKey).toHaveBeenCalledWith('correct-password', 'salt', 2, localDeviceKey);
     expect(nativeBridgeMocks.deriveNativeDeviceProtectedKey).not.toHaveBeenCalled();
-    expect(twoFactorMocks.verifyTwoFactorCode).not.toHaveBeenCalled();
+    expect(supabaseMock.functions.invoke).toHaveBeenCalledWith('auth-2fa', {
+      body: expect.objectContaining({
+        twoFactorCode: null,
+      }),
+    });
+  });
+
+  it('rejects a wrong case security word through server-side persistence', async () => {
+    const { deactivateDeviceKeyProtection } = await import('../deviceKeyDeactivationService');
+    supabaseMock.functions.invoke.mockResolvedValue({
+      data: { success: false, error: 'Invalid request payload', errorCode: 'INVALID_CONFIRMATION' },
+      error: null,
+    });
+
+    const result = await deactivateDeviceKeyProtection({
+      userId: 'user-1',
+      masterPassword: 'correct-password',
+      salt: 'salt',
+      kdfVersion: 2,
+      encryptedUserKey: 'device-protected-user-key',
+      currentDeviceKey: null,
+      twoFactorCode: '123456',
+      confirmationWord: 'disable device key',
+    });
+
+    expect(result.error).toMatchObject({ name: 'DeviceKeyDeactivationError', code: 'SECURITY_WORD_FAILED' });
+    expect(deviceKeyServiceMocks.deleteDeviceKey).not.toHaveBeenCalled();
   });
 });
