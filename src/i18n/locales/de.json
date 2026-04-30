@@ -651,7 +651,9 @@
       "lock": "Sperren"
     },
     "items": {
-      "decrypting": "Entschlüssele Einträge..."
+      "decrypting": "Entschlüssele Einträge...",
+      "cloudSyncing": "Synchronisiere mit Cloud...",
+      "cloudSyncedRecently": "Zuletzt synchronisiert vor wenigen Sekunden"
     },
     "actions": {
       "add": "Neuer Eintrag",

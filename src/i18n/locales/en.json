@@ -647,6 +647,11 @@
       "uncategorized": "Uncategorized",
       "addCategory": "Add category"
     },
+    "items": {
+      "decrypting": "Decrypting entries...",
+      "cloudSyncing": "Synchronizing with cloud...",
+      "cloudSyncedRecently": "Last synchronized a few seconds ago"
+    },
     "item": {
       "addNew": "New Entry",
       "edit": "Edit",

@@ -154,6 +154,8 @@ export function VaultItemList({
     lastError: null,
   });
   const [revalidating, setRevalidating] = useState(false);
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false);
+  const [lastCloudSyncAt, setLastCloudSyncAt] = useState<Date | null>(null);
   const [cloudSyncTick, setCloudSyncTick] = useState(0);
   const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
@@ -161,6 +163,7 @@ export function VaultItemList({
   const revalidatingRef = useRef(false);
   const fetchItemsRef = useRef(false);
   const pendingFetchItemsRef = useRef(false);
+  const hasRenderedVaultContentRef = useRef(false);
   const decryptItemRef = useRef(decryptItem);
   const decryptItemForLegacyMigrationRef = useRef(decryptItemForLegacyMigration);
   const encryptItemRef = useRef(encryptItem);
@@ -180,6 +183,9 @@ export function VaultItemList({
   useEffect(() => {
     failedDecryptPayloadByItemIdRef.current.clear();
     loggedDecryptFailuresRef.current.clear();
+    hasRenderedVaultContentRef.current = false;
+    setLastCloudSyncAt(null);
+    setBackgroundSyncing(false);
   }, [userId, isDuressMode]);
 
   useEffect(() => {
@@ -250,8 +256,14 @@ export function VaultItemList({
         return;
       }
 
+      const isBackgroundSync = hasRenderedVaultContentRef.current;
       fetchItemsRef.current = true;
-      setLoading(true);
+      if (isBackgroundSync) {
+        setBackgroundSyncing(true);
+      } else {
+        setLoading(true);
+        setDecrypting(true);
+      }
       try {
         const { snapshot, source } = await loadVaultSnapshot(userId);
         const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
@@ -280,7 +292,6 @@ export function VaultItemList({
         const decryptableItemIds = new Set<string>();
         const unreadableItems: QuarantinedVaultItem[] = [];
 
-        setDecrypting(true);
         const decryptedItems = await mapInBatches(
           vaultItems,
           DECRYPT_BATCH_SIZE,
@@ -441,6 +452,9 @@ export function VaultItemList({
         }
 
         setItems(decryptedItems as VaultItem[]);
+        hasRenderedVaultContentRef.current = decryptedItems.length > 0
+          || (integrityResult?.mode === 'quarantine' && integrityResult.quarantinedItems.length > 0);
+        setLastCloudSyncAt(new Date());
 
         // Cached snapshots keep the vault usable offline and while local writes
         // are pending. A lightweight remote revalidation follows so DB-side
@@ -459,6 +473,7 @@ export function VaultItemList({
         }
         setLoading(false);
         setDecrypting(false);
+        setBackgroundSyncing(false);
       }
     }
 
@@ -734,7 +749,7 @@ export function VaultItemList({
 
   const renderableItemCount = items.filter((item) => item.decryptedData).length;
 
-  if (loading || decrypting) {
+  if ((loading || decrypting) && items.length === 0 && quarantinedItems.length === 0) {
     return (
       <div className="flex h-64 flex-col items-center justify-center text-muted-foreground">
         <Loader2 className="mb-4 h-8 w-8 animate-spin" />
@@ -777,6 +792,21 @@ export function VaultItemList({
 
   return (
     <div className="space-y-4">
+      {(backgroundSyncing || lastCloudSyncAt) && (
+        <div className="flex items-center justify-end text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1))] px-3 py-1">
+            <RefreshCw className={cn('h-3.5 w-3.5', backgroundSyncing && 'animate-spin')} />
+            {backgroundSyncing
+              ? t('vault.items.cloudSyncing', {
+                defaultValue: 'Synchronisiere mit Cloud...',
+              })
+              : t('vault.items.cloudSyncedRecently', {
+                defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden',
+              })}
+          </span>
+        </div>
+      )}
+
       {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[hsl(var(--border)/0.45)] bg-[hsl(var(--el-1))] px-4 py-3 text-sm">
           <p className="inline-flex items-center gap-2 text-muted-foreground">

@@ -467,6 +467,56 @@ describe.sequential('VaultItemList', () => {
     });
   });
 
+  it('keeps rendered entries visible while a cloud refresh runs in the background', async () => {
+    snapshotState.source = 'remote';
+    snapshotState.online = true;
+    snapshotState.items = [itemOk];
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'healthy',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+
+    render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('Visible Item');
+
+    let resolveBackgroundLoad: (value: Awaited<ReturnType<typeof loadVaultSnapshot>>) => void = () => {};
+    vi.mocked(loadVaultSnapshot).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveBackgroundLoad = resolve;
+    }) as ReturnType<typeof loadVaultSnapshot>);
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(await screen.findByText('Synchronisiere mit Cloud...')).toBeInTheDocument();
+    expect(screen.getByText('Visible Item')).toBeInTheDocument();
+    expect(screen.queryByText('common.loading')).not.toBeInTheDocument();
+    expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveBackgroundLoad({
+        source: 'remote',
+        snapshot: {
+          vaultId: 'vault-1',
+          categories: [],
+          items: [itemOk],
+        },
+      });
+    });
+
+    await screen.findByText('Zuletzt synchronisiert vor wenigen Sekunden');
+  });
+
   it('migrates a healthy legacy no-AAD item instead of reporting quarantine', async () => {
     snapshotState.online = true;
     snapshotState.source = 'remote';
