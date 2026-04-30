@@ -46,11 +46,24 @@ Passkey unlock is an authentication convenience, not an exception to Device-Key 
 
 ## Integrity and Quarantine
 
-Category drift blocks the vault. Item drift quarantines affected items and those items must not be decrypted. Baseline read failures block the vault. There is no auto-rebaseline for untrusted remote drift, category drift, malformed snapshots, or unreadable baselines.
+Category drift blocks the vault. Verified ciphertext drift quarantines the affected server-backed items and those items must not be decrypted. Baseline read failures block the vault. There is no auto-rebaseline for untrusted remote drift, category drift, malformed snapshots, or unreadable baselines.
 
 Trusted recovery and Safe Mode use only locally trusted snapshots. Recovery code must not accept manipulated remote data as a trusted source. Quarantine is an integrity state, not an authentication failure; Device-Key-missing is a Device-Key state, not a 2FA failure.
 
-Runtime item decrypt failures are treated separately from persisted integrity drift. A single unreadable item can be shown as item quarantine, but all-item runtime decrypt failure is treated as a likely key/state mismatch and must not create a mass-quarantine state.
+Runtime item decrypt failures are treated separately from persisted integrity drift. They are a revalidation/key-state failure until the integrity service has verified the vault key, snapshot scope, category structure, and item-specific ciphertext evidence. Runtime decrypt errors must not be merged into active item quarantine, persisted, restored, deleted, or counted as manipulated vault items.
+
+Quarantine v2 distinguishes active item quarantine from adjacent diagnostics:
+
+- `ciphertext_changed` is active item quarantine only when the item exists in the verified server snapshot and the encrypted payload differs from the trusted baseline.
+- `missing_on_server` is a missing-remote diagnostic, not active quarantine. It may be recoverable only when a trusted local snapshot contains the item.
+- `unknown_on_server` is an orphan-remote diagnostic, not active quarantine. It must not be decrypted or counted as a normal vault item.
+- stale or baseline-only references without a current server object and without a trusted local snapshot are diagnostics only and must not show restore actions.
+
+Search, category selection, Authenticator views, Vault Health rendering, focus/visibility refreshes, and other UI state must never create or change quarantine. They may only render the current integrity decision. Device-Key activation/deactivation, stale Device-Key caches, wrong vault keys, stale offline credentials, and passkey/master-password failures must resolve to lock, revalidation, or policy states, never to item quarantine.
+
+Trusted recovery snapshots are created only after a healthy verified vault state. They must not be created from quarantine, Safe Mode, stale cache, incomplete scope, or failed revalidation states. Restore uses only the trusted local snapshot payload, writes a new encrypted item through the normal mutation path, refreshes the integrity baseline for that trusted mutation, and then verifies that the restored item is no longer quarantined.
+
+Current boundary: Quarantine v2 proves item-level drift by comparing the current authoritative `encrypted_data` row with the locally encrypted integrity baseline after the vault key has decrypted that baseline. It does not yet provide a full remote manifest, server-signed inventory, or AAD-v2 envelope migration. Those remain follow-up work: introduce a manifest interface that records the expected item inventory and per-item envelope metadata, bind item AAD to that manifest version, then migrate existing rows only through trusted mutation paths. Until that migration exists, missing/unknown server records stay diagnostic-only and are not active restoreable item quarantine.
 
 ## Runtime Cleanup
 

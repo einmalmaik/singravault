@@ -943,7 +943,7 @@ describe("VaultContext", () => {
       expect(mockSupabase.from).toHaveBeenCalledWith("profiles");
     });
 
-    it("keeps unlock digest-based and accepts deferred unreadable item quarantine", async () => {
+    it("keeps unlock digest-based and treats deferred unreadable items as revalidation failure", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
@@ -992,22 +992,17 @@ describe("VaultContext", () => {
         result.current.reportUnreadableItems([
           {
             id: "item-bad",
-            reason: "ciphertext_changed",
+            reason: "decrypt_failed",
             updatedAt: "2026-04-22T10:00:00.000Z",
           },
         ]);
       });
 
-      expect(result.current.integrityMode).toBe("quarantine");
-      expect(result.current.quarantinedItems).toEqual([
-        expect.objectContaining({
-          id: "item-bad",
-          reason: "ciphertext_changed",
-        }),
-      ]);
+      expect(result.current.integrityMode).toBe("revalidation_failed");
+      expect(result.current.quarantinedItems).toEqual([]);
     });
 
-    it("removes runtime unreadable quarantine entries immediately after delete succeeds", async () => {
+    it("does not expose runtime unreadable items as deletable quarantine records", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
@@ -1027,23 +1022,15 @@ describe("VaultContext", () => {
         result.current.reportUnreadableItems([
           {
             id: "item-bad",
-            reason: "ciphertext_changed",
+            reason: "decrypt_failed",
             updatedAt: "2026-04-22T10:00:00.000Z",
           },
         ]);
       });
 
-      expect(result.current.quarantinedItems).toEqual([
-        expect.objectContaining({ id: "item-bad" }),
-      ]);
-
-      await act(async () => {
-        await result.current.deleteQuarantinedItem("item-bad");
-      });
-
-      expect(mockDeleteQuarantinedItemFromVault).toHaveBeenCalledWith(mockUser.id, "item-bad");
+      expect(result.current.integrityMode).toBe("revalidation_failed");
       expect(result.current.quarantinedItems).toEqual([]);
-      expect(result.current.integrityMode).toBe("healthy");
+      expect(mockDeleteQuarantinedItemFromVault).not.toHaveBeenCalled();
     });
 
     it("blocks unlock when encrypted categories can no longer be decrypted", async () => {

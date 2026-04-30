@@ -11,17 +11,17 @@ const supabaseState = vi.hoisted(() => ({
 }));
 
 const dependencyMocks = vi.hoisted(() => ({
-  enqueueOfflineMutation: vi.fn(async () => 'mutation-1'),
-  upsertOfflineItemRow: vi.fn(async () => undefined),
-  removeOfflineItemRow: vi.fn(async () => undefined),
-  resolveDefaultVaultId: vi.fn(async () => 'vault-1'),
+  enqueueOfflineMutation: vi.fn(async (_mutation: Record<string, unknown>) => 'mutation-1'),
+  upsertOfflineItemRow: vi.fn(async (_userId: string, _item: Record<string, unknown>, _vaultId: string | null) => undefined),
+  removeOfflineItemRow: vi.fn(async (_userId: string, _itemId: string) => undefined),
+  resolveDefaultVaultId: vi.fn(async (_userId: string) => 'vault-1'),
   buildVaultItemRowFromInsert: vi.fn((payload: Record<string, unknown>) => ({
     ...payload,
     created_at: '2026-04-23T00:00:00.000Z',
     updated_at: '2026-04-23T00:00:00.000Z',
   })),
   isAppOnline: vi.fn(() => true),
-  isLikelyOfflineError: vi.fn(() => false),
+  isLikelyOfflineError: vi.fn((_error: unknown) => false),
 }));
 
 vi.mock('@/integrations/supabase/client', () => ({
@@ -79,13 +79,14 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 
 vi.mock('@/services/offlineVaultService', () => ({
-  buildVaultItemRowFromInsert: (...args: unknown[]) => dependencyMocks.buildVaultItemRowFromInsert(...args),
-  enqueueOfflineMutation: (...args: unknown[]) => dependencyMocks.enqueueOfflineMutation(...args),
-  upsertOfflineItemRow: (...args: unknown[]) => dependencyMocks.upsertOfflineItemRow(...args),
-  removeOfflineItemRow: (...args: unknown[]) => dependencyMocks.removeOfflineItemRow(...args),
-  resolveDefaultVaultId: (...args: unknown[]) => dependencyMocks.resolveDefaultVaultId(...args),
+  buildVaultItemRowFromInsert: (payload: Record<string, unknown>) => dependencyMocks.buildVaultItemRowFromInsert(payload),
+  enqueueOfflineMutation: (mutation: Record<string, unknown>) => dependencyMocks.enqueueOfflineMutation(mutation),
+  upsertOfflineItemRow: (userId: string, item: Record<string, unknown>, vaultId: string | null) =>
+    dependencyMocks.upsertOfflineItemRow(userId, item, vaultId),
+  removeOfflineItemRow: (userId: string, itemId: string) => dependencyMocks.removeOfflineItemRow(userId, itemId),
+  resolveDefaultVaultId: (userId: string) => dependencyMocks.resolveDefaultVaultId(userId),
   isAppOnline: () => dependencyMocks.isAppOnline(),
-  isLikelyOfflineError: (...args: unknown[]) => dependencyMocks.isLikelyOfflineError(...args),
+  isLikelyOfflineError: (error: unknown) => dependencyMocks.isLikelyOfflineError(error),
 }));
 
 import {
@@ -163,6 +164,42 @@ describe('vaultQuarantineRecoveryService', () => {
       canAcceptMissing: false,
       isBusy: true,
       lastError: 'failed',
+    });
+  });
+
+  it('does not mark missing or unknown diagnostics as restorable even with stale trusted rows', () => {
+    const staleTrustedRows = indexTrustedSnapshotItems({
+      userId: 'user-1',
+      vaultId: 'vault-1',
+      items: [
+        trustedItem,
+        { ...trustedItem, id: 'item-missing' },
+        { ...trustedItem, id: 'item-unknown' },
+      ],
+      categories: [],
+      lastSyncedAt: null,
+      updatedAt: '2026-04-23T00:00:00.000Z',
+    });
+
+    const resolutions = buildQuarantineResolutionMap([
+      { id: 'item-1', reason: 'ciphertext_changed', updatedAt: null },
+      { id: 'item-missing', reason: 'missing_on_server', updatedAt: null },
+      { id: 'item-unknown', reason: 'unknown_on_server', updatedAt: null },
+    ], staleTrustedRows);
+
+    expect(resolutions['item-1']).toMatchObject({
+      canRestore: true,
+      hasTrustedLocalCopy: true,
+    });
+    expect(resolutions['item-missing']).toMatchObject({
+      canRestore: false,
+      canAcceptMissing: true,
+      hasTrustedLocalCopy: true,
+    });
+    expect(resolutions['item-unknown']).toMatchObject({
+      canRestore: false,
+      canDelete: true,
+      hasTrustedLocalCopy: true,
     });
   });
 

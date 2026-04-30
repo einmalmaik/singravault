@@ -9,17 +9,22 @@ export interface VaultQuarantineSummary {
   decryptableItemIds: string[];
 }
 
+function isActiveItemQuarantine(item: QuarantinedVaultItem): boolean {
+  return item.reason === 'ciphertext_changed';
+}
+
 export function buildVaultQuarantineSummary(
   quarantinedItems: QuarantinedVaultItem[],
   allItemIds: Iterable<string>,
 ): VaultQuarantineSummary {
-  const quarantinedIds = new Set(quarantinedItems.map((item) => item.id));
+  const activeQuarantinedItems = mergeQuarantinedItems(quarantinedItems);
+  const quarantinedIds = new Set(activeQuarantinedItems.map((item) => item.id));
   const decryptableItemIds = [...allItemIds]
     .filter((itemId) => !quarantinedIds.has(itemId))
     .sort((left, right) => left.localeCompare(right));
 
   return {
-    quarantinedItems: [...quarantinedItems].sort((left, right) => left.id.localeCompare(right.id)),
+    quarantinedItems: activeQuarantinedItems,
     decryptableItemIds,
   };
 }
@@ -31,6 +36,10 @@ export function mergeQuarantinedItems(
 
   for (const group of groups) {
     for (const item of group) {
+      if (!isActiveItemQuarantine(item)) {
+        continue;
+      }
+
       const existing = merged.get(item.id);
       if (!existing || (item.updatedAt ?? '') > (existing.updatedAt ?? '')) {
         merged.set(item.id, item);
@@ -55,19 +64,20 @@ export function buildDisplayedIntegrityResult(
     }
 
     return {
-      valid: true,
+      valid: false,
       isFirstCheck: false,
       computedRoot: '',
-      itemCount: runtimeUnreadableItems.length,
+      itemCount: 0,
       categoryCount: 0,
-      mode: 'quarantine',
-      quarantinedItems: runtimeUnreadableItems,
+      mode: 'revalidation_failed',
+      nonTamperReason: 'revalidation_failed',
+      quarantinedItems: [],
     };
   }
 
   if (
-    result.itemCount >= 2
-    && runtimeUnreadableItems.length >= result.itemCount
+    runtimeUnreadableItems.length > 0
+    && result.quarantinedItems.length === 0
   ) {
     return {
       ...result,
@@ -86,7 +96,7 @@ export function buildDisplayedIntegrityResult(
     };
   }
 
-  const mergedItems = mergeQuarantinedItems(result.quarantinedItems, runtimeUnreadableItems);
+  const mergedItems = mergeQuarantinedItems(result.quarantinedItems);
   if (mergedItems.length === 0) {
     return {
       ...result,

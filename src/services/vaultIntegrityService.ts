@@ -393,6 +393,20 @@ export function toVaultIntegrityVerificationResult(
   }
 
   if (inspection.itemDrifts.length > 0) {
+    const activeItemQuarantine = inspection.itemDrifts.filter(isActiveItemQuarantineReason);
+    if (activeItemQuarantine.length === 0) {
+      return {
+        valid: true,
+        isFirstCheck: false,
+        computedRoot: inspection.digest,
+        storedRoot: inspection.storedRoot,
+        itemCount: inspection.itemCount,
+        categoryCount: inspection.categoryCount,
+        mode: 'healthy',
+        quarantinedItems: [],
+      };
+    }
+
     return {
       valid: true,
       isFirstCheck: false,
@@ -401,7 +415,7 @@ export function toVaultIntegrityVerificationResult(
       itemCount: inspection.itemCount,
       categoryCount: inspection.categoryCount,
       mode: 'quarantine',
-      quarantinedItems: inspection.itemDrifts,
+      quarantinedItems: activeItemQuarantine,
     };
   }
 
@@ -810,6 +824,10 @@ function detectItemDigestDrift(
     const rightDate = right.updatedAt ?? '';
     return rightDate.localeCompare(leftDate) || left.id.localeCompare(right.id);
   });
+}
+
+function isActiveItemQuarantineReason(item: QuarantinedVaultItem): boolean {
+  return item.reason === 'ciphertext_changed';
 }
 
 function filterItemDriftsByBaselineScopeProof(
