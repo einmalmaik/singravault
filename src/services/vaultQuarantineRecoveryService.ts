@@ -13,6 +13,7 @@ import {
 import { neutralizeVaultItemServerMetadata } from '@/services/vaultMetadataPolicy';
 import type { VaultItemServerMetadata } from '@/services/vaultMetadataPolicy';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
+import { isActiveQuarantineReasonV2 } from '@/services/vaultIntegrityV2/runtimeBridge';
 
 type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
 type VaultItemInsert = Database['public']['Tables']['vault_items']['Insert'];
@@ -58,8 +59,8 @@ export function buildQuarantineResolutionMap(
         item.id,
         {
           reason: item.reason,
-          canRestore: hasTrustedLocalCopy && item.reason === 'ciphertext_changed',
-          canDelete: item.reason === 'ciphertext_changed' || item.reason === 'unknown_on_server',
+          canRestore: hasTrustedLocalCopy && isActiveQuarantineReasonV2(item.reason),
+          canDelete: isActiveQuarantineReasonV2(item.reason) || item.reason === 'unknown_on_server',
           canAcceptMissing: item.reason === 'missing_on_server',
           hasTrustedLocalCopy,
           isBusy: runtimeState.isBusy,

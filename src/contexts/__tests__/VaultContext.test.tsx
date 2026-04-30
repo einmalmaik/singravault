@@ -129,6 +129,7 @@ const mockFetchRemoteOfflineSnapshot = vi.fn();
 const mockGetOfflineSnapshot = vi.fn();
 const mockGetTrustedOfflineSnapshot = vi.fn();
 const mockIsRecentLocalVaultMutation = vi.fn();
+const mockResolveDefaultVaultId = vi.fn();
 const mockSaveTrustedOfflineSnapshot = vi.fn();
 const mockClearOfflineVaultData = vi.fn();
 const mockIsAppOnline = vi.fn(() => true);
@@ -137,6 +138,7 @@ vi.mock("@/services/offlineVaultService", () => ({
   isLikelyOfflineError: vi.fn(() => false),
   fetchRemoteOfflineSnapshot: (...args: unknown[]) => mockFetchRemoteOfflineSnapshot(...args),
   getOfflineSnapshot: (...args: unknown[]) => mockGetOfflineSnapshot(...args),
+  resolveDefaultVaultId: (...args: unknown[]) => mockResolveDefaultVaultId(...args),
   getOfflineCredentials: (...args: unknown[]) => mockGetOfflineCredentials(...args),
   getOfflineVaultTwoFactorRequirement: (...args: unknown[]) => mockGetOfflineVaultTwoFactorRequirement(...args),
   getTrustedOfflineSnapshot: (...args: unknown[]) => mockGetTrustedOfflineSnapshot(...args),
@@ -286,6 +288,7 @@ describe("VaultContext", () => {
       updatedAt: new Date().toISOString(),
     }));
     mockGetOfflineSnapshot.mockResolvedValue(null);
+    mockResolveDefaultVaultId.mockResolvedValue("vault-123");
     mockGetTrustedOfflineSnapshot.mockResolvedValue(null);
     mockIsRecentLocalVaultMutation.mockReturnValue(false);
     mockSaveTrustedOfflineSnapshot.mockResolvedValue(undefined);
@@ -1853,7 +1856,7 @@ describe("VaultContext", () => {
     });
 
     it("should encrypt vault item when unlocked", async () => {
-      mockEncryptVaultItem.mockResolvedValue("encrypted-item-json");
+      mockEncrypt.mockResolvedValue(Buffer.from(new Uint8Array(13).fill(1)).toString("base64"));
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
 
@@ -1877,8 +1880,9 @@ describe("VaultContext", () => {
         encrypted = await result.current.encryptItem(itemData, "item-1");
       });
 
-      expect(encrypted).toBe("encrypted-item-json");
-      expect(mockEncryptVaultItem).toHaveBeenCalledWith(itemData, expect.anything(), "item-1");
+      expect(encrypted).toMatch(/^sv-vault-v2:/);
+      expect(mockEncryptVaultItem).not.toHaveBeenCalled();
+      expect(mockEncrypt).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.any(String));
     });
 
     it("should decrypt vault item when unlocked", async () => {

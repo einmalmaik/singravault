@@ -29,6 +29,9 @@ This is the canonical active architecture document. Older files under `docs/` ar
 | Integrity decisions | `src/services/vaultIntegrityDecisionEngine.ts` |
 | Integrity runtime orchestration | `src/services/vaultIntegrityRuntimeService.ts` |
 | Vault Integrity / Quarantine V2 services | `src/services/vaultIntegrityV2/` |
+| Manifest V2 server persistence | `src/services/vaultIntegrityV2/serverManifestStore.ts`, `supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql` |
+| Product Item-Envelope V2 adapter | `src/services/vaultIntegrityV2/productItemEnvelope.ts` |
+| Runtime Manifest V2 bridge | `src/services/vaultIntegrityV2/runtimeBridge.ts` |
 | Quarantine summaries and decrypt guard | `src/services/vaultQuarantineOrchestrator.ts` |
 | Trusted recovery and quarantine mutations | `src/services/vaultRecoveryOrchestrator.ts` |
 | Legacy repair helpers | `src/services/legacyVaultRepairService.ts` |
@@ -38,6 +41,12 @@ This is the canonical active architecture document. Older files under `docs/` ar
 `src/contexts/VaultContext.tsx` stays a gateway: define the context, export the provider, export `useVault`, and keep the public API stable. `src/contexts/vault/useVaultProviderActions.tsx` binds callbacks and delegates to services; it must not become a second VaultContext monolith.
 
 Auth-state changes belong in `AuthContext` or dedicated auth services. Vault-unlock changes belong in `vaultMasterUnlockService`, `vaultPasskeyUnlockService`, `vaultUnlockOrchestrator`, or `deviceKeyUnlockOrchestrator`. Device-Key activation belongs in `deviceKeyActivationService`. Integrity and quarantine decisions must stay in their decision/orchestrator services.
+
+Manifest V2 is used by the runtime only after the server returns an authenticated Manifest V2 envelope for the vault. The runtime bridge loads the envelope, evaluates it against the current server/cache snapshot, and returns the existing provider-facing integrity result. If no Manifest V2 exists or legacy item envelopes remain, the R3 compatibility path remains active and must not persist active quarantine for missing/unknown/stale diagnostics.
+
+Legitimate item writes from the public vault API now use Item-Envelope V2. The current compatibility layer still lets legacy vaults operate until all rows are V2-native; a healthy trusted refresh persists Manifest V2 only when the current snapshot contains no legacy item envelopes. Category changes update the manifest through the same trusted refresh path once the vault is V2-native.
+
+The current server schema stores Manifest V2 in `public.vault_integrity_manifests`. It provides owner-scoped RLS and revision metadata, but it is not a fully atomic item/category/manifest mutation pipeline. If an item/category write succeeds and the manifest write fails, the state is sync/repair work; UI or runtime code must not report it as item tampering.
 
 File-size guardrails: `VaultContext.tsx` should remain below 150 lines, `useVaultProviderActions.tsx` below 700 lines, and no new runtime module should grow past 900 lines. If one of those limits is reached, split by responsibility before adding behavior.
 

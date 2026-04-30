@@ -52,6 +52,13 @@ export type VaultIntegrityNonTamperReason =
   | 'baseline_canonicalization_incompatible';
 export type VaultIntegrityItemIssueReason =
   | 'ciphertext_changed'
+  | 'aead_auth_failed'
+  | 'item_envelope_malformed'
+  | 'item_aad_mismatch'
+  | 'item_manifest_hash_mismatch'
+  | 'item_revision_replay'
+  | 'item_key_id_mismatch'
+  | 'duplicate_active_item_record'
   | 'missing_on_server'
   | 'unknown_on_server'
   | 'decrypt_failed';

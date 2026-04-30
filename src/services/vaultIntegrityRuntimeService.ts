@@ -27,6 +27,10 @@ import {
   persistTrustedRecoverySnapshot,
   type TrustedRecoverySnapshotState,
 } from '@/services/vaultRecoveryOrchestrator';
+import {
+  evaluateRuntimeVaultIntegrityV2,
+  persistRuntimeManifestV2ForTrustedSnapshot,
+} from '@/services/vaultIntegrityV2/runtimeBridge';
 
 export interface VaultIntegrityRuntimeCallbacks {
   applyIntegrityResultState: (result: VaultIntegrityVerificationResult) => void;
@@ -70,6 +74,7 @@ export async function persistMissingOrLegacyBaseline(input: {
 export async function finalizeVaultUnlockIntegrity(input: {
   userId: string;
   activeKey: CryptoKey;
+  encryptedUserKey?: string | null;
   callbacks: VaultIntegrityRuntimeCallbacks;
 }): Promise<{ error: Error | null }> {
   const { userId, activeKey, callbacks } = input;
@@ -81,6 +86,39 @@ export async function finalizeVaultUnlockIntegrity(input: {
     });
     if (!snapshotBundle) {
       return { error: new Error('Vault snapshot unavailable') };
+    }
+
+    const trustedRecoveryState = await loadTrustedRecoverySnapshotState(userId);
+    const v2Result = await evaluateRuntimeVaultIntegrityV2({
+      userId,
+      snapshot: snapshotBundle.rawSnapshot,
+      vaultKey: activeKey,
+      encryptedUserKey: input.encryptedUserKey,
+      trustedRecoveryState,
+      evaluationSource: 'unlock',
+    });
+    if (v2Result) {
+      callbacks.applyIntegrityResultState(v2Result);
+      if (v2Result.mode === 'blocked') {
+        await callbacks.setBlockedIntegrityState(
+          activeKey,
+          v2Result.blockedReason ?? 'snapshot_malformed',
+          v2Result,
+        );
+        return {
+          error: new Error(
+            'Die Integritätsprüfung des Tresors ist fehlgeschlagen. Safe Mode oder Reset ist erforderlich.',
+          ),
+        };
+      }
+      if (v2Result.mode === 'healthy') {
+        callbacks.applyTrustedRecoveryState(
+          await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
+        );
+      } else {
+        callbacks.applyTrustedRecoveryState(trustedRecoveryState);
+      }
+      return { error: null };
     }
 
     const integrityAssessment = await assessVaultIntegritySnapshot({
@@ -143,6 +181,7 @@ export async function finalizeVaultUnlockIntegrity(input: {
 export async function refreshVaultIntegrityBaseline(input: {
   userId: string;
   encryptionKey: CryptoKey;
+  encryptedUserKey?: string | null;
   trustedMutation?: TrustedVaultMutation;
   callbacks: VaultIntegrityRuntimeCallbacks;
 }): Promise<void> {
@@ -203,6 +242,12 @@ export async function refreshVaultIntegrityBaseline(input: {
         callbacks.applyTrustedRecoveryState(
           await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
         );
+        await persistRuntimeManifestV2ForTrustedSnapshot({
+          userId,
+          snapshot: snapshotBundle.rawSnapshot,
+          vaultKey: encryptionKey,
+          encryptedUserKey: input.encryptedUserKey,
+        }).catch(() => undefined);
         callbacks.applyIntegrityResultState({
           valid: true,
           isFirstCheck: false,
@@ -255,6 +300,12 @@ export async function refreshVaultIntegrityBaseline(input: {
   callbacks.applyTrustedRecoveryState(
     await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
   );
+  await persistRuntimeManifestV2ForTrustedSnapshot({
+    userId,
+    snapshot: snapshotBundle.rawSnapshot,
+    vaultKey: encryptionKey,
+    encryptedUserKey: input.encryptedUserKey,
+  }).catch(() => undefined);
   callbacks.applyIntegrityResultState({
     valid: true,
     isFirstCheck: false,
@@ -271,6 +322,7 @@ export async function refreshVaultIntegrityBaseline(input: {
 export async function verifyVaultIntegrity(input: {
   userId: string;
   encryptionKey: CryptoKey;
+  encryptedUserKey?: string | null;
   snapshot?: OfflineVaultSnapshot;
   source?: 'remote' | 'cache' | 'empty';
   callbacks: VaultIntegrityRuntimeCallbacks;
@@ -288,6 +340,31 @@ export async function verifyVaultIntegrity(input: {
     const rawSnapshot = snapshot ?? loadedSnapshotBundle?.rawSnapshot;
     if (!rawSnapshot) {
       return null;
+    }
+
+    const trustedRecoveryState = await loadTrustedRecoverySnapshotState(userId);
+    const v2Result = await evaluateRuntimeVaultIntegrityV2({
+      userId,
+      snapshot: rawSnapshot,
+      vaultKey: encryptionKey,
+      encryptedUserKey: input.encryptedUserKey,
+      trustedRecoveryState,
+      evaluationSource: 'manual_recheck',
+    });
+    if (v2Result) {
+      callbacks.applyIntegrityResultState(v2Result);
+      if (v2Result.mode === 'blocked') {
+        await callbacks.setBlockedIntegrityState(
+          encryptionKey,
+          v2Result.blockedReason ?? 'snapshot_malformed',
+          v2Result,
+        );
+      } else if (v2Result.mode === 'healthy') {
+        callbacks.applyTrustedRecoveryState(await persistTrustedRecoverySnapshot(rawSnapshot));
+      } else {
+        callbacks.applyTrustedRecoveryState(trustedRecoveryState);
+      }
+      return v2Result;
     }
 
     const integrityAssessment = await assessVaultIntegritySnapshot({

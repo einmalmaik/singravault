@@ -1,4 +1,3 @@
-import { decryptVaultItem, decryptVaultItemForMigration, encryptVaultItem } from '@/services/cryptoService';
 import { isAppOnline, type OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import {
   deleteQuarantinedItemFromVault,
@@ -12,6 +11,12 @@ import {
   hasLegacyVaultItemServerMetadata,
   mergeLegacyVaultItemMetadataIntoPayload,
 } from '@/services/vaultMetadataPolicy';
+import {
+  decryptProductVaultItem,
+  decryptProductVaultItemForMigration,
+  encryptProductVaultItemV2,
+} from '@/services/vaultIntegrityV2/productItemEnvelope';
+import { isActiveQuarantineReasonV2 } from '@/services/vaultIntegrityV2/runtimeBridge';
 
 export interface TrustedRecoverySnapshotState {
   trustedRecoveryAvailable: boolean;
@@ -47,27 +52,48 @@ export async function restoreQuarantinedVaultItem(input: {
   userId: string;
   itemId: string;
   activeKey: CryptoKey;
+  encryptedUserKey?: string | null;
   trustedSnapshotItem: TrustedSnapshotItem;
   refreshIntegrityBaseline: (mutation: { itemIds: string[] }) => Promise<void>;
   verifyIntegrity: () => Promise<{ quarantinedItems: Array<{ id: string }> } | null>;
 }): Promise<void> {
   let trustedSnapshotItem = input.trustedSnapshotItem;
   try {
-    const migrationDecrypt = await decryptVaultItemForMigration(
-      input.trustedSnapshotItem.encrypted_data,
-      input.activeKey,
-      input.itemId,
-    );
+    const migrationDecrypt = await decryptProductVaultItemForMigration({
+      encryptedData: input.trustedSnapshotItem.encrypted_data,
+      vaultKey: input.activeKey,
+      entryId: input.itemId,
+    });
+    const decryptedData = hasLegacyVaultItemServerMetadata(input.trustedSnapshotItem)
+      ? mergeLegacyVaultItemMetadataIntoPayload(migrationDecrypt.data, input.trustedSnapshotItem)
+      : migrationDecrypt.data;
     if (migrationDecrypt.legacyEnvelopeUsed) {
-      const decryptedData = hasLegacyVaultItemServerMetadata(input.trustedSnapshotItem)
-        ? mergeLegacyVaultItemMetadataIntoPayload(migrationDecrypt.data, input.trustedSnapshotItem)
-        : migrationDecrypt.data;
       trustedSnapshotItem = {
         ...input.trustedSnapshotItem,
-        encrypted_data: await encryptVaultItem(decryptedData, input.activeKey, input.itemId),
+        encrypted_data: await encryptProductVaultItemV2({
+          userId: input.userId,
+          encryptedUserKey: input.encryptedUserKey,
+          vaultKey: input.activeKey,
+          data: decryptedData,
+          entryId: input.itemId,
+        }),
       };
     } else {
-      await decryptVaultItem(input.trustedSnapshotItem.encrypted_data, input.activeKey, input.itemId);
+      await decryptProductVaultItem({
+        encryptedData: input.trustedSnapshotItem.encrypted_data,
+        vaultKey: input.activeKey,
+        entryId: input.itemId,
+      });
+      trustedSnapshotItem = {
+        ...input.trustedSnapshotItem,
+        encrypted_data: await encryptProductVaultItemV2({
+          userId: input.userId,
+          encryptedUserKey: input.encryptedUserKey,
+          vaultKey: input.activeKey,
+          data: decryptedData,
+          entryId: input.itemId,
+        }),
+      };
     }
   } catch {
     throw new Error('Die lokale Wiederherstellungskopie für diesen Eintrag ist nicht mehr entschlüsselbar.');
@@ -100,7 +126,7 @@ export async function deleteQuarantinedVaultItem(input: {
     throw new Error('Der Quarantäne-Eintrag konnte nicht mit dem Server synchronisiert gelöscht werden.');
   }
 
-  if (input.reason === 'ciphertext_changed') {
+  if (isActiveQuarantineReasonV2(input.reason)) {
     await input.refreshIntegrityBaseline({ itemIds: [input.itemId] });
   } else {
     await input.verifyIntegrity();

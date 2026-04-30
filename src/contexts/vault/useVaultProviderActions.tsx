@@ -2,11 +2,8 @@ import { useCallback, useRef } from 'react';
 import {
   decrypt,
   decryptBytes,
-  decryptVaultItem,
-  decryptVaultItemForMigration,
   encrypt,
   encryptBytes,
-  encryptVaultItem,
   type VaultItemData,
 } from '@/services/cryptoService';
 import {
@@ -53,6 +50,11 @@ import {
   unlockVaultWithPasskey,
 } from '@/services/vaultPasskeyUnlockService';
 import { unlockVaultWithMasterPassword } from '@/services/vaultMasterUnlockService';
+import {
+  decryptProductVaultItem,
+  decryptProductVaultItemForMigration,
+  encryptProductVaultItemV2,
+} from '@/services/vaultIntegrityV2/productItemEnvelope';
 import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngine';
 import type {
   QuarantinedVaultItem,
@@ -285,6 +287,7 @@ export function useVaultProviderActions(): VaultContextType {
     const integrityResult = await finalizeVaultUnlockIntegrity({
       userId: user.id,
       activeKey,
+      encryptedUserKey: state.encryptedUserKey,
       callbacks: integrityCallbacks(),
     });
     if (integrityResult.error) {
@@ -299,7 +302,7 @@ export function useVaultProviderActions(): VaultContextType {
     markVaultSessionActive(sessionStorage);
     state.setPendingSessionRestore(false);
     return { error: null };
-  }, [integrityCallbacks, state, user]);
+  }, [integrityCallbacks, state, state.encryptedUserKey, user]);
 
   const enforceVaultTwoFactorBeforeKeyRelease = useCallback(async (
     options?: VaultUnlockOptions,
@@ -614,10 +617,11 @@ export function useVaultProviderActions(): VaultContextType {
     await refreshVaultIntegrityBaseline({
       userId: user.id,
       encryptionKey: state.encryptionKey,
+      encryptedUserKey: state.encryptedUserKey,
       trustedMutation,
       callbacks: integrityCallbacks(),
     });
-  }, [integrityCallbacks, state.encryptionKey, user]);
+  }, [integrityCallbacks, state.encryptedUserKey, state.encryptionKey, user]);
 
   const verifyIntegrity = useCallback(async (
     snapshot?: OfflineVaultSnapshot,
@@ -630,11 +634,12 @@ export function useVaultProviderActions(): VaultContextType {
     return verifyVaultIntegrity({
       userId: user.id,
       encryptionKey: state.encryptionKey,
+      encryptedUserKey: state.encryptedUserKey,
       snapshot,
       source: options?.source,
       callbacks: integrityCallbacks(),
     });
-  }, [integrityCallbacks, state.encryptionKey, user]);
+  }, [integrityCallbacks, state.encryptedUserKey, state.encryptionKey, user]);
 
   const updateIntegrity = useCallback(async (
     items: VaultItemForIntegrity[],
@@ -660,6 +665,7 @@ export function useVaultProviderActions(): VaultContextType {
         userId: user.id,
         itemId,
         activeKey: state.encryptionKey!,
+        encryptedUserKey: state.encryptedUserKey,
         trustedSnapshotItem,
         refreshIntegrityBaseline: (mutation) => refreshIntegrityBaseline(mutation),
         verifyIntegrity: () => {
@@ -672,6 +678,7 @@ export function useVaultProviderActions(): VaultContextType {
   }, [
     refreshIntegrityBaseline,
     state,
+    state.encryptedUserKey,
     user,
     verifyIntegrity,
   ]);
@@ -789,15 +796,28 @@ export function useVaultProviderActions(): VaultContextType {
     if (!state.encryptionKey) {
       throw new Error('Vault is locked');
     }
-    return encryptVaultItem(data, state.encryptionKey, entryId);
-  }, [state.encryptionKey]);
+    if (!user) {
+      throw new Error('No active user session');
+    }
+    return encryptProductVaultItemV2({
+      userId: user.id,
+      encryptedUserKey: state.encryptedUserKey,
+      vaultKey: state.encryptionKey,
+      data,
+      entryId,
+    });
+  }, [state.encryptedUserKey, state.encryptionKey, user]);
 
   const decryptItem = useCallback(async (encryptedData: string, entryId: string): Promise<VaultItemData> => {
     if (!state.encryptionKey) {
       throw new Error('Vault is locked');
     }
     assertItemDecryptable(state.quarantinedItems, entryId);
-    return decryptVaultItem(encryptedData, state.encryptionKey, entryId);
+    return decryptProductVaultItem({
+      encryptedData,
+      vaultKey: state.encryptionKey,
+      entryId,
+    });
   }, [state.encryptionKey, state.quarantinedItems]);
 
   const decryptItemForLegacyMigration = useCallback(async (
@@ -807,7 +827,11 @@ export function useVaultProviderActions(): VaultContextType {
     if (!state.encryptionKey) {
       throw new Error('Vault is locked');
     }
-    return decryptVaultItemForMigration(encryptedData, state.encryptionKey, entryId);
+    return decryptProductVaultItemForMigration({
+      encryptedData,
+      vaultKey: state.encryptionKey,
+      entryId,
+    });
   }, [state.encryptionKey]);
 
   return buildVaultContextValue(state, {
