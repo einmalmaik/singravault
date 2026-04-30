@@ -37,6 +37,10 @@ vi.mock('@/components/settings/SecuritySettings', () => ({
   SecuritySettings: () => null,
 }));
 
+vi.mock('@/components/settings/DeviceKeySettings', () => ({
+  DeviceKeySettings: () => null,
+}));
+
 import { getCoreProfileSettingsSections } from '../coreSettingsSections';
 
 describe('getCoreProfileSettingsSections', () => {
@@ -60,5 +64,18 @@ describe('getCoreProfileSettingsSections', () => {
     const sections = getCoreProfileSettingsSections(t);
 
     expect(sections.map((section) => section.id)).toContain('profile-legal-links');
+  });
+
+  it('exposes Device Key import from account security without requiring vault settings', () => {
+    mockShouldShowWebsiteChrome.mockReturnValue(true);
+
+    const sections = getCoreProfileSettingsSections(t);
+    const deviceKeySection = sections.find((section) => section.id === 'profile-device-key');
+
+    expect(deviceKeySection).toMatchObject({
+      surface: 'profile',
+      tab: 'security',
+    });
+    expect(deviceKeySection?.keywords.join(' ')).toContain('import');
   });
 });

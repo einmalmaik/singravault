@@ -564,7 +564,10 @@
       "password": "Master-Passwort",
       "submit": "Entsperren",
       "logout": "Abmelden",
-      "sessionRestore": "Bitte gib dein Master-Passwort erneut ein, um deine Sitzung fortzusetzen."
+      "sessionRestore": "Bitte gib dein Master-Passwort erneut ein, um deine Sitzung fortzusetzen.",
+      "deviceKeyRequiredTitle": "Geräteschlüssel erforderlich",
+      "deviceKeyRequiredDescription": "Dieser Tresor ist durch einen Geräteschlüssel geschützt. Importiere den Schlüssel von einem vertrauenswürdigen Gerät, bevor du diesen Tresor hier entsperrst.",
+      "importDeviceKey": "Geräteschlüssel importieren"
     },
     "providers": {
       "google": "Google",

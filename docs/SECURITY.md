@@ -26,9 +26,13 @@ Deactivation lives in `src/services/deviceKeyDeactivationService.ts` and is only
 
 Unlock for a Device-Key-protected vault requires both the master-password KDF path and local Device-Key availability. Authentication, a Supabase session, or the master password alone only reaches the locked "Device Key required" state. Vault item loading, repair, migration, export, trusted recovery mutation, and quarantine restore require a real unlocked vault key and must not run on missing Device-Key state.
 
+Alternate unlock hooks such as duress/dual-unlock are not Device-Key exceptions. For `device_key_required` vaults, the primary Device-Key-aware unlock path is the only path allowed to release an active vault key.
+
 Tauri stores Device Keys through native commands backed by the OS keychain via Rust `keyring`. On Windows, if the keychain cannot store binary secrets reliably, the desktop runtime uses a DPAPI-protected file under the user's local Singra Vault app data as a fallback. The identifier is scoped by user id and survives normal app updates; deleting app data, resetting the OS keychain, reinstalling in a way that removes local data, or changing OS credentials can require Device-Key import/recovery.
 
 Web and PWA store Device Keys in the browser local secret store: a non-extractable WebCrypto wrapping key in IndexedDB wraps the Device Key payload stored in IndexedDB. This is weaker than an OS keychain and is scoped to the origin/browser profile/PWA storage partition. Another browser profile, private mode, cleared site data, or a PWA/browser storage reset has no Device Key and must import it explicitly.
+
+Device-Key import is available from account security after account login, before vault unlock. That surface may store/import local Device-Key transfer material for the signed-in account, but it must not display vault contents or require an active vault key. Export, disable, and other vault-key-sensitive Device-Key operations remain unavailable while the vault is locked.
 
 Device-Key transfer uses a versioned encrypted envelope plus a high-entropy transfer secret. The transfer secret and envelope must never be logged, sent to telemetry, embedded in URLs, or stored server-side in plaintext. Import refuses malformed, downgraded, extreme-KDF, wrong-secret, and overwrite attempts.
 
@@ -37,6 +41,8 @@ Server compromise limits: the client preserves a locally known `device_key_requi
 ## Passkey/WebAuthn
 
 Passkeys are scoped to RP ID and origin. Web, PWA, and Tauri are not assumed to share one passkey surface. PRF support is checked before registration, but actual registration and authentication remain the source of truth.
+
+Passkey unlock is an authentication convenience, not an exception to Device-Key protection. When the server-visible vault policy is `device_key_required`, the client must resolve local Device-Key availability before starting passkey unlock, and the WebAuthn Edge Function must not store or return passkey-wrapped vault-key material. Supporting passkey unlock for Device-Key-protected vaults requires a separate Device-Key-bound proof or enrollment design; until then this path fails closed.
 
 ## Integrity and Quarantine
 

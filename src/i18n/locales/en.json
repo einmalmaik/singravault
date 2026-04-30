@@ -564,7 +564,10 @@
       "password": "Master Password",
       "submit": "Unlock",
       "logout": "Logout",
-      "sessionRestore": "Please re-enter your master password to continue your session."
+      "sessionRestore": "Please re-enter your master password to continue your session.",
+      "deviceKeyRequiredTitle": "Device Key required",
+      "deviceKeyRequiredDescription": "This vault is protected with a Device Key. Import the key from a trusted device before unlocking this vault here.",
+      "importDeviceKey": "Import Device Key"
     },
     "providers": {
       "google": "Google",

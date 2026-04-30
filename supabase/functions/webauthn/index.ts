@@ -291,7 +291,7 @@ async function handleVerifyRegistration(
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
 ) {
-    const { credential, deviceName, prfSalt, wrappedMasterKey, prfEnabled } = body as {
+    const { credential, deviceName, prfSalt, wrappedMasterKey, prfEnabled, challengeId } = body as {
         credential: unknown;
         deviceName?: string;
         prfSalt: string;
@@ -339,6 +339,11 @@ async function handleVerifyRegistration(
         }
 
         const { credential: regCredential } = verification.registrationInfo;
+
+        if (wrappedMasterKey && await isDeviceKeyRequiredForUser(supabase, user.id)) {
+            await supabase.from("webauthn_challenges").delete().eq("id", storedChallenge.id);
+            return jsonResponse({ error: "Device Key required for passkey vault unlock" }, 403, corsHeaders);
+        }
 
         // Store the credential in the database
         const { error: insertError } = await supabase
@@ -579,6 +584,10 @@ async function handleVerifyAuthentication(
 
         // Dieser Endpoint bestätigt nur den Passkey und liefert den
         // verschlüsselten Vault-Schlüssel zurück.
+        if (dbCredential.wrapped_master_key && await isDeviceKeyRequiredForUser(supabase, user.id)) {
+            return jsonResponse({ error: "Device Key required for passkey vault unlock" }, 403, corsHeaders);
+        }
+
         return jsonResponse({
             verified: true,
             credentialId: dbCredential.credential_id,
@@ -615,6 +624,10 @@ async function handleActivatePrf(
 
     if (typeof wrappedMasterKey !== "string" || wrappedMasterKey.length === 0) {
         return jsonResponse({ error: "Missing wrappedMasterKey" }, 400, corsHeaders);
+    }
+
+    if (await isDeviceKeyRequiredForUser(supabase, user.id)) {
+        return jsonResponse({ error: "Device Key required for passkey vault unlock" }, 403, corsHeaders);
     }
 
     const credentialResponse = credential as { id: string };
@@ -739,6 +752,10 @@ async function handleUpgradeWrappedKey(
 
     if (typeof wrappedMasterKey !== "string" || wrappedMasterKey.trim().length === 0) {
         return jsonResponse({ error: "Missing wrappedMasterKey" }, 400, corsHeaders);
+    }
+
+    if (await isDeviceKeyRequiredForUser(supabase, user.id)) {
+        return jsonResponse({ error: "Device Key required for passkey vault unlock" }, 403, corsHeaders);
     }
 
     const credentialResponse = credential as { id?: string };
@@ -973,6 +990,24 @@ function isCredentialAvailableForRp(
     // hosted web surface. Keep them visible there so existing users do not lose
     // their web passkeys, while desktop/local surfaces stay isolated.
     return !credentialRpId && currentRpId === CONFIGURED_SITE_RP_ID;
+}
+
+async function isDeviceKeyRequiredForUser(
+    supabase: ReturnType<typeof createClient>,
+    userId: string,
+): Promise<boolean> {
+    const { data, error } = await supabase
+        .from("profiles")
+        .select("vault_protection_mode")
+        .eq("id", userId)
+        .maybeSingle();
+
+    if (error) {
+        console.error("Failed to load vault protection mode for WebAuthn:", error);
+        return true;
+    }
+
+    return (data as { vault_protection_mode?: string } | null)?.vault_protection_mode === "device_key_required";
 }
 
 async function loadPendingWebauthnChallenge(

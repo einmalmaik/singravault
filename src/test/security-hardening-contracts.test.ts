@@ -205,6 +205,15 @@ describe("security hardening contracts", () => {
     expect(deviceKeyActivation).not.toContain("device_key_fingerprint");
   });
 
+  it("keeps master-password unlock Device Key enforcement ahead of alternate unlock hooks", () => {
+    const vaultMasterUnlock = readFileSync("src/services/vaultMasterUnlockService.ts", "utf-8");
+
+    expect(vaultMasterUnlock).toContain("if (!requiresDeviceKey(input.vaultProtectionMode))");
+    expect(vaultMasterUnlock).toContain("const duressResult = await tryDuressUnlock(input)");
+    expect(vaultMasterUnlock).toContain("return await unlockWithPrimaryVaultKey(input)");
+    expect(vaultMasterUnlock).toContain("const { deviceKey, deviceKeyAvailable, error: deviceKeyError } = await input.getRequiredDeviceKey()");
+  });
+
   it("keeps Tauri Device Key raw material out of generic renderer reads", () => {
     const rust = readFileSync("src-tauri/src/lib.rs", "utf-8");
     const nativeBridge = readFileSync("src/services/deviceKeyNativeBridge.ts", "utf-8");
@@ -249,6 +258,39 @@ describe("security hardening contracts", () => {
     expect(migration).toContain("OLD.vault_protection_mode = 'device_key_required'");
     expect(migration).toContain("NEW.vault_protection_mode = 'master_only'");
     expect(migration).toContain("device_key_deactivation_requires_server_validation");
+  });
+
+  it("prevents Passkey vault unlock material from bypassing Device Key enforcement", () => {
+    const passkeyUnlock = readFileSync("src/services/vaultPasskeyUnlockService.ts", "utf-8");
+    const providerActions = readFileSync("src/contexts/vault/useVaultProviderActions.tsx", "utf-8");
+    const webauthn = readFileSync("supabase/functions/webauthn/index.ts", "utf-8");
+
+    expect(passkeyUnlock).toContain("getRequiredDeviceKey");
+    expect(passkeyUnlock).toContain("Passkey proves user presence/authentication only");
+    expect(providerActions).toContain("getRequiredDeviceKey,");
+
+    expect(webauthn).toContain("isDeviceKeyRequiredForUser");
+    expect(webauthn).toContain('.select("vault_protection_mode")');
+    expect(webauthn).toContain('vault_protection_mode === "device_key_required"');
+    expect(webauthn).toContain('Device Key required for passkey vault unlock');
+    expect(webauthn).not.toMatch(/skipDeviceKey|bypassDeviceKey|deviceKeyPresent/i);
+  });
+
+  it("exposes Device Key import from account security and the locked vault screen", () => {
+    const coreSections = readFileSync("src/components/settings/coreSettingsSections.tsx", "utf-8");
+    const vaultUnlock = readFileSync("src/components/vault/VaultUnlock.tsx", "utf-8");
+    const app = readFileSync("src/App.tsx", "utf-8");
+
+    expect(app).toContain('path="/settings"');
+    expect(app).toContain("<ProtectedRoute><SettingsPage /></ProtectedRoute>");
+    expect(app).toContain("<VaultUnlockRequiredRoute>");
+    expect(app).toContain("VaultSettingsPage");
+    expect(coreSections).toContain("id: 'profile-device-key'");
+    expect(coreSections).toContain("render: () => <DeviceKeySettings />");
+    expect(vaultUnlock).toContain("/settings?tab=security#profile-device-key");
+    expect(vaultUnlock).toContain("state={buildReturnState(location)}");
+    expect(vaultUnlock).toContain("requiresDeviceKey(vaultProtectionMode) && !deviceKeyActive");
+    expect(vaultUnlock).not.toContain('href="/settings?tab=security#profile-device-key"');
   });
 
   it("centralizes server-visible vault item metadata neutralization for new writes", () => {

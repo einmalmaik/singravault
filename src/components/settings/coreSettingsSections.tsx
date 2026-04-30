@@ -7,6 +7,7 @@ import { DataSettings } from '@/components/settings/DataSettings';
 import { LegalLinksSettings } from '@/components/settings/LegalLinksSettings';
 import { PasswordSettings } from '@/components/settings/PasswordSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
+import { DeviceKeySettings } from '@/components/settings/DeviceKeySettings';
 import type { SettingsSectionDescriptor } from '@/extensions/types';
 import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
@@ -47,6 +48,15 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       title: t('settings.password.title'),
       keywords: ['password', 'passwort', 'change password', 'reset password'],
       render: () => <PasswordSettings />,
+    },
+    {
+      id: 'profile-device-key',
+      surface: 'profile',
+      tab: 'security',
+      order: 30,
+      title: t('deviceKey.title'),
+      keywords: ['device key', 'geräte-schlüssel', 'geraeteschluessel', 'import', 'transfer', 'gerät autorisieren'],
+      render: () => <DeviceKeySettings />,
     },
     {
       id: 'profile-account-export',

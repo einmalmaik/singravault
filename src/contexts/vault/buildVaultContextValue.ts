@@ -48,6 +48,7 @@ export function buildVaultContextValue(
     isLoading: state.isLoading,
     isDuressMode: state.isDuressMode,
     deviceKeyActive: state.deviceKeyActive,
+    vaultProtectionMode: state.vaultProtectionMode,
     setupMasterPassword: actions.setupMasterPassword,
     unlock: actions.unlock,
     unlockWithPasskey: actions.unlockWithPasskey,

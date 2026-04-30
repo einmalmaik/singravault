@@ -27,6 +27,7 @@ export interface VaultPasskeyUnlockInput {
   encryptedUserKey: string | null;
   vaultProtectionMode: VaultProtectionMode;
   options?: VaultUnlockOptions;
+  getRequiredDeviceKey: () => Promise<RequiredDeviceKeyResult>;
   enforceVaultTwoFactorBeforeKeyRelease: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
   finalizeVaultUnlock: (activeKey: CryptoKey) => Promise<{ error: Error | null }>;
   applyCredentialUpdates: (updates: {
@@ -53,6 +54,13 @@ export async function unlockVaultWithPasskey(
   }
 
   try {
+    // Passkey proves user presence/authentication only. It must not replace
+    // local Device Key possession when the server-visible vault policy requires it.
+    const { error: deviceKeyError } = await input.getRequiredDeviceKey();
+    if (deviceKeyError) {
+      return { error: deviceKeyError };
+    }
+
     const result = await authenticatePasskey({ encryptedUserKey: input.encryptedUserKey });
     if (!result.success) {
       if (result.error === 'CANCELLED') {

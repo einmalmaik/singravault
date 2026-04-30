@@ -1110,6 +1110,42 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
     });
 
+    it("blocks master-password unlock before deriving key material when Device Key is required but missing", async () => {
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "encrypted-user-key",
+            vault_protection_mode: "device_key_required",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+      mockCheckHasDeviceKey.mockResolvedValue(false);
+      mockLoadDeviceKey.mockResolvedValue(null);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error?.message).toContain("This vault is protected with a Device Key");
+      expect(mockDeriveRawKey).not.toHaveBeenCalled();
+      expect(mockImportMasterKey).not.toHaveBeenCalled();
+      expect(mockFetchRemoteOfflineSnapshot).not.toHaveBeenCalled();
+      expect(result.current.isLocked).toBe(true);
+    });
+
     it("should unlock and migrate an empty legacy vault without a verifier", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
@@ -1340,6 +1376,74 @@ describe("VaultContext", () => {
 
       expect(unlockResult?.error?.message).toContain("Too many attempts");
       expect(mockAuthenticatePasskey).not.toHaveBeenCalled();
+    });
+
+    it("blocks passkey unlock before WebAuthn when a required Device Key is missing", async () => {
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "encrypted-user-key",
+            vault_protection_mode: "device_key_required",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+      mockCheckHasDeviceKey.mockResolvedValue(false);
+      mockLoadDeviceKey.mockResolvedValue(null);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey();
+      });
+
+      expect(unlockResult?.error?.message).toContain("This vault is protected with a Device Key");
+      expect(mockAuthenticatePasskey).not.toHaveBeenCalled();
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("does not let passkey disable Device Key enforcement when the local Device Key is available", async () => {
+      const localDeviceKey = new Uint8Array(32).fill(7);
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "encrypted-user-key",
+            vault_protection_mode: "device_key_required",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+      mockLoadDeviceKey.mockResolvedValue(localDeviceKey);
+      mockVerifyKey.mockResolvedValue(true);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlockWithPasskey();
+      });
+
+      expect(mockLoadDeviceKey).toHaveBeenCalledWith(mockUser.id);
+      expect(mockAuthenticatePasskey).toHaveBeenCalledTimes(1);
+      expect(result.current.isLocked).toBe(false);
     });
 
     it("should record failed attempts for passkey verification errors", async () => {

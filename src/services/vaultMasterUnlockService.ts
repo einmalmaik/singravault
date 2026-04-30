@@ -71,9 +71,13 @@ export async function unlockVaultWithMasterPassword(
   }
 
   try {
-    const duressResult = await tryDuressUnlock(input);
-    if (duressResult.handled) {
-      return { error: duressResult.error };
+    // Duress/dual-unlock hooks derive alternate vault keys and are not
+    // Device-Key-aware. Protected vaults must use the primary DK path only.
+    if (!requiresDeviceKey(input.vaultProtectionMode)) {
+      const duressResult = await tryDuressUnlock(input);
+      if (duressResult.handled) {
+        return { error: duressResult.error };
+      }
     }
 
     return await unlockWithPrimaryVaultKey(input);

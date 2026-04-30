@@ -9,6 +9,7 @@ import type {
 import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecoveryService';
 import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngine';
 import type { VaultItemForIntegrity } from '@/extensions/types';
+import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
 
 export type VaultSnapshotSource = 'remote' | 'cache' | 'empty';
 
@@ -23,6 +24,7 @@ export interface VaultContextType {
     pendingSessionRestore: boolean;
     isDuressMode: boolean;
     deviceKeyActive: boolean;
+    vaultProtectionMode: VaultProtectionMode;
     setupMasterPassword: (masterPassword: string) => Promise<{ error: Error | null }>;
     unlock: (masterPassword: string, options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
     unlockWithPasskey: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;

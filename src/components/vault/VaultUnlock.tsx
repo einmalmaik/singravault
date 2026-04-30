@@ -11,7 +11,8 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Shield, Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { Shield, Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint, KeyRound } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,11 +24,14 @@ import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { TwoFactorVerificationModal } from '@/components/auth/TwoFactorVerificationModal';
 import { verifyTwoFactorCode } from '@/services/twoFactorService';
+import { requiresDeviceKey } from '@/services/deviceKeyProtectionPolicy';
+import { buildReturnState } from '@/services/returnNavigationState';
 
 export function VaultUnlock() {
     const { t } = useTranslation();
     const { toast } = useToast();
-    const { unlock, unlockWithPasskey, pendingSessionRestore, webAuthnAvailable, hasPasskeyUnlock } = useVault();
+    const location = useLocation();
+    const { unlock, unlockWithPasskey, pendingSessionRestore, webAuthnAvailable, hasPasskeyUnlock, deviceKeyActive, vaultProtectionMode } = useVault();
     const { signOut, user, loading: authLoading } = useAuth();
 
     const [password, setPassword] = useState('');
@@ -138,6 +142,7 @@ export function VaultUnlock() {
     };
 
     const showPasskeyOption = hasPasskeyUnlock;
+    const showDeviceKeyImportAction = requiresDeviceKey(vaultProtectionMode) && !deviceKeyActive;
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">
@@ -157,6 +162,16 @@ export function VaultUnlock() {
                     {pendingSessionRestore && (
                         <div className="mt-3 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm text-blue-600 dark:text-blue-400">
                             {t('auth.unlock.sessionRestore', 'Please re-enter your master password to continue your session.')}
+                        </div>
+                    )}
+                    {showDeviceKeyImportAction && (
+                        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-left text-sm text-amber-800 dark:text-amber-200">
+                            <p className="font-medium">
+                                {t('auth.unlock.deviceKeyRequiredTitle', 'Device Key required')}
+                            </p>
+                            <p className="mt-1">
+                                {t('auth.unlock.deviceKeyRequiredDescription', 'This vault is protected with a Device Key. Import the key from a trusted device before unlocking on this device.')}
+                            </p>
                         </div>
                     )}
                 </CardHeader>
@@ -229,6 +244,22 @@ export function VaultUnlock() {
                         </Button>
 
                         <div className="pt-4 border-t">
+                            {showDeviceKeyImportAction && (
+                                <Button
+                                    asChild
+                                    type="button"
+                                    variant="outline"
+                                    className="mb-2 w-full"
+                                >
+                                    <Link
+                                        to="/settings?tab=security#profile-device-key"
+                                        state={buildReturnState(location)}
+                                    >
+                                        <KeyRound className="w-4 h-4 mr-2" />
+                                        {t('auth.unlock.importDeviceKey', 'Import Device Key')}
+                                    </Link>
+                                </Button>
+                            )}
                             <Button
                                 type="button"
                                 variant="ghost"
