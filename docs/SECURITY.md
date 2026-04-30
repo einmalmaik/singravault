@@ -52,18 +52,23 @@ Trusted recovery and Safe Mode use only locally trusted snapshots. Recovery code
 
 Runtime item decrypt failures are treated separately from persisted integrity drift. They are a revalidation/key-state failure until the integrity service has verified the vault key, snapshot scope, category structure, and item-specific ciphertext evidence. Runtime decrypt errors must not be merged into active item quarantine, persisted, restored, deleted, or counted as manipulated vault items.
 
-Quarantine v2 distinguishes active item quarantine from adjacent diagnostics:
+Vault Integrity V2 adds an authenticated manifest and context-bound item envelopes in `src/services/vaultIntegrityV2/`. The V2 manifest is encrypted/authenticated with AES-GCM, carries `manifestRevision`, `previousManifestHash`, `categoriesHash`, and the expected item envelope hashes, and is checked against a local high-water mark to detect rollback. Manifest verification is a prerequisite for active item quarantine.
+
+Item-Envelope V2 uses AES-GCM AAD with `vaultId`, `userId`, `itemId`, `itemType`, `keyId`, `itemRevision`, and `schemaVersion`. A ciphertext from another item, user, vault, revision, item type, schema, or key id must fail as an integrity finding after the vault key and manifest have been authenticated. Legacy v1/no-AAD rows require explicit re-encryption before Manifest V2 migration and must not be silently marked trusted.
+
+Quarantine V2 distinguishes active item quarantine from adjacent diagnostics:
 
 - `ciphertext_changed` is active item quarantine only when the item exists in the verified server snapshot and the encrypted payload differs from the trusted baseline.
+- `aead_auth_failed`, `item_envelope_malformed`, `item_aad_mismatch`, `item_manifest_hash_mismatch`, `item_revision_replay`, `item_key_id_mismatch`, and `duplicate_active_item_record` are active item quarantine only after Manifest V2 and vault-key authentication have succeeded.
 - `missing_on_server` is a missing-remote diagnostic, not active quarantine. It may be recoverable only when a trusted local snapshot contains the item.
 - `unknown_on_server` is an orphan-remote diagnostic, not active quarantine. It must not be decrypted or counted as a normal vault item.
 - stale or baseline-only references without a current server object and without a trusted local snapshot are diagnostics only and must not show restore actions.
 
 Search, category selection, Authenticator views, Vault Health rendering, focus/visibility refreshes, and other UI state must never create or change quarantine. They may only render the current integrity decision. Device-Key activation/deactivation, stale Device-Key caches, wrong vault keys, stale offline credentials, and passkey/master-password failures must resolve to lock, revalidation, or policy states, never to item quarantine.
 
-Trusted recovery snapshots are created only after a healthy verified vault state. They must not be created from quarantine, Safe Mode, stale cache, incomplete scope, or failed revalidation states. Restore uses only the trusted local snapshot payload, writes a new encrypted item through the normal mutation path, refreshes the integrity baseline for that trusted mutation, and then verifies that the restored item is no longer quarantined.
+Trusted recovery snapshots are created only after a healthy verified vault state. They must not be created from quarantine, Safe Mode, stale cache, incomplete scope, conflict, or failed revalidation states. Restore uses only the trusted local snapshot payload, writes a new Item-Envelope V2 through the mutation path, updates Manifest V2, and verifies that the restored item is no longer quarantined. Restore must never use suspicious server ciphertext as the source of truth.
 
-Current boundary: Quarantine v2 proves item-level drift by comparing the current authoritative `encrypted_data` row with the locally encrypted integrity baseline after the vault key has decrypted that baseline. It does not yet provide a full remote manifest, server-signed inventory, or AAD-v2 envelope migration. Those remain follow-up work: introduce a manifest interface that records the expected item inventory and per-item envelope metadata, bind item AAD to that manifest version, then migrate existing rows only through trusted mutation paths. Until that migration exists, missing/unknown server records stay diagnostic-only and are not active restoreable item quarantine.
+Current boundary: the V2 service layer, types, cryptographic envelopes, migration gate, reconciliation, mutation, restore, and regression tests are implemented. Existing installed vault rows may still be legacy `sv-vault-v1`/AAD-by-item-id until they are explicitly re-encrypted through trusted mutation or migration flows. The R3 local-baseline runtime path remains as a compatibility path and must keep missing/unknown/stale records diagnostic-only until a vault has completed Manifest V2 migration.
 
 ## Runtime Cleanup
 

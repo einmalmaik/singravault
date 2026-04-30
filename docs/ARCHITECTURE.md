@@ -28,6 +28,7 @@ This is the canonical active architecture document. Older files under `docs/` ar
 | Legacy KDF repair | `src/services/vaultKdfRepairService.ts` |
 | Integrity decisions | `src/services/vaultIntegrityDecisionEngine.ts` |
 | Integrity runtime orchestration | `src/services/vaultIntegrityRuntimeService.ts` |
+| Vault Integrity / Quarantine V2 services | `src/services/vaultIntegrityV2/` |
 | Quarantine summaries and decrypt guard | `src/services/vaultQuarantineOrchestrator.ts` |
 | Trusted recovery and quarantine mutations | `src/services/vaultRecoveryOrchestrator.ts` |
 | Legacy repair helpers | `src/services/legacyVaultRepairService.ts` |
