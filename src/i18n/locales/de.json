@@ -567,6 +567,7 @@
       "sessionRestore": "Bitte gib dein Master-Passwort erneut ein, um deine Sitzung fortzusetzen.",
       "deviceKeyRequiredTitle": "Geräteschlüssel erforderlich",
       "deviceKeyRequiredDescription": "Dieser Tresor ist durch einen Geräteschlüssel geschützt. Importiere den Schlüssel von einem vertrauenswürdigen Gerät, bevor du diesen Tresor hier entsperrst.",
+      "accountSettings": "Account Settings",
       "importDeviceKey": "Geräteschlüssel importieren"
     },
     "providers": {

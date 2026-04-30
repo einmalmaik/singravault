@@ -116,6 +116,20 @@ describe("VaultUnlock", () => {
 
     expect(screen.getByLabelText("auth.unlock.password")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /auth\.unlock\.submit/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Account Settings/i })).toHaveAttribute("href", "/settings");
+  });
+
+  it("navigates to account settings from the locked vault screen", () => {
+    render(
+      <MemoryRouter initialEntries={["/vault"]}>
+        <VaultUnlock />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: /Account Settings/i }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings");
   });
 
   it("should call unlock with entered password and a 2FA callback on submit", async () => {

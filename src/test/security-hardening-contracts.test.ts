@@ -278,6 +278,7 @@ describe("security hardening contracts", () => {
 
   it("exposes Device Key import from account security and the locked vault screen", () => {
     const coreSections = readFileSync("src/components/settings/coreSettingsSections.tsx", "utf-8");
+    const securitySettings = readFileSync("src/components/settings/SecuritySettings.tsx", "utf-8");
     const vaultUnlock = readFileSync("src/components/vault/VaultUnlock.tsx", "utf-8");
     const app = readFileSync("src/App.tsx", "utf-8");
 
@@ -287,7 +288,10 @@ describe("security hardening contracts", () => {
     expect(app).toContain("VaultSettingsPage");
     expect(coreSections).toContain("id: 'profile-device-key'");
     expect(coreSections).toContain("render: () => <DeviceKeySettings />");
+    expect(securitySettings).not.toContain("DeviceKeySettings");
     expect(vaultUnlock).toContain("/settings?tab=security#profile-device-key");
+    expect(vaultUnlock).toContain('to="/settings"');
+    expect(vaultUnlock).toContain("auth.unlock.accountSettings");
     expect(vaultUnlock).toContain("state={buildReturnState(location)}");
     expect(vaultUnlock).toContain("requiresDeviceKey(vaultProtectionMode) && !deviceKeyActive");
     expect(vaultUnlock).not.toContain('href="/settings?tab=security#profile-device-key"');

@@ -9,10 +9,9 @@ import { PasswordSettings } from '@/components/settings/PasswordSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
 import { DeviceKeySettings } from '@/components/settings/DeviceKeySettings';
 import type { SettingsSectionDescriptor } from '@/extensions/types';
-import { shouldShowWebsiteChrome } from '@/platform/appShell';
 
 export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDescriptor[] {
-  const sections: SettingsSectionDescriptor[] = [
+  return [
     {
       id: 'profile-appearance',
       surface: 'profile',
@@ -67,10 +66,7 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       keywords: ['dsgvo', 'gdpr', 'export', 'privacy', 'datenexport', 'account export'],
       render: () => <AccountDataExportSettings />,
     },
-  ];
-
-  if (!shouldShowWebsiteChrome()) {
-    sections.push({
+    {
       id: 'profile-legal-links',
       surface: 'profile',
       tab: 'data-legal',
@@ -78,10 +74,8 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       title: t('settings.desktopLegal.title', 'Rechtliches & Informationen'),
       keywords: ['rechtlich', 'privacy', 'datenschutz', 'impressum', 'security', 'whitepaper'],
       render: () => <LegalLinksSettings />,
-    });
-  }
-
-  return sections;
+    },
+  ];
 }
 
 export function getCoreVaultSettingsSections(t: TFunction): SettingsSectionDescriptor[] {
@@ -92,7 +86,7 @@ export function getCoreVaultSettingsSections(t: TFunction): SettingsSectionDescr
       tab: 'security',
       order: 10,
       title: t('settings.security.title'),
-      keywords: ['vault', 'security', 'auto lock', 'passkey', 'device key', 'tresor', 'sicherheit'],
+      keywords: ['vault', 'security', 'auto lock', 'passkey', 'tresor', 'sicherheit'],
       render: () => <SecuritySettings mode="vault" />,
     },
     {

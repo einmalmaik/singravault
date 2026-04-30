@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router-dom';
-import { Shield, Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint, KeyRound } from 'lucide-react';
+import { Shield, Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint, KeyRound, Settings } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -244,6 +244,20 @@ export function VaultUnlock() {
                         </Button>
 
                         <div className="pt-4 border-t">
+                            <Button
+                                asChild
+                                type="button"
+                                variant="outline"
+                                className="mb-2 w-full"
+                            >
+                                <Link
+                                    to="/settings"
+                                    state={buildReturnState(location)}
+                                >
+                                    <Settings className="w-4 h-4 mr-2" />
+                                    {t('auth.unlock.accountSettings', 'Account Settings')}
+                                </Link>
+                            </Button>
                             {showDeviceKeyImportAction && (
                                 <Button
                                     asChild

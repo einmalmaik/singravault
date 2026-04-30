@@ -24,7 +24,6 @@ import { Separator } from '@/components/ui/separator';
 
 import { TwoFactorSettings } from './TwoFactorSettings';
 import { PasskeySettings } from './PasskeySettings';
-import { DeviceKeySettings } from './DeviceKeySettings';
 import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -50,7 +49,7 @@ export function SecuritySettings({ mode = 'all' }: SecuritySettingsProps) {
     const { autoLockTimeout, setAutoLockTimeout, lock, isLocked } = useVault();
     const showVaultControls = mode !== 'account';
     const showTwoFactor = mode !== 'vault';
-    const showVaultSecurityExtensions = mode !== 'account';
+    const showPasskeySettings = mode !== 'account';
 
     const handleAutoLockChange = (value: string) => {
         const timeout = parseInt(value, 10);
@@ -141,13 +140,10 @@ export function SecuritySettings({ mode = 'all' }: SecuritySettingsProps) {
                 </>
             )}
 
-            {showVaultSecurityExtensions && (
+            {showPasskeySettings && (
                 <>
                     {(showVaultControls || showTwoFactor) && <Separator className="my-6" />}
                     <PasskeySettings />
-
-                    <Separator className="my-6" />
-                    <DeviceKeySettings />
                 </>
             )}
         </>
