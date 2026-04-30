@@ -220,6 +220,14 @@ function isValidManifest(manifest: VaultManifestV2): boolean {
     && typeof manifest.createdAt === 'string'
     && typeof manifest.categoriesHash === 'string'
     && Array.isArray(manifest.items)
+    && (manifest.tombstones === undefined || (
+      Array.isArray(manifest.tombstones)
+      && manifest.tombstones.every((tombstone) => (
+        typeof tombstone.itemId === 'string'
+        && typeof tombstone.deletedAt === 'string'
+        && Number.isSafeInteger(tombstone.deletedAtManifestRevision)
+      ))
+    ))
     && manifest.items.every((item) => (
       typeof item.itemId === 'string'
       && typeof item.itemType === 'string'

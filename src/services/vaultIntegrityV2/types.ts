@@ -73,6 +73,7 @@ export type VaultManifestV2 = {
     itemId: string;
     deletedAt: string;
     deletedAtManifestRevision: number;
+    deletedByDeviceId?: string;
   }>;
 };
 

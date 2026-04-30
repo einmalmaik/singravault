@@ -284,6 +284,7 @@ export async function buildManifestV2FromVerifiedInputs(input: {
   previousManifestHash?: string;
   categories: ServerVaultCategoryV2[];
   items: ServerVaultItemV2[];
+  tombstones?: VaultManifestV2['tombstones'];
   createdAt?: string;
   createdByDeviceId?: string;
 }): Promise<VaultManifestV2> {
@@ -312,6 +313,9 @@ export async function buildManifestV2FromVerifiedInputs(input: {
     createdAt: input.createdAt ?? new Date().toISOString(),
     categoriesHash,
     items: items.sort((left, right) => left.itemId.localeCompare(right.itemId)),
+    tombstones: input.tombstones?.length
+      ? [...input.tombstones].sort((left, right) => left.itemId.localeCompare(right.itemId))
+      : undefined,
   };
 }
 
@@ -324,6 +328,7 @@ export async function buildManifestEnvelopeV2FromVerifiedInputs(input: {
   previousManifestHash?: string;
   categories: ServerVaultCategoryV2[];
   items: ServerVaultItemV2[];
+  tombstones?: VaultManifestV2['tombstones'];
   vaultKey: CryptoKey;
   createdAt?: string;
   createdByDeviceId?: string;

@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildManifestEnvelopeV2FromVerifiedInputs,
   encryptItemEnvelopeV2,
   evaluateRuntimeVaultIntegrityV2,
   persistRuntimeManifestV2ForTrustedSnapshot,
+  verifyVaultManifestV2,
   type ServerVaultCategoryV2,
   type ServerVaultItemV2,
 } from '../index';
@@ -90,6 +91,11 @@ function snapshot(items: ServerVaultItemV2[], categories: ServerVaultCategoryV2[
 }
 
 describe('Vault Integrity V2 runtime bridge', () => {
+  beforeEach(() => {
+    manifestStore.loadServerManifestEnvelopeV2.mockReset();
+    manifestStore.persistServerManifestEnvelopeV2.mockReset();
+  });
+
   it('evaluates an existing server manifest during runtime verification', async () => {
     const key = await testKey();
     const categories = [category()];
@@ -170,6 +176,43 @@ describe('Vault Integrity V2 runtime bridge', () => {
     });
   });
 
+  it('does not turn stale cached V2 snapshots into active item quarantine', async () => {
+    const key = await testKey();
+    const categories = [category()];
+    const items = [await item(key, 'item-1')];
+    const bundle = await buildManifestEnvelopeV2FromVerifiedInputs({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      keyId: KEY_ID,
+      keysetVersion: 1,
+      manifestRevision: 1,
+      categories,
+      items,
+      vaultKey: key,
+    });
+    manifestStore.loadServerManifestEnvelopeV2.mockResolvedValue({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      manifestRevision: 1,
+      manifestHash: bundle.manifestHash,
+      previousManifestHash: null,
+      keyId: KEY_ID,
+      envelope: bundle.envelope,
+    });
+    const staleCachedItems = [{ ...items[0], encrypted_data: `${items[0].encrypted_data.slice(0, -1)}A` }];
+
+    await expect(evaluateRuntimeVaultIntegrityV2({
+      userId: USER_ID,
+      snapshot: snapshot(staleCachedItems, categories),
+      vaultKey: key,
+      evaluationSource: 'manual_recheck',
+      snapshotSource: 'cache',
+    })).resolves.toMatchObject({
+      mode: 'revalidation_failed',
+      quarantinedItems: [],
+    });
+  });
+
   it('does not persist a Manifest V2 over legacy item envelopes', async () => {
     const key = await testKey();
     const result = await persistRuntimeManifestV2ForTrustedSnapshot({
@@ -186,5 +229,64 @@ describe('Vault Integrity V2 runtime bridge', () => {
 
     expect(result).toBe('skipped_legacy_items');
     expect(manifestStore.persistServerManifestEnvelopeV2).not.toHaveBeenCalled();
+  });
+
+  it('persists a trusted item delete as a Manifest V2 tombstone during runtime refresh', async () => {
+    const key = await testKey();
+    const categories = [category()];
+    const items = [await item(key, 'item-1'), await item(key, 'item-2')];
+    const currentBundle = await buildManifestEnvelopeV2FromVerifiedInputs({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      keyId: KEY_ID,
+      keysetVersion: 1,
+      manifestRevision: 1,
+      categories,
+      items,
+      vaultKey: key,
+    });
+    manifestStore.loadServerManifestEnvelopeV2.mockResolvedValue({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      manifestRevision: 1,
+      manifestHash: currentBundle.manifestHash,
+      previousManifestHash: null,
+      keyId: KEY_ID,
+      envelope: currentBundle.envelope,
+    });
+
+    await expect(persistRuntimeManifestV2ForTrustedSnapshot({
+      userId: USER_ID,
+      snapshot: snapshot([items[1]], categories),
+      vaultKey: key,
+      trustedMutation: { itemIds: new Set(['item-1']) },
+    })).resolves.toBe('persisted');
+
+    expect(manifestStore.persistServerManifestEnvelopeV2).toHaveBeenCalledWith(expect.objectContaining({
+      expectedPreviousManifestRevision: 1,
+      expectedPreviousManifestHash: currentBundle.manifestHash,
+    }));
+    const persisted = manifestStore.persistServerManifestEnvelopeV2.mock.calls[0]?.[0];
+    const verified = await verifyVaultManifestV2({
+      envelope: persisted.envelope,
+      key,
+      expectedUserId: USER_ID,
+      expectedVaultId: VAULT_ID,
+      expectedKeyId: KEY_ID,
+    });
+
+    expect(persisted.envelope.manifestRevision).toBe(2);
+    expect(verified).toMatchObject({
+      ok: true,
+      manifest: {
+        previousManifestHash: currentBundle.manifestHash,
+        items: [expect.objectContaining({ itemId: 'item-2' })],
+        tombstones: [expect.objectContaining({
+          itemId: 'item-1',
+          deletedAtManifestRevision: 2,
+        })],
+      },
+      manifestHash: persisted.manifestHash,
+    });
   });
 });

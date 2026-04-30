@@ -21,12 +21,14 @@ Vault Integrity V2 introduces a central service layer under `src/services/vaultI
 - Reconciliation V2: active quarantine, orphan remote, missing recoverable/unrecoverable, stale diagnostics, closed records, and conflicts are separated by canonical identity.
 - Snapshot Trust V2: trusted snapshots can be created only from a normal verified state.
 - Restore V2: restore requires a matching trusted snapshot, writes a new Item-Envelope V2, updates Manifest V2, and requires re-verification.
+- Delete V2: legitimate item deletes are represented by Manifest V2 tombstones so they are not reclassified as missing remote or active quarantine.
 - Migration V2: migration is idempotent, requires a verified vault key, rejects active quarantine, rejects ambiguous duplicate rows, and blocks legacy v1/no-AAD rows until they are explicitly re-encrypted.
 
 Operationalization adds three product adapters:
 
 - `productItemEnvelope.ts`: provider-facing item encryption/decryption writes and reads Item-Envelope V2 while preserving legacy read compatibility.
 - `serverManifestStore.ts`: loads and persists encrypted Manifest V2 envelopes in `public.vault_integrity_manifests`.
+- `serverManifestStore.ts` also exposes the `apply_vault_mutation_v2` RPC wrapper for CAS-safe item/category/restore/delete plus manifest writes.
 - `runtimeBridge.ts`: connects Manifest V2 evaluation to the existing provider-facing integrity result so unlock and manual verification can consume V2 decisions without UI security logic.
 
 ## Security Invariants
@@ -49,7 +51,7 @@ Migration cannot silently bless legacy or suspicious state. Existing legacy rows
 
 Restore is intentionally narrow. It restores only from a trusted local snapshot and re-encrypts through Item-AAD V2. It never uses suspicious remote ciphertext as the source.
 
-Server persistence is deliberately limited. `vault_integrity_manifests` stores the encrypted envelope and non-secret revision metadata under owner-scoped RLS, but the current product write path does not yet provide a single atomic RPC that writes item/category mutations and Manifest V2 together. A failed manifest persist after a legitimate item/category write is a sync/repair state, not evidence of item tampering.
+Server persistence uses two layers. `vault_integrity_manifests` stores the encrypted envelope and non-secret revision metadata under owner-scoped RLS. `apply_vault_mutation_v2` is the transaction/CAS path: it locks the sync head and manifest row, checks expected base revision, expected manifest revision, and expected manifest hash, then writes the item/category/restore/delete mutation and Manifest V2 envelope together. A stale revision/hash result is conflict or sync-pending state, not evidence of item tampering. Product paths that still perform direct row writes plus trusted manifest refresh are compatibility bridges until they are fully moved to the RPC.
 
 ## Tests
 
@@ -66,6 +68,8 @@ The V2 test suite covers:
 - Duplicate active item records as a concrete active finding.
 - Legitimate item mutation through AAD V2 and Manifest V2 revision increment.
 - Restore from trusted snapshot through AAD V2 and Manifest V2.
+- Trusted item delete through Manifest V2 tombstone without missing-remote quarantine.
+- CAS RPC wrapper for successful V2 mutation calls and stale manifest conflicts.
 - R3 stale diagnostic records without 17-vs-21 phantom active quarantine.
 - Idempotent migration and blocked migration for legacy item envelopes.
 - Runtime bridge evaluation of an existing server Manifest V2 envelope.
@@ -75,6 +79,6 @@ The V2 test suite covers:
 
 ## Remaining Boundaries
 
-V2-native vaults now have a productive runtime path, but full R4 is still not claimable until the unlocked browser/Tauri E2E flows pass against a provisioned test account and the remaining legacy migration/write-atomicity work is closed. Existing production vaults that still contain legacy `sv-vault-v1` or legacy no-AAD rows must complete explicit re-encryption before they can be represented as fully migrated Manifest V2 vaults.
+V2-native vaults now have a productive runtime path, but full R4 is still not claimable until the unlocked browser/Tauri E2E flows pass against a provisioned test account, legacy re-encrypt migration is productized, and all direct item/category writes are routed through the CAS RPC. Existing production vaults that still contain legacy `sv-vault-v1` or legacy no-AAD rows must complete explicit re-encryption before they can be represented as fully migrated Manifest V2 vaults.
 
-The local dev-test-account provisioning currently refuses the configured password because it does not satisfy the local Supabase password policy. That blocks the required unlocked runtime E2E proof. This is a verification blocker, not an integrity-model exception.
+The local dev-test-account provisioning now derives deterministic local-only policy-compliant credentials if configured test values do not satisfy the local Supabase password policy. That removes the provisioning blocker, but it is not by itself the required unlocked runtime E2E proof.

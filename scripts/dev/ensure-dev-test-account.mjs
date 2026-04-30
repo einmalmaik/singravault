@@ -3,6 +3,7 @@
 // Licensed under the Business Source License 1.1 - see LICENSE
 
 import { createClient } from "@supabase/supabase-js";
+import { createHash } from "node:crypto";
 import { config as loadDotenv } from "dotenv";
 
 loadDotenv({ path: ".env" });
@@ -13,8 +14,8 @@ const createUser = readBoolean(process.env.SINGRA_DEV_TEST_CREATE_USER);
 const autoConfirm = readBoolean(process.env.SINGRA_DEV_TEST_AUTO_CONFIRM);
 const resetVault = readBoolean(process.env.SINGRA_DEV_TEST_RESET_VAULT);
 const email = readString(process.env.SINGRA_DEV_TEST_EMAIL);
-const password = readString(process.env.SINGRA_DEV_TEST_PASSWORD);
-const masterPassword = readString(process.env.SINGRA_DEV_TEST_MASTER_PASSWORD);
+const configuredPassword = readString(process.env.SINGRA_DEV_TEST_PASSWORD);
+const configuredMasterPassword = readString(process.env.SINGRA_DEV_TEST_MASTER_PASSWORD);
 const supabaseUrl = readString(process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL);
 const serviceRoleKey = readString(process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SINGRA_SUPABASE_SERVICE_ROLE_KEY);
 const SUPABASE_DEV_PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"|<>?,./`~]).+$/;
@@ -26,17 +27,31 @@ if (!enabled) {
 
 assertDevOnly();
 
-if (!email || !password || !masterPassword) {
+if (!email || !configuredMasterPassword) {
   safeLog("Dev test account env is incomplete; skipping account provisioning.");
   process.exit(0);
 }
 
-if (!isValidSupabaseDevPassword(password)) {
+const password = isValidSupabaseDevPassword(configuredPassword)
+  ? configuredPassword
+  : deriveLocalDevPassword(email);
+const masterPassword = isValidSupabaseDevPassword(configuredMasterPassword)
+  ? configuredMasterPassword
+  : deriveLocalDevPassword(`${email}:master`);
+
+if (!isValidSupabaseDevPassword(password) || !isValidSupabaseDevPassword(masterPassword)) {
   safeLog(
-    "Dev test account password does not satisfy the local Supabase password policy; "
-    + "skipping account provisioning so the dev server can start.",
+    "Dev test account password policy could not be satisfied; skipping account provisioning.",
   );
   process.exit(0);
+}
+
+if (!isValidSupabaseDevPassword(configuredPassword)) {
+  safeLog("Configured dev test account password did not satisfy policy; using a generated local-only value.");
+}
+
+if (!isValidSupabaseDevPassword(configuredMasterPassword)) {
+  safeLog("Configured dev test master password did not satisfy policy; using a generated local-only value.");
 }
 
 if (!createUser) {
@@ -145,7 +160,12 @@ function readString(value) {
 }
 
 function isValidSupabaseDevPassword(value) {
-  return SUPABASE_DEV_PASSWORD_PATTERN.test(value);
+  return typeof value === "string" && value.length >= 12 && SUPABASE_DEV_PASSWORD_PATTERN.test(value);
+}
+
+function deriveLocalDevPassword(seed) {
+  const digest = createHash("sha256").update(String(seed)).digest("hex");
+  return `LocalDev!${digest.slice(0, 24)}aA1`;
 }
 
 function safeLog(message) {

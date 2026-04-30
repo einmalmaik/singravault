@@ -71,3 +71,56 @@ export async function buildTrustedItemUpsertMutationV2(input: {
     manifestEnvelope: bundle.envelope,
   };
 }
+
+export async function buildTrustedItemDeleteMutationV2(input: {
+  userId: string;
+  vaultId: string;
+  keyId: string;
+  keysetVersion: number;
+  vaultKey: CryptoKey;
+  currentManifest: VaultManifestV2;
+  categories: ServerVaultCategoryV2[];
+  existingItems: ServerVaultItemV2[];
+  itemId: string;
+  deletedAt?: string;
+  deletedByDeviceId?: string;
+}): Promise<{
+  tombstone: NonNullable<VaultManifestV2['tombstones']>[number];
+  manifest: VaultManifestV2;
+  manifestHash: string;
+  manifestEnvelope: VaultManifestEnvelopeV2;
+}> {
+  const previousManifestHash = await hashVaultManifestV2(input.currentManifest);
+  const manifestRevision = input.currentManifest.manifestRevision + 1;
+  const existingTombstones = input.currentManifest.tombstones ?? [];
+  const deletedAt = input.deletedAt ?? new Date().toISOString();
+  const tombstone = {
+    itemId: input.itemId,
+    deletedAt,
+    deletedAtManifestRevision: manifestRevision,
+    deletedByDeviceId: input.deletedByDeviceId,
+  };
+  const tombstones = [
+    ...existingTombstones.filter((entry) => entry.itemId !== input.itemId),
+    tombstone,
+  ];
+  const bundle = await buildManifestEnvelopeV2FromVerifiedInputs({
+    userId: input.userId,
+    vaultId: input.vaultId,
+    keyId: input.keyId,
+    keysetVersion: input.keysetVersion,
+    manifestRevision,
+    previousManifestHash,
+    categories: input.categories,
+    items: input.existingItems.filter((item) => item.id !== input.itemId),
+    tombstones,
+    vaultKey: input.vaultKey,
+  });
+
+  return {
+    tombstone,
+    manifest: bundle.manifest,
+    manifestHash: bundle.manifestHash,
+    manifestEnvelope: bundle.envelope,
+  };
+}

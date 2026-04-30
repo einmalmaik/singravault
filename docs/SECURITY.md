@@ -68,11 +68,15 @@ Search, category selection, Authenticator views, Vault Health rendering, focus/v
 
 Trusted recovery snapshots are created only after a healthy verified vault state. They must not be created from quarantine, Safe Mode, stale cache, incomplete scope, conflict, or failed revalidation states. Restore uses only the trusted local snapshot payload, writes a new Item-Envelope V2 through the mutation path, updates Manifest V2, and verifies that the restored item is no longer quarantined. Restore must never use suspicious server ciphertext as the source of truth.
 
+Item deletion in a V2-native vault is represented in Manifest V2 with a tombstone (`itemId`, `deletedAt`, `deletedAtManifestRevision`, and optional `deletedByDeviceId`). The runtime bridge only derives tombstones for explicit trusted item mutations and only from a previous authenticated manifest. A deleted item is therefore not a normal item, not `missing_remote`, and not active quarantine.
+
 Operational V2 path: new product item encryption now writes Item-Envelope V2 through `src/services/vaultIntegrityV2/productItemEnvelope.ts`. `src/services/vaultIntegrityRuntimeService.ts` attempts Manifest V2 verification during unlock/manual verification whenever a server Manifest V2 envelope exists, maps V2 item findings to the existing quarantine UI model, and persists a server Manifest V2 after trusted healthy refreshes only when every current item already has an Item-Envelope V2. Restore from a trusted local snapshot re-encrypts the restored payload as Item-Envelope V2 before writing it back.
 
 Manifest storage lives in `public.vault_integrity_manifests` (`supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql`). The table stores only the encrypted/authenticated manifest envelope plus non-secret revision metadata (`manifest_revision`, `manifest_hash`, `previous_manifest_hash`, `key_id`). RLS restricts access to the vault owner. The client still authenticates the envelope and item hashes; the server row is not a trust source.
 
-Current boundary: V2-native vaults now have a productive runtime path for item writes, restore writes, manifest persistence, and manifest-based unlock/verify decisions. Existing installed vault rows may still be legacy `sv-vault-v1`/AAD-by-item-id until they are explicitly re-encrypted through trusted mutation or migration flows. The R3 local-baseline runtime path remains as a compatibility path and must keep missing/unknown/stale records diagnostic-only until a vault has completed Manifest V2 migration. Cross-row atomicity between item/category writes and manifest writes is not fully solved in the current Supabase mutation paths; failed manifest writes must be treated as sync/repair work, never as item tampering.
+`public.apply_vault_mutation_v2` is the CAS-safe transaction path for V2 item/category/restore/delete writes with their Manifest V2 envelope. It checks the expected sync-head revision, expected manifest revision, and expected manifest hash before applying the mutation. Stale revision/hash failures are conflict or sync-pending states, never item quarantine.
+
+Current boundary: V2-native vaults now have a productive runtime path for item writes, restore writes, delete tombstones, manifest persistence, and manifest-based unlock/verify decisions. Existing installed vault rows may still be legacy `sv-vault-v1`/AAD-by-item-id until they are explicitly re-encrypted through trusted mutation or migration flows. The R3 local-baseline runtime path remains as a compatibility path and must keep missing/unknown/stale records diagnostic-only until a vault has completed Manifest V2 migration. Product paths must finish routing all item/category/manifest writes through `apply_vault_mutation_v2`; direct write plus trusted manifest refresh remains a compatibility bridge, not full R4.
 
 ## Runtime Cleanup
 
@@ -87,3 +91,5 @@ Browser and PWA paths rely on Web Crypto, browser storage, and WebAuthn origin r
 ## Dev/Test Safety
 
 No URL, `localStorage`, `sessionStorage`, or mock-auth bypass may log in a user. Dev-test-account secrets are server-only environment values and must not be exposed in client bundles, examples, tests, fixtures, docs, toasts, or console output.
+
+Local dev-test-account provisioning may derive deterministic policy-compliant local-only credentials when configured test values fail the local Supabase password policy. The derivation seed is a non-secret local test identifier, the resulting password is never logged, and the path is only for reproducible local E2E provisioning.

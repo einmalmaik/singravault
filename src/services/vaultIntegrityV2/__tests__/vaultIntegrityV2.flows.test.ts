@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { VaultItemData } from '@/services/cryptoService';
 import {
   buildManifestEnvelopeV2FromVerifiedInputs,
+  buildTrustedItemDeleteMutationV2,
   buildTrustedItemUpsertMutationV2,
   encryptItemEnvelopeV2,
   encryptVaultManifestV2,
@@ -286,6 +287,55 @@ describe('Vault Integrity V2 service flows', () => {
       },
       evaluationSource: 'sync',
     })).resolves.toMatchObject({ mode: 'normal', manifestRevision: 2 });
+  });
+
+  it('applies a legitimate item delete as a Manifest V2 tombstone without missing-remote quarantine', async () => {
+    const fixture = await vaultFixture(2);
+    const deletion = await buildTrustedItemDeleteMutationV2({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      keyId: KEY_ID,
+      keysetVersion: 1,
+      vaultKey: fixture.key,
+      currentManifest: fixture.manifest,
+      categories: fixture.categories,
+      existingItems: fixture.items,
+      itemId: 'item-1',
+      deletedAt: '2026-04-30T11:00:00.000Z',
+      deletedByDeviceId: 'device-1',
+    });
+
+    expect(deletion.manifest.manifestRevision).toBe(2);
+    expect(deletion.manifest.previousManifestHash).toBe(fixture.manifestHash);
+    expect(deletion.manifest.tombstones).toEqual([
+      expect.objectContaining({
+        itemId: 'item-1',
+        deletedAtManifestRevision: 2,
+        deletedByDeviceId: 'device-1',
+      }),
+    ]);
+
+    await expect(evaluateVaultIntegrityV2({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      serverItems: [fixture.items[1]],
+      serverCategories: fixture.categories,
+      serverManifestEnvelope: deletion.manifestEnvelope,
+      localSnapshots: [fixture.snapshot],
+      pendingMutations: [],
+      unlockContext: {
+        vaultKeyVerified: true,
+        vaultKey: fixture.key,
+        keyId: KEY_ID,
+        protectionMode: 'master_only',
+      },
+      evaluationSource: 'sync',
+    })).resolves.toMatchObject({
+      mode: 'normal',
+      manifestRevision: 2,
+      itemCount: 1,
+      healthyItemIds: ['item-2'],
+    });
   });
 
   it('restores only from a trusted snapshot and writes new AAD V2 plus Manifest V2', async () => {

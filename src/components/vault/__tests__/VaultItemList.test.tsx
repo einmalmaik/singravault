@@ -482,6 +482,41 @@ describe.sequential('VaultItemList', () => {
     );
   });
 
+  it('renders V2-native item envelopes without sending them through legacy migration', async () => {
+    snapshotState.online = true;
+    snapshotState.source = 'remote';
+    snapshotState.items = [{
+      ...itemOk,
+      encrypted_data: 'sv-vault-v2:opaque-test-envelope',
+    }];
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'healthy',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+    mockDecryptItem.mockResolvedValue({
+      title: 'V2 Visible Item',
+      itemType: 'password',
+      isFavorite: false,
+      categoryId: null,
+    });
+
+    render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('V2 Visible Item');
+
+    expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).not.toHaveBeenCalled();
+    expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
+  });
+
   it('migrates legacy no-AAD items from runtime decrypt-failed quarantine', async () => {
     snapshotState.online = true;
     snapshotState.source = 'remote';

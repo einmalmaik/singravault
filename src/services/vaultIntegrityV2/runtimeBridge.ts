@@ -10,6 +10,7 @@ import {
 } from './decisionEngine';
 import { isVaultItemEnvelopeV2 } from './itemEnvelopeCrypto';
 import { deriveVaultIntegrityKeyIdV2 } from './keyId';
+import { verifyVaultManifestV2 } from './manifestCrypto';
 import {
   loadServerManifestEnvelopeV2,
   persistServerManifestEnvelopeV2,
@@ -20,7 +21,12 @@ import type {
   ServerVaultItemV2,
   TrustedLocalSnapshotMetadata,
   VaultIntegrityDecisionV2,
+  VaultManifestV2,
 } from './types';
+
+type TrustedRuntimeMutationScope = {
+  itemIds?: Iterable<string>;
+};
 
 export async function evaluateRuntimeVaultIntegrityV2(input: {
   userId: string;
@@ -29,6 +35,7 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
   encryptedUserKey?: string | null;
   trustedRecoveryState?: TrustedRecoverySnapshotState | null;
   evaluationSource: 'unlock' | 'manual_recheck' | 'sync' | 'focus_refetch';
+  snapshotSource?: 'remote' | 'cache' | 'empty';
 }): Promise<VaultIntegrityVerificationResult | null> {
   const vaultId = input.snapshot.vaultId;
   if (!vaultId) {
@@ -64,7 +71,7 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
     evaluationSource: input.evaluationSource,
   });
 
-  return mapDecisionToRuntimeResult(decision, input.snapshot);
+  return mapDecisionToRuntimeResult(decision, input.snapshot, input.snapshotSource ?? 'remote');
 }
 
 export async function persistRuntimeManifestV2ForTrustedSnapshot(input: {
@@ -72,6 +79,7 @@ export async function persistRuntimeManifestV2ForTrustedSnapshot(input: {
   snapshot: OfflineVaultSnapshot;
   vaultKey: CryptoKey;
   encryptedUserKey?: string | null;
+  trustedMutation?: TrustedRuntimeMutationScope;
 }): Promise<'persisted' | 'skipped_legacy_items' | 'skipped_missing_vault'> {
   const vaultId = input.snapshot.vaultId;
   if (!vaultId) {
@@ -84,6 +92,15 @@ export async function persistRuntimeManifestV2ForTrustedSnapshot(input: {
 
   const keyId = deriveVaultIntegrityKeyIdV2({ encryptedUserKey: input.encryptedUserKey });
   const current = await loadServerManifestEnvelopeV2({ userId: input.userId, vaultId });
+  const tombstones = await deriveTrustedDeleteTombstones({
+    current,
+    keyId,
+    snapshot: input.snapshot,
+    trustedMutation: input.trustedMutation,
+    userId: input.userId,
+    vaultId,
+    vaultKey: input.vaultKey,
+  });
   const bundle = await buildManifestEnvelopeV2FromVerifiedInputs({
     userId: input.userId,
     vaultId,
@@ -93,6 +110,7 @@ export async function persistRuntimeManifestV2ForTrustedSnapshot(input: {
     previousManifestHash: current?.manifestHash ?? undefined,
     categories: toServerCategories(input.snapshot.categories),
     items: toServerItems(input.snapshot.items),
+    tombstones,
     vaultKey: input.vaultKey,
   });
 
@@ -109,9 +127,58 @@ export async function persistRuntimeManifestV2ForTrustedSnapshot(input: {
   return 'persisted';
 }
 
+async function deriveTrustedDeleteTombstones(input: {
+  current: Awaited<ReturnType<typeof loadServerManifestEnvelopeV2>>;
+  keyId: string;
+  snapshot: OfflineVaultSnapshot;
+  trustedMutation?: TrustedRuntimeMutationScope;
+  userId: string;
+  vaultId: string;
+  vaultKey: CryptoKey;
+}): Promise<VaultManifestV2['tombstones'] | undefined> {
+  const trustedItemIds = new Set(input.trustedMutation?.itemIds ?? []);
+  if (!input.current || trustedItemIds.size === 0) {
+    return undefined;
+  }
+
+  const previousManifest = await verifyVaultManifestV2({
+    envelope: input.current.envelope,
+    key: input.vaultKey,
+    expectedUserId: input.userId,
+    expectedVaultId: input.vaultId,
+    expectedKeyId: input.keyId,
+  });
+  if (!previousManifest.ok) {
+    return undefined;
+  }
+
+  const snapshotItemIds = new Set(input.snapshot.items.map((item) => item.id));
+  const deletedItemIds = previousManifest.manifest.items
+    .map((item) => item.itemId)
+    .filter((itemId) => trustedItemIds.has(itemId) && !snapshotItemIds.has(itemId));
+  if (deletedItemIds.length === 0) {
+    return previousManifest.manifest.tombstones;
+  }
+
+  const nextManifestRevision = input.current.manifestRevision + 1;
+  const now = new Date().toISOString();
+  const retainedTombstones = (previousManifest.manifest.tombstones ?? [])
+    .filter((tombstone) => !deletedItemIds.includes(tombstone.itemId));
+
+  return [
+    ...retainedTombstones,
+    ...deletedItemIds.map((itemId) => ({
+      itemId,
+      deletedAt: now,
+      deletedAtManifestRevision: nextManifestRevision,
+    })),
+  ];
+}
+
 function mapDecisionToRuntimeResult(
   decision: VaultIntegrityDecisionV2,
   snapshot: OfflineVaultSnapshot,
+  snapshotSource: 'remote' | 'cache' | 'empty',
 ): VaultIntegrityVerificationResult {
   const base = {
     isFirstCheck: false,
@@ -120,6 +187,16 @@ function mapDecisionToRuntimeResult(
     itemCount: snapshot.items.length,
     categoryCount: snapshot.categories.length,
   };
+
+  if (shouldDowngradeNonRemoteDecision(decision, snapshotSource)) {
+    return {
+      ...base,
+      valid: false,
+      mode: 'revalidation_failed',
+      nonTamperReason: 'revalidation_failed',
+      quarantinedItems: [],
+    };
+  }
 
   if (decision.mode === 'normal') {
     return {
@@ -172,6 +249,26 @@ function mapDecisionToRuntimeResult(
       : 'snapshot_source_not_authoritative',
     quarantinedItems: [],
   };
+}
+
+function shouldDowngradeNonRemoteDecision(
+  decision: VaultIntegrityDecisionV2,
+  snapshotSource: 'remote' | 'cache' | 'empty',
+): boolean {
+  if (snapshotSource === 'remote' || decision.mode === 'normal') {
+    return false;
+  }
+
+  if (decision.mode === 'item_quarantine'
+    || decision.mode === 'orphan_remote'
+    || decision.mode === 'missing_remote'
+    || decision.mode === 'sync_pending'
+    || decision.mode === 'conflict') {
+    return true;
+  }
+
+  return decision.mode === 'safe_mode'
+    && (decision.reason === 'category_structure_mismatch' || decision.reason === 'vault_structure_corrupt');
 }
 
 function toServerItems(items: OfflineVaultSnapshot['items']): ServerVaultItemV2[] {

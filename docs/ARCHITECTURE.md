@@ -44,9 +44,9 @@ Auth-state changes belong in `AuthContext` or dedicated auth services. Vault-unl
 
 Manifest V2 is used by the runtime only after the server returns an authenticated Manifest V2 envelope for the vault. The runtime bridge loads the envelope, evaluates it against the current server/cache snapshot, and returns the existing provider-facing integrity result. If no Manifest V2 exists or legacy item envelopes remain, the R3 compatibility path remains active and must not persist active quarantine for missing/unknown/stale diagnostics.
 
-Legitimate item writes from the public vault API now use Item-Envelope V2. The current compatibility layer still lets legacy vaults operate until all rows are V2-native; a healthy trusted refresh persists Manifest V2 only when the current snapshot contains no legacy item envelopes. Category changes update the manifest through the same trusted refresh path once the vault is V2-native.
+Legitimate item writes from the public vault API now use Item-Envelope V2. The current compatibility layer still lets legacy vaults operate until all rows are V2-native; a healthy trusted refresh persists Manifest V2 only when the current snapshot contains no legacy item envelopes. Category changes update the manifest through the same trusted refresh path once the vault is V2-native. Trusted item deletes are represented as Manifest V2 tombstones derived from the previous authenticated manifest, so a legitimate delete does not become `missing_on_server` on another refresh.
 
-The current server schema stores Manifest V2 in `public.vault_integrity_manifests`. It provides owner-scoped RLS and revision metadata, but it is not a fully atomic item/category/manifest mutation pipeline. If an item/category write succeeds and the manifest write fails, the state is sync/repair work; UI or runtime code must not report it as item tampering.
+The current server schema stores Manifest V2 in `public.vault_integrity_manifests`. It provides owner-scoped RLS and revision metadata. `public.apply_vault_mutation_v2` is the transaction/CAS entry point for item, category, restore, delete, and manifest metadata writes: it locks the sync head and current manifest row, checks the expected base revision, manifest revision, and manifest hash, then writes the data row and encrypted manifest envelope in one database transaction. Product paths that still use direct item/category writes plus trusted manifest refresh are compatibility paths and must treat a failed manifest write as sync/repair work, never item tampering.
 
 File-size guardrails: `VaultContext.tsx` should remain below 150 lines, `useVaultProviderActions.tsx` below 700 lines, and no new runtime module should grow past 900 lines. If one of those limits is reached, split by responsibility before adding behavior.
 
@@ -55,6 +55,8 @@ Account Settings must not require vault unlock. Vault Settings and vault data ac
 ## Dev Test Account
 
 The dev test account is local-environment driven. Server-only values such as passwords, master passwords, and service-role keys must be used only by trusted Node scripts such as `scripts/dev/ensure-dev-test-account.mjs`. Client code may only read `VITE_DEV_TEST_ACCOUNT_UI`; no password, master password, Device Key material, or service key may use a `VITE_` prefix.
+
+If configured local dev-test passwords do not satisfy the local Supabase password policy, `scripts/dev/ensure-dev-test-account.mjs` derives deterministic local-only replacement values from non-secret test identifiers. The generated values are not printed and are not production secrets; they exist only to make local provisioning reproducible enough for unlocked runtime E2E.
 
 ## Required Checks
 

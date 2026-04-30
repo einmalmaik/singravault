@@ -31,6 +31,7 @@ import {
   evaluateRuntimeVaultIntegrityV2,
   persistRuntimeManifestV2ForTrustedSnapshot,
 } from '@/services/vaultIntegrityV2/runtimeBridge';
+import { parseVaultItemEnvelopeV2 } from '@/services/vaultIntegrityV2/itemEnvelopeCrypto';
 
 export interface VaultIntegrityRuntimeCallbacks {
   applyIntegrityResultState: (result: VaultIntegrityVerificationResult) => void;
@@ -52,6 +53,56 @@ export function canPersistIntegrityBaselineImmediately(
       assessment.inspection.baselineKind !== 'missing'
       || (snapshot.items.length === 0 && snapshot.categories.length === 0)
     );
+}
+
+export function shouldDowngradeCrossDeviceV2BaselineDrift(input: {
+  assessment: VaultIntegrityAssessment;
+  snapshot: OfflineVaultSnapshot;
+  source?: 'remote' | 'cache' | 'empty';
+}): boolean {
+  const result = input.assessment.result;
+  if (input.source !== 'remote' || result.mode !== 'quarantine') {
+    return false;
+  }
+
+  if (
+    input.assessment.unreadableCategoryReason
+    || input.assessment.inspection.categoryDriftIds.length > 0
+    || result.quarantinedItems.length === 0
+    || result.quarantinedItems.some((item) => item.reason !== 'ciphertext_changed')
+  ) {
+    return false;
+  }
+
+  const itemsById = new Map(input.snapshot.items.map((item) => [item.id, item]));
+  return result.quarantinedItems.every((quarantinedItem) => {
+    const item = itemsById.get(quarantinedItem.id);
+    if (!item) {
+      return false;
+    }
+    const parsed = parseVaultItemEnvelopeV2(item.encrypted_data);
+    return parsed.ok
+      && parsed.envelope.itemId === item.id
+      && parsed.envelope.userId === input.snapshot.userId
+      && parsed.envelope.vaultId === input.snapshot.vaultId;
+  });
+}
+
+function buildCrossDeviceRevalidationResult(
+  snapshot: OfflineVaultSnapshot,
+  assessment: VaultIntegrityAssessment,
+): VaultIntegrityVerificationResult {
+  return {
+    valid: false,
+    isFirstCheck: false,
+    computedRoot: assessment.inspection.digest,
+    storedRoot: assessment.inspection.storedRoot,
+    itemCount: snapshot.items.length,
+    categoryCount: snapshot.categories.length,
+    mode: 'revalidation_failed',
+    nonTamperReason: 'revalidation_failed',
+    quarantinedItems: [],
+  };
 }
 
 export async function persistMissingOrLegacyBaseline(input: {
@@ -96,6 +147,7 @@ export async function finalizeVaultUnlockIntegrity(input: {
       encryptedUserKey: input.encryptedUserKey,
       trustedRecoveryState,
       evaluationSource: 'unlock',
+      snapshotSource: snapshotBundle.source,
     });
     if (v2Result) {
       callbacks.applyIntegrityResultState(v2Result);
@@ -128,6 +180,19 @@ export async function finalizeVaultUnlockIntegrity(input: {
       source: snapshotBundle.source,
     });
     const integrityResult = integrityAssessment.result;
+    if (shouldDowngradeCrossDeviceV2BaselineDrift({
+      assessment: integrityAssessment,
+      snapshot: snapshotBundle.rawSnapshot,
+      source: snapshotBundle.source,
+    })) {
+      const revalidationResult = buildCrossDeviceRevalidationResult(
+        snapshotBundle.rawSnapshot,
+        integrityAssessment,
+      );
+      callbacks.applyIntegrityResultState(revalidationResult);
+      callbacks.applyTrustedRecoveryState(trustedRecoveryState);
+      return { error: null };
+    }
     callbacks.applyIntegrityResultState(integrityResult);
 
     if (integrityResult.mode === 'blocked') {
@@ -247,6 +312,7 @@ export async function refreshVaultIntegrityBaseline(input: {
           snapshot: snapshotBundle.rawSnapshot,
           vaultKey: encryptionKey,
           encryptedUserKey: input.encryptedUserKey,
+          trustedMutation: normalizedTrustedMutation,
         }).catch(() => undefined);
         callbacks.applyIntegrityResultState({
           valid: true,
@@ -305,6 +371,7 @@ export async function refreshVaultIntegrityBaseline(input: {
     snapshot: snapshotBundle.rawSnapshot,
     vaultKey: encryptionKey,
     encryptedUserKey: input.encryptedUserKey,
+    trustedMutation: normalizedTrustedMutation,
   }).catch(() => undefined);
   callbacks.applyIntegrityResultState({
     valid: true,
@@ -350,6 +417,7 @@ export async function verifyVaultIntegrity(input: {
       encryptedUserKey: input.encryptedUserKey,
       trustedRecoveryState,
       evaluationSource: 'manual_recheck',
+      snapshotSource: source ?? (snapshot ? undefined : loadedSnapshotBundle?.source),
     });
     if (v2Result) {
       callbacks.applyIntegrityResultState(v2Result);
@@ -374,6 +442,17 @@ export async function verifyVaultIntegrity(input: {
       source: source ?? (snapshot ? undefined : loadedSnapshotBundle?.source),
     });
     const result = integrityAssessment.result;
+    const assessmentSource = source ?? (snapshot ? undefined : loadedSnapshotBundle?.source);
+    if (shouldDowngradeCrossDeviceV2BaselineDrift({
+      assessment: integrityAssessment,
+      snapshot: rawSnapshot,
+      source: assessmentSource,
+    })) {
+      const revalidationResult = buildCrossDeviceRevalidationResult(rawSnapshot, integrityAssessment);
+      callbacks.applyIntegrityResultState(revalidationResult);
+      callbacks.applyTrustedRecoveryState(trustedRecoveryState);
+      return revalidationResult;
+    }
     const recentLocalRebaselineAllowed = canRebaselineRecentLocalMutation(userId, integrityAssessment);
     if (result.mode === 'blocked' && !recentLocalRebaselineAllowed) {
       await callbacks.setBlockedIntegrityState(

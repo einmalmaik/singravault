@@ -28,6 +28,7 @@ import { getServiceHooks } from '@/extensions/registry';
 import { cn } from '@/lib/utils';
 import { ItemFilter, ViewMode } from '@/pages/VaultPage';
 import { isCurrentVaultItemEnvelope, VaultItemData } from '@/services/cryptoService';
+import { isVaultItemEnvelopeV2 } from '@/services/vaultIntegrityV2/itemEnvelopeCrypto';
 import {
   isAppOnline,
   loadVaultSnapshot,
@@ -338,7 +339,9 @@ export function VaultItemList({
               trustedItemIds.add(item.id);
             }
 
-            if (canPersistLegacyEncryptionMigration && !isCurrentVaultItemEnvelope(migration.item.encrypted_data)) {
+            const isCurrentOrV2Envelope = isVaultItemEnvelopeV2(migration.item.encrypted_data)
+              || isCurrentVaultItemEnvelope(migration.item.encrypted_data);
+            if (canPersistLegacyEncryptionMigration && !isCurrentOrV2Envelope) {
               try {
                 const encryptionMigration = await migrateLegacyVaultItemEncryptionAndMetadata({
                   userId,
