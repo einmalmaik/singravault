@@ -378,6 +378,7 @@ DECLARE
     _next_revision BIGINT := 0;
     _item_id UUID;
     _category_id UUID;
+    _affected_rows INTEGER := 0;
 BEGIN
     IF _uid IS NULL THEN
         RAISE EXCEPTION 'Not authenticated';
@@ -424,6 +425,15 @@ BEGIN
 
     IF _vault_id IS NULL THEN
         RETURN jsonb_build_object('applied', false, 'conflict_reason', 'missing_vault');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.vaults
+        WHERE id = _vault_id
+          AND user_id = _uid
+    ) THEN
+        RAISE EXCEPTION 'Mutation vault_id must belong to authenticated user';
     END IF;
 
     INSERT INTO public.vault_sync_heads (vault_id, user_id, revision, updated_at)
@@ -475,30 +485,28 @@ BEGIN
         )
         ON CONFLICT (id) DO UPDATE
         SET encrypted_data = EXCLUDED.encrypted_data,
-            updated_at = NOW();
+            updated_at = NOW()
+        WHERE public.vault_items.user_id = _uid
+          AND public.vault_items.vault_id = _vault_id;
+
+        GET DIAGNOSTICS _affected_rows = ROW_COUNT;
+        IF _affected_rows = 0 THEN
+            RETURN jsonb_build_object(
+                'applied', false,
+                'revision', _current_revision,
+                'conflict_reason', 'ownership_conflict'
+            );
+        END IF;
     ELSIF p_type = 'delete_item' THEN
         DELETE FROM public.vault_items
         WHERE id = _item_id
           AND user_id = _uid;
     ELSIF p_type = 'upsert_category' THEN
-        IF COALESCE(p_payload->>'name', '') NOT LIKE 'enc:cat:v1:%' THEN
-            RAISE EXCEPTION 'Category name must be client-side encrypted'
-                USING ERRCODE = '22023';
-        END IF;
-
-        IF p_payload ? 'icon'
-           AND p_payload->>'icon' IS NOT NULL
-           AND p_payload->>'icon' NOT LIKE 'enc:cat:v1:%' THEN
-            RAISE EXCEPTION 'Category icon must be client-side encrypted'
-                USING ERRCODE = '22023';
-        END IF;
-
-        IF p_payload ? 'color'
-           AND p_payload->>'color' IS NOT NULL
-           AND p_payload->>'color' NOT LIKE 'enc:cat:v1:%' THEN
-            RAISE EXCEPTION 'Category color must be client-side encrypted'
-                USING ERRCODE = '22023';
-        END IF;
+        PERFORM public.assert_encrypted_category_metadata(
+            p_payload->>'name',
+            p_payload->>'icon',
+            p_payload->>'color'
+        );
 
         INSERT INTO public.categories (
             id,
@@ -524,7 +532,17 @@ BEGIN
             color = EXCLUDED.color,
             parent_id = NULL,
             sort_order = NULL,
-            updated_at = NOW();
+            updated_at = NOW()
+        WHERE public.categories.user_id = _uid;
+
+        GET DIAGNOSTICS _affected_rows = ROW_COUNT;
+        IF _affected_rows = 0 THEN
+            RETURN jsonb_build_object(
+                'applied', false,
+                'revision', _current_revision,
+                'conflict_reason', 'ownership_conflict'
+            );
+        END IF;
     ELSIF p_type = 'delete_category' THEN
         DELETE FROM public.categories
         WHERE id = _category_id

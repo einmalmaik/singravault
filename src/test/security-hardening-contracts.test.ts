@@ -155,21 +155,66 @@ describe("security hardening contracts", () => {
       "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
       "utf-8",
     );
+    const manifestV2Migration = readFileSync(
+      "supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql",
+      "utf-8",
+    );
     const categoryMigration = readFileSync(
       "supabase/migrations/20260428143000_enforce_encrypted_category_metadata.sql",
       "utf-8",
     );
 
-    expect(syncMigration).toContain("Category name must be client-side encrypted");
-    expect(syncMigration).toContain("COALESCE(p_payload->>'name', '') NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("CREATE OR REPLACE FUNCTION public.assert_encrypted_category_metadata");
+    expect(categoryMigration).toContain("COALESCE(p_name, '') NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("p_icon IS NOT NULL AND p_icon NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("p_color IS NOT NULL AND p_color NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("Category name must be client-side encrypted");
+    expect(categoryMigration).toContain("Category icon must be client-side encrypted");
+    expect(categoryMigration).toContain("Category color must be client-side encrypted");
+
+    for (const migration of [syncMigration, manifestV2Migration]) {
+      expect(migration).toMatch(/perform public\.assert_encrypted_category_metadata/i);
+      expect(migration).toContain("p_payload->>'name'");
+      expect(migration).toContain("p_payload->>'icon'");
+      expect(migration).toContain("p_payload->>'color'");
+    }
+
     expect(syncMigration).toContain("parent_id = NULL");
     expect(syncMigration).toContain("sort_order = NULL");
 
     expect(categoryMigration).toContain("CREATE TRIGGER enforce_encrypted_category_metadata_trigger");
     expect(categoryMigration).toContain("BEFORE INSERT OR UPDATE ON public.categories");
-    expect(categoryMigration).toContain("NEW.name, '') NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("PERFORM public.assert_encrypted_category_metadata(NEW.name, NEW.icon, NEW.color)");
     expect(categoryMigration).toContain("NEW.parent_id := NULL");
     expect(categoryMigration).toContain("NEW.sort_order := NULL");
+  });
+
+  it("does not expose the category metadata assertion helper as a client RPC", () => {
+    const categoryMigration = readFileSync(
+      "supabase/migrations/20260428143000_enforce_encrypted_category_metadata.sql",
+      "utf-8",
+    );
+    const syncMigration = readFileSync(
+      "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
+      "utf-8",
+    );
+    const manifestV2Migration = readFileSync(
+      "supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql",
+      "utf-8",
+    );
+
+    expect(syncMigration).toMatch(/CREATE OR REPLACE FUNCTION public\.apply_vault_mutation\([\s\S]*?SECURITY DEFINER/i);
+    expect(manifestV2Migration).toMatch(/create or replace function public\.apply_vault_mutation_v2\([\s\S]*?security definer/i);
+    expect(categoryMigration).toMatch(/CREATE OR REPLACE FUNCTION public\.enforce_encrypted_category_metadata\(\)[\s\S]*?SECURITY DEFINER/i);
+
+    for (const role of ["PUBLIC", "anon", "authenticated"]) {
+      expect(categoryMigration).toContain(
+        `REVOKE ALL ON FUNCTION public.assert_encrypted_category_metadata(TEXT, TEXT, TEXT) FROM ${role}`,
+      );
+    }
+    expect(categoryMigration).not.toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.assert_encrypted_category_metadata\(TEXT, TEXT, TEXT\) TO (PUBLIC|anon|authenticated)/,
+    );
   });
 
   it("keeps service worker caching scoped away from Supabase and vault API responses", () => {
@@ -271,9 +316,37 @@ describe("security hardening contracts", () => {
 
     expect(webauthn).toContain("isDeviceKeyRequiredForUser");
     expect(webauthn).toContain('.select("vault_protection_mode")');
+    expect(webauthn).toContain('.eq("user_id", userId)');
+    expect(webauthn).not.toContain('.eq("id", userId)');
+    expect(webauthn).toContain("Missing profile while checking WebAuthn Device Key policy");
     expect(webauthn).toContain('vault_protection_mode === "device_key_required"');
     expect(webauthn).toContain('Device Key required for passkey vault unlock');
     expect(webauthn).not.toMatch(/skipDeviceKey|bypassDeviceKey|deviceKeyPresent/i);
+  });
+
+  it("keeps security-definer vault mutation conflicts scoped to caller-owned rows", () => {
+    const legacyMutation = readFileSync(
+      "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
+      "utf-8",
+    );
+    const manifestV2Mutation = readFileSync(
+      "supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql",
+      "utf-8",
+    );
+
+    for (const migration of [legacyMutation, manifestV2Mutation]) {
+      expect(migration).toMatch(/get diagnostics _affected_rows = row_count/i);
+      expect(migration).toContain("ownership_conflict");
+      expect(migration).toMatch(/where public\.vault_items\.user_id = _uid/i);
+      expect(migration).toContain("public.vault_items.vault_id = _vault_id");
+      expect(migration).toMatch(/where public\.categories\.user_id = _uid/i);
+    }
+
+    expect(manifestV2Mutation).toMatch(/where public\.vault_integrity_manifests\.user_id = _uid/i);
+    expect(manifestV2Mutation).toMatch(
+      /if not exists \(\s*select 1\s*from public\.vaults\s*where id = _vault_id and user_id = _uid\s*\) then/i,
+    );
+    expect(manifestV2Mutation).not.toMatch(/_vault_id := \(p_payload->>'vault_id'\)::uuid;[\s\S]{0,360}insert into public\.vault_sync_heads/i);
   });
 
   it("exposes Device Key import from account security and the locked vault screen", () => {

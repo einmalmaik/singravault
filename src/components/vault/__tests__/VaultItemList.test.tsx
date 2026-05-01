@@ -716,6 +716,11 @@ describe.sequential('VaultItemList', () => {
       expect(loadVaultSnapshot).toHaveBeenCalledTimes(2);
     });
     expect(await screen.findByText('Visible Item')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('common.loading')).not.toBeInTheDocument();
+      expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+      expect(screen.queryByText('Synchronisiere mit Cloud...')).not.toBeInTheDocument();
+    });
   });
 
   it('does not poison decrypt-failed cache when legacy encryption migration persistence fails', async () => {

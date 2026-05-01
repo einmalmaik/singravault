@@ -999,11 +999,16 @@ async function isDeviceKeyRequiredForUser(
     const { data, error } = await supabase
         .from("profiles")
         .select("vault_protection_mode")
-        .eq("id", userId)
+        .eq("user_id", userId)
         .maybeSingle();
 
     if (error) {
         console.error("Failed to load vault protection mode for WebAuthn:", error);
+        return true;
+    }
+
+    if (!data) {
+        console.error("Missing profile while checking WebAuthn Device Key policy");
         return true;
     }
 

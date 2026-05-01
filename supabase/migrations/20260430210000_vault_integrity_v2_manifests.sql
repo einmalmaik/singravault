@@ -113,6 +113,7 @@ declare
   _current_manifest public.vault_integrity_manifests%rowtype;
   _item_id uuid;
   _category_id uuid;
+  _affected_rows integer := 0;
 begin
   if _uid is null then
     raise exception 'Not authenticated';
@@ -158,6 +159,14 @@ begin
 
   if _vault_id is null then
     return jsonb_build_object('applied', false, 'conflict_reason', 'missing_vault');
+  end if;
+
+  if not exists (
+    select 1
+    from public.vaults
+    where id = _vault_id and user_id = _uid
+  ) then
+    raise exception 'Mutation vault_id must belong to authenticated user';
   end if;
 
   if p_manifest_revision is null or p_manifest_revision < 1 then
@@ -239,14 +248,28 @@ begin
     set encrypted_data = excluded.encrypted_data,
         item_type = excluded.item_type,
         category_id = excluded.category_id,
-        updated_at = now();
+        updated_at = now()
+    where public.vault_items.user_id = _uid
+      and public.vault_items.vault_id = _vault_id;
+
+    get diagnostics _affected_rows = row_count;
+    if _affected_rows = 0 then
+      return jsonb_build_object(
+        'applied', false,
+        'revision', _current_revision,
+        'manifest_revision', _current_manifest.manifest_revision,
+        'conflict_reason', 'ownership_conflict'
+      );
+    end if;
   elsif p_type = 'delete_item' then
     delete from public.vault_items
     where id = _item_id and user_id = _uid;
   elsif p_type = 'upsert_category' then
-    if coalesce(p_payload->>'name', '') not like 'enc:cat:v1:%' then
-      raise exception 'Category name must be client-side encrypted' using errcode = '22023';
-    end if;
+    perform public.assert_encrypted_category_metadata(
+      p_payload->>'name',
+      p_payload->>'icon',
+      p_payload->>'color'
+    );
 
     insert into public.categories (id, user_id, name, icon, color, parent_id, sort_order)
     values (
@@ -264,7 +287,18 @@ begin
         color = excluded.color,
         parent_id = excluded.parent_id,
         sort_order = excluded.sort_order,
-        updated_at = now();
+        updated_at = now()
+    where public.categories.user_id = _uid;
+
+    get diagnostics _affected_rows = row_count;
+    if _affected_rows = 0 then
+      return jsonb_build_object(
+        'applied', false,
+        'revision', _current_revision,
+        'manifest_revision', _current_manifest.manifest_revision,
+        'conflict_reason', 'ownership_conflict'
+      );
+    end if;
   elsif p_type = 'delete_category' then
     delete from public.categories
     where id = _category_id and user_id = _uid;
@@ -284,7 +318,18 @@ begin
       previous_manifest_hash = excluded.previous_manifest_hash,
       key_id = excluded.key_id,
       manifest_envelope = excluded.manifest_envelope,
-      updated_at = now();
+      updated_at = now()
+  where public.vault_integrity_manifests.user_id = _uid;
+
+  get diagnostics _affected_rows = row_count;
+  if _affected_rows = 0 then
+    return jsonb_build_object(
+      'applied', false,
+      'revision', _current_revision,
+      'manifest_revision', _current_manifest.manifest_revision,
+      'conflict_reason', 'ownership_conflict'
+    );
+  end if;
 
   select revision into _next_revision
   from public.vault_sync_heads
