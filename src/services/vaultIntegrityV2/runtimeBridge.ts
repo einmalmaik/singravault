@@ -159,6 +159,54 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
         return buildRuntimeNonTamperResult(input.snapshot, 'integrity_unknown', 'rollback_check_unavailable');
       }
     }
+    if (retryResult.status === 'persisted' && decision.mode === 'orphan_remote') {
+      const reloadedManifest = await loadServerManifestEnvelopeV2({ userId: input.userId, vaultId });
+      if (reloadedManifest) {
+        const revalidatedDecision = await evaluateVaultIntegrityV2({
+          userId: input.userId,
+          vaultId,
+          serverItems: toServerItems(input.snapshot.items),
+          serverCategories: toServerCategories(input.snapshot.categories),
+          serverManifestEnvelope: reloadedManifest.envelope,
+          localHighWaterMark: localHighWaterMark
+            ? {
+              manifestRevision: localHighWaterMark.manifestRevision,
+              manifestHash: localHighWaterMark.manifestHash,
+            }
+            : undefined,
+          localSnapshots: trustedRecoveryStateToV2Metadata(input.trustedRecoveryState, {
+            userId: input.userId,
+            vaultId,
+            highWaterMark: localHighWaterMark,
+          }),
+          pendingMutations: [],
+          unlockContext: {
+            vaultKeyVerified: true,
+            vaultKey: input.vaultKey,
+            keyId,
+            protectionMode: input.snapshot.vaultProtectionMode ?? 'master_only',
+          },
+          evaluationSource: input.evaluationSource,
+        });
+        if (
+          canAdvanceManifestHighWaterMark(revalidatedDecision)
+          && !shouldDowngradeNonRemoteDecision(revalidatedDecision, snapshotSource)
+        ) {
+          try {
+            await saveManifestHighWaterMark({
+              userId: input.userId,
+              vaultId,
+              manifestRevision: revalidatedDecision.manifestRevision,
+              manifestHash: revalidatedDecision.manifestHash,
+              keyId,
+            });
+          } catch {
+            return buildRuntimeNonTamperResult(input.snapshot, 'integrity_unknown', 'rollback_check_unavailable');
+          }
+        }
+        return mapDecisionToRuntimeResult(revalidatedDecision, input.snapshot, snapshotSource);
+      }
+    }
   }
 
   return mapDecisionToRuntimeResult(decision, input.snapshot, snapshotSource);
@@ -467,7 +515,8 @@ function canRetryRuntimeManifestPersistAfterDecision(input: {
   decisionMode: VaultIntegrityDecisionV2['mode'];
   snapshotSource: 'remote' | 'cache' | 'empty';
 }): boolean {
-  return input.decisionMode === 'normal' && input.snapshotSource === 'remote';
+  return (input.decisionMode === 'normal' || input.decisionMode === 'orphan_remote')
+    && input.snapshotSource === 'remote';
 }
 
 function buildRuntimeNonTamperResult(

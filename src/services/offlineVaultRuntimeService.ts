@@ -74,6 +74,7 @@ export async function loadCachedVaultCredentials(
 export async function loadCurrentVaultIntegritySnapshot(input: {
   userId: string;
   persistRemoteSnapshot?: boolean;
+  preferRemote?: boolean;
   useLocalMutationOverlay?: boolean;
 }): Promise<CurrentVaultIntegritySnapshot> {
   const { userId } = input;
@@ -87,18 +88,23 @@ export async function loadCurrentVaultIntegritySnapshot(input: {
     };
   }
 
-  if (isAppOnline()) {
+  if (input.preferRemote || isAppOnline()) {
     try {
       const rawSnapshot = await fetchRemoteOfflineSnapshot(userId, {
         persist: input.persistRemoteSnapshot !== false,
       });
 
+      logIntegritySnapshotSource('remote', rawSnapshot, input);
       return {
         rawSnapshot,
         integritySnapshot: buildVaultIntegritySnapshot(rawSnapshot),
         source: 'remote',
       };
     } catch (error) {
+      console.warn('[VaultIntegrity] Remote snapshot load failed.', {
+        code: safeSnapshotLoadErrorCode(error),
+        preferRemote: input.preferRemote === true,
+      });
       if (!isLikelyOfflineError(error)) {
         throw error;
       }
@@ -106,11 +112,54 @@ export async function loadCurrentVaultIntegritySnapshot(input: {
   }
 
   const { snapshot, source } = await loadVaultSnapshot(userId);
+  logIntegritySnapshotSource(source, snapshot, input);
   return {
     rawSnapshot: snapshot,
     integritySnapshot: buildVaultIntegritySnapshot(snapshot),
     source,
   };
+}
+
+function logIntegritySnapshotSource(
+  source: VaultRuntimeSnapshotSource,
+  snapshot: OfflineVaultSnapshot,
+  input: {
+    persistRemoteSnapshot?: boolean;
+    preferRemote?: boolean;
+    useLocalMutationOverlay?: boolean;
+  },
+): void {
+  console.info('[VaultIntegrity] Snapshot selected.', {
+    source,
+    preferRemote: input.preferRemote === true,
+    persistRemoteSnapshot: input.persistRemoteSnapshot !== false,
+    useLocalMutationOverlay: input.useLocalMutationOverlay === true,
+    hasVaultId: Boolean(snapshot.vaultId),
+    itemCount: snapshot.items.length,
+    categoryCount: snapshot.categories.length,
+    remoteRevisionKnown: typeof snapshot.remoteRevision === 'number',
+    completenessKind: snapshot.completeness?.kind ?? 'missing',
+    completenessReason: snapshot.completeness?.reason ?? 'missing',
+    completenessSource: snapshot.completeness?.source ?? 'missing',
+  });
+}
+
+function safeSnapshotLoadErrorCode(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = String((error as { code?: unknown }).code ?? '');
+    if (code) {
+      return code.toLowerCase().replace(/[^a-z0-9_:-]/g, '_').slice(0, 80);
+    }
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  if (message.includes('failed to fetch') || message.includes('network') || message.includes('fetch')) {
+    return 'network_unavailable';
+  }
+  if (message.includes('rollback')) {
+    return 'remote_snapshot_rollback';
+  }
+  return 'snapshot_load_failed';
 }
 
 export async function loadRemoteVaultProfile(

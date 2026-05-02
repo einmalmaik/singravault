@@ -764,7 +764,11 @@
       "revalidationHint": "Prüfe den Tresor erneut, wenn die Verbindung wieder stabil ist.",
       "ignoreSummaryAction": "Alle Hinweise ausblenden",
       "resetChallengeExpired": "Die Sicherheitsbestätigung für den Tresor-Reset ist abgelaufen. Bitte versuche es erneut.",
-      "resetFailed": "Der Tresor konnte nicht zurückgesetzt werden."
+      "resetFailed": "Der Tresor konnte nicht zurückgesetzt werden.",
+      "revalidationTitle": "Integrit\u00e4tspr\u00fcfung erforderlich",
+      "retryCheck": "Erneut pr\u00fcfen",
+      "recheckFailed": "Der Integrit\u00e4tscheck konnte nicht abgeschlossen werden.",
+      "recheckUnavailable": "Der Tresor-Schl\u00fcssel oder Snapshot ist nicht verf\u00fcgbar. Sperre den Tresor und entsperre ihn erneut."
     }
   },
   "generator": {

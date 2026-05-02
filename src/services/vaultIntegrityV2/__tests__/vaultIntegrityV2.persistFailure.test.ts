@@ -3,6 +3,7 @@ import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import {
   loadManifestPersistRetryRecord,
   removeManifestPersistRetryRecord,
+  saveManifestPersistRetryRecord,
 } from '../index';
 
 const USER_ID = 'user-persist-failure';
@@ -17,6 +18,7 @@ const serviceMocks = vi.hoisted(() => ({
   loadTrustedRecoverySnapshotState: vi.fn(),
   persistRuntimeManifestV2ForTrustedSnapshot: vi.fn(),
   retryPendingRuntimeManifestV2ForSnapshot: vi.fn(),
+  decryptVaultItem: vi.fn(),
   warn: vi.fn(),
 }));
 
@@ -65,7 +67,29 @@ vi.mock('@/services/vaultIntegrityV2/runtimeBridge', () => ({
 }));
 
 vi.mock('@/services/vaultIntegrityV2/itemEnvelopeCrypto', () => ({
-  parseVaultItemEnvelopeV2: vi.fn(() => ({ ok: true, envelope: { itemId: 'item-1', userId: USER_ID, vaultId: VAULT_ID } })),
+  parseVaultItemEnvelopeV2: vi.fn((encryptedData: string) => {
+    if (!encryptedData.startsWith('sv-vault-v2:')) {
+      return { ok: false, error: 'unsupported_envelope' };
+    }
+    const itemId = encryptedData === 'sv-vault-v2:legacy-candidate' ? 'legacy-v2-item' : 'item-1';
+    return {
+      ok: true,
+      envelope: {
+        itemId,
+        userId: USER_ID,
+        vaultId: VAULT_ID,
+        itemType: 'password',
+        keyId: 'legacy-kdf-v1',
+        itemRevision: 2,
+        schemaVersion: 1,
+      },
+    };
+  }),
+  verifyAndDecryptItemEnvelopeV2: vi.fn(() => ({ ok: true, data: {}, envelope: {}, envelopeHash: 'hash' })),
+}));
+
+vi.mock('@/services/cryptoService', () => ({
+  decryptVaultItem: serviceMocks.decryptVaultItem,
 }));
 
 function snapshot(): OfflineVaultSnapshot {
@@ -149,6 +173,7 @@ describe('Manifest V2 runtime persist failure handling', () => {
       trustedSnapshot: null,
     });
     serviceMocks.retryPendingRuntimeManifestV2ForSnapshot.mockResolvedValue({ status: 'no_pending' });
+    serviceMocks.decryptVaultItem.mockResolvedValue({});
   });
 
   it('surfaces Manifest V2 persist failures as revalidation_failed and stores a retry record', async () => {
@@ -179,6 +204,174 @@ describe('Manifest V2 runtime persist failure handling', () => {
       lastErrorCode: 'manifest_persist_failed',
     });
     expect(JSON.stringify(serviceMocks.warn.mock.calls)).not.toContain('secret token');
+  });
+
+  it('clears a stale pending manifest retry record on snapshot mismatch so baseline refresh can proceed', async () => {
+    const { refreshVaultIntegrityBaseline } = await import('@/services/vaultIntegrityRuntimeService');
+    const callbacks = {
+      applyIntegrityResultState: vi.fn(),
+      applyTrustedRecoveryState: vi.fn(),
+      setBlockedIntegrityState: vi.fn(),
+      bumpVaultDataVersion: vi.fn(),
+    };
+    await saveManifestPersistRetryRecord({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      snapshotDigest: 'stale-digest-for-mismatch',
+      lastErrorCode: 'manifest_persist_failed',
+    });
+    serviceMocks.retryPendingRuntimeManifestV2ForSnapshot.mockResolvedValue({
+      status: 'snapshot_mismatch',
+      errorCode: 'manifest_retry_snapshot_mismatch',
+    });
+    serviceMocks.persistRuntimeManifestV2ForTrustedSnapshot.mockResolvedValue('persisted');
+
+    await refreshVaultIntegrityBaseline({
+      userId: USER_ID,
+      encryptionKey: {} as CryptoKey,
+      callbacks,
+    });
+
+    expect(callbacks.applyIntegrityResultState).toHaveBeenLastCalledWith(expect.objectContaining({
+      mode: 'healthy',
+    }));
+    await expect(loadManifestPersistRetryRecord(USER_ID, VAULT_ID)).resolves.toBeNull();
+  });
+
+  it('lets an explicit remote refresh bootstrap Manifest V2 after authenticated V2 ciphertext drift', async () => {
+    const { refreshVaultIntegrityBaseline } = await import('@/services/vaultIntegrityRuntimeService');
+    const callbacks = {
+      applyIntegrityResultState: vi.fn(),
+      applyTrustedRecoveryState: vi.fn(),
+      setBlockedIntegrityState: vi.fn(),
+      bumpVaultDataVersion: vi.fn(),
+    };
+    serviceMocks.assessVaultIntegritySnapshot.mockResolvedValue({
+      unreadableCategoryReason: null,
+      inspection: {
+        digest: 'digest-after-manual-bootstrap',
+        itemCount: 1,
+        categoryCount: 0,
+        baselineKind: 'v2',
+        storedRoot: 'old-digest',
+        legacyBaselineMismatch: false,
+        itemDrifts: [
+          { id: 'item-1', reason: 'ciphertext_changed', updatedAt: '2026-04-30T10:00:00.000Z' },
+          { id: 'deleted-item', reason: 'missing_on_server', updatedAt: null },
+        ],
+        categoryDriftIds: [],
+      },
+      result: {
+        valid: true,
+        isFirstCheck: false,
+        computedRoot: 'digest-after-manual-bootstrap',
+        storedRoot: 'old-digest',
+        itemCount: 1,
+        categoryCount: 0,
+        mode: 'quarantine',
+        quarantinedItems: [
+          { id: 'item-1', reason: 'ciphertext_changed', updatedAt: '2026-04-30T10:00:00.000Z' },
+        ],
+      },
+    });
+    serviceMocks.persistIntegrityBaseline.mockResolvedValue('digest-after-manual-bootstrap');
+    serviceMocks.persistRuntimeManifestV2ForTrustedSnapshot.mockResolvedValue('persisted');
+
+    const result = await refreshVaultIntegrityBaseline({
+      userId: USER_ID,
+      encryptionKey: {} as CryptoKey,
+      callbacks,
+    });
+
+    expect(result).toMatchObject({ mode: 'healthy' });
+    expect(serviceMocks.persistIntegrityBaseline).toHaveBeenCalledWith(
+      USER_ID,
+      expect.anything(),
+      expect.anything(),
+      'digest-after-manual-bootstrap',
+      { vaultId: VAULT_ID },
+    );
+    expect(serviceMocks.persistRuntimeManifestV2ForTrustedSnapshot).toHaveBeenCalled();
+    expect(callbacks.applyIntegrityResultState).toHaveBeenLastCalledWith(expect.objectContaining({
+      mode: 'healthy',
+    }));
+  });
+
+  it('lets an explicit remote refresh bootstrap a mixed V2/V1 snapshot after every current item authenticates', async () => {
+    const { refreshVaultIntegrityBaseline } = await import('@/services/vaultIntegrityRuntimeService');
+    const callbacks = {
+      applyIntegrityResultState: vi.fn(),
+      applyTrustedRecoveryState: vi.fn(),
+      setBlockedIntegrityState: vi.fn(),
+      bumpVaultDataVersion: vi.fn(),
+    };
+    const rawSnapshot = snapshot();
+    rawSnapshot.items = [
+      rawSnapshot.items[0],
+      {
+        ...rawSnapshot.items[0],
+        id: 'legacy-v1-item',
+        encrypted_data: 'sv-vault-v1:legacy-item',
+        created_at: '2026-04-30T11:00:00.000Z',
+        updated_at: '2026-04-30T11:00:00.000Z',
+      },
+    ];
+    serviceMocks.loadCurrentVaultIntegritySnapshot.mockResolvedValue({
+      rawSnapshot,
+      integritySnapshot: {
+        items: rawSnapshot.items.map((item) => ({ id: item.id, encrypted_data: item.encrypted_data })),
+        categories: [],
+      },
+      source: 'remote',
+    });
+    serviceMocks.assessVaultIntegritySnapshot.mockResolvedValue({
+      unreadableCategoryReason: null,
+      inspection: {
+        digest: 'digest-after-mixed-manual-bootstrap',
+        itemCount: 2,
+        categoryCount: 0,
+        baselineKind: 'v2',
+        storedRoot: 'old-digest',
+        legacyBaselineMismatch: false,
+        itemDrifts: [
+          { id: 'item-1', reason: 'ciphertext_changed', updatedAt: '2026-04-30T10:00:00.000Z' },
+          { id: 'legacy-v1-item', reason: 'unknown_on_server', updatedAt: '2026-04-30T11:00:00.000Z' },
+          { id: 'deleted-item', reason: 'missing_on_server', updatedAt: null },
+        ],
+        categoryDriftIds: [],
+      },
+      result: {
+        valid: true,
+        isFirstCheck: false,
+        computedRoot: 'digest-after-mixed-manual-bootstrap',
+        storedRoot: 'old-digest',
+        itemCount: 2,
+        categoryCount: 0,
+        mode: 'quarantine',
+        quarantinedItems: [
+          { id: 'item-1', reason: 'ciphertext_changed', updatedAt: '2026-04-30T10:00:00.000Z' },
+        ],
+      },
+    });
+    serviceMocks.persistIntegrityBaseline.mockResolvedValue('digest-after-mixed-manual-bootstrap');
+    serviceMocks.persistRuntimeManifestV2ForTrustedSnapshot.mockResolvedValue('skipped_legacy_items');
+
+    const result = await refreshVaultIntegrityBaseline({
+      userId: USER_ID,
+      encryptionKey: {} as CryptoKey,
+      callbacks,
+    });
+
+    expect(result).toMatchObject({ mode: 'healthy' });
+    expect(serviceMocks.decryptVaultItem).toHaveBeenCalledWith(
+      'sv-vault-v1:legacy-item',
+      expect.anything(),
+      'legacy-v1-item',
+    );
+    expect(serviceMocks.persistRuntimeManifestV2ForTrustedSnapshot).toHaveBeenCalled();
+    expect(callbacks.applyIntegrityResultState).toHaveBeenLastCalledWith(expect.objectContaining({
+      mode: 'healthy',
+    }));
   });
 
   it('applies a visible non-healthy state when manual recheck cannot load a snapshot', async () => {

@@ -675,7 +675,7 @@ describe('Vault Integrity V2 runtime bridge', () => {
     });
   });
 
-  it('blocks pending Manifest V2 retry after missing or orphan remote runtime decisions', async () => {
+  it('blocks pending Manifest V2 retry after missing remote runtime decision', async () => {
     const key = await testKey();
     const categories = [category()];
     const items = [await item(key, 'item-1')];
@@ -715,12 +715,12 @@ describe('Vault Integrity V2 runtime bridge', () => {
     await expect(loadManifestPersistRetryRecord(USER_ID, VAULT_ID)).resolves.toMatchObject({
       snapshotDigest: missingRetryDigest,
     });
+  });
 
-    manifestStore.loadServerManifestEnvelopeV2.mockReset();
-    manifestStore.persistServerManifestEnvelopeV2.mockReset();
-    await removeManifestHighWaterMark(USER_ID, VAULT_ID).catch(() => undefined);
-    await removeManifestPersistRetryRecord(USER_ID, VAULT_ID).catch(() => undefined);
-
+  it('retries and re-evaluates manifest for orphan remote decision when snapshot matches pending retry', async () => {
+    const key = await testKey();
+    const categories = [category()];
+    const items = [await item(key, 'item-1')];
     const emptyManifest = await buildManifestEnvelopeV2FromVerifiedInputs({
       userId: USER_ID,
       vaultId: VAULT_ID,
@@ -732,7 +732,76 @@ describe('Vault Integrity V2 runtime bridge', () => {
       vaultKey: key,
     });
     const orphanSnapshot = snapshot(items, categories);
-    const orphanRetryDigest = await saveRetryForSnapshot(orphanSnapshot);
+    await saveRetryForSnapshot(orphanSnapshot);
+
+    let latestRecord: {
+      manifestRevision: number;
+      manifestHash: string;
+      previousManifestHash: string | null;
+      envelope: unknown;
+    } = {
+      manifestRevision: 1,
+      manifestHash: emptyManifest.manifestHash,
+      previousManifestHash: null,
+      envelope: emptyManifest.envelope,
+    };
+    manifestStore.loadServerManifestEnvelopeV2.mockImplementation(async () => ({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      keyId: KEY_ID,
+      ...latestRecord,
+    }));
+    manifestStore.persistServerManifestEnvelopeV2.mockImplementation(async (data: {
+      envelope: { manifestRevision: number };
+      manifestHash: string;
+      previousManifestHash: string | null;
+    }) => {
+      latestRecord = {
+        manifestRevision: data.envelope.manifestRevision,
+        manifestHash: data.manifestHash,
+        previousManifestHash: data.previousManifestHash,
+        envelope: data.envelope,
+      };
+    });
+
+    await expect(evaluateRuntimeVaultIntegrityV2({
+      userId: USER_ID,
+      snapshot: orphanSnapshot,
+      vaultKey: key,
+      evaluationSource: 'manual_recheck',
+      snapshotSource: 'remote',
+    })).resolves.toMatchObject({
+      mode: 'healthy',
+      quarantinedItems: [],
+    });
+
+    expect(manifestStore.persistServerManifestEnvelopeV2).toHaveBeenCalledTimes(1);
+    await expect(loadManifestPersistRetryRecord(USER_ID, VAULT_ID)).resolves.toBeNull();
+    await expect(loadManifestHighWaterMark(USER_ID, VAULT_ID)).resolves.toMatchObject({
+      manifestRevision: 2,
+    });
+  });
+
+  it('clears stale pending retry for orphan remote decision when snapshot digest does not match', async () => {
+    const key = await testKey();
+    const categories = [category()];
+    const items = [await item(key, 'item-1')];
+    const emptyManifest = await buildManifestEnvelopeV2FromVerifiedInputs({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      keyId: KEY_ID,
+      keysetVersion: 1,
+      manifestRevision: 1,
+      categories,
+      items: [],
+      vaultKey: key,
+    });
+    await saveManifestPersistRetryRecord({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      snapshotDigest: 'stale-orphan-digest',
+      lastErrorCode: 'manifest_persist_failed',
+    });
     manifestStore.loadServerManifestEnvelopeV2.mockResolvedValue({
       userId: USER_ID,
       vaultId: VAULT_ID,
@@ -745,7 +814,7 @@ describe('Vault Integrity V2 runtime bridge', () => {
 
     await expect(evaluateRuntimeVaultIntegrityV2({
       userId: USER_ID,
-      snapshot: orphanSnapshot,
+      snapshot: snapshot(items, categories),
       vaultKey: key,
       evaluationSource: 'manual_recheck',
       snapshotSource: 'remote',
@@ -754,9 +823,7 @@ describe('Vault Integrity V2 runtime bridge', () => {
     });
 
     expect(manifestStore.persistServerManifestEnvelopeV2).not.toHaveBeenCalled();
-    await expect(loadManifestPersistRetryRecord(USER_ID, VAULT_ID)).resolves.toMatchObject({
-      snapshotDigest: orphanRetryDigest,
-    });
+    await expect(loadManifestPersistRetryRecord(USER_ID, VAULT_ID)).resolves.toBeNull();
   });
 
   it('clears a stale pending Manifest V2 retry after normal remote runtime verification', async () => {

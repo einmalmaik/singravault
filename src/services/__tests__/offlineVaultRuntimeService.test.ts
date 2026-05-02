@@ -29,6 +29,7 @@ describe('offlineVaultRuntimeService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     offlineVaultServiceMock.getOfflineCredentials.mockResolvedValue(null);
+    offlineVaultServiceMock.isAppOnline.mockReturnValue(true);
   });
 
   it('treats the remote profile as authoritative when Device Key was disabled elsewhere', async () => {
@@ -52,6 +53,52 @@ describe('offlineVaultRuntimeService', () => {
       credentials: {
         vaultProtectionMode: 'master_only',
       },
+    });
+  });
+
+  it('can prefer a remote integrity snapshot even when navigator state says offline', async () => {
+    const { loadCurrentVaultIntegritySnapshot } = await import('../offlineVaultRuntimeService');
+    const remoteSnapshot = {
+      userId: 'user-1',
+      vaultId: 'vault-1',
+      items: [],
+      categories: [],
+    };
+    offlineVaultServiceMock.isAppOnline.mockReturnValue(false);
+    offlineVaultServiceMock.fetchRemoteOfflineSnapshot.mockResolvedValue(remoteSnapshot);
+
+    await expect(loadCurrentVaultIntegritySnapshot({
+      userId: 'user-1',
+      preferRemote: true,
+    })).resolves.toMatchObject({
+      rawSnapshot: remoteSnapshot,
+      source: 'remote',
+    });
+    expect(offlineVaultServiceMock.loadVaultSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the cached integrity snapshot when the preferred remote fetch is offline', async () => {
+    const { loadCurrentVaultIntegritySnapshot } = await import('../offlineVaultRuntimeService');
+    const cachedSnapshot = {
+      userId: 'user-1',
+      vaultId: 'vault-1',
+      items: [],
+      categories: [],
+    };
+    offlineVaultServiceMock.isAppOnline.mockReturnValue(false);
+    offlineVaultServiceMock.isLikelyOfflineError.mockReturnValue(true);
+    offlineVaultServiceMock.fetchRemoteOfflineSnapshot.mockRejectedValue(new Error('Failed to fetch'));
+    offlineVaultServiceMock.loadVaultSnapshot.mockResolvedValue({
+      snapshot: cachedSnapshot,
+      source: 'cache',
+    });
+
+    await expect(loadCurrentVaultIntegritySnapshot({
+      userId: 'user-1',
+      preferRemote: true,
+    })).resolves.toMatchObject({
+      rawSnapshot: cachedSnapshot,
+      source: 'cache',
     });
   });
 });

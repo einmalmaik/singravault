@@ -742,7 +742,11 @@
       "revalidationHint": "Check the vault again when the connection is stable.",
       "ignoreSummaryAction": "Hide all notices",
       "resetChallengeExpired": "The vault reset confirmation expired. Please try again.",
-      "resetFailed": "The vault could not be reset."
+      "resetFailed": "The vault could not be reset.",
+      "revalidationTitle": "Integrity check required",
+      "retryCheck": "Check again",
+      "recheckFailed": "The integrity check could not be completed.",
+      "recheckUnavailable": "The vault key or snapshot is unavailable. Lock and unlock the vault again."
     }
   },
   "generator": {

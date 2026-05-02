@@ -29,7 +29,7 @@ export interface VaultProviderActionBindings {
     options?: { source?: VaultSnapshotSource },
   ) => Promise<VaultIntegrityVerificationResult | null>;
   updateIntegrity: (items: VaultItemForIntegrity[]) => Promise<void>;
-  refreshIntegrityBaseline: (trustedMutation?: TrustedVaultMutation) => Promise<void>;
+  refreshIntegrityBaseline: VaultContextType['refreshIntegrityBaseline'];
   reportUnreadableItems: (items: QuarantinedVaultItem[]) => void;
   enterSafeMode: () => Promise<{ error: Error | null }>;
   restoreQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;

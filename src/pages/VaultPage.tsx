@@ -70,6 +70,15 @@ function getIntegrityWarningText(
     if (reason === 'manifest_snapshot_conflict') {
         return 'Der lokale vertrauenswürdige Snapshot widerspricht dem Server-Manifest. Bitte synchronisiere oder nutze die Wiederherstellung.';
     }
+    if (reason === 'snapshot_source_not_authoritative') {
+        return 'Es konnte kein frischer Server-Snapshot autoritativ geprüft werden. Prüfe die Verbindung und versuche es erneut.';
+    }
+    if (reason === 'snapshot_completeness_unknown') {
+        return 'Der lokale Snapshot enthält keine vollständigen Prüfinformationen. Ein frischer Server-Abgleich ist erforderlich.';
+    }
+    if (reason === 'revalidation_failed') {
+        return 'Die erneute Integritätsprüfung konnte den aktuellen Serverzustand noch nicht bestätigen.';
+    }
     if (mode === 'migration_required') {
         return 'Dieser Tresor benötigt eine Integritätsmigration. Der normale Zugriff bleibt bis zum Abschluss gesperrt.';
     }
@@ -92,7 +101,7 @@ export default function VaultPage() {
         isSetupRequired,
         isLoading: vaultLoading,
         lastIntegrityResult,
-        verifyIntegrity,
+        refreshIntegrityBaseline,
     } = useVault();
 
     const [searchQuery, setSearchQuery] = useState('');
@@ -187,7 +196,29 @@ export default function VaultPage() {
         const handleIntegrityRecheck = async () => {
             setIsRecheckingIntegrity(true);
             try {
-                await verifyIntegrity();
+                const recheckResult = await refreshIntegrityBaseline();
+                if (!recheckResult) {
+                    toast({
+                        variant: 'destructive',
+                        title: t('common.error'),
+                        description: t('vault.integrity.recheckUnavailable', {
+                            defaultValue: 'Der Tresor-Schlüssel oder Snapshot ist nicht verfügbar. Sperre den Tresor und entsperre ihn erneut.',
+                        }),
+                    });
+                    return;
+                }
+                if (NON_DECRYPTABLE_INTEGRITY_MODES.has(recheckResult.mode)) {
+                    toast({
+                        variant: 'destructive',
+                        title: t('vault.integrity.revalidationTitle', {
+                            defaultValue: 'Integritätsprüfung erforderlich',
+                        }),
+                        description: getIntegrityWarningText(
+                            recheckResult.mode,
+                            recheckResult.nonTamperReason,
+                        ),
+                    });
+                }
             } catch {
                 toast({
                     variant: 'destructive',

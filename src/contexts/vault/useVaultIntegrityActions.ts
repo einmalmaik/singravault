@@ -33,12 +33,12 @@ export function useVaultIntegrityActions({
 }: VaultIntegrityActionsInput) {
   const refreshIntegrityBaseline = useCallback(async (
     trustedMutation?: TrustedVaultMutation,
-  ): Promise<void> => {
+  ): Promise<VaultIntegrityVerificationResult | null> => {
     if (!user || !state.encryptionKey) {
-      return;
+      return null;
     }
 
-    await refreshVaultIntegrityBaseline({
+    return refreshVaultIntegrityBaseline({
       userId: user.id,
       encryptionKey: state.encryptionKey,
       encryptedUserKey: state.encryptedUserKey,

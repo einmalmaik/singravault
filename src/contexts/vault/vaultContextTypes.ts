@@ -58,7 +58,7 @@ export interface VaultContextType {
         options?: { source?: VaultSnapshotSource },
     ) => Promise<VaultIntegrityVerificationResult | null>;
     updateIntegrity: (items: VaultItemForIntegrity[]) => Promise<void>;
-    refreshIntegrityBaseline: (trustedMutation?: TrustedVaultMutation) => Promise<void>;
+    refreshIntegrityBaseline: (trustedMutation?: TrustedVaultMutation) => Promise<VaultIntegrityVerificationResult | null>;
     reportUnreadableItems: (items: QuarantinedVaultItem[]) => void;
     integrityVerified: boolean;
     lastIntegrityResult: VaultIntegrityVerificationResult | null;
