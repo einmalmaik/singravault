@@ -27,7 +27,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getServiceHooks } from '@/extensions/registry';
 import { cn } from '@/lib/utils';
 import { ItemFilter, ViewMode } from '@/pages/VaultPage';
-import { isCurrentVaultItemEnvelope, VaultItemData } from '@/services/cryptoService';
+import { VaultItemData } from '@/services/cryptoService';
 import { isVaultItemEnvelopeV2 } from '@/services/vaultIntegrityV2/itemEnvelopeCrypto';
 import {
   isAppOnline,
@@ -425,9 +425,7 @@ export function VaultItemList({
                 trustedItemIds.add(item.id);
               }
 
-              const isCurrentOrV2Envelope = isVaultItemEnvelopeV2(migration.item.encrypted_data)
-                || isCurrentVaultItemEnvelope(migration.item.encrypted_data);
-              if (canPersistLegacyEncryptionMigration && !isCurrentOrV2Envelope) {
+              if (canPersistLegacyEncryptionMigration && !isVaultItemEnvelopeV2(migration.item.encrypted_data)) {
                 try {
                   const encryptionMigration = await migrateLegacyVaultItemEncryptionAndMetadata({
                     userId,
