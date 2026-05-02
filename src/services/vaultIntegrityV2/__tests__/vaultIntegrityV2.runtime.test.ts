@@ -339,6 +339,21 @@ describe('Vault Integrity V2 runtime bridge', () => {
     });
   });
 
+  it('falls back to the legacy local baseline path when cached unlock cannot reach the server manifest', async () => {
+    const key = await testKey();
+    const categories = [category()];
+    const items = [await item(key, 'item-1')];
+    manifestStore.loadServerManifestEnvelopeV2.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(evaluateRuntimeVaultIntegrityV2({
+      userId: USER_ID,
+      snapshot: snapshot(items, categories),
+      vaultKey: key,
+      evaluationSource: 'unlock',
+      snapshotSource: 'cache',
+    })).resolves.toBeNull();
+  });
+
   it('does not persist a Manifest V2 over legacy item envelopes', async () => {
     const key = await testKey();
     const result = await persistRuntimeManifestV2ForTrustedSnapshot({

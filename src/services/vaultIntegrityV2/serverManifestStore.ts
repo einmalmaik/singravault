@@ -1,8 +1,13 @@
 import { supabase } from '@/integrations/supabase/client';
+import { isLikelyOfflineError } from '@/services/offlineVaultService';
 import {
   parseVaultManifestEnvelopeV2,
   serializeVaultManifestEnvelopeV2,
 } from './manifestCrypto';
+import {
+  loadCachedManifestEnvelopeV2,
+  saveCachedManifestEnvelopeV2,
+} from './manifestEnvelopeCacheStore';
 import type { VaultManifestEnvelopeV2 } from './types';
 
 export interface StoredVaultManifestEnvelopeV2 {
@@ -40,16 +45,29 @@ export async function loadServerManifestEnvelopeV2(input: {
     return null;
   }
 
-  const { data, error } = await supabase
-    .from('vault_integrity_manifests' as never)
-    .select('user_id, vault_id, manifest_revision, manifest_hash, previous_manifest_hash, key_id, manifest_envelope')
-    .eq('user_id', input.userId)
-    .eq('vault_id', input.vaultId)
-    .maybeSingle() as { data: VaultManifestRow | null; error: { code?: string; message?: string } | null };
+  let result: { data: VaultManifestRow | null; error: { code?: string; message?: string } | null };
+  try {
+    result = await supabase
+      .from('vault_integrity_manifests' as never)
+      .select('user_id, vault_id, manifest_revision, manifest_hash, previous_manifest_hash, key_id, manifest_envelope')
+      .eq('user_id', input.userId)
+      .eq('vault_id', input.vaultId)
+      .maybeSingle() as { data: VaultManifestRow | null; error: { code?: string; message?: string } | null };
+  } catch (error) {
+    if (isLikelyOfflineError(error)) {
+      return loadCachedManifestEnvelopeV2(input);
+    }
+    throw error;
+  }
+
+  const { data, error } = result;
 
   if (error) {
     if (error.code === '42P01' || /does not exist/i.test(error.message ?? '')) {
       return null;
+    }
+    if (isLikelyOfflineError(error)) {
+      return loadCachedManifestEnvelopeV2(input);
     }
     throw error;
   }
@@ -63,7 +81,7 @@ export async function loadServerManifestEnvelopeV2(input: {
     throw new Error('Stored Manifest V2 envelope is malformed.');
   }
 
-  return {
+  const storedManifest = {
     userId: data.user_id,
     vaultId: data.vault_id,
     manifestRevision: data.manifest_revision,
@@ -72,6 +90,8 @@ export async function loadServerManifestEnvelopeV2(input: {
     keyId: data.key_id,
     envelope: parsed.envelope,
   };
+  await saveCachedManifestEnvelopeV2(storedManifest).catch(() => undefined);
+  return storedManifest;
 }
 
 export async function persistServerManifestEnvelopeV2(input: {
@@ -124,6 +144,16 @@ export async function persistServerManifestEnvelopeV2(input: {
   if (error) {
     throw error;
   }
+
+  await saveCachedManifestEnvelopeV2({
+    userId: input.userId,
+    vaultId: input.vaultId,
+    manifestRevision: input.envelope.manifestRevision,
+    manifestHash: input.manifestHash,
+    previousManifestHash: input.previousManifestHash ?? null,
+    keyId: input.envelope.keyId,
+    envelope: input.envelope,
+  }).catch(() => undefined);
 }
 
 export async function applyVaultMutationWithManifestV2(input: {
@@ -159,10 +189,24 @@ export async function applyVaultMutationWithManifestV2(input: {
     throw error;
   }
 
-  return data ?? {
+  const result = data ?? {
     applied: false,
     revision: null,
     manifest_revision: null,
     conflict_reason: 'empty_result',
   };
+
+  if (result.applied) {
+    await saveCachedManifestEnvelopeV2({
+      userId: input.envelope.userId,
+      vaultId: input.envelope.vaultId,
+      manifestRevision: input.envelope.manifestRevision,
+      manifestHash: input.manifestHash,
+      previousManifestHash: input.previousManifestHash ?? null,
+      keyId: input.envelope.keyId,
+      envelope: input.envelope,
+    }).catch(() => undefined);
+  }
+
+  return result;
 }

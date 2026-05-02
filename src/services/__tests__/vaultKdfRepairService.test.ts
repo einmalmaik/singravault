@@ -56,6 +56,32 @@ describe('vaultKdfRepairService', () => {
 
   const activeKey = { kind: 'active-key' } as CryptoKey;
 
+  it('skips the online repair probe while the app is offline', async () => {
+    const { repairBrokenKdfUpgradeIfNeeded } = await import('../vaultKdfRepairService');
+    const onlineSpy = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await repairBrokenKdfUpgradeIfNeeded({
+      userId: 'user-1',
+      masterPassword: 'not-logged',
+      salt: 'salt',
+      kdfVersion: 2,
+      activeKey,
+    });
+
+    expect(mockSupabase.from).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledWith(
+      'KDF repair check skipped while offline.',
+      expect.objectContaining({ code: 'network_unavailable' }),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    onlineSpy.mockRestore();
+    infoSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
   it('propagates failed item updates as retryable KDF repair persistence errors', async () => {
     const { KdfRepairPersistenceError, repairBrokenKdfUpgradeIfNeeded } = await import('../vaultKdfRepairService');
 

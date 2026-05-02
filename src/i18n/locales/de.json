@@ -768,7 +768,19 @@
       "revalidationTitle": "Integrit\u00e4tspr\u00fcfung erforderlich",
       "retryCheck": "Erneut pr\u00fcfen",
       "recheckFailed": "Der Integrit\u00e4tscheck konnte nicht abgeschlossen werden.",
-      "recheckUnavailable": "Der Tresor-Schl\u00fcssel oder Snapshot ist nicht verf\u00fcgbar. Sperre den Tresor und entsperre ihn erneut."
+      "recheckUnavailable": "Der Tresor-Schl\u00fcssel oder Snapshot ist nicht verf\u00fcgbar. Sperre den Tresor und entsperre ihn erneut.",
+      "unlockVerificationFailed": "Die Tresor-Integrit\u00e4t konnte nicht gepr\u00fcft werden. Wenn du offline bist, entsperre den Tresor mit einem zuvor vollst\u00e4ndig synchronisierten lokalen Snapshot.",
+      "messages": {
+        "manifest_persist_failed": "Der Manifest-V2-Status konnte noch nicht dauerhaft gespeichert werden. Ein erneuter Integrit\u00e4tscheck ist erforderlich.",
+        "rollback_check_unavailable": "Der lokale Rollback-Schutz ist aktuell nicht verf\u00fcgbar. Der normale Tresorzugriff bleibt gesperrt.",
+        "manifest_snapshot_conflict": "Der lokale vertrauensw\u00fcrdige Snapshot widerspricht dem Server-Manifest. Bitte synchronisiere oder nutze die Wiederherstellung.",
+        "snapshot_source_not_authoritative": "Es konnte kein frischer oder lokal verifizierter Snapshot autoritativ gepr\u00fcft werden. Pr\u00fcfe die Verbindung und versuche es erneut.",
+        "snapshot_completeness_unknown": "Der lokale Snapshot enth\u00e4lt keine vollst\u00e4ndigen Pr\u00fcfinformationen. Ein frischer Server-Abgleich ist erforderlich.",
+        "revalidation_failed": "Die erneute Integrit\u00e4tspr\u00fcfung konnte den aktuellen Tresorstand noch nicht best\u00e4tigen.",
+        "migration_required": "Dieser Tresor ben\u00f6tigt eine Integrit\u00e4tsmigration. Der normale Zugriff bleibt bis zum Abschluss gesperrt.",
+        "scope_incomplete": "Der aktuelle Tresor-Snapshot ist unvollst\u00e4ndig. Der normale Zugriff bleibt bis zur vollst\u00e4ndigen Pr\u00fcfung gesperrt.",
+        "default": "Der Integrit\u00e4tszustand konnte nicht vollst\u00e4ndig best\u00e4tigt werden. Der normale Tresorzugriff bleibt gesperrt."
+      }
     }
   },
   "generator": {
@@ -842,7 +854,14 @@
       "deleteTotpOnlyHint": "Backup-Codes können die Kontolöschung nicht autorisieren.",
       "deleteBackupCodePlaceholder": "Backup-Code",
       "deleteUseBackupCode": "Backup-Code verwenden",
-      "deleteTwoFactorInvalid": "Der Zwei-Faktor-Code ist ungültig oder abgelaufen."
+      "deleteTwoFactorInvalid": "Der Zwei-Faktor-Code ist ungültig oder abgelaufen.",
+      "language": {
+        "title": "Sprache",
+        "description": "Standardmäßig wird die Sprache des Systems oder Browsers verwendet. Du kannst sie für dieses Gerät überschreiben.",
+        "label": "Anzeigesprache",
+        "system": "Systemsprache ({{language}})",
+        "consentHint": "Die Auswahl wird nur dauerhaft gespeichert, wenn optionale Cookies und lokale Einstellungen erlaubt sind."
+      }
     },
     "password": {
       "title": "Passwort ändern",

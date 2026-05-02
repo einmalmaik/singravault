@@ -5,10 +5,11 @@ interface IntegrityBaselineEnvelope {
 }
 
 export const INTEGRITY_DB_NAME = 'singra-vault-integrity';
-export const INTEGRITY_DB_VERSION = 2;
+export const INTEGRITY_DB_VERSION = 3;
 export const INTEGRITY_BASELINES_STORE = 'baselines';
 export const MANIFEST_HIGH_WATER_MARKS_STORE = 'manifest-high-water-marks';
 export const MANIFEST_PERSIST_RETRY_STORE = 'manifest-persist-retry';
+export const MANIFEST_ENVELOPES_STORE = 'manifest-envelopes';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -38,6 +39,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(MANIFEST_PERSIST_RETRY_STORE)) {
         db.createObjectStore(MANIFEST_PERSIST_RETRY_STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(MANIFEST_ENVELOPES_STORE)) {
+        db.createObjectStore(MANIFEST_ENVELOPES_STORE, { keyPath: 'key' });
       }
     };
 

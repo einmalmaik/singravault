@@ -19,7 +19,13 @@ const serviceMocks = vi.hoisted(() => ({
   persistRuntimeManifestV2ForTrustedSnapshot: vi.fn(),
   retryPendingRuntimeManifestV2ForSnapshot: vi.fn(),
   decryptVaultItem: vi.fn(),
+  saveOfflineSnapshot: vi.fn(),
   warn: vi.fn(),
+}));
+
+vi.mock('@/services/offlineVaultService', () => ({
+  isLikelyOfflineError: vi.fn(() => false),
+  saveOfflineSnapshot: serviceMocks.saveOfflineSnapshot,
 }));
 
 vi.mock('@/services/offlineVaultRuntimeService', () => ({
@@ -174,6 +180,67 @@ describe('Manifest V2 runtime persist failure handling', () => {
     });
     serviceMocks.retryPendingRuntimeManifestV2ForSnapshot.mockResolvedValue({ status: 'no_pending' });
     serviceMocks.decryptVaultItem.mockResolvedValue({});
+    serviceMocks.saveOfflineSnapshot.mockResolvedValue(undefined);
+  });
+
+  it('allows cached unlock to continue when Manifest V2 is unavailable but the local baseline is healthy', async () => {
+    const { finalizeVaultUnlockIntegrity } = await import('@/services/vaultIntegrityRuntimeService');
+    const rawSnapshot = snapshot();
+    serviceMocks.loadCurrentVaultIntegritySnapshot.mockResolvedValue({
+      rawSnapshot,
+      integritySnapshot: {
+        items: rawSnapshot.items.map((item) => ({ id: item.id, encrypted_data: item.encrypted_data })),
+        categories: [],
+      },
+      source: 'cache',
+    });
+    const callbacks = {
+      applyIntegrityResultState: vi.fn(),
+      applyTrustedRecoveryState: vi.fn(),
+      setBlockedIntegrityState: vi.fn(),
+      bumpVaultDataVersion: vi.fn(),
+    };
+
+    const result = await finalizeVaultUnlockIntegrity({
+      userId: USER_ID,
+      activeKey: {} as CryptoKey,
+      callbacks,
+    });
+
+    expect(result.error).toBeNull();
+    expect(callbacks.applyIntegrityResultState).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'healthy',
+    }));
+    expect(callbacks.setBlockedIntegrityState).not.toHaveBeenCalled();
+    expect(serviceMocks.saveOfflineSnapshot).not.toHaveBeenCalled();
+    expect(serviceMocks.assessVaultIntegritySnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'cache',
+    }));
+  });
+
+  it('persists a remote snapshot for offline unlock only after healthy runtime verification', async () => {
+    const { finalizeVaultUnlockIntegrity } = await import('@/services/vaultIntegrityRuntimeService');
+    const callbacks = {
+      applyIntegrityResultState: vi.fn(),
+      applyTrustedRecoveryState: vi.fn(),
+      setBlockedIntegrityState: vi.fn(),
+      bumpVaultDataVersion: vi.fn(),
+    };
+
+    const result = await finalizeVaultUnlockIntegrity({
+      userId: USER_ID,
+      activeKey: {} as CryptoKey,
+      callbacks,
+    });
+
+    expect(result.error).toBeNull();
+    expect(callbacks.applyIntegrityResultState).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'healthy',
+    }));
+    expect(serviceMocks.saveOfflineSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+    }));
   });
 
   it('surfaces Manifest V2 persist failures as revalidation_failed and stores a retry record', async () => {

@@ -6,6 +6,7 @@ import {
 } from '@/services/cryptoService';
 import { supabase } from '@/integrations/supabase/client';
 import { isTauriDevUserId } from '@/platform/tauriDevMode';
+import { isAppOnline, isLikelyOfflineError } from '@/services/offlineVaultService';
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
 
@@ -34,6 +35,14 @@ export async function repairBrokenKdfUpgradeIfNeeded(input: {
 }): Promise<void> {
   const { userId, masterPassword, salt, kdfVersion, activeKey, contextLabel } = input;
   if (isTauriDevUserId(userId) || kdfVersion < 2) {
+    return;
+  }
+
+  if (!isAppOnline()) {
+    console.info('KDF repair check skipped while offline.', {
+      code: 'network_unavailable',
+      context: contextLabel ?? null,
+    });
     return;
   }
 
@@ -108,7 +117,18 @@ export async function repairBrokenKdfUpgradeIfNeeded(input: {
       }
     }
   } catch (error) {
-    console.error(`KDF repair check failed${formatContext(contextLabel)}:`, error);
+    if (isLikelyOfflineError(error)) {
+      console.warn('KDF repair check skipped because the network is unavailable.', {
+        code: 'network_unavailable',
+        context: contextLabel ?? null,
+      });
+      return;
+    }
+
+    console.error('KDF repair check failed.', {
+      code: safeKdfRepairErrorCode(error),
+      context: contextLabel ?? null,
+    });
     if (error instanceof KdfRepairPersistenceError) {
       throw error;
     }
@@ -220,4 +240,19 @@ async function persistRepairResult(
 
 function formatContext(contextLabel: string | undefined): string {
   return contextLabel ? ` (${contextLabel})` : '';
+}
+
+function safeKdfRepairErrorCode(error: unknown): string {
+  if (error instanceof KdfRepairPersistenceError) {
+    return `persistence_${error.rowKind}`;
+  }
+
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = String((error as { code?: unknown }).code ?? '');
+    if (code) {
+      return code.toLowerCase().replace(/[^a-z0-9_:-]/g, '_').slice(0, 80);
+    }
+  }
+
+  return 'kdf_repair_check_failed';
 }

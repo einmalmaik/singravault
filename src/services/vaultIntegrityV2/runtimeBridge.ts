@@ -1,4 +1,4 @@
-import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
+import { isLikelyOfflineError, type OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import {
   computeVaultSnapshotDigest,
   type VaultIntegritySnapshot,
@@ -58,10 +58,19 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
     return null;
   }
 
-  const storedManifest = await loadServerManifestEnvelopeV2({
-    userId: input.userId,
-    vaultId,
-  });
+  const snapshotSource = input.snapshotSource ?? 'remote';
+  let storedManifest: Awaited<ReturnType<typeof loadServerManifestEnvelopeV2>>;
+  try {
+    storedManifest = await loadServerManifestEnvelopeV2({
+      userId: input.userId,
+      vaultId,
+    });
+  } catch (error) {
+    if (snapshotSource !== 'remote' && isLikelyOfflineError(error)) {
+      return null;
+    }
+    throw error;
+  }
   if (!storedManifest) {
     return null;
   }
@@ -115,7 +124,6 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
     evaluationSource: input.evaluationSource,
   });
 
-  const snapshotSource = input.snapshotSource ?? 'remote';
   if (
     canAdvanceManifestHighWaterMark(decision)
     && !shouldDowngradeNonRemoteDecision(decision, snapshotSource)

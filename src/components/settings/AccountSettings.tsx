@@ -8,13 +8,20 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { User, LogOut, Trash2, Loader2, Mail, Download, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { User, LogOut, Trash2, Loader2, Mail, Download, ShieldCheck, AlertTriangle, Languages } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import {
     AlertDialog,
     AlertDialogCancel,
@@ -39,6 +46,16 @@ import { buildVaultExportPayload } from '@/services/vaultExportService';
 import { verifyTwoFactorChallenge } from '@/services/twoFactorService';
 import { clearLastOAuthProvider } from '@/services/socialLoginPreferenceService';
 import { invokeAuthedFunction, isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
+import {
+    changeLanguagePreference,
+    getStoredLanguagePreference,
+    isLanguagePreference,
+    languages,
+    resolveSystemLanguage,
+    SYSTEM_LANGUAGE_PREFERENCE,
+    type LanguageCode,
+    type LanguagePreference,
+} from '@/i18n';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
@@ -58,6 +75,10 @@ export function AccountSettings() {
     const [isLoadingDeleteContext, setIsLoadingDeleteContext] = useState(false);
     const [vaultItemCount, setVaultItemCount] = useState(0);
     const [accountTwoFactorEnabled, setAccountTwoFactorEnabled] = useState(false);
+    const [languagePreference, setLanguagePreference] = useState<LanguagePreference>(() => getStoredLanguagePreference());
+
+    const systemLanguage = resolveSystemLanguage();
+    const supportedLanguages = Object.entries(languages) as Array<[LanguageCode, (typeof languages)[LanguageCode]]>;
 
     useEffect(() => {
         if (!showDeleteDialog || !user) {
@@ -102,6 +123,15 @@ export function AccountSettings() {
     const handleLogout = async () => {
         await signOut();
         navigate('/');
+    };
+
+    const handleLanguagePreferenceChange = (value: string) => {
+        if (!isLanguagePreference(value)) {
+            return;
+        }
+
+        setLanguagePreference(value);
+        changeLanguagePreference(value);
     };
 
     const executeDeleteAccount = async (): Promise<boolean> => {
@@ -292,6 +322,46 @@ export function AccountSettings() {
                             {t('settings.account.deleteAccount')}
                         </Button>
                     </div>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <Languages className="w-5 h-5" />
+                        {t('settings.account.language.title')}
+                    </CardTitle>
+                    <CardDescription>
+                        {t('settings.account.language.description')}
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                    <Label htmlFor="account-language">
+                        {t('settings.account.language.label')}
+                    </Label>
+                    <Select
+                        value={languagePreference}
+                        onValueChange={handleLanguagePreferenceChange}
+                    >
+                        <SelectTrigger id="account-language">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value={SYSTEM_LANGUAGE_PREFERENCE}>
+                                {t('settings.account.language.system', {
+                                    language: languages[systemLanguage].name,
+                                })}
+                            </SelectItem>
+                            {supportedLanguages.map(([code, language]) => (
+                                <SelectItem key={code} value={code}>
+                                    {language.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                        {t('settings.account.language.consentHint')}
+                    </p>
                 </CardContent>
             </Card>
 

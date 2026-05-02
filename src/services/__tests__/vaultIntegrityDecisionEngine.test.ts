@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assessVaultIntegritySnapshot,
   buildSnapshotCompletenessContext,
   buildVaultIntegritySnapshot,
   canRebaselineTrustedMutation,
@@ -112,6 +113,110 @@ describe("vaultIntegrityDecisionEngine", () => {
     expect(decision.mode).toBe("scope_incomplete");
     expect(decision.quarantinedItems).toEqual([]);
     expect(decision.debugSafeReason).toBe("snapshot_scope_incomplete");
+  });
+
+  it("accepts a cached snapshot as scope-complete only when its cached completeness was remote-verified", () => {
+    const completeness = buildSnapshotCompletenessContext({
+      source: "cache",
+      snapshot: {
+        userId: "user-1",
+        vaultId: "vault-1",
+        items: [{ id: "item-1" }],
+        categories: [],
+        lastSyncedAt: "2026-04-29T10:00:00.000Z",
+        updatedAt: "2026-04-29T10:00:00.000Z",
+        completeness: {
+          kind: "complete",
+          reason: "remote_page_count_verified",
+          checkedAt: "2026-04-29T10:00:00.000Z",
+          source: "remote",
+          scope: {
+            kind: "private_default_vault",
+            userId: "user-1",
+            vaultId: "vault-1",
+            includesSharedCollections: false,
+          },
+          vault: { defaultVaultResolved: true },
+          items: {
+            loadedCount: 1,
+            totalCount: 1,
+            complete: true,
+            pageSize: 1000,
+          },
+          categories: {
+            loadedCount: 0,
+            totalCount: 0,
+            complete: true,
+            pageSize: 1000,
+          },
+        },
+      } as never,
+    });
+
+    expect(completeness).toEqual({
+      isComplete: true,
+      canVerifyDrift: true,
+    });
+  });
+
+  it("does not create a first offline trust baseline from a non-empty cached snapshot", async () => {
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    const assessment = await assessVaultIntegritySnapshot({
+      userId: "user-without-baseline",
+      activeKey: key,
+      source: "cache",
+      snapshot: {
+        userId: "user-without-baseline",
+        vaultId: "vault-1",
+        items: [{
+          id: "item-1",
+          user_id: "user-without-baseline",
+          vault_id: "vault-1",
+          title: "",
+          website_url: null,
+          icon_url: null,
+          item_type: "password",
+          category_id: null,
+          is_favorite: null,
+          sort_order: null,
+          last_used_at: null,
+          encrypted_data: "ciphertext",
+          created_at: "2026-04-29T10:00:00.000Z",
+          updated_at: "2026-04-29T10:00:00.000Z",
+        }],
+        categories: [],
+        lastSyncedAt: "2026-04-29T10:00:00.000Z",
+        updatedAt: "2026-04-29T10:00:00.000Z",
+        completeness: {
+          kind: "complete",
+          reason: "remote_page_count_verified",
+          checkedAt: "2026-04-29T10:00:00.000Z",
+          source: "remote",
+          scope: {
+            kind: "private_default_vault",
+            userId: "user-without-baseline",
+            vaultId: "vault-1",
+            includesSharedCollections: false,
+          },
+          vault: { defaultVaultResolved: true },
+          items: {
+            loadedCount: 1,
+            totalCount: 1,
+            complete: true,
+            pageSize: 1000,
+          },
+          categories: {
+            loadedCount: 0,
+            totalCount: 0,
+            complete: true,
+            pageSize: 1000,
+          },
+        },
+      },
+    });
+
+    expect(assessment.result.mode).toBe("integrity_unknown");
+    expect(assessment.result.nonTamperReason).toBe("snapshot_source_not_authoritative");
   });
 
   it("reports incompatible baseline versions as migration_required without all-items quarantine", () => {

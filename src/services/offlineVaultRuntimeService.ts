@@ -152,7 +152,9 @@ function safeSnapshotLoadErrorCode(error: unknown): string {
     }
   }
 
-  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  const message = error instanceof Error
+    ? error.message.toLowerCase()
+    : String((error as { message?: unknown })?.message ?? '').toLowerCase();
   if (message.includes('failed to fetch') || message.includes('network') || message.includes('fetch')) {
     return 'network_unavailable';
   }

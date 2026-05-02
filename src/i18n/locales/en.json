@@ -746,7 +746,19 @@
       "revalidationTitle": "Integrity check required",
       "retryCheck": "Check again",
       "recheckFailed": "The integrity check could not be completed.",
-      "recheckUnavailable": "The vault key or snapshot is unavailable. Lock and unlock the vault again."
+      "recheckUnavailable": "The vault key or snapshot is unavailable. Lock and unlock the vault again.",
+      "unlockVerificationFailed": "Vault integrity could not be verified. If you are offline, unlock with a previously fully synchronized local snapshot.",
+      "messages": {
+        "manifest_persist_failed": "The Manifest V2 status could not be saved permanently yet. Another integrity check is required.",
+        "rollback_check_unavailable": "Local rollback protection is currently unavailable. Normal vault access remains locked.",
+        "manifest_snapshot_conflict": "The trusted local snapshot conflicts with the server manifest. Sync again or use recovery.",
+        "snapshot_source_not_authoritative": "No fresh or locally verified snapshot could be checked authoritatively. Check the connection and try again.",
+        "snapshot_completeness_unknown": "The local snapshot does not contain complete verification metadata. A fresh server sync is required.",
+        "revalidation_failed": "The integrity recheck could not confirm the current vault state yet.",
+        "migration_required": "This vault requires an integrity migration. Normal access remains locked until it is complete.",
+        "scope_incomplete": "The current vault snapshot is incomplete. Normal access remains locked until verification is complete.",
+        "default": "The integrity state could not be fully confirmed. Normal vault access remains locked."
+      }
     }
   },
   "generator": {
@@ -822,7 +834,14 @@
       "deleteTotpOnlyHint": "Backup codes cannot authorize account deletion.",
       "deleteBackupCodePlaceholder": "Backup code",
       "deleteUseBackupCode": "Use backup code",
-      "deleteTwoFactorInvalid": "The two-factor code is invalid or expired."
+      "deleteTwoFactorInvalid": "The two-factor code is invalid or expired.",
+      "language": {
+        "title": "Language",
+        "description": "By default, Singra uses the system or browser language. You can override it for this device.",
+        "label": "Display language",
+        "system": "System language ({{language}})",
+        "consentHint": "The selection is only saved permanently when optional cookies and local preferences are allowed."
+      }
     },
     "password": {
       "title": "Change Password",

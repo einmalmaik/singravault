@@ -61,6 +61,7 @@ export function buildSnapshotCompletenessContext(input: {
   const { snapshot, source } = input;
   const completeness = snapshot.completeness;
   const authoritativeSource = source === 'remote'
+    || completeness?.source === 'remote'
     || completeness?.source === 'remote_with_local_overlay';
 
   if (!completeness) {
@@ -160,7 +161,7 @@ export async function assessVaultIntegritySnapshot(input: {
   activeKey: CryptoKey;
   source?: VaultIntegritySnapshotSource;
 }): Promise<VaultIntegrityAssessment> {
-  const inspection = await inspectVaultSnapshotIntegrity(
+  const baseInspection = await inspectVaultSnapshotIntegrity(
     input.userId,
     buildVaultIntegritySnapshot(input.snapshot),
     input.activeKey,
@@ -172,6 +173,17 @@ export async function assessVaultIntegritySnapshot(input: {
       }),
     },
   );
+  const inspection = input.source === 'cache'
+    && baseInspection.baselineKind === 'missing'
+    && (input.snapshot.items.length > 0 || input.snapshot.categories.length > 0)
+    ? {
+      ...baseInspection,
+      nonTamperState: {
+        mode: 'integrity_unknown' as const,
+        reason: 'snapshot_source_not_authoritative' as const,
+      },
+    }
+    : baseInspection;
   const baseResult = toVaultIntegrityVerificationResult(inspection);
 
   if (baseResult.mode === 'blocked') {

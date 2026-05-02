@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     Plus,
@@ -58,34 +59,35 @@ const NON_DECRYPTABLE_INTEGRITY_MODES = new Set<VaultIntegrityMode>([
 ]);
 
 function getIntegrityWarningText(
+    t: TFunction,
     mode: VaultIntegrityMode | 'safe',
     reason?: VaultIntegrityNonTamperReason,
 ): string {
     if (reason === 'manifest_persist_failed') {
-        return 'Der Manifest-V2-Status konnte noch nicht dauerhaft gespeichert werden. Ein erneuter Integritätscheck ist erforderlich.';
+        return t('vault.integrity.messages.manifest_persist_failed');
     }
     if (reason === 'rollback_check_unavailable') {
-        return 'Der lokale Rollback-Schutz ist aktuell nicht verfügbar. Der normale Tresorzugriff bleibt gesperrt.';
+        return t('vault.integrity.messages.rollback_check_unavailable');
     }
     if (reason === 'manifest_snapshot_conflict') {
-        return 'Der lokale vertrauenswürdige Snapshot widerspricht dem Server-Manifest. Bitte synchronisiere oder nutze die Wiederherstellung.';
+        return t('vault.integrity.messages.manifest_snapshot_conflict');
     }
     if (reason === 'snapshot_source_not_authoritative') {
-        return 'Es konnte kein frischer Server-Snapshot autoritativ geprüft werden. Prüfe die Verbindung und versuche es erneut.';
+        return t('vault.integrity.messages.snapshot_source_not_authoritative');
     }
     if (reason === 'snapshot_completeness_unknown') {
-        return 'Der lokale Snapshot enthält keine vollständigen Prüfinformationen. Ein frischer Server-Abgleich ist erforderlich.';
+        return t('vault.integrity.messages.snapshot_completeness_unknown');
     }
     if (reason === 'revalidation_failed') {
-        return 'Die erneute Integritätsprüfung konnte den aktuellen Serverzustand noch nicht bestätigen.';
+        return t('vault.integrity.messages.revalidation_failed');
     }
     if (mode === 'migration_required') {
-        return 'Dieser Tresor benötigt eine Integritätsmigration. Der normale Zugriff bleibt bis zum Abschluss gesperrt.';
+        return t('vault.integrity.messages.migration_required');
     }
     if (mode === 'scope_incomplete') {
-        return 'Der aktuelle Tresor-Snapshot ist unvollständig. Der normale Zugriff bleibt bis zur vollständigen Prüfung gesperrt.';
+        return t('vault.integrity.messages.scope_incomplete');
     }
-    return 'Der Integritätszustand konnte nicht vollständig bestätigt werden. Der normale Tresorzugriff bleibt gesperrt.';
+    return t('vault.integrity.messages.default');
 }
 
 export default function VaultPage() {
@@ -214,6 +216,7 @@ export default function VaultPage() {
                             defaultValue: 'Integritätsprüfung erforderlich',
                         }),
                         description: getIntegrityWarningText(
+                            t,
                             recheckResult.mode,
                             recheckResult.nonTamperReason,
                         ),
@@ -245,6 +248,7 @@ export default function VaultPage() {
                             </h1>
                             <p className="text-sm text-muted-foreground">
                                 {getIntegrityWarningText(
+                                    t,
                                     integrityMode,
                                     lastIntegrityResult?.nonTamperReason,
                                 )}

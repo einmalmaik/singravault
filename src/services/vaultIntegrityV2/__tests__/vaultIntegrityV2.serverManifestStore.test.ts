@@ -10,6 +10,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 
 const { applyVaultMutationWithManifestV2 } = await import('../serverManifestStore');
+const { loadCachedManifestEnvelopeV2 } = await import('../manifestEnvelopeCacheStore');
 
 function envelope(): VaultManifestEnvelopeV2 {
   return {
@@ -72,6 +73,14 @@ describe('Vault Integrity V2 server manifest store', () => {
       p_key_id: 'legacy-kdf-v1',
       p_manifest_envelope: expect.stringMatching(/^sv-vault-manifest-v2:/),
     }));
+    await expect(loadCachedManifestEnvelopeV2({
+      userId: 'user-1',
+      vaultId: 'vault-1',
+    })).resolves.toMatchObject({
+      manifestRevision: 2,
+      manifestHash: 'new-hash',
+      keyId: 'legacy-kdf-v1',
+    });
   });
 
   it('returns CAS conflicts without converting them to quarantine', async () => {

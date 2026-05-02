@@ -11,6 +11,7 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Link, useLocation } from 'react-router-dom';
 import { Shield, Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint, KeyRound, Settings } from 'lucide-react';
 
@@ -26,6 +27,20 @@ import { TwoFactorVerificationModal } from '@/components/auth/TwoFactorVerificat
 import { verifyTwoFactorCode } from '@/services/twoFactorService';
 import { requiresDeviceKey } from '@/services/deviceKeyProtectionPolicy';
 import { buildReturnState } from '@/services/returnNavigationState';
+
+function getVaultUnlockErrorMessage(error: Error, t: TFunction): string {
+    const message = error.message;
+    if (
+        /vault integrity verification failed/i.test(message)
+        || /vault snapshot unavailable/i.test(message)
+        || /integrit/i.test(message)
+        || /baseline/i.test(message)
+    ) {
+        return t('vault.integrity.unlockVerificationFailed');
+    }
+
+    return message || t('auth.unlock.invalidMasterPassword', 'Invalid master password');
+}
 
 export function VaultUnlock() {
     const { t } = useTranslation();
@@ -69,7 +84,7 @@ export function VaultUnlock() {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
-                description: error.message || t('auth.unlock.invalidMasterPassword', 'Invalid master password'),
+                description: getVaultUnlockErrorMessage(error, t),
             });
             setPassword('');
         }

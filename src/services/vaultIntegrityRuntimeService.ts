@@ -1,4 +1,8 @@
-import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
+import {
+  isLikelyOfflineError,
+  saveOfflineSnapshot,
+  type OfflineVaultSnapshot,
+} from '@/services/offlineVaultService';
 import {
   VaultIntegrityBaselineError,
   isNonTamperIntegrityMode,
@@ -21,7 +25,6 @@ import {
   type TrustedVaultMutation,
 } from '@/services/vaultIntegrityDecisionEngine';
 import { loadCurrentVaultIntegritySnapshot } from '@/services/offlineVaultRuntimeService';
-import { isLikelyOfflineError } from '@/services/offlineVaultService';
 import { decryptVaultItem } from '@/services/cryptoService';
 import {
   loadTrustedRecoverySnapshotState,
@@ -356,6 +359,23 @@ export async function persistMissingOrLegacyBaseline(input: {
   }
 }
 
+async function persistVerifiedUnlockSnapshot(input: {
+  snapshot: OfflineVaultSnapshot;
+  source: 'remote' | 'cache' | 'empty';
+}): Promise<void> {
+  if (input.source !== 'remote') {
+    return;
+  }
+
+  try {
+    await saveOfflineSnapshot(input.snapshot);
+  } catch {
+    console.warn('Verified offline vault snapshot could not be stored.', {
+      code: 'offline_snapshot_persist_failed',
+    });
+  }
+}
+
 export async function finalizeVaultUnlockIntegrity(input: {
   userId: string;
   activeKey: CryptoKey;
@@ -403,6 +423,10 @@ export async function finalizeVaultUnlockIntegrity(input: {
         };
       }
       if (v2Result.mode === 'healthy') {
+        await persistVerifiedUnlockSnapshot({
+          snapshot: snapshotBundle.rawSnapshot,
+          source: snapshotBundle.source,
+        });
         callbacks.applyTrustedRecoveryState(
           await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
         );
@@ -466,9 +490,18 @@ export async function finalizeVaultUnlockIntegrity(input: {
           inspection: integrityAssessment.inspection,
           vaultId: snapshotBundle.rawSnapshot.vaultId,
         });
+        await persistVerifiedUnlockSnapshot({
+          snapshot: snapshotBundle.rawSnapshot,
+          source: snapshotBundle.source,
+        });
         callbacks.applyTrustedRecoveryState(
           await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
         );
+      } else if (integrityAssessment.inspection.baselineKind !== 'missing') {
+        await persistVerifiedUnlockSnapshot({
+          snapshot: snapshotBundle.rawSnapshot,
+          source: snapshotBundle.source,
+        });
       }
     } else {
       callbacks.applyTrustedRecoveryState(await loadTrustedRecoverySnapshotState(userId));
