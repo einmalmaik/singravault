@@ -143,7 +143,7 @@ async function handleCompleteDeviceKeyDeactivation(
     }
   }
 
-  const { error } = await supabaseAdmin
+  const { data: updatedProfile, error } = await supabaseAdmin
     .from("profiles")
     .update({
       master_password_verifier: verificationHash,
@@ -155,11 +155,20 @@ async function handleCompleteDeviceKeyDeactivation(
       device_key_backup_acknowledged_at: null,
     })
     .eq("user_id", userId)
-    .eq("vault_protection_mode", "device_key_required");
+    .eq("vault_protection_mode", "device_key_required")
+    .select("user_id, vault_protection_mode")
+    .maybeSingle();
 
   if (error) {
     console.error("Failed to complete Device Key deactivation:", error);
     return new Response(JSON.stringify({ error: "Device Key protection state could not be updated" }), { status: 503, headers });
+  }
+
+  if (!updatedProfile) {
+    return new Response(JSON.stringify({
+      error: "Device Key protection state could not be updated",
+      errorCode: "DEVICE_KEY_STATE_CONFLICT",
+    }), { status: 409, headers });
   }
 
   return new Response(JSON.stringify({ success: true }), { status: 200, headers });

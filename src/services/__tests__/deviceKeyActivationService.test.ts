@@ -40,6 +40,10 @@ const nativeBridgeMocks = vi.hoisted(() => ({
   isNativeDeviceKeyBridgeRuntime: vi.fn(() => true),
 }));
 
+const offlineVaultServiceMocks = vi.hoisted(() => ({
+  saveOfflineCredentials: vi.fn(async () => undefined),
+}));
+
 const supabaseMock = vi.hoisted(() => {
   const profileUpdateChain: Record<string, unknown> = {};
   profileUpdateChain.update = vi.fn(() => profileUpdateChain);
@@ -54,7 +58,7 @@ vi.mock('@/services/cryptoService', () => cryptoMocks);
 vi.mock('@/services/deviceKeyService', () => deviceKeyServiceMocks);
 vi.mock('@/services/deviceKeyNativeBridge', () => nativeBridgeMocks);
 vi.mock('@/platform/localSecretStore', () => ({ isLocalSecretStoreSupported: vi.fn(async () => true) }));
-vi.mock('@/services/offlineVaultService', () => ({ saveOfflineCredentials: vi.fn(async () => undefined) }));
+vi.mock('@/services/offlineVaultService', () => offlineVaultServiceMocks);
 vi.mock('@/integrations/supabase/client', () => ({ supabase: supabaseMock }));
 
 describe('deviceKeyActivationService', () => {
@@ -69,6 +73,7 @@ describe('deviceKeyActivationService', () => {
       userKey: { kind: 'recovered-user-key' },
     });
     cryptoMocks.verifyKey.mockResolvedValue(true);
+    offlineVaultServiceMocks.saveOfflineCredentials.mockResolvedValue(undefined);
   });
 
   it('provisions and validates a native Device Key before marking the vault protected', async () => {
@@ -121,6 +126,34 @@ describe('deviceKeyActivationService', () => {
     expect(deviceKeyServiceMocks.deleteDeviceKey).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001');
     expect(supabaseMock._profileUpdateChain.update).not.toHaveBeenCalled();
     expect(result.state).toBeUndefined();
+  });
+
+  it('keeps the native Device Key when offline credential persistence fails after profile commit', async () => {
+    const { activateDeviceKeyProtection } = await import('../deviceKeyActivationService');
+    offlineVaultServiceMocks.saveOfflineCredentials.mockRejectedValue(new Error('IndexedDB unavailable'));
+
+    const result = await activateDeviceKeyProtection({
+      userId: '00000000-0000-4000-8000-000000000001',
+      masterPassword: 'not-logged',
+      salt: 'salt',
+      kdfVersion: 2,
+      encryptionKey: { kind: 'current-key' } as CryptoKey,
+      encryptedUserKey: 'old-encrypted-user-key',
+      verificationHash: 'current-verifier',
+      currentDeviceKey: null,
+    });
+
+    expect(result.error).toBeNull();
+    expect(supabaseMock._profileUpdateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      vault_protection_mode: 'device_key_required',
+      encrypted_user_key: 'new-encrypted-user-key',
+    }));
+    expect(offlineVaultServiceMocks.saveOfflineCredentials).toHaveBeenCalled();
+    expect(deviceKeyServiceMocks.deleteDeviceKey).not.toHaveBeenCalled();
+    expect(result.state).toMatchObject({
+      deviceKeyActive: true,
+      vaultProtectionMode: 'device_key_required',
+    });
   });
 
   it('tries older KDF versions when the stored UserKey wrapper metadata is stale', async () => {

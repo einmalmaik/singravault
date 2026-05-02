@@ -95,7 +95,16 @@ export async function verifyVaultManifestV2(input: {
       encodeAadV2(envelope.aad),
     );
     const manifest = JSON.parse(plaintext) as VaultManifestV2;
-    if (!isValidManifest(manifest) || !verifyVaultManifestAadV2(envelope.aad, manifest, envelope.keyId)) {
+    if (
+      !isValidManifest(manifest)
+      || !isVaultManifestContextBoundToExpectedInput({
+        envelope,
+        manifest,
+        expectedVaultId: input.expectedVaultId,
+        expectedUserId: input.expectedUserId,
+        expectedKeyId: input.expectedKeyId,
+      })
+    ) {
       return {
         ok: false,
         reason: 'manifest_invalid',
@@ -111,6 +120,30 @@ export async function verifyVaultManifestV2(input: {
       diagnostics: [{ code: 'manifest_auth_failed', message: 'Manifest AEAD authentication failed.' }],
     };
   }
+}
+
+function isVaultManifestContextBoundToExpectedInput(input: {
+  envelope: VaultManifestEnvelopeV2;
+  manifest: VaultManifestV2;
+  expectedVaultId: string;
+  expectedUserId: string;
+  expectedKeyId?: string;
+}): boolean {
+  const expectedKeyId = input.expectedKeyId ?? input.envelope.keyId;
+
+  return input.manifest.vaultId === input.expectedVaultId
+    && input.manifest.userId === input.expectedUserId
+    && input.envelope.keyId === expectedKeyId
+    && input.envelope.manifestRevision === input.manifest.manifestRevision
+    && verifyVaultManifestAadV2(
+      input.envelope.aad,
+      {
+        vaultId: input.expectedVaultId,
+        userId: input.expectedUserId,
+        manifestRevision: input.manifest.manifestRevision,
+      },
+      expectedKeyId,
+    );
 }
 
 export function serializeVaultManifestEnvelopeV2(envelope: VaultManifestEnvelopeV2): string {

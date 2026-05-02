@@ -293,6 +293,9 @@ describe("security hardening contracts", () => {
     expect(auth2fa).toContain('getTwoFactorRequirementServer(supabaseAdmin, userId, "vault_unlock")');
     expect(auth2fa).toContain('method: "totp"');
     expect(auth2fa).toContain('.eq("vault_protection_mode", "device_key_required")');
+    expect(auth2fa).toContain('.select("user_id, vault_protection_mode")');
+    expect(auth2fa).toContain(".maybeSingle()");
+    expect(auth2fa).toContain("DEVICE_KEY_STATE_CONFLICT");
     expect(auth2fa).not.toMatch(/confirmationWord[\s\S]{0,120}\.toLowerCase\(/);
 
     expect(deactivationService).toContain("complete-device-key-deactivation");

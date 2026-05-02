@@ -245,6 +245,25 @@ describe('Vault Integrity V2 crypto and manifest verification', () => {
     })).resolves.toMatchObject({ ok: false, reason: 'manifest_auth_failed' });
   });
 
+  it('rejects relabeled Manifest V2 envelopes whose authenticated context belongs to another vault', async () => {
+    const key = await testKey();
+    const categories = [makeCategory()];
+    const items = [await makeItem(key)];
+    const { envelope } = await makeManifest(key, items, categories);
+
+    await expect(verifyVaultManifestV2({
+      envelope: {
+        ...envelope,
+        vaultId: 'vault-other',
+        userId: 'user-other',
+      },
+      key,
+      expectedUserId: 'user-other',
+      expectedVaultId: 'vault-other',
+      expectedKeyId: KEY_ID,
+    })).resolves.toMatchObject({ ok: false, reason: 'manifest_invalid' });
+  });
+
   it('detects Manifest V2 rollback against the local high-water mark', async () => {
     const key = await testKey();
     const categories = [makeCategory()];

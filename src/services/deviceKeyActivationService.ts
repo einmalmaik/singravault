@@ -94,6 +94,7 @@ async function activateNativeDeviceKeyProtection(
 ): Promise<DeviceKeyActivationResult> {
   const { userId, masterPassword, salt, kdfVersion, encryptionKey, encryptedUserKey } = input;
   let nativeDeviceKeyStored = false;
+  let profileStatePersisted = false;
   const targetKdfVersion = Math.max(kdfVersion, CURRENT_KDF_VERSION);
 
   try {
@@ -143,7 +144,8 @@ async function activateNativeDeviceKeyProtection(
       newVerifier,
       newEncryptedUserKey,
     });
-    await saveOfflineCredentials(
+    profileStatePersisted = true;
+    await saveOfflineCredentialsAfterDeviceKeyCommit(
       userId,
       salt,
       newVerifier,
@@ -166,7 +168,7 @@ async function activateNativeDeviceKeyProtection(
       },
     };
   } catch (error) {
-    if (nativeDeviceKeyStored) {
+    if (nativeDeviceKeyStored && !profileStatePersisted) {
       try {
         await deleteDeviceKey(userId);
       } catch {
@@ -235,7 +237,7 @@ async function activateBrowserDeviceKeyProtection(
       throw error;
     }
 
-    await saveOfflineCredentials(
+    await saveOfflineCredentialsAfterDeviceKeyCommit(
       userId,
       salt,
       newVerifier,
@@ -279,7 +281,7 @@ async function activateBrowserDeviceKeyProtection(
     newVerifier,
     newEncryptedUserKey: null,
   });
-  await saveOfflineCredentials(
+  await saveOfflineCredentialsAfterDeviceKeyCommit(
     userId,
     salt,
     newVerifier,
@@ -446,6 +448,31 @@ async function persistDeviceKeyProfileState(input: {
 
   if (error) {
     throw new Error(`Failed to update profile: ${error.message}`);
+  }
+}
+
+async function saveOfflineCredentialsAfterDeviceKeyCommit(
+  userId: string,
+  salt: string,
+  verificationHash: string,
+  kdfVersion: number,
+  encryptedUserKey: string | null,
+  vaultProtectionMode: VaultProtectionMode,
+): Promise<void> {
+  try {
+    await saveOfflineCredentials(
+      userId,
+      salt,
+      verificationHash,
+      kdfVersion,
+      encryptedUserKey,
+      vaultProtectionMode,
+    );
+  } catch {
+    console.warn(
+      'Device Key profile state was updated, but offline credential cache persistence failed. '
+      + 'Offline unlock will retry after the next successful credential refresh.',
+    );
   }
 }
 
