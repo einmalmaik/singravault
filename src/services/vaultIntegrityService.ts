@@ -42,12 +42,16 @@ export type VaultIntegrityBlockedReason =
   | 'snapshot_malformed'
   | 'vault_key_unavailable'
   | 'device_key_required'
+  | 'manifest_rollback_detected'
   | 'unknown_integrity_failure';
 export type VaultIntegrityNonTamperReason =
   | 'snapshot_completeness_unknown'
   | 'snapshot_scope_incomplete'
   | 'snapshot_source_not_authoritative'
   | 'revalidation_failed'
+  | 'manifest_persist_failed'
+  | 'rollback_check_unavailable'
+  | 'manifest_snapshot_conflict'
   | 'baseline_schema_incompatible'
   | 'baseline_canonicalization_incompatible';
 export type VaultIntegrityItemIssueReason =

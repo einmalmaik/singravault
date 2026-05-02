@@ -1,6 +1,7 @@
 import {
   isNonTamperIntegrityMode,
   type QuarantinedVaultItem,
+  type VaultIntegrityMode,
   type VaultIntegrityVerificationResult,
 } from './vaultIntegrityService';
 
@@ -10,7 +11,16 @@ export interface VaultQuarantineSummary {
 }
 
 function isActiveItemQuarantine(item: QuarantinedVaultItem): boolean {
-  return item.reason === 'ciphertext_changed';
+  return new Set<string>([
+    'ciphertext_changed',
+    'aead_auth_failed',
+    'item_envelope_malformed',
+    'item_aad_mismatch',
+    'item_manifest_hash_mismatch',
+    'item_revision_replay',
+    'item_key_id_mismatch',
+    'duplicate_active_item_record',
+  ]).has(item.reason);
 }
 
 export function buildVaultQuarantineSummary(
@@ -121,11 +131,31 @@ export function buildDisplayedIntegrityResult(
 }
 
 export function assertItemDecryptable(
-  quarantinedItems: QuarantinedVaultItem[],
-  itemId: string,
+  input: {
+    mode: VaultIntegrityMode | 'safe' | string;
+    quarantinedItems: QuarantinedVaultItem[];
+    itemId: string;
+  },
 ): void {
-  const quarantineSummary = buildVaultQuarantineSummary(quarantinedItems, [itemId]);
-  if (!quarantineSummary.decryptableItemIds.includes(itemId)) {
-    throw new Error('Vault item is quarantined and will not be decrypted.');
+  if (input.mode !== 'healthy' && input.mode !== 'quarantine') {
+    throw new VaultIntegrityDecryptBlockedError(input.mode);
+  }
+
+  if (input.mode === 'quarantine' || input.quarantinedItems.length > 0) {
+    const quarantineSummary = buildVaultQuarantineSummary(input.quarantinedItems, [input.itemId]);
+    if (!quarantineSummary.decryptableItemIds.includes(input.itemId)) {
+      throw new Error('Vault item is quarantined and will not be decrypted.');
+    }
+  }
+}
+
+export class VaultIntegrityDecryptBlockedError extends Error {
+  readonly code = 'vault_integrity_decrypt_blocked';
+  readonly mode: string;
+
+  constructor(mode: string) {
+    super('Vault item decrypt is blocked until vault integrity is trusted.');
+    this.name = 'VaultIntegrityDecryptBlockedError';
+    this.mode = mode;
   }
 }

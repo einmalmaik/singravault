@@ -1,5 +1,6 @@
 import type { VaultItemData } from '@/services/cryptoService';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
+import { VaultIntegrityDecryptBlockedError } from '@/services/vaultQuarantineOrchestrator';
 
 type ExportableVaultItemRow = {
   id: string;
@@ -54,7 +55,10 @@ export async function buildVaultExportPayload(
           updated_at: item.updated_at ?? null,
           data: decrypted,
         };
-      } catch {
+      } catch (error) {
+        if (error instanceof VaultIntegrityDecryptBlockedError) {
+          throw error;
+        }
         return null;
       }
     }),

@@ -30,7 +30,10 @@ import {
 import {
   evaluateRuntimeVaultIntegrityV2,
   persistRuntimeManifestV2ForTrustedSnapshot,
+  retryPendingRuntimeManifestV2ForSnapshot,
+  safeManifestPersistErrorCode,
 } from '@/services/vaultIntegrityV2/runtimeBridge';
+import { saveManifestPersistRetryRecord } from '@/services/vaultIntegrityV2/manifestPersistRetryStore';
 import { parseVaultItemEnvelopeV2 } from '@/services/vaultIntegrityV2/itemEnvelopeCrypto';
 
 export interface VaultIntegrityRuntimeCallbacks {
@@ -107,6 +110,105 @@ function buildCrossDeviceRevalidationResult(
     nonTamperReason: 'revalidation_failed',
     quarantinedItems: [],
   };
+}
+
+function buildManifestPersistFailedResult(input: {
+  snapshot: OfflineVaultSnapshot;
+  snapshotDigest: string;
+  itemCount: number;
+  categoryCount: number;
+}): VaultIntegrityVerificationResult {
+  return {
+    valid: false,
+    isFirstCheck: false,
+    computedRoot: input.snapshotDigest,
+    storedRoot: input.snapshotDigest,
+    itemCount: input.itemCount,
+    categoryCount: input.categoryCount,
+    mode: 'revalidation_failed',
+    nonTamperReason: 'manifest_persist_failed',
+    quarantinedItems: [],
+  };
+}
+
+async function persistRuntimeManifestV2ForHealthyPublish(input: {
+  userId: string;
+  snapshot: OfflineVaultSnapshot;
+  vaultKey: CryptoKey;
+  encryptedUserKey?: string | null;
+  trustedMutation?: TrustedVaultMutation;
+  snapshotDigest: string;
+  itemCount: number;
+  categoryCount: number;
+}): Promise<
+  | { ok: true; status: 'persisted' | 'skipped_legacy_items' | 'skipped_missing_vault' }
+  | { ok: false; result: VaultIntegrityVerificationResult }
+> {
+  try {
+    const status = await persistRuntimeManifestV2ForTrustedSnapshot({
+      userId: input.userId,
+      snapshot: input.snapshot,
+      vaultKey: input.vaultKey,
+      encryptedUserKey: input.encryptedUserKey,
+      trustedMutation: input.trustedMutation,
+    });
+    return { ok: true, status };
+  } catch (error) {
+    const errorCode = safeManifestPersistErrorCode(error);
+    if (input.snapshot.vaultId) {
+      try {
+        await saveManifestPersistRetryRecord({
+          userId: input.userId,
+          vaultId: input.snapshot.vaultId,
+          snapshotDigest: input.snapshotDigest,
+          lastErrorCode: errorCode,
+        });
+      } catch {
+        console.warn('Manifest V2 persist retry state could not be stored.', {
+          code: 'manifest_retry_store_unavailable',
+        });
+      }
+    }
+    console.warn('Manifest V2 persist failed after trusted integrity refresh.', { code: errorCode });
+    return {
+      ok: false,
+      result: buildManifestPersistFailedResult(input),
+    };
+  }
+}
+
+async function surfacePendingManifestRetryFailure(input: {
+  userId: string;
+  snapshot: OfflineVaultSnapshot;
+  activeKey: CryptoKey;
+  encryptedUserKey?: string | null;
+  trustedMutation?: TrustedVaultMutation;
+  digest: string;
+}): Promise<VaultIntegrityVerificationResult | null> {
+  const retryResult = await retryPendingRuntimeManifestV2ForSnapshot({
+    userId: input.userId,
+    snapshot: input.snapshot,
+    vaultKey: input.activeKey,
+    encryptedUserKey: input.encryptedUserKey,
+    trustedMutation: input.trustedMutation,
+    snapshotDigest: input.digest,
+  });
+
+  if (
+    retryResult.status !== 'failed'
+    && retryResult.status !== 'store_unavailable'
+    && retryResult.status !== 'snapshot_digest_unavailable'
+    && retryResult.status !== 'snapshot_mismatch'
+  ) {
+    return null;
+  }
+
+  return buildManifestPersistFailedResult({
+    snapshot: input.snapshot,
+    snapshotDigest: input.digest,
+    itemCount: input.snapshot.items.length,
+    categoryCount: input.snapshot.categories.length,
+  });
 }
 
 export async function persistMissingOrLegacyBaseline(input: {
@@ -270,6 +372,20 @@ export async function refreshVaultIntegrityBaseline(input: {
     activeKey: encryptionKey,
     source: snapshotBundle.source,
   });
+  const pendingManifestFailure = await surfacePendingManifestRetryFailure({
+    userId,
+    snapshot: snapshotBundle.rawSnapshot,
+    activeKey: encryptionKey,
+    encryptedUserKey: input.encryptedUserKey,
+    trustedMutation: normalizedTrustedMutation,
+    digest: integrityAssessment.inspection.digest,
+  });
+  if (pendingManifestFailure) {
+    callbacks.applyIntegrityResultState(pendingManifestFailure);
+    callbacks.applyTrustedRecoveryState(await loadTrustedRecoverySnapshotState(userId));
+    callbacks.bumpVaultDataVersion();
+    return;
+  }
   const integrityResult = integrityAssessment.result;
   if (shouldDowngradeCrossDeviceV2BaselineDrift({
     assessment: integrityAssessment,
@@ -326,13 +442,21 @@ export async function refreshVaultIntegrityBaseline(input: {
         callbacks.applyTrustedRecoveryState(
           await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
         );
-        await persistRuntimeManifestV2ForTrustedSnapshot({
+        const manifestPersist = await persistRuntimeManifestV2ForHealthyPublish({
           userId,
           snapshot: snapshotBundle.rawSnapshot,
           vaultKey: encryptionKey,
           encryptedUserKey: input.encryptedUserKey,
           trustedMutation: normalizedTrustedMutation,
-        }).catch(() => undefined);
+          snapshotDigest: selectiveDigest,
+          itemCount: snapshotBundle.integritySnapshot.items.length,
+          categoryCount: snapshotBundle.integritySnapshot.categories.length,
+        });
+        if (!manifestPersist.ok) {
+          callbacks.applyIntegrityResultState(manifestPersist.result);
+          callbacks.bumpVaultDataVersion();
+          return;
+        }
         callbacks.applyIntegrityResultState({
           valid: true,
           isFirstCheck: false,
@@ -385,13 +509,21 @@ export async function refreshVaultIntegrityBaseline(input: {
   callbacks.applyTrustedRecoveryState(
     await persistTrustedRecoverySnapshot(snapshotBundle.rawSnapshot),
   );
-  await persistRuntimeManifestV2ForTrustedSnapshot({
+  const manifestPersist = await persistRuntimeManifestV2ForHealthyPublish({
     userId,
     snapshot: snapshotBundle.rawSnapshot,
     vaultKey: encryptionKey,
     encryptedUserKey: input.encryptedUserKey,
     trustedMutation: normalizedTrustedMutation,
-  }).catch(() => undefined);
+    snapshotDigest: digest,
+    itemCount: snapshotBundle.integritySnapshot.items.length,
+    categoryCount: snapshotBundle.integritySnapshot.categories.length,
+  });
+  if (!manifestPersist.ok) {
+    callbacks.applyIntegrityResultState(manifestPersist.result);
+    callbacks.bumpVaultDataVersion();
+    return;
+  }
   callbacks.applyIntegrityResultState({
     valid: true,
     isFirstCheck: false,
@@ -525,8 +657,10 @@ export async function verifyVaultIntegrity(input: {
   } catch (error) {
     if (!(error instanceof VaultIntegrityBaselineError)) {
       const level = isLikelyOfflineError(error) ? 'warn' : 'error';
-      console[level]('Vault integrity revalidation failed without changing integrity state:', error);
-      return {
+      console[level]('Vault integrity revalidation failed.', {
+        code: safeManifestPersistErrorCode(error),
+      });
+      const failureResult: VaultIntegrityVerificationResult = {
         valid: false,
         isFirstCheck: false,
         computedRoot: '',
@@ -536,9 +670,11 @@ export async function verifyVaultIntegrity(input: {
         nonTamperReason: 'revalidation_failed',
         quarantinedItems: [],
       };
+      callbacks.applyIntegrityResultState(failureResult);
+      return failureResult;
     }
 
-    console.error('Vault integrity verification error:', error);
+    console.error('Vault integrity verification error.', { code: 'baseline_unreadable' });
     const blockedReason: VaultIntegrityBlockedReason = 'baseline_unreadable';
     const failureResult: VaultIntegrityVerificationResult = {
       valid: false,

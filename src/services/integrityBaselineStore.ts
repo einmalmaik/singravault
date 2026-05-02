@@ -4,9 +4,11 @@ interface IntegrityBaselineEnvelope {
   updatedAt: string;
 }
 
-const DB_NAME = 'singra-vault-integrity';
-const DB_VERSION = 1;
-const BASELINES_STORE = 'baselines';
+export const INTEGRITY_DB_NAME = 'singra-vault-integrity';
+export const INTEGRITY_DB_VERSION = 2;
+export const INTEGRITY_BASELINES_STORE = 'baselines';
+export const MANIFEST_HIGH_WATER_MARKS_STORE = 'manifest-high-water-marks';
+export const MANIFEST_PERSIST_RETRY_STORE = 'manifest-persist-retry';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -24,23 +26,37 @@ function openDb(): Promise<IDBDatabase> {
   }
 
   dbPromise = new Promise((resolve, reject) => {
-    const request = ensureIndexedDb().open(DB_NAME, DB_VERSION);
+    const request = ensureIndexedDb().open(INTEGRITY_DB_NAME, INTEGRITY_DB_VERSION);
 
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(BASELINES_STORE)) {
-        db.createObjectStore(BASELINES_STORE, { keyPath: 'userId' });
+      if (!db.objectStoreNames.contains(INTEGRITY_BASELINES_STORE)) {
+        db.createObjectStore(INTEGRITY_BASELINES_STORE, { keyPath: 'userId' });
+      }
+      if (!db.objectStoreNames.contains(MANIFEST_HIGH_WATER_MARKS_STORE)) {
+        db.createObjectStore(MANIFEST_HIGH_WATER_MARKS_STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(MANIFEST_PERSIST_RETRY_STORE)) {
+        db.createObjectStore(MANIFEST_PERSIST_RETRY_STORE, { keyPath: 'key' });
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
     request.onerror = () => reject(request.error);
   });
 
   return dbPromise;
 }
 
-function withStore<T>(
+export function withIntegrityObjectStore<T>(
+  storeName: string,
   mode: IDBTransactionMode,
   handler: (
     store: IDBObjectStore,
@@ -51,12 +67,23 @@ function withStore<T>(
   return new Promise((resolve, reject) => {
     openDb()
       .then((db) => {
-        const transaction = db.transaction(BASELINES_STORE, mode);
-        const store = transaction.objectStore(BASELINES_STORE);
+        const transaction = db.transaction(storeName, mode);
+        const store = transaction.objectStore(storeName);
         handler(store, resolve, reject);
       })
       .catch(reject);
   });
+}
+
+function withStore<T>(
+  mode: IDBTransactionMode,
+  handler: (
+    store: IDBObjectStore,
+    resolve: (value: T) => void,
+    reject: (reason?: unknown) => void,
+  ) => void,
+): Promise<T> {
+  return withIntegrityObjectStore(INTEGRITY_BASELINES_STORE, mode, handler);
 }
 
 export async function loadIntegrityBaselineEnvelope(userId: string): Promise<string | null> {

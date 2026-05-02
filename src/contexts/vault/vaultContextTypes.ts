@@ -46,6 +46,11 @@ export interface VaultContextType {
         encryptedData: string,
         entryId: string,
     ) => Promise<{ data: VaultItemData; legacyEnvelopeUsed: boolean; legacyNoAadFallbackUsed: boolean }>;
+    decryptTrustedRecoverySnapshotItem: (
+        item: OfflineVaultSnapshot['items'][number],
+        snapshotId: string,
+        vaultId: string,
+    ) => Promise<VaultItemData>;
     autoLockTimeout: number;
     setAutoLockTimeout: (timeout: number) => void;
     verifyIntegrity: (

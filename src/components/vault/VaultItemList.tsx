@@ -39,6 +39,7 @@ import {
   migrateLegacyVaultItemMetadata,
 } from '@/services/legacyVaultMetadataMigrationService';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
+import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
 import { VaultItemCard } from './VaultItemCard';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
@@ -86,6 +87,33 @@ interface BulkRestoreProgress {
   failed: number;
   currentItemId: string | null;
   lastError: string | null;
+}
+
+function canDecryptFromIntegrityResult(
+  result: { mode?: string; quarantinedItems: QuarantinedVaultItem[] } | null | undefined,
+  itemId: string,
+): boolean {
+  if (!result?.mode) {
+    return false;
+  }
+
+  if (
+    result.mode === 'quarantine'
+    && result.quarantinedItems.some((item) => item.id === itemId)
+  ) {
+    return false;
+  }
+
+  try {
+    assertItemDecryptable({
+      mode: result.mode,
+      quarantinedItems: result.quarantinedItems,
+      itemId,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
@@ -267,7 +295,8 @@ export function VaultItemList({
       try {
         const { snapshot, source } = await loadVaultSnapshot(userId);
         const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
-        if (integrityResult?.mode === 'blocked') {
+        const allowsAnyDecrypt = integrityResult?.mode === 'healthy' || integrityResult?.mode === 'quarantine';
+        if (!allowsAnyDecrypt) {
           setItems([]);
         } else {
           const canPersistMigrations = integrityResult?.mode === 'healthy'
@@ -295,6 +324,10 @@ export function VaultItemList({
             vaultItems,
             DECRYPT_BATCH_SIZE,
             async (item) => {
+              if (!canDecryptFromIntegrityResult(integrityResult, item.id)) {
+                return { ...item, decryptedData: undefined };
+              }
+
               const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
               if (cachedFailedPayload === item.encrypted_data) {
                 return { ...item, decryptedData: undefined };

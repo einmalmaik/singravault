@@ -12,13 +12,16 @@ import { loadVaultSnapshot } from '@/services/offlineVaultService';
 
 type SnapshotItem = {
   id: string;
+  user_id: string;
   vault_id: string;
   title: string;
   website_url: string | null;
   icon_url: string | null;
-  item_type: 'password' | 'note' | 'totp' | 'card';
+  item_type: 'password' | 'note' | 'totp';
   is_favorite: boolean;
   category_id: string | null;
+  sort_order: number;
+  last_used_at: string;
   created_at: string;
   updated_at: string;
   encrypted_data: string;
@@ -82,7 +85,7 @@ const mockVaultContext = {
   lastIntegrityResult: null as
     | null
     | {
-        mode?: 'healthy' | 'quarantine' | 'blocked';
+        mode?: 'healthy' | 'quarantine' | 'blocked' | 'revalidation_failed' | 'integrity_unknown';
         quarantinedItems: Array<{
           id: string;
           reason: 'ciphertext_changed' | 'missing_on_server' | 'unknown_on_server' | 'decrypt_failed';
@@ -107,9 +110,12 @@ vi.mock('@/services/offlineVaultService', () => ({
   loadVaultSnapshot: vi.fn().mockImplementation(async () => ({
     source: snapshotState.source,
     snapshot: {
+      userId: 'user-1',
       vaultId: 'vault-1',
       categories: [],
       items: snapshotState.items,
+      lastSyncedAt: '2026-02-18T10:00:00.000Z',
+      updatedAt: '2026-02-18T10:00:00.000Z',
     },
   })),
   isAppOnline: vi.fn().mockImplementation(() => snapshotState.online),
@@ -141,6 +147,7 @@ vi.mock('@/components/vault/VaultQuarantinedItemCard', () => ({
 
 const itemOk: SnapshotItem = {
   id: 'item-ok',
+  user_id: 'user-1',
   vault_id: 'vault-1',
   title: 'Encrypted Item',
   website_url: null,
@@ -148,6 +155,8 @@ const itemOk: SnapshotItem = {
   item_type: 'password',
   is_favorite: false,
   category_id: null,
+  sort_order: 0,
+  last_used_at: '2026-02-18T10:00:00.000Z',
   created_at: '2026-02-18T10:00:00.000Z',
   updated_at: '2026-02-18T10:00:00.000Z',
   encrypted_data: 'cipher-ok',
@@ -155,6 +164,7 @@ const itemOk: SnapshotItem = {
 
 const itemBad: SnapshotItem = {
   id: 'item-bad',
+  user_id: 'user-1',
   vault_id: 'vault-1',
   title: 'Encrypted Item',
   website_url: null,
@@ -162,6 +172,8 @@ const itemBad: SnapshotItem = {
   item_type: 'password',
   is_favorite: false,
   category_id: null,
+  sort_order: 0,
+  last_used_at: '2026-02-18T09:00:00.000Z',
   created_at: '2026-02-18T10:00:00.000Z',
   updated_at: '2026-02-18T09:00:00.000Z',
   encrypted_data: 'cipher-bad',
@@ -173,6 +185,18 @@ const itemBadTotp: SnapshotItem = {
   item_type: 'totp',
   encrypted_data: 'cipher-bad-totp',
 };
+
+function renderList() {
+  return render(
+    <VaultItemList
+      searchQuery=""
+      filter="all"
+      categoryId={null}
+      viewMode="grid"
+      onEditItem={vi.fn()}
+    />,
+  );
+}
 
 describe.sequential('VaultItemList', () => {
   afterEach(() => {
@@ -206,7 +230,12 @@ describe.sequential('VaultItemList', () => {
       migrated: true,
     }));
     mockRefreshIntegrityBaseline.mockResolvedValue(undefined);
-    mockVerifyIntegrity.mockResolvedValue(null);
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'healthy',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+
     mockReportUnreadableItems.mockClear();
     mockDecryptItem.mockImplementation(async (cipher: string) => {
       if (cipher.startsWith('cipher-bad')) {
@@ -254,12 +283,118 @@ describe.sequential('VaultItemList', () => {
     });
 
     expect(screen.queryByText('1 betroffene Einträge wurden zusammengefasst.')).not.toBeInTheDocument();
-    expect(mockReportUnreadableItems).toHaveBeenCalledWith([
-      expect.objectContaining({
-        id: 'item-bad',
-        reason: 'decrypt_failed',
-      }),
-    ]);
+    expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
+  });
+
+  it('does not decrypt when fresh integrity result is revalidation_failed even if previous context was healthy', async () => {
+    mockVaultContext.lastIntegrityResult = {
+      mode: 'healthy',
+      quarantinedItems: [],
+    };
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'revalidation_failed',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+
+    renderList();
+
+    await waitFor(() => {
+      expect(mockVerifyIntegrity).toHaveBeenCalled();
+    });
+    expect(mockDecryptItem).not.toHaveBeenCalled();
+    expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).not.toHaveBeenCalled();
+  });
+
+  it('does not decrypt when fresh integrity result is integrity_unknown even if previous context was healthy', async () => {
+    mockVaultContext.lastIntegrityResult = {
+      mode: 'healthy',
+      quarantinedItems: [],
+    };
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'integrity_unknown',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+
+    renderList();
+
+    await waitFor(() => {
+      expect(mockVerifyIntegrity).toHaveBeenCalled();
+    });
+    expect(mockDecryptItem).not.toHaveBeenCalled();
+    expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).not.toHaveBeenCalled();
+  });
+
+  it('does not decrypt an item from the freshly returned quarantine result', async () => {
+    mockVaultContext.lastIntegrityResult = {
+      mode: 'healthy',
+      quarantinedItems: [],
+    };
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'quarantine',
+      quarantinedItems: [{ id: 'item-ok', reason: 'ciphertext_changed', updatedAt: null }],
+      isFirstCheck: false,
+    });
+
+    renderList();
+
+    await waitFor(() => {
+      expect(mockVerifyIntegrity).toHaveBeenCalled();
+    });
+    expect(mockDecryptItem).not.toHaveBeenCalledWith('cipher-ok', 'item-ok');
+  });
+
+  it('decrypts only non-quarantined items from the freshly returned quarantine result', async () => {
+    mockVaultContext.lastIntegrityResult = {
+      mode: 'healthy',
+      quarantinedItems: [],
+    };
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'quarantine',
+      quarantinedItems: [{ id: 'item-bad', reason: 'ciphertext_changed', updatedAt: null }],
+      isFirstCheck: false,
+    });
+
+    renderList();
+
+    await waitFor(() => {
+      expect(mockDecryptItem).toHaveBeenCalledWith('cipher-ok', 'item-ok');
+    });
+    expect(mockDecryptItem).not.toHaveBeenCalledWith('cipher-bad', 'item-bad');
+  });
+
+  it('continues to decrypt normally when fresh integrity result is healthy', async () => {
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'healthy',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+
+    renderList();
+
+    await waitFor(() => {
+      expect(mockDecryptItem).toHaveBeenCalledWith('cipher-ok', 'item-ok');
+    });
+  });
+
+  it('fails closed for unknown fresh integrity modes', async () => {
+    mockVaultContext.lastIntegrityResult = {
+      mode: 'healthy',
+      quarantinedItems: [],
+    };
+    mockVerifyIntegrity.mockResolvedValue({
+      mode: 'future_mode',
+      quarantinedItems: [],
+      isFirstCheck: false,
+    });
+
+    renderList();
+
+    await waitFor(() => {
+      expect(mockVerifyIntegrity).toHaveBeenCalled();
+    });
+    expect(mockDecryptItem).not.toHaveBeenCalled();
   });
 
   it('groups two mixed-type tampered items only in the all-items quarantine summary', async () => {
@@ -507,9 +642,12 @@ describe.sequential('VaultItemList', () => {
       resolveBackgroundLoad({
         source: 'remote',
         snapshot: {
+          userId: 'user-1',
           vaultId: 'vault-1',
           categories: [],
           items: [itemOk],
+          lastSyncedAt: '2026-02-18T10:00:00.000Z',
+          updatedAt: '2026-02-18T10:00:00.000Z',
         },
       });
     });
@@ -553,7 +691,7 @@ describe.sequential('VaultItemList', () => {
       expect.objectContaining({
         userId: 'user-1',
         vaultId: 'vault-1',
-        item: itemBad,
+        item: expect.objectContaining({ id: itemBad.id }),
       }),
     );
     expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
@@ -599,7 +737,7 @@ describe.sequential('VaultItemList', () => {
     expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
   });
 
-  it('migrates legacy no-AAD items from runtime decrypt-failed quarantine', async () => {
+  it('does not migrate items from runtime decrypt-failed quarantine', async () => {
     snapshotState.online = true;
     snapshotState.source = 'remote';
     snapshotState.items = [itemBad];
@@ -642,22 +780,12 @@ describe.sequential('VaultItemList', () => {
     );
 
     await waitFor(() => {
-      expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).toHaveBeenCalled();
+      expect(mockVerifyIntegrity).toHaveBeenCalled();
     });
-
-    expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 'user-1',
-        vaultId: 'vault-1',
-        item: itemBad,
-      }),
-    );
+    expect(mockDecryptItem).not.toHaveBeenCalledWith('cipher-bad', 'item-bad');
+    expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).not.toHaveBeenCalled();
     expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
-    expect(mockRefreshIntegrityBaseline).toHaveBeenCalledWith(
-      expect.objectContaining({
-        itemIds: expect.any(Set),
-      }),
-    );
+    expect(mockRefreshIntegrityBaseline).not.toHaveBeenCalled();
   });
 
   it('replays exactly one fetch when refresh changes during an in-flight load', async () => {
@@ -669,9 +797,12 @@ describe.sequential('VaultItemList', () => {
       .mockImplementationOnce(async () => ({
         source: 'remote',
         snapshot: {
+          userId: 'user-1',
           vaultId: 'vault-1',
           categories: [],
           items: [itemOk],
+          lastSyncedAt: '2026-02-18T10:00:00.000Z',
+          updatedAt: '2026-02-18T10:00:00.000Z',
         },
       }));
 

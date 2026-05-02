@@ -35,6 +35,15 @@ vi.mock('@/services/vaultRecoveryService', () => ({
   resetUserVaultState: vi.fn(),
 }));
 
+vi.mock('@/services/vaultIntegrityV2/productItemEnvelope', () => ({
+  decryptProductVaultItem: (input: { encryptedData: string; vaultKey: CryptoKey; entryId: string }) =>
+    cryptoMocks.decryptVaultItem(input.encryptedData, input.vaultKey, input.entryId),
+  decryptProductVaultItemForMigration: (input: { encryptedData: string; vaultKey: CryptoKey; entryId: string }) =>
+    cryptoMocks.decryptVaultItemForMigration(input.encryptedData, input.vaultKey, input.entryId),
+  encryptProductVaultItemV2: (input: { data: unknown; vaultKey: CryptoKey; entryId: string }) =>
+    cryptoMocks.encryptVaultItem(input.data, input.vaultKey, input.entryId),
+}));
+
 import { restoreQuarantinedVaultItem } from './vaultRecoveryOrchestrator';
 
 describe('vaultRecoveryOrchestrator', () => {

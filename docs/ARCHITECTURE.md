@@ -30,8 +30,10 @@ This is the canonical active architecture document. Older files under `docs/` ar
 | Integrity runtime orchestration | `src/services/vaultIntegrityRuntimeService.ts` |
 | Vault Integrity / Quarantine V2 services | `src/services/vaultIntegrityV2/` |
 | Manifest V2 server persistence | `src/services/vaultIntegrityV2/serverManifestStore.ts`, `supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql` |
+| Manifest V2 local HWM and retry state | `src/services/vaultIntegrityV2/manifestHighWaterMarkStore.ts`, `src/services/vaultIntegrityV2/manifestPersistRetryStore.ts`, `src/services/integrityBaselineStore.ts` |
 | Product Item-Envelope V2 adapter | `src/services/vaultIntegrityV2/productItemEnvelope.ts` |
 | Runtime Manifest V2 bridge | `src/services/vaultIntegrityV2/runtimeBridge.ts` |
+| Recovery-only decrypt special path | `src/services/vaultIntegrityV2/safeModeDecrypt.ts` |
 | Quarantine summaries and decrypt guard | `src/services/vaultQuarantineOrchestrator.ts` |
 | Trusted recovery and quarantine mutations | `src/services/vaultRecoveryOrchestrator.ts` |
 | Legacy repair helpers | `src/services/legacyVaultRepairService.ts` |
@@ -49,6 +51,12 @@ Legitimate item writes from the public vault API now use Item-Envelope V2. The c
 During the mixed R3/V2 period, Web and Tauri can observe each other's legitimate V2 envelope rewrites before both clients have the same authenticated Manifest V2 chain. The runtime treats all untrusted `ciphertext_changed` drift over well-formed same-vault V2 envelopes as revalidation work rather than active quarantine, including the local-mutation-overlay snapshots used immediately after create/update/delete. It intentionally does not update the baseline from that state; the long-term fix remains full Manifest V2 migration and CAS-backed mutation writes.
 
 The current server schema stores Manifest V2 in `public.vault_integrity_manifests`. It provides owner-scoped RLS and revision metadata. `public.apply_vault_mutation_v2` is the transaction/CAS entry point for item, category, restore, delete, and manifest metadata writes: it locks the sync head and current manifest row, checks the expected base revision, manifest revision, and manifest hash, then writes the data row and encrypted manifest envelope in one database transaction. Product paths that still use direct item/category writes plus trusted manifest refresh are compatibility paths and must treat a failed manifest write as sync/repair work, never item tampering.
+
+The runtime bridge does not derive rollback state from the same server manifest row it is verifying. It loads a locally persisted high-water mark from `singra-vault-integrity` / `manifest-high-water-marks`, passes that to the V2 decision engine, and advances it only after a cryptographically verified `normal` decision or a trusted-manifest `item_quarantine` decision. If the HWM store is unavailable, if the server manifest is older than the local HWM, or if first-run trusted snapshot evidence contradicts the server manifest, the provider-facing state is non-healthy and normal decrypt is blocked.
+
+Runtime Manifest V2 refresh uses surface-and-defer semantics. A failed non-atomic manifest persist records a sanitized retry marker in `manifest-persist-retry`, reports `revalidation_failed` with `manifest_persist_failed`, and retries on unlock, manual recheck, focus/sync evaluation, or the next trusted refresh. Successful retry clears the marker before healthy state can be published.
+
+Decision mapping is intentionally narrow: `normal` maps to `healthy` and allows normal decrypt; `item_quarantine` maps to `quarantine` and allows only non-quarantined item decrypt; rollback/corruption maps to `blocked`; persist failure maps to `revalidation_failed`; HWM and snapshot conflicts map to `integrity_unknown`; migration and incomplete scope remain non-decryptable. Safe Mode export uses the recovery-only decrypt helper and never the normal `decryptItem` callback.
 
 File-size guardrails: `VaultContext.tsx` should remain below 150 lines, `useVaultProviderActions.tsx` below 700 lines, and no new runtime module should grow past 900 lines. If one of those limits is reached, split by responsibility before adding behavior.
 

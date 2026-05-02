@@ -188,6 +188,23 @@ vi.mock("@/services/twoFactorService", () => ({
   getTwoFactorRequirement: (...args: unknown[]) => mockGetTwoFactorRequirement(...args),
 }));
 
+vi.mock("@/services/vaultIntegrityV2/runtimeBridge", () => ({
+  evaluateRuntimeVaultIntegrityV2: vi.fn(async () => null),
+  persistRuntimeManifestV2ForTrustedSnapshot: vi.fn(async () => "skipped_legacy_items"),
+  retryPendingRuntimeManifestV2ForSnapshot: vi.fn(async () => ({ status: "no_pending" })),
+  safeManifestPersistErrorCode: vi.fn(() => "manifest_persist_failed"),
+  isActiveQuarantineReasonV2: vi.fn((reason: string) => new Set([
+    "ciphertext_changed",
+    "aead_auth_failed",
+    "item_envelope_malformed",
+    "item_aad_mismatch",
+    "item_manifest_hash_mismatch",
+    "item_revision_replay",
+    "item_key_id_mismatch",
+    "duplicate_active_item_record",
+  ]).has(reason)),
+}));
+
 // ============ Test Helpers ============
 
 function createWrapper() {
