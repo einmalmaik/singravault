@@ -42,6 +42,7 @@ import type { VaultItemData } from '@/services/cryptoService';
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
@@ -86,6 +87,7 @@ import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import {
     buildVaultItemRowFromInsert,
     enqueueOfflineMutation,
+    invalidateVaultSnapshotCache,
     isAppOnline,
     isLikelyOfflineError,
     loadVaultSnapshot,
@@ -260,6 +262,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         isDuressMode,
         refreshIntegrityBaseline,
         verifyIntegrity,
+        bumpVaultDataVersion,
     } = useVault();
     const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
     const hasPremiumAuthenticator = isPremiumActive();
@@ -661,9 +664,17 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 });
             }
 
+            // Invalidate snapshot cache only when online sync succeeded, so integrity check fetches fresh remote data
+            if (syncedOnline) {
+                invalidateVaultSnapshotCache(user.id);
+            }
+
             await refreshIntegrityBaseline({
                 itemIds: [targetItemId],
             });
+
+            // Trigger data refresh in VaultItemList
+            bumpVaultDataVersion();
 
             clearSensitiveDialogState();
             onOpenChange(false);
@@ -721,6 +732,12 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                         defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
                     }),
             });
+
+            // Invalidate snapshot cache only when online sync succeeded, so integrity check fetches fresh remote data
+            if (syncedOnline) {
+                invalidateVaultSnapshotCache(user.id);
+            }
+
             await refreshIntegrityBaseline({
                 itemIds: [normalizedItemId],
             });
@@ -768,6 +785,11 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                         <DialogTitle>
                             {isEditing ? t('vault.editItem') : t('vault.newItem')}
                         </DialogTitle>
+                        <DialogDescription>
+                            {isEditing
+                                ? t('vault.editItemDescription', { defaultValue: 'Bearbeite den ausgewählten Tresoreintrag.' })
+                                : t('vault.newItemDescription', { defaultValue: 'Erstelle einen neuen Tresoreintrag.' })}
+                        </DialogDescription>
                     </DialogHeader>
 
                     {/* Item Type Tabs */}
