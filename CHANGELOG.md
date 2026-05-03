@@ -2,6 +2,38 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## 0.4.4 - 2026-05-03
+
+### Verbesserte Stabilität
+
+- Vault-Items bleiben während Cloud-Sync sichtbar – keine leeren Listen mehr während Hintergrund-Synchronisation
+- Offline-Vault-Unlock wurde verbessert und zeigt lokalisierte Integritätsfehlermeldungen
+- Vault-Integritätschecks für gemischte V1/V2-Accounts wurden stabilisiert
+- Fehlalarme bei Vault-Quarantäne durch unvollständige Snapshots wurden verhindert
+- Bulk-Wiederherstellung aus Quarantäne und Migration von Legacy-Vault-Items sind jetzt möglich
+
+### Device Key & Sicherheit
+
+- Device-Key-Einstellungen wurden unter Account Security konsolidiert und übersichtlicher gestaltet
+- Device-Key-Deaktivierung wird jetzt serverseitig validiert für zusätzliche Sicherheit
+- Device-Key-Transfer-Flow wurde verbessert und testbarer gemacht
+- Device-Key-Policy-Sync und Quarantäne-Handling wurden gehärtet
+- Device-Key und Manifest-Integritätschecks wurden verstärkt
+
+### Benutzeroberfläche
+
+- Rechtslinks (Impressum, Datenschutz) wurden in die Account-Einstellungen verschoben
+- Unlock-Shortcut wurde hinzugefügt für schnelleren Zugriff
+- Status-Indikator für Hintergrund-Synchronisation mit lokalisierten Texten
+
+### Technical Hardening
+
+- Vault-Integrity-V2-State-Machine wurde gehärtet
+- Category-Metadata-Validation wurde verbessert
+- Vault-Integrity-Sync über mehrere Clients wurde stabilisiert
+- Dev-Auth und Vault-Quarantäne-Handling wurden gehärtet
+- Server-seitige Validierung für kritische Device-Key-Operationen
+
 ## 0.4.3 - 2026-04-28
 
 ### Security Hardening
