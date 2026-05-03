@@ -185,7 +185,7 @@ function createChainable(resolvedValue: unknown = { data: null, error: null }) {
   const chain: Record<string, (...args: unknown[]) => unknown> = {};
   const methods = [
     "select", "insert", "update", "delete", "upsert",
-    "eq", "in", "single", "maybeSingle", "limit", "order",
+    "eq", "in", "single", "maybeSingle", "limit", "order", "range",
   ];
   for (const m of methods) {
     chain[m] = vi.fn().mockReturnValue(chain);
@@ -633,7 +633,7 @@ describe("Mutation queue", () => {
     expect(JSON.stringify(mutation.payload)).not.toContain("finance");
   });
 
-  it("tauri dev user: does not queue local-only mutations", async () => {
+  it("legacy tauri dev user id queues mutations like a normal account", async () => {
     const id = await svc.enqueueOfflineMutation({
       userId: TAURI_DEV_USER_ID,
       type: "upsert_category",
@@ -641,7 +641,7 @@ describe("Mutation queue", () => {
     } as MutationInput);
 
     expect(typeof id).toBe("string");
-    await expect(svc.getOfflineMutations(TAURI_DEV_USER_ID)).resolves.toEqual([]);
+    await expect(svc.getOfflineMutations(TAURI_DEV_USER_ID)).resolves.toHaveLength(1);
   });
 
   it("getOfflineMutations returns entries sorted by createdAt", async () => {
@@ -782,6 +782,47 @@ describe("fetchRemoteOfflineSnapshot", () => {
     expect(cached).toEqual(snapshot);
   });
 
+  it("fetches all item pages before marking a remote snapshot complete", async () => {
+    const firstPageItems = Array.from({ length: svc.REMOTE_SNAPSHOT_PAGE_SIZE }, (_, index) =>
+      makeItemRow({ id: `item-${index + 1}` }));
+    const secondPageItems = [makeItemRow({ id: "item-1001" })];
+    const vaultChain = createChainable({ data: { id: VAULT_ID }, error: null });
+    const catChain = createChainable({ data: [], error: null, count: 0 });
+    const firstItemChain = createChainable({
+      data: firstPageItems,
+      error: null,
+      count: svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1,
+    });
+    const secondItemChain = createChainable({
+      data: secondPageItems,
+      error: null,
+      count: svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1,
+    });
+
+    mockSupabase._setChains([vaultChain, catChain, firstItemChain, secondItemChain]);
+
+    const snapshot = await svc.fetchRemoteOfflineSnapshot(USER_ID);
+
+    expect(snapshot.items).toHaveLength(svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1);
+    expect(snapshot.completeness?.kind).toBe("complete");
+    expect(snapshot.completeness?.items).toMatchObject({
+      loadedCount: svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1,
+      totalCount: svc.REMOTE_SNAPSHOT_PAGE_SIZE + 1,
+      complete: true,
+    });
+    expect(firstItemChain.range).toHaveBeenCalledWith(0, svc.REMOTE_SNAPSHOT_PAGE_SIZE - 1);
+    expect(secondItemChain.range).toHaveBeenCalledWith(
+      svc.REMOTE_SNAPSHOT_PAGE_SIZE,
+      (svc.REMOTE_SNAPSHOT_PAGE_SIZE * 2) - 1,
+    );
+    expect(catChain.order).toHaveBeenNthCalledWith(1, "sort_order", { ascending: true, nullsFirst: false });
+    expect(catChain.order).toHaveBeenNthCalledWith(2, "id", { ascending: true });
+    expect(firstItemChain.order).toHaveBeenNthCalledWith(1, "updated_at", { ascending: false, nullsFirst: false });
+    expect(firstItemChain.order).toHaveBeenNthCalledWith(2, "id", { ascending: true });
+    expect(secondItemChain.order).toHaveBeenNthCalledWith(1, "updated_at", { ascending: false, nullsFirst: false });
+    expect(secondItemChain.order).toHaveBeenNthCalledWith(2, "id", { ascending: true });
+  });
+
   it("stores the remote vault revision and rejects a lower later revision", async () => {
     mockSupabase.rpc.mockResolvedValueOnce({ data: [{ revision: 8 }], error: null });
     mockSupabase._setChains([
@@ -863,15 +904,20 @@ describe("loadVaultSnapshot", () => {
     expect(snapshot.userId).toBe(USER_ID);
   });
 
-  it("tauri dev user: stays local and does not fetch remote data", async () => {
+  it("legacy tauri dev user id uses the normal remote snapshot path", async () => {
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+
+    const vaultChain = createChainable({ data: { id: TAURI_DEV_VAULT_ID }, error: null });
+    const catChain = createChainable({ data: [], error: null });
+    const itemChain = createChainable({ data: [], error: null });
+    mockSupabase._setChains([vaultChain, catChain, itemChain]);
 
     const { snapshot, source } = await svc.loadVaultSnapshot(TAURI_DEV_USER_ID);
 
-    expect(source).toBe("empty");
+    expect(source).toBe("remote");
     expect(snapshot.userId).toBe(TAURI_DEV_USER_ID);
     expect(snapshot.vaultId).toBe(TAURI_DEV_VAULT_ID);
-    expect(mockSupabase.from).not.toHaveBeenCalled();
+    expect(mockSupabase.from).toHaveBeenCalled();
   });
 
   it("online: overlays a fresh local category mutation onto a stale remote snapshot", async () => {
@@ -916,6 +962,24 @@ describe("loadVaultSnapshot", () => {
 
     expect(source).toBe("cache");
     expect(snapshot.categories.map((category) => category.id)).toEqual(["cat-existing"]);
+  });
+
+  it("online: does not let a stale remote refresh resurrect a locally deleted item", async () => {
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+
+    await svc.upsertOfflineItemRow(USER_ID, makeItemRow() as VaultItemRow);
+    await svc.removeOfflineItemRow(USER_ID, "item-1");
+
+    const vaultChain = createChainable({ data: { id: VAULT_ID }, error: null });
+    const catChain = createChainable({ data: [], error: null });
+    const itemChain = createChainable({ data: [makeItemRow()], error: null });
+    mockSupabase._setChains([vaultChain, catChain, itemChain]);
+
+    const refreshedSnapshot = await svc.fetchRemoteOfflineSnapshot(USER_ID);
+    const cachedSnapshot = await svc.getOfflineSnapshot(USER_ID);
+
+    expect(refreshedSnapshot.items).toEqual([]);
+    expect(cachedSnapshot?.items).toEqual([]);
   });
 
   it("online: keeps cached snapshot authoritative while offline mutations are pending", async () => {
@@ -972,7 +1036,7 @@ describe("syncOfflineMutations", () => {
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
   });
 
-  it("tauri dev user: skips remote sync entirely", async () => {
+  it("sync with no queued mutations is a no-op for any account id", async () => {
     const result = await svc.syncOfflineMutations(TAURI_DEV_USER_ID);
 
     expect(result).toEqual({ processed: 0, remaining: 0, errors: 0 });

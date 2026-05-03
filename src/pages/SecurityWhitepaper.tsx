@@ -135,8 +135,8 @@ function buildSections(language: 'de' | 'en'): Section[] {
           : 'Not evidenced as external audit: an independent full security review. Evidence exists for focused internal docs, unit/integration tests, and selected manual runtime checks.',
       ],
       evidence: [
-        ev('docs/security/SECURITY_MODEL_V2.md', undefined, undefined, undefined, de ? 'Dokument kann älter als Codeänderungen werden.' : 'Documentation can drift from code changes.', 'TEILWEISE'),
-        ev('docs/xss-same-origin-hardening-2026-04-28.md', undefined, undefined, undefined, de ? 'Fokussierter Check, kein Gesamtaudit.' : 'Focused check, not a full audit.', 'TEILWEISE'),
+        ev('docs/SECURITY.md', undefined, undefined, undefined, de ? 'Kanonisches Security-Dokument; Detailnachweise liegen im Archiv.' : 'Canonical security document; detailed evidence is archived.', 'TEILWEISE'),
+        ev('docs/archive/xss-same-origin-hardening-2026-04-28.md', undefined, undefined, undefined, de ? 'Archivierter fokussierter Check, kein Gesamtaudit.' : 'Archived focused check, not a full audit.', 'TEILWEISE'),
       ],
     },
     {
@@ -155,7 +155,7 @@ function buildSections(language: 'de' | 'en'): Section[] {
           : 'Out of scope: compromised unlocked client, RAM/clipboard/keyboard malware, voluntary password disclosure, phishing outside the app, device loss without OS protection, social engineering, and compromised external OAuth providers.',
       ],
       evidence: [
-        ev('docs/security/WEB_PWA_THREAT_MODEL.md', undefined, undefined, undefined, de ? 'Web/PWA-Grenzen gelten nicht automatisch identisch für Tauri.' : 'Web/PWA boundaries do not automatically equal Tauri boundaries.', 'TEILWEISE'),
+        ev('docs/SECURITY.md', undefined, undefined, undefined, de ? 'Web/PWA-Grenzen gelten nicht automatisch identisch für Tauri.' : 'Web/PWA boundaries do not automatically equal Tauri boundaries.', 'TEILWEISE'),
       ],
     },
     {
@@ -268,7 +268,7 @@ function buildSections(language: 'de' | 'en'): Section[] {
           : 'Padding is not evidenced. Pending attachments during item creation are not evidenced as a fully supported flow in current notes. Risky formats should not be rendered inline as HTML/SVG/XML/PDF.',
       ],
       evidence: [
-        ev('docs/premium-file-upload-e2ee.md', undefined, 'encrypted manifest, chunks', undefined, de ? 'Private Premium-Codepfade sind im öffentlichen Repo nur teilweise belegbar.' : 'Private Premium code paths are only partially evidenced in the public repo.', 'TEILWEISE'),
+        ev('docs/archive/premium-file-upload-e2ee.md', undefined, 'encrypted manifest, chunks', undefined, de ? 'Archivierte Premium-Notiz; private Premium-Codepfade sind im öffentlichen Repo nur teilweise belegbar.' : 'Archived Premium note; private Premium code paths are only partially evidenced in the public repo.', 'TEILWEISE'),
         ev('supabase/migrations/20260426143000_file_attachment_e2ee_chunked_limits.sql', undefined, undefined, undefined, de ? 'DB/Storage-Metadaten bleiben sichtbar.' : 'DB/storage metadata remains visible.', 'TEILWEISE'),
       ],
     },
@@ -288,7 +288,7 @@ function buildSections(language: 'de' | 'en'): Section[] {
           : 'Revocation cannot undo already copied plaintexts or keys. PQ/hybrid concerns key wrapping and does not solve endpoint or social-engineering risks.',
       ],
       evidence: [
-        ev('docs/EMERGENCY_ACCESS.md', undefined, undefined, undefined, de ? 'Private Premium-Implementierung nur teilweise im öffentlichen Repo belegbar.' : 'Private Premium implementation is only partially evidenced in the public repo.', 'TEILWEISE'),
+        ev('docs/archive/EMERGENCY_ACCESS.md', undefined, undefined, undefined, de ? 'Archivierte Premium-Notiz; private Premium-Implementierung nur teilweise im öffentlichen Repo belegbar.' : 'Archived Premium note; private Premium implementation is only partially evidenced in the public repo.', 'TEILWEISE'),
         ev('src/services/pqCryptoService.ts', 'hybridWrapKey(), hybridUnwrapKey()', 'hybrid ciphertext 0x04', 'src/services/pqCryptoService.test.ts', de ? 'Nur Key-Wrapping-Pfad, nicht gesamte Vault-Daten.' : 'Only key-wrapping path, not all vault data.', 'BELEGT'),
       ],
     },
@@ -393,7 +393,7 @@ function buildSections(language: 'de' | 'en'): Section[] {
       evidence: [
         ev('src/services/vaultExportService.ts; src/services/exportFileService.ts', 'exportVaultItems(), sanitizeExportFilename()', 'plaintext export', 'src/services/exportFileService.test.ts', de ? 'Nach lokalem Export liegt Verantwortung beim Nutzer/OS.' : 'After local export, responsibility moves to user/OS.', 'BELEGT'),
         ev('src/services/vaultRecoveryService.ts', 'resetLocalVaultStateAfterRemoteReset()', undefined, 'src/services/vaultRecoveryService.test.ts', de ? 'Provider-Backups/Logs sind nicht als sofort gelöscht belegt.' : 'Provider backups/logs are not evidenced as immediately deleted.', 'TEILWEISE'),
-        ev('docs/premium-service-boundary-2026-03.md; src/extensions/registry.ts', undefined, undefined, 'src/extensions/registry.test.ts', de ? 'Private Premium-Codeabdeckung bleibt NICHT BELEGT im öffentlichen Repo.' : 'Private Premium code coverage remains NOT EVIDENCED in the public repo.', 'TEILWEISE'),
+        ev('docs/archive/premium-service-boundary-2026-03.md; src/extensions/registry.ts', undefined, undefined, 'src/extensions/registry.test.ts', de ? 'Private Premium-Codeabdeckung bleibt NICHT BELEGT im öffentlichen Repo.' : 'Private Premium code coverage remains NOT EVIDENCED in the public repo.', 'TEILWEISE'),
       ],
     },
     {
@@ -406,7 +406,7 @@ function buildSections(language: 'de' | 'en'): Section[] {
           : 'Known limitations: no external audit, same-origin XSS in unlocked Web/PWA client, malware/RAM/clipboard, Trusted Types not enforced, no evidenced file padding, rollback freshness limits, Premium full tests partially open, provider metadata, recovery/trustee risks.',
       ],
       evidence: [
-        ev('docs/security/p0-p1-remediation-2026-04-27.md', undefined, undefined, undefined, de ? 'Punktuelle Remediation-Notiz, kein Audit-Siegel.' : 'Focused remediation note, not an audit seal.', 'TEILWEISE'),
+        ev('docs/SECURITY.md', undefined, undefined, undefined, de ? 'Kanonisches Modell, kein externes Audit-Siegel.' : 'Canonical model, not an external audit seal.', 'TEILWEISE'),
       ],
     },
   ];
@@ -427,8 +427,8 @@ function buildDataRows(language: 'de' | 'en'): MatrixRow[] {
     row(['TOTP Secret', 'JBSWY3...', 'encrypted_data', 'Nein', 'Ja', 'AES-GCM', 'VaultItemData.totpSecret', 'vaultItemCryptoStorage.test.ts', de ? 'Entsperrter Client kann Codes erzeugen' : 'Unlocked client can generate codes'], 'BELEGT'),
     row(['TOTP issuer/label/algorithm/digits/period', 'GitHub / SHA1 / 6 / 30', 'encrypted_data', 'Nein', 'Ja', 'AES-GCM', 'VaultItemData.totp*', 'vaultItemCryptoStorage.test.ts', de ? 'item_type kann sichtbar sein' : 'item_type can be visible'], 'BELEGT'),
     row(['Categories', de ? 'Name, Icon, Farbe' : 'Name, icon, color', 'categories.name/icon/color', de ? 'Nein für verschlüsselte Felder' : 'No for encrypted fields', 'Ja', 'Encrypted category prefix + AES-GCM', 'cryptoService reEncryptVault()', 'vaultIntegrityService.test.ts', de ? 'Kategorie-ID/Zeilenstruktur sichtbar' : 'Category ID/row structure visible'], 'BELEGT'),
-    row(['File Attachments', de ? 'Dateiinhalt' : 'File content', 'Supabase Storage chunks', 'Nein', 'Ja', 'Per-file key + chunk AES-GCM', 'docs/premium-file-upload-e2ee.md', 'NICHT BELEGT im öffentlichen Repo', de ? 'Premium-Code privat; Größe/Zugriff sichtbar' : 'Premium code private; size/access visible'], 'TEILWEISE'),
-    row(['File Attachment Metadata', de ? 'Name/MIME/Größe' : 'Name/MIME/size', 'encrypted manifest', de ? 'Laut Doku nein; technische Metadaten ja' : 'According to docs no; technical metadata yes', 'Ja', 'Encrypted manifest', 'docs/premium-file-upload-e2ee.md', 'NICHT BELEGT im öffentlichen Repo', de ? 'Kein Padding belegt' : 'No padding evidenced'], 'TEILWEISE'),
+    row(['File Attachments', de ? 'Dateiinhalt' : 'File content', 'Supabase Storage chunks', 'Nein', 'Ja', 'Per-file key + chunk AES-GCM', 'docs/archive/premium-file-upload-e2ee.md', 'NICHT BELEGT im öffentlichen Repo', de ? 'Premium-Code privat; Größe/Zugriff sichtbar' : 'Premium code private; size/access visible'], 'TEILWEISE'),
+    row(['File Attachment Metadata', de ? 'Name/MIME/Größe' : 'Name/MIME/size', 'encrypted manifest', de ? 'Laut archivierter Doku nein; technische Metadaten ja' : 'According to archived docs no; technical metadata yes', 'Ja', 'Encrypted manifest', 'docs/archive/premium-file-upload-e2ee.md', 'NICHT BELEGT im öffentlichen Repo', de ? 'Kein Padding belegt' : 'No padding evidenced'], 'TEILWEISE'),
     row(['Emergency Access Key Material', de ? 'Grantor Vault-Key Wrap' : 'Grantor vault-key wrap', 'emergency access tables', de ? 'Klartext nein; Status ja' : 'Plaintext no; status yes', 'Ja', 'Hybrid/PQ key wrapping', 'EMERGENCY_ACCESS.md; pqCryptoService.ts', 'security-rls-emergency-access.test.ts', de ? 'Trustee-Kompromiss' : 'Trustee compromise'], 'TEILWEISE'),
     row(['Sharing Data', de ? 'Collection membership' : 'Collection membership', 'shared collection tables', de ? 'Mitgliedschaft/Rollen ja' : 'Membership/roles yes', de ? 'Keys gewrappt' : 'Keys wrapped', 'RSA/PQ wrapping where implemented', 'SHARED_COLLECTIONS_ENCRYPTION.md', 'NICHT BELEGT vollständig', de ? 'Revocation-Grenzen' : 'Revocation limits'], 'TEILWEISE'),
     row(['Device Keys', de ? 'lokaler Device Key' : 'local device key', 'OS store / IndexedDB', de ? 'Server nein' : 'Server no', de ? 'lokal geschützt' : 'locally protected', 'HKDF device-key path', 'deviceKeyService.ts', 'deviceKeyService.test.ts', de ? 'Gerätekompromiss' : 'Device compromise'], 'BELEGT'),
@@ -461,11 +461,11 @@ function buildClaimRows(language: 'de' | 'en'): MatrixRow[] {
     row([de ? 'Vault Items sind clientseitig verschlüsselt.' : 'Vault items are client-side encrypted.', 'Core vault', 'Ja', 'Ja', 'Ja', 'Ja', 'cryptoService.encryptVaultItem()', 'vaultItemCryptoStorage.test.ts', de ? 'Entsperrter Client sieht Klartext.' : 'Unlocked client sees plaintext.', 'BELEGT'], 'BELEGT'),
     row([de ? 'Notes sind verschlüsselt.' : 'Notes are encrypted.', 'Notes fields', 'Ja', 'Ja', 'Ja', 'Ja', 'VaultItemData.notes', 'vaultItemCryptoStorage.test.ts', de ? 'Klartext-Export enthält Notes.' : 'Plaintext export contains notes.', 'BELEGT'], 'BELEGT'),
     row([de ? 'TOTP Secrets sind verschlüsselt.' : 'TOTP secrets are encrypted.', 'TOTP item payload', 'Ja', 'Ja', 'Ja', 'Premium optional', 'VaultItemData.totpSecret', 'vaultItemCryptoStorage.test.ts', de ? 'TOTP-Code lokal im entsperrten Zustand berechenbar.' : 'TOTP code is locally computable when unlocked.', 'BELEGT'], 'BELEGT'),
-    row([de ? 'Dateianhänge sind clientseitig E2EE.' : 'File attachments are client-side E2EE.', 'Premium files', 'Ja', 'Ja', 'Ja', 'Ja', 'docs/premium-file-upload-e2ee.md', 'NICHT BELEGT vollständig öffentlich', de ? 'Premium-Code privat; kein Padding belegt.' : 'Premium code private; no padding evidenced.', 'TEILWEISE'], 'TEILWEISE'),
-    row([de ? 'Server kann Dateien nicht lesen.' : 'Server cannot read files.', 'Premium file content', 'Ja', 'Ja', 'Ja', 'Ja', 'premium-file-upload-e2ee.md', 'NICHT BELEGT vollständig öffentlich', de ? 'Server sieht technische Metadaten.' : 'Server sees technical metadata.', 'TEILWEISE'], 'TEILWEISE'),
+    row([de ? 'Dateianhänge sind clientseitig E2EE.' : 'File attachments are client-side E2EE.', 'Premium files', 'Ja', 'Ja', 'Ja', 'Ja', 'docs/archive/premium-file-upload-e2ee.md', 'NICHT BELEGT vollständig öffentlich', de ? 'Premium-Code privat; kein Padding belegt.' : 'Premium code private; no padding evidenced.', 'TEILWEISE'], 'TEILWEISE'),
+    row([de ? 'Server kann Dateien nicht lesen.' : 'Server cannot read files.', 'Premium file content', 'Ja', 'Ja', 'Ja', 'Ja', 'docs/archive/premium-file-upload-e2ee.md', 'NICHT BELEGT vollständig öffentlich', de ? 'Server sieht technische Metadaten.' : 'Server sees technical metadata.', 'TEILWEISE'], 'TEILWEISE'),
     row([de ? 'PQ nur für Sharing/Emergency Key-Wrapping.' : 'PQ only for sharing/emergency key wrapping.', 'Hybrid/PQ paths', 'Ja', 'Ja', 'Ja', 'Ja', 'pqCryptoService.ts', 'pqCryptoService.test.ts', de ? 'Nicht allgemeine Vault-Datenverschlüsselung.' : 'Not general vault data encryption.', 'BELEGT'], 'BELEGT'),
-    row([de ? 'Emergency Access ist alternativer Key-Wrapping-Pfad.' : 'Emergency Access is an alternative key-wrapping path.', 'Premium emergency', 'Ja', 'Ja', 'Ja', 'Ja', 'EMERGENCY_ACCESS.md', 'security-rls-emergency-access.test.ts', de ? 'Trustee wird Teil der TCB.' : 'Trustee becomes part of TCB.', 'TEILWEISE'], 'TEILWEISE'),
-    row([de ? 'Browser/PWA schützt nicht gegen Same-Origin-XSS im entsperrten Zustand.' : 'Browser/PWA does not protect against same-origin XSS when unlocked.', 'Web/PWA', 'Ja', 'Ja', de ? 'anders, aber entsperrter Client bleibt Risiko' : 'different, but unlocked client remains risk', 'Ja', 'xss-same-origin-hardening doc', 'NICHT BELEGT als vollständiger Test', de ? 'Client-Kompromiss bleibt Vollrisiko.' : 'Client compromise remains full risk.', 'BELEGT'], 'BELEGT'),
+    row([de ? 'Emergency Access ist alternativer Key-Wrapping-Pfad.' : 'Emergency Access is an alternative key-wrapping path.', 'Premium emergency', 'Ja', 'Ja', 'Ja', 'Ja', 'docs/archive/EMERGENCY_ACCESS.md', 'security-rls-emergency-access.test.ts', de ? 'Trustee wird Teil der TCB.' : 'Trustee becomes part of TCB.', 'TEILWEISE'], 'TEILWEISE'),
+    row([de ? 'Browser/PWA schützt nicht gegen Same-Origin-XSS im entsperrten Zustand.' : 'Browser/PWA does not protect against same-origin XSS when unlocked.', 'Web/PWA', 'Ja', 'Ja', de ? 'anders, aber entsperrter Client bleibt Risiko' : 'different, but unlocked client remains risk', 'Ja', 'docs/archive/xss-same-origin-hardening-2026-04-28.md', 'NICHT BELEGT als vollständiger Test', de ? 'Client-Kompromiss bleibt Vollrisiko.' : 'Client compromise remains full risk.', 'BELEGT'], 'BELEGT'),
     row([de ? 'Account Delete entfernt user-owned Daten.' : 'Account delete removes user-owned data.', 'Account data', 'Ja', 'Ja', 'Ja', 'Ja', 'delete RPC/migrations', 'vault-reset-rpc-contract.test.ts', de ? 'Backups/Logs nicht sofort physisch belegt.' : 'Backups/logs not evidenced as immediately physical deleted.', 'TEILWEISE'], 'TEILWEISE'),
     row([de ? 'Kein Legacy-Passwort-Fallback.' : 'No legacy password fallback.', 'App password login', 'Ja', 'Ja', 'Ja', 'Ja', 'auth-session edge function', 'auth-flow-hardening.test.ts', de ? 'OAuth ist anderer Pfad.' : 'OAuth is a different path.', 'BELEGT'], 'BELEGT'),
   ];

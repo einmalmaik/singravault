@@ -331,6 +331,8 @@ export async function registerPasskey(
             // Got PRF output during registration — wrap the raw key now
             const prfOutput = new Uint8Array(prfResults.first);
             try {
+                assertPasskeyKeyMaterialLength(rawVaultKeyBytes, 'Vault key');
+                assertPasskeyKeyMaterialLength(prfOutput, 'Passkey PRF output');
                 wrappedMasterKey = formatPasskeyEnvelopeV2(
                     await encryptRawKeyBytes(rawVaultKeyBytes, prfOutput),
                 );
@@ -441,6 +443,8 @@ export async function activatePasskeyPrf(
 
     const prfOutput = new Uint8Array(prfResults.first);
     try {
+        assertPasskeyKeyMaterialLength(rawVaultKeyBytes, 'Vault key');
+        assertPasskeyKeyMaterialLength(prfOutput, 'Passkey PRF output');
         const wrappedKey = formatPasskeyEnvelopeV2(
             await encryptRawKeyBytes(rawVaultKeyBytes, prfOutput),
         );
@@ -549,6 +553,7 @@ export async function authenticatePasskey(
     // 6. Derive wrapping key from PRF output and decrypt the raw key bytes
     const prfOutput = new Uint8Array(prfResults.first);
     try {
+        assertPasskeyKeyMaterialLength(prfOutput, 'Passkey PRF output');
         const parsedEnvelope = parsePasskeyEnvelope(verifyData.wrappedMasterKey);
         const rawWrappedKeyBytes = await decryptRawKeyBytes(
             parsedEnvelope.payload,
@@ -556,6 +561,7 @@ export async function authenticatePasskey(
         );
 
         if (parsedEnvelope.version === 2) {
+            assertPasskeyKeyMaterialLength(rawWrappedKeyBytes, 'Wrapped vault key');
             const encryptionKey = await importMasterKey(rawWrappedKeyBytes);
             rawWrappedKeyBytes.fill(0);
 
@@ -570,6 +576,7 @@ export async function authenticatePasskey(
 
         if (authenticateOptions.encryptedUserKey) {
             const rawVaultKeyBytes = await unwrapUserKeyBytes(authenticateOptions.encryptedUserKey, rawWrappedKeyBytes);
+            assertPasskeyKeyMaterialLength(rawVaultKeyBytes, 'Unwrapped vault key');
 
             try {
                 await upgradePasskeyWrappedKey(rawVaultKeyBytes, verifyData.credentialId);
@@ -669,6 +676,8 @@ export async function deletePasskey(
  * @returns CryptoKey suitable for encrypt/decrypt
  */
 async function deriveWrappingKey(prfOutput: Uint8Array): Promise<CryptoKey> {
+    assertPasskeyKeyMaterialLength(prfOutput, 'Passkey PRF output');
+
     // Import PRF output as HKDF key material
     const baseKey = await crypto.subtle.importKey(
         'raw',
@@ -706,6 +715,9 @@ async function encryptRawKeyBytes(
     rawKeyBytes: Uint8Array,
     prfOutput: Uint8Array,
 ): Promise<string> {
+    assertPasskeyKeyMaterialLength(rawKeyBytes, 'Vault key');
+    assertPasskeyKeyMaterialLength(prfOutput, 'Passkey PRF output');
+
     const wrappingKey = await deriveWrappingKey(prfOutput);
     const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
     let ciphertextBytes: Uint8Array | null = null;
@@ -743,6 +755,8 @@ async function decryptRawKeyBytes(
     encryptedBase64: string,
     prfOutput: Uint8Array,
 ): Promise<Uint8Array> {
+    assertPasskeyKeyMaterialLength(prfOutput, 'Passkey PRF output');
+
     const wrappingKey = await deriveWrappingKey(prfOutput);
     const combined = base64ToUint8Array(encryptedBase64);
     if (combined.length <= IV_LENGTH) {
@@ -760,7 +774,9 @@ async function decryptRawKeyBytes(
             ciphertext,
         );
 
-        return new Uint8Array(plaintext);
+        const plaintextBytes = new Uint8Array(plaintext);
+        assertPasskeyKeyMaterialLength(plaintextBytes, 'Passkey wrapped key plaintext');
+        return plaintextBytes;
     } finally {
         combined.fill(0);
         iv.fill(0);
@@ -784,6 +800,12 @@ function parsePasskeyEnvelope(envelope: string): { version: 1 | 2; payload: stri
         version: 1,
         payload: envelope,
     };
+}
+
+function assertPasskeyKeyMaterialLength(bytes: Uint8Array, label: string): void {
+    if (bytes.length !== 32) {
+        throw new Error(`${label} must be exactly 32 bytes.`);
+    }
 }
 
 // ============ Utility Functions ============

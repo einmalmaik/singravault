@@ -67,7 +67,7 @@ Premium wird **nicht** in dieses Repository eingecheckt.
 - In Deployments und Release-Builds wird Premium nur über private Build-Zugriffe injiziert.
 - Fehlt das Paket, läuft der Core sauber mit einem Stub weiter.
 
-Details: [`docs/premium-loading.md`](docs/premium-loading.md)
+Historische Details: [`docs/archive/premium-loading.md`](docs/archive/premium-loading.md)
 
 ## Voraussetzungen
 
@@ -155,7 +155,7 @@ Desktop-Releases dürfen trotzdem mit Premium gebaut werden, solange:
 - der Premium-Source-Code nie ins öffentliche Repo gelangt
 - Premium-Funktionen serverseitig abgesichert bleiben
 
-Details: [`docs/desktop-release-process.md`](docs/desktop-release-process.md)
+Historische Details: [`docs/archive/desktop-release-process.md`](docs/archive/desktop-release-process.md)
 
 ## GitHub Actions
 

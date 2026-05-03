@@ -10,26 +10,13 @@ export function isTauriDevMode(): boolean {
 }
 
 export function isTauriDevUserId(userId: string | null | undefined): boolean {
-  return userId === TAURI_DEV_USER_ID;
+  void userId;
+  return false;
 }
 
 export function isTauriDevAuthBypassEnabled(): boolean {
-  if (!isTauriDevMode() || typeof window === 'undefined') {
-    return false;
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  const requested = params.get('tauriDevAuth');
-  if (requested === '1' || requested === 'true') {
-    window.localStorage.setItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY, '1');
-    return true;
-  }
-  if (requested === '0' || requested === 'false') {
-    window.localStorage.removeItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY);
-    return false;
-  }
-
-  return window.localStorage.getItem(TAURI_DEV_AUTH_BYPASS_STORAGE_KEY) === '1';
+  disableTauriDevAuthBypass();
+  return false;
 }
 
 export function disableTauriDevAuthBypass(): void {

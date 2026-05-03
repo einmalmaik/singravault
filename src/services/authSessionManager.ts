@@ -114,7 +114,7 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
     return onlineState(bffSession);
   }
 
-  return offlineOrUnauthenticatedState();
+  return unauthenticatedState();
 }
 
 export async function applyAuthenticatedSession(tokens: SessionTokens): Promise<Session> {

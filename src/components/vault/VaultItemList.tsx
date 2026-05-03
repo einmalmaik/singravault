@@ -11,6 +11,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Eye, KeyRound, Loader2, Plus, RefreshCw, Shield, TriangleAlert } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,18 +28,29 @@ import { getServiceHooks } from '@/extensions/registry';
 import { cn } from '@/lib/utils';
 import { ItemFilter, ViewMode } from '@/pages/VaultPage';
 import { VaultItemData } from '@/services/cryptoService';
+import { isVaultItemEnvelopeV2 } from '@/services/vaultIntegrityV2/itemEnvelopeCrypto';
 import {
   isAppOnline,
   loadVaultSnapshot,
 } from '@/services/offlineVaultService';
-import { migrateLegacyVaultItemMetadata } from '@/services/legacyVaultMetadataMigrationService';
+import {
+  LegacyVaultMetadataMigrationPersistenceError,
+  migrateLegacyVaultItemEncryptionAndMetadata,
+  migrateLegacyVaultItemMetadata,
+} from '@/services/legacyVaultMetadataMigrationService';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
+import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
 import { VaultItemCard } from './VaultItemCard';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
+import {
+  VaultQuarantineRestoreProgressDialog,
+  type VaultQuarantineRestoreProgressStatus,
+} from './VaultQuarantineRestoreProgressDialog';
 
 const DECRYPT_BATCH_SIZE = 25;
 const QUARANTINE_SUMMARY_THRESHOLD = 2;
+const CLOUD_SYNC_REFRESH_INTERVAL_MS = 10_000;
 
 interface VaultItem {
   id: string;
@@ -57,6 +78,43 @@ interface VaultItemListProps {
 type RenderableVaultListEntry =
   | { kind: 'item'; item: VaultItem }
   | { kind: 'quarantined'; item: VaultItem; quarantine: QuarantinedVaultItem };
+
+interface BulkRestoreProgress {
+  open: boolean;
+  status: VaultQuarantineRestoreProgressStatus;
+  total: number;
+  completed: number;
+  failed: number;
+  currentItemId: string | null;
+  lastError: string | null;
+}
+
+function canDecryptFromIntegrityResult(
+  result: { mode?: string; quarantinedItems: QuarantinedVaultItem[] } | null | undefined,
+  itemId: string,
+): boolean {
+  if (!result?.mode) {
+    return false;
+  }
+
+  if (
+    result.mode === 'quarantine'
+    && result.quarantinedItems.some((item) => item.id === itemId)
+  ) {
+    return false;
+  }
+
+  try {
+    assertItemDecryptable({
+      mode: result.mode,
+      quarantinedItems: result.quarantinedItems,
+      itemId,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
   return `${item.reason}:${item.updatedAt ?? ''}`;
@@ -93,13 +151,17 @@ export function VaultItemList({
 }: VaultItemListProps) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const userId = user?.id ?? null;
   const {
     decryptItem,
+    decryptItemForLegacyMigration,
     encryptItem,
     isDuressMode,
     lastIntegrityResult,
+    quarantineResolutionById,
     reportUnreadableItems,
     refreshIntegrityBaseline,
+    restoreQuarantinedItem,
     verifyIntegrity,
     vaultDataVersion,
   } = useVault();
@@ -109,19 +171,94 @@ export function VaultItemList({
   const [decrypting, setDecrypting] = useState(false);
   const [ignoredQuarantineById, setIgnoredQuarantineById] = useState<Record<string, string>>({});
   const [showIgnoredQuarantine, setShowIgnoredQuarantine] = useState(false);
+  const [bulkRestoreConfirmOpen, setBulkRestoreConfirmOpen] = useState(false);
+  const [bulkRestoreProgress, setBulkRestoreProgress] = useState<BulkRestoreProgress>({
+    open: false,
+    status: 'running',
+    total: 0,
+    completed: 0,
+    failed: 0,
+    currentItemId: null,
+    lastError: null,
+  });
   const [revalidating, setRevalidating] = useState(false);
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false);
+  const [lastCloudSyncAt, setLastCloudSyncAt] = useState<Date | null>(null);
+  const [cloudSyncTick, setCloudSyncTick] = useState(0);
   const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
   const revalidationRequestIdRef = useRef(0);
   const revalidatingRef = useRef(false);
+  const fetchItemsRef = useRef(false);
+  const pendingFetchItemsRef = useRef(false);
+  const hasRenderedVaultContentRef = useRef(false);
+  const decryptItemRef = useRef(decryptItem);
+  const decryptItemForLegacyMigrationRef = useRef(decryptItemForLegacyMigration);
+  const encryptItemRef = useRef(encryptItem);
+  const reportUnreadableItemsRef = useRef(reportUnreadableItems);
+  const verifyIntegrityRef = useRef(verifyIntegrity);
+  const refreshIntegrityBaselineRef = useRef(refreshIntegrityBaseline);
+
+  useEffect(() => {
+    decryptItemRef.current = decryptItem;
+    decryptItemForLegacyMigrationRef.current = decryptItemForLegacyMigration;
+    encryptItemRef.current = encryptItem;
+    reportUnreadableItemsRef.current = reportUnreadableItems;
+    verifyIntegrityRef.current = verifyIntegrity;
+    refreshIntegrityBaselineRef.current = refreshIntegrityBaseline;
+  }, [decryptItem, decryptItemForLegacyMigration, encryptItem, refreshIntegrityBaseline, reportUnreadableItems, verifyIntegrity]);
 
   useEffect(() => {
     failedDecryptPayloadByItemIdRef.current.clear();
     loggedDecryptFailuresRef.current.clear();
-  }, [user?.id, isDuressMode]);
+    hasRenderedVaultContentRef.current = false;
+    setLastCloudSyncAt(null);
+    setBackgroundSyncing(false);
+  }, [userId, isDuressMode]);
+
+  useEffect(() => {
+    if (!userId) {
+      return undefined;
+    }
+
+    const requestCloudSync = () => {
+      if (!isAppOnline()) {
+        return;
+      }
+
+      setCloudSyncTick((tick) => tick + 1);
+    };
+
+    const requestVisibleCloudSync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      requestCloudSync();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        requestCloudSync();
+      }
+    };
+
+    window.addEventListener('focus', requestVisibleCloudSync);
+    window.addEventListener('online', requestVisibleCloudSync);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const intervalId = window.setInterval(requestVisibleCloudSync, CLOUD_SYNC_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.removeEventListener('focus', requestVisibleCloudSync);
+      window.removeEventListener('online', requestVisibleCloudSync);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [userId]);
 
   const revalidateRemoteIntegrity = useCallback(async () => {
-    if (!user || revalidatingRef.current) {
+    if (!userId || revalidatingRef.current) {
       return;
     }
 
@@ -130,139 +267,256 @@ export function VaultItemList({
     revalidatingRef.current = true;
     setRevalidating(true);
     try {
-      await verifyIntegrity();
+      await verifyIntegrityRef.current();
     } finally {
       if (revalidationRequestIdRef.current === requestId) {
         revalidatingRef.current = false;
         setRevalidating(false);
       }
     }
-  }, [user, verifyIntegrity]);
+  }, [userId]);
 
   useEffect(() => {
     async function fetchItems() {
-      if (!user) return;
+      if (!userId) return;
+      if (fetchItemsRef.current) {
+        pendingFetchItemsRef.current = true;
+        return;
+      }
 
-      setLoading(true);
-      try {
-        const { snapshot, source } = await loadVaultSnapshot(user.id);
-        const integrityResult = await verifyIntegrity(snapshot, { source });
-        if (integrityResult?.mode === 'blocked') {
-          setItems([]);
-          return;
-        }
-        const canPersistMigrations = integrityResult?.mode === 'healthy'
-          && integrityResult.isFirstCheck
-          && source === 'remote'
-          && isAppOnline();
-
-        const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-        let integrityBaselineDirty = false;
-        const trustedItemIds = new Set<string>();
-        const decryptableItemIds = new Set<string>();
-        const unreadableItems: QuarantinedVaultItem[] = [];
-
+      const isBackgroundSync = hasRenderedVaultContentRef.current;
+      fetchItemsRef.current = true;
+      if (isBackgroundSync) {
+        setBackgroundSyncing(true);
+      } else {
+        setLoading(true);
         setDecrypting(true);
-        const decryptedItems = await mapInBatches(
-          vaultItems,
-          DECRYPT_BATCH_SIZE,
-          async (item) => {
-            const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
-            if (cachedFailedPayload === item.encrypted_data) {
-              return { ...item, decryptedData: undefined };
-            }
+      }
+      try {
+        const { snapshot, source } = await loadVaultSnapshot(userId);
+        const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
+        const allowsAnyDecrypt = integrityResult?.mode === 'healthy' || integrityResult?.mode === 'quarantine';
+        if (!allowsAnyDecrypt) {
+          setItems([]);
+        } else {
+          const canPersistMigrations = integrityResult?.mode === 'healthy'
+            && integrityResult.isFirstCheck
+            && source === 'remote'
+            && isAppOnline();
+          const canPersistLegacyEncryptionMigration = source === 'remote'
+            && isAppOnline()
+            && (
+              integrityResult?.mode === 'healthy'
+              || (
+                integrityResult?.mode === 'quarantine'
+                && integrityResult.quarantinedItems.length > 0
+                && integrityResult.quarantinedItems.every((item) => item.reason === 'decrypt_failed')
+              )
+            );
 
-            try {
-              const decryptedData = await decryptItem(item.encrypted_data, item.id);
+          const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+          let integrityBaselineDirty = false;
+          const trustedItemIds = new Set<string>();
+          const decryptableItemIds = new Set<string>();
+          const unreadableItems: QuarantinedVaultItem[] = [];
+
+          const decryptedItems = await mapInBatches(
+            vaultItems,
+            DECRYPT_BATCH_SIZE,
+            async (item) => {
+              if (!canDecryptFromIntegrityResult(integrityResult, item.id)) {
+                return { ...item, decryptedData: undefined };
+              }
+
+              const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
+              if (cachedFailedPayload === item.encrypted_data) {
+                return { ...item, decryptedData: undefined };
+              }
+
+              let decryptedData: VaultItemData | null = null;
+              try {
+                decryptedData = await decryptItemRef.current(item.encrypted_data, item.id);
+              } catch {
+                if (canPersistLegacyEncryptionMigration) {
+                  let legacyMigrationDecrypt: Awaited<ReturnType<typeof decryptItemForLegacyMigrationRef.current>> | null = null;
+                  try {
+                    legacyMigrationDecrypt = await decryptItemForLegacyMigrationRef.current(
+                      item.encrypted_data,
+                      item.id,
+                    );
+                    if (!legacyMigrationDecrypt.legacyNoAadFallbackUsed) {
+                      throw new Error('No legacy encryption migration required.');
+                    }
+                  } catch {
+                    legacyMigrationDecrypt = null;
+                  }
+
+                  if (legacyMigrationDecrypt) {
+                    try {
+                      const migration = await migrateLegacyVaultItemEncryptionAndMetadata({
+                        userId,
+                        vaultId: snapshot.vaultId,
+                        item,
+                        decryptedData: legacyMigrationDecrypt.data,
+                        canPersistRemote: true,
+                        encryptItem: encryptItemRef.current,
+                      });
+                      integrityBaselineDirty = true;
+                      trustedItemIds.add(item.id);
+                      decryptableItemIds.add(item.id);
+                      failedDecryptPayloadByItemIdRef.current.delete(item.id);
+
+                      return {
+                        ...migration.item,
+                        decryptedData: migration.decryptedData,
+                      };
+                    } catch (migrationError) {
+                      if (migrationError instanceof LegacyVaultMetadataMigrationPersistenceError) {
+                        console.warn('Legacy vault item encryption migration could not be persisted; will retry later.', item.id);
+                        decryptableItemIds.add(item.id);
+                        failedDecryptPayloadByItemIdRef.current.delete(item.id);
+                        return {
+                          ...item,
+                          decryptedData: legacyMigrationDecrypt.data,
+                        };
+                      }
+                      throw migrationError;
+                    }
+                  }
+                }
+
+                failedDecryptPayloadByItemIdRef.current.set(item.id, item.encrypted_data);
+                unreadableItems.push({
+                  id: item.id,
+                  reason: 'decrypt_failed',
+                  updatedAt: item.updated_at ?? null,
+                  itemType: item.item_type ?? null,
+                });
+                const logKey = `${item.id}:${item.updated_at}`;
+                if (!loggedDecryptFailuresRef.current.has(logKey)) {
+                  loggedDecryptFailuresRef.current.add(logKey);
+                  console.debug(
+                    isDuressMode
+                      ? 'Failed to decrypt item in Duress Mode (expected for Real items):'
+                      : 'Failed to decrypt item (key mismatch or corrupt):',
+                    item.id,
+                  );
+                }
+
+                return { ...item, decryptedData: undefined };
+              }
+              if (!decryptedData) {
+                throw new Error('Vault item decrypt returned no data.');
+              }
+
               decryptableItemIds.add(item.id);
               failedDecryptPayloadByItemIdRef.current.delete(item.id);
 
               const migration = await migrateLegacyVaultItemMetadata({
-                userId: user.id,
+                userId,
                 vaultId: snapshot.vaultId,
                 item,
                 decryptedData,
                 canPersistRemote: canPersistMigrations,
-                encryptItem,
+                encryptItem: encryptItemRef.current,
               });
               if (migration.migrated) {
                 integrityBaselineDirty = true;
                 trustedItemIds.add(item.id);
               }
 
+              if (canPersistLegacyEncryptionMigration && !isVaultItemEnvelopeV2(migration.item.encrypted_data)) {
+                try {
+                  const encryptionMigration = await migrateLegacyVaultItemEncryptionAndMetadata({
+                    userId,
+                    vaultId: snapshot.vaultId,
+                    item: migration.item,
+                    decryptedData: migration.decryptedData,
+                    canPersistRemote: true,
+                    encryptItem: encryptItemRef.current,
+                  });
+                  integrityBaselineDirty = true;
+                  trustedItemIds.add(item.id);
+                  decryptableItemIds.add(item.id);
+                  failedDecryptPayloadByItemIdRef.current.delete(item.id);
+
+                  return {
+                    ...encryptionMigration.item,
+                    decryptedData: encryptionMigration.decryptedData,
+                  };
+                } catch (migrationError) {
+                  if (migrationError instanceof LegacyVaultMetadataMigrationPersistenceError) {
+                    console.warn('Legacy vault item encryption migration could not be persisted; will retry later.', item.id);
+                    return {
+                      ...migration.item,
+                      decryptedData: migration.decryptedData,
+                    };
+                  }
+                  throw migrationError;
+                }
+              }
+
               return {
                 ...migration.item,
                 decryptedData: migration.decryptedData,
               };
-            } catch {
-              failedDecryptPayloadByItemIdRef.current.set(item.id, item.encrypted_data);
-              unreadableItems.push({
-                id: item.id,
-                reason: 'ciphertext_changed',
-                updatedAt: item.updated_at ?? null,
-                itemType: item.item_type ?? null,
-              });
-              const logKey = `${item.id}:${item.updated_at}`;
-              if (!loggedDecryptFailuresRef.current.has(logKey)) {
-                loggedDecryptFailuresRef.current.add(logKey);
-                console.debug(
-                  isDuressMode
-                    ? 'Failed to decrypt item in Duress Mode (expected for Real items):'
-                    : 'Failed to decrypt item (key mismatch or corrupt):',
-                  item.id,
-                );
-              }
+            },
+          );
 
-              return { ...item, decryptedData: undefined };
-            }
-          },
-        );
+          reportUnreadableItemsRef.current(unreadableItems);
 
-        if (unreadableItems.length > 0) {
-          reportUnreadableItems(unreadableItems);
-        }
+          const canPersistTrustedFirstBaseline = integrityResult?.mode === 'healthy'
+            && integrityResult.isFirstCheck
+            && source === 'remote'
+            && isAppOnline()
+            && unreadableItems.length === 0;
 
-        const canPersistTrustedFirstBaseline = integrityResult?.mode === 'healthy'
-          && integrityResult.isFirstCheck
-          && source === 'remote'
-          && isAppOnline()
-          && unreadableItems.length === 0;
+          if (
+            (integrityBaselineDirty && (canPersistMigrations || canPersistLegacyEncryptionMigration))
+            || canPersistTrustedFirstBaseline
+          ) {
+            await refreshIntegrityBaselineRef.current({
+              itemIds: new Set([...decryptableItemIds, ...trustedItemIds]),
+              categoryIds: snapshot.categories.map((category) => category.id),
+            });
+          }
 
-        if ((integrityBaselineDirty && canPersistMigrations) || canPersistTrustedFirstBaseline) {
-          await refreshIntegrityBaseline({
-            itemIds: new Set([...decryptableItemIds, ...trustedItemIds]),
-            categoryIds: snapshot.categories.map((category) => category.id),
-          });
-        }
+          setItems(decryptedItems as VaultItem[]);
+          hasRenderedVaultContentRef.current = decryptedItems.length > 0
+            || (integrityResult?.mode === 'quarantine' && integrityResult.quarantinedItems.length > 0);
+          setLastCloudSyncAt(new Date());
 
-        setItems(decryptedItems as VaultItem[]);
-
-        // Cached snapshots keep the vault usable offline and while local writes
-        // are pending. A lightweight remote revalidation follows so DB-side
-        // tampering can move items into quarantine without waiting for edit/open.
-        if (source !== 'remote' && isAppOnline()) {
-          void revalidateRemoteIntegrity();
+          // Cached snapshots keep the vault usable offline and while local writes
+          // are pending. A lightweight remote revalidation follows so DB-side
+          // tampering can move items into quarantine without waiting for edit/open.
+          if (source !== 'remote' && isAppOnline()) {
+            void revalidateRemoteIntegrity();
+          }
         }
       } catch (err) {
         console.error('Error fetching vault items:', err);
       } finally {
+        fetchItemsRef.current = false;
+      }
+
+      if (pendingFetchItemsRef.current) {
+        pendingFetchItemsRef.current = false;
+        void fetchItems();
+      } else {
         setLoading(false);
         setDecrypting(false);
+        setBackgroundSyncing(false);
       }
     }
 
     void fetchItems();
   }, [
-    user,
-    decryptItem,
-    encryptItem,
     refreshKey,
+    cloudSyncTick,
     isDuressMode,
-    reportUnreadableItems,
-    refreshIntegrityBaseline,
     revalidateRemoteIntegrity,
+    userId,
     vaultDataVersion,
-    verifyIntegrity,
   ]);
 
   const quarantinedItems = useMemo(
@@ -456,6 +710,12 @@ export function VaultItemList({
       quarantinedItems,
     ],
   );
+  const restorablePanelItems = useMemo(
+    () => panelQuarantinedItems.filter(
+      (item) => quarantineResolutionById[item.id]?.canRestore,
+    ),
+    [panelQuarantinedItems, quarantineResolutionById],
+  );
 
   const handleIgnoreGroupedQuarantine = useCallback(() => {
     persistIgnoredQuarantine({
@@ -467,9 +727,61 @@ export function VaultItemList({
     setShowIgnoredQuarantine(false);
   }, [ignoredQuarantineById, panelQuarantinedItems, persistIgnoredQuarantine]);
 
+  const handleRestoreAllVisible = useCallback(async () => {
+    const itemsToRestore = restorablePanelItems;
+    if (itemsToRestore.length === 0) {
+      setBulkRestoreConfirmOpen(false);
+      return;
+    }
+
+    setBulkRestoreConfirmOpen(false);
+    setBulkRestoreProgress({
+      open: true,
+      status: 'running',
+      total: itemsToRestore.length,
+      completed: 0,
+      failed: 0,
+      currentItemId: itemsToRestore[0].id,
+      lastError: null,
+    });
+
+    let completed = 0;
+    let failed = 0;
+    let lastError: string | null = null;
+
+    for (const item of itemsToRestore) {
+      setBulkRestoreProgress((current) => ({
+        ...current,
+        currentItemId: item.id,
+      }));
+
+      const result = await restoreQuarantinedItem(item.id);
+      if (result.error) {
+        failed += 1;
+        lastError = result.error.message;
+      } else {
+        completed += 1;
+      }
+
+      setBulkRestoreProgress((current) => ({
+        ...current,
+        completed,
+        failed,
+        lastError,
+      }));
+    }
+
+    setBulkRestoreProgress((current) => ({
+      ...current,
+      status: failed > 0 ? 'failed' : 'success',
+      currentItemId: null,
+      lastError,
+    }));
+  }, [restorablePanelItems, restoreQuarantinedItem]);
+
   const renderableItemCount = items.filter((item) => item.decryptedData).length;
 
-  if (loading || decrypting) {
+  if ((loading || decrypting) && items.length === 0 && quarantinedItems.length === 0) {
     return (
       <div className="flex h-64 flex-col items-center justify-center text-muted-foreground">
         <Loader2 className="mb-4 h-8 w-8 animate-spin" />
@@ -512,6 +824,21 @@ export function VaultItemList({
 
   return (
     <div className="space-y-4">
+      {(backgroundSyncing || lastCloudSyncAt) && (
+        <div className="flex items-center justify-end text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1))] px-3 py-1">
+            <RefreshCw className={cn('h-3.5 w-3.5', backgroundSyncing && 'animate-spin')} />
+            {backgroundSyncing
+              ? t('vault.items.cloudSyncing', {
+                defaultValue: 'Synchronisiere mit Cloud...',
+              })
+              : t('vault.items.cloudSyncedRecently', {
+                defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden',
+              })}
+          </span>
+        </div>
+      )}
+
       {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[hsl(var(--border)/0.45)] bg-[hsl(var(--el-1))] px-4 py-3 text-sm">
           <p className="inline-flex items-center gap-2 text-muted-foreground">
@@ -567,6 +894,13 @@ export function VaultItemList({
         items={panelQuarantinedItems}
         ignoredItems={showIgnoredQuarantine ? activeIgnoredQuarantinedItems : []}
         onIgnoreItem={handleIgnoreQuarantineItem}
+        onRestoreAll={
+          restorablePanelItems.length > 0
+            ? () => setBulkRestoreConfirmOpen(true)
+            : undefined
+        }
+        restoreAllCount={restorablePanelItems.length}
+        restoreAllDisabled={bulkRestoreProgress.open && bulkRestoreProgress.status === 'running'}
         onIgnoreAll={
           hasGroupedQuarantine && canRenderGroupedQuarantine && panelQuarantinedItems.length > 0
             ? handleIgnoreGroupedQuarantine
@@ -628,6 +962,60 @@ export function VaultItemList({
           ))}
         </div>
       )}
+
+      <AlertDialog
+        open={bulkRestoreConfirmOpen}
+        onOpenChange={setBulkRestoreConfirmOpen}
+      >
+        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('vault.integrity.confirmBulkRestoreTitle', {
+                defaultValue: '{{count}} Einträge wiederherstellen?',
+                count: restorablePanelItems.length,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="leading-relaxed">
+              {t('vault.integrity.confirmBulkRestoreDescription', {
+                defaultValue: 'Es werden nur Einträge wiederhergestellt, für die auf diesem Gerät eine vertrauenswürdige lokale Kopie verfügbar ist. Jeder Eintrag wird einzeln geprüft und danach verifiziert.',
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {t('common.cancel', {
+                defaultValue: 'Abbrechen',
+              })}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleRestoreAllVisible();
+              }}
+            >
+              {t('vault.integrity.confirmBulkRestoreAction', {
+                defaultValue: 'Wiederherstellen',
+              })}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <VaultQuarantineRestoreProgressDialog
+        open={bulkRestoreProgress.open}
+        status={bulkRestoreProgress.status}
+        total={bulkRestoreProgress.total}
+        completed={bulkRestoreProgress.completed}
+        failed={bulkRestoreProgress.failed}
+        currentItemId={bulkRestoreProgress.currentItemId}
+        lastError={bulkRestoreProgress.lastError}
+        onContinue={() => {
+          setBulkRestoreProgress((current) => ({
+            ...current,
+            open: false,
+          }));
+        }}
+      />
     </div>
   );
 }

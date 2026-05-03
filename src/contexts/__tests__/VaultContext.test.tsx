@@ -129,6 +129,7 @@ const mockFetchRemoteOfflineSnapshot = vi.fn();
 const mockGetOfflineSnapshot = vi.fn();
 const mockGetTrustedOfflineSnapshot = vi.fn();
 const mockIsRecentLocalVaultMutation = vi.fn();
+const mockResolveDefaultVaultId = vi.fn();
 const mockSaveTrustedOfflineSnapshot = vi.fn();
 const mockClearOfflineVaultData = vi.fn();
 const mockIsAppOnline = vi.fn(() => true);
@@ -137,6 +138,7 @@ vi.mock("@/services/offlineVaultService", () => ({
   isLikelyOfflineError: vi.fn(() => false),
   fetchRemoteOfflineSnapshot: (...args: unknown[]) => mockFetchRemoteOfflineSnapshot(...args),
   getOfflineSnapshot: (...args: unknown[]) => mockGetOfflineSnapshot(...args),
+  resolveDefaultVaultId: (...args: unknown[]) => mockResolveDefaultVaultId(...args),
   getOfflineCredentials: (...args: unknown[]) => mockGetOfflineCredentials(...args),
   getOfflineVaultTwoFactorRequirement: (...args: unknown[]) => mockGetOfflineVaultTwoFactorRequirement(...args),
   getTrustedOfflineSnapshot: (...args: unknown[]) => mockGetTrustedOfflineSnapshot(...args),
@@ -186,6 +188,23 @@ vi.mock("@/services/twoFactorService", () => ({
   getTwoFactorRequirement: (...args: unknown[]) => mockGetTwoFactorRequirement(...args),
 }));
 
+vi.mock("@/services/vaultIntegrityV2/runtimeBridge", () => ({
+  evaluateRuntimeVaultIntegrityV2: vi.fn(async () => null),
+  persistRuntimeManifestV2ForTrustedSnapshot: vi.fn(async () => "skipped_legacy_items"),
+  retryPendingRuntimeManifestV2ForSnapshot: vi.fn(async () => ({ status: "no_pending" })),
+  safeManifestPersistErrorCode: vi.fn(() => "manifest_persist_failed"),
+  isActiveQuarantineReasonV2: vi.fn((reason: string) => new Set([
+    "ciphertext_changed",
+    "aead_auth_failed",
+    "item_envelope_malformed",
+    "item_aad_mismatch",
+    "item_manifest_hash_mismatch",
+    "item_revision_replay",
+    "item_key_id_mismatch",
+    "duplicate_active_item_record",
+  ]).has(reason)),
+}));
+
 // ============ Test Helpers ============
 
 function createWrapper() {
@@ -212,6 +231,56 @@ function createSelectQueryMock(
   return query;
 }
 
+function withCompleteSnapshot<T extends {
+  userId?: string;
+  vaultId?: string | null;
+  items: unknown[];
+  categories: unknown[];
+  lastSyncedAt?: string | null;
+  updatedAt?: string;
+}>(
+  snapshot: T,
+  source: "remote" | "remote_with_local_overlay" = "remote",
+): T & { completeness: Record<string, unknown> } {
+  const checkedAt = snapshot.updatedAt ?? "2026-04-29T10:00:00.000Z";
+  const userId = snapshot.userId ?? mockUser.id;
+  const vaultId = snapshot.vaultId ?? "vault-123";
+  return {
+    ...snapshot,
+    userId,
+    vaultId,
+    lastSyncedAt: snapshot.lastSyncedAt ?? checkedAt,
+    updatedAt: snapshot.updatedAt ?? checkedAt,
+    completeness: {
+      kind: "complete",
+      reason: source === "remote_with_local_overlay"
+        ? "remote_with_local_mutation_overlay"
+        : "remote_page_count_verified",
+      checkedAt,
+      source,
+      scope: {
+        kind: "private_default_vault",
+        userId,
+        vaultId,
+        includesSharedCollections: false,
+      },
+      vault: { defaultVaultResolved: Boolean(vaultId) },
+      items: {
+        loadedCount: snapshot.items.length,
+        totalCount: snapshot.items.length,
+        complete: true,
+        pageSize: 1000,
+      },
+      categories: {
+        loadedCount: snapshot.categories.length,
+        totalCount: snapshot.categories.length,
+        complete: true,
+        pageSize: 1000,
+      },
+    },
+  };
+}
+
 // ============ Test Suite ============
 
 describe("VaultContext", () => {
@@ -227,15 +296,16 @@ describe("VaultContext", () => {
     mockSaveOfflineVaultTwoFactorRequirement.mockResolvedValue(undefined);
     mockIsAppOnline.mockReturnValue(true);
     mockSaveOfflineCredentials.mockResolvedValue(undefined);
-    mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+    mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
       userId: mockUser.id,
       vaultId: "vault-123",
       items: [],
       categories: [],
       lastSyncedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    });
+    }));
     mockGetOfflineSnapshot.mockResolvedValue(null);
+    mockResolveDefaultVaultId.mockResolvedValue("vault-123");
     mockGetTrustedOfflineSnapshot.mockResolvedValue(null);
     mockIsRecentLocalVaultMutation.mockReturnValue(false);
     mockSaveTrustedOfflineSnapshot.mockResolvedValue(undefined);
@@ -244,10 +314,10 @@ describe("VaultContext", () => {
     mockLoadDeviceKey.mockResolvedValue(null);
     mockCheckHasDeviceKey.mockResolvedValue(false);
     mockLoadVaultSnapshot.mockResolvedValue({
-      snapshot: {
+      snapshot: withCompleteSnapshot({
         items: [],
         categories: [],
-      },
+      }, "remote_with_local_overlay"),
       source: "cache",
     });
     mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
@@ -366,7 +436,7 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
     });
 
-    it("uses the local setup path only for the dedicated Tauri dev user", async () => {
+    it("does not grant the legacy Tauri dev user a local setup bypass", async () => {
       mockUseAuth.mockReturnValue({
         user: { id: "00000000-0000-4000-8000-000000000001", email: "tauri-dev@singra.local" },
         authReady: true,
@@ -386,7 +456,7 @@ describe("VaultContext", () => {
 
       expect(result.current.isSetupRequired).toBe(false);
       expect(mockGetOfflineCredentials).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000001");
-      expect(mockSupabase.from).not.toHaveBeenCalled();
+      expect(mockSupabase.from).toHaveBeenCalledWith("profiles");
     });
 
     it("should load existing vault setup from profile", async () => {
@@ -824,11 +894,25 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
     });
 
-    it("tauri dev unlock verifies the local snapshot without server reads", async () => {
+    it("legacy Tauri dev user unlock uses the normal remote snapshot path", async () => {
       const devUserId = "00000000-0000-4000-8000-000000000001";
       mockUseAuth.mockReturnValue({
         user: { id: devUserId, email: "tauri-dev@singra.local" },
         authReady: true,
+      });
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "dev-salt",
+            master_password_verifier: "dev-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "dev-encrypted-user-key",
+            vault_protection_mode: "master_only",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
       });
       mockGetOfflineCredentials.mockResolvedValue({
         salt: "dev-salt",
@@ -839,29 +923,26 @@ describe("VaultContext", () => {
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
       mockDecrypt.mockResolvedValue("QA Kategorie");
-      mockLoadVaultSnapshot.mockResolvedValue({
-        snapshot: {
-          userId: devUserId,
-          vaultId: "00000000-0000-4000-8000-000000000002",
-          items: [],
-          categories: [
-            {
-              id: "cat-1",
-              user_id: devUserId,
-              name: "enc:cat:v1:category-cipher",
-              icon: null,
-              color: "enc:cat:v1:color-cipher",
-              parent_id: null,
-              sort_order: null,
-              created_at: "2026-04-22T10:00:00.000Z",
-              updated_at: "2026-04-22T11:00:00.000Z",
-            },
-          ],
-          lastSyncedAt: null,
-          updatedAt: "2026-04-22T11:00:00.000Z",
-        },
-        source: "cache",
-      });
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
+        userId: devUserId,
+        vaultId: "vault-regular",
+        items: [],
+        categories: [
+          {
+            id: "cat-1",
+            user_id: devUserId,
+            name: "enc:cat:v1:category-cipher",
+            icon: null,
+            color: "enc:cat:v1:color-cipher",
+            parent_id: null,
+            sort_order: null,
+            created_at: "2026-04-22T10:00:00.000Z",
+            updated_at: "2026-04-22T11:00:00.000Z",
+          },
+        ],
+        lastSyncedAt: null,
+        updatedAt: "2026-04-22T11:00:00.000Z",
+      }));
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
 
@@ -877,17 +958,17 @@ describe("VaultContext", () => {
       expect(unlockResult?.error).toBeNull();
       expect(result.current.isLocked).toBe(false);
       expect(result.current.integrityMode).toBe("healthy");
-      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(devUserId);
-      expect(mockFetchRemoteOfflineSnapshot).not.toHaveBeenCalled();
-      expect(mockSupabase.from).not.toHaveBeenCalled();
+      expect(mockFetchRemoteOfflineSnapshot).toHaveBeenCalledWith(devUserId, { persist: false });
+      expect(mockLoadVaultSnapshot).not.toHaveBeenCalledWith(devUserId);
+      expect(mockSupabase.from).toHaveBeenCalledWith("profiles");
     });
 
-    it("keeps unlock digest-based and accepts deferred unreadable item quarantine", async () => {
+    it("keeps unlock digest-based and treats deferred unreadable items as revalidation failure", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
-      mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
         userId: mockUser.id,
         vaultId: "vault-123",
         items: [
@@ -908,7 +989,7 @@ describe("VaultContext", () => {
         categories: [],
         lastSyncedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      });
+      }));
       mockDecryptVaultItem.mockRejectedValue(new Error("OperationError"));
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
@@ -931,22 +1012,17 @@ describe("VaultContext", () => {
         result.current.reportUnreadableItems([
           {
             id: "item-bad",
-            reason: "ciphertext_changed",
+            reason: "decrypt_failed",
             updatedAt: "2026-04-22T10:00:00.000Z",
           },
         ]);
       });
 
-      expect(result.current.integrityMode).toBe("quarantine");
-      expect(result.current.quarantinedItems).toEqual([
-        expect.objectContaining({
-          id: "item-bad",
-          reason: "ciphertext_changed",
-        }),
-      ]);
+      expect(result.current.integrityMode).toBe("revalidation_failed");
+      expect(result.current.quarantinedItems).toEqual([]);
     });
 
-    it("removes runtime unreadable quarantine entries immediately after delete succeeds", async () => {
+    it("does not expose runtime unreadable items as deletable quarantine records", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
@@ -966,23 +1042,15 @@ describe("VaultContext", () => {
         result.current.reportUnreadableItems([
           {
             id: "item-bad",
-            reason: "ciphertext_changed",
+            reason: "decrypt_failed",
             updatedAt: "2026-04-22T10:00:00.000Z",
           },
         ]);
       });
 
-      expect(result.current.quarantinedItems).toEqual([
-        expect.objectContaining({ id: "item-bad" }),
-      ]);
-
-      await act(async () => {
-        await result.current.deleteQuarantinedItem("item-bad");
-      });
-
-      expect(mockDeleteQuarantinedItemFromVault).toHaveBeenCalledWith(mockUser.id, "item-bad");
+      expect(result.current.integrityMode).toBe("revalidation_failed");
       expect(result.current.quarantinedItems).toEqual([]);
-      expect(result.current.integrityMode).toBe("healthy");
+      expect(mockDeleteQuarantinedItemFromVault).not.toHaveBeenCalled();
     });
 
     it("blocks unlock when encrypted categories can no longer be decrypted", async () => {
@@ -990,7 +1058,7 @@ describe("VaultContext", () => {
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
-      mockFetchRemoteOfflineSnapshot.mockResolvedValue({
+      mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
         userId: mockUser.id,
         vaultId: "vault-123",
         items: [],
@@ -1009,7 +1077,7 @@ describe("VaultContext", () => {
         ],
         lastSyncedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      });
+      }));
       mockDecrypt.mockRejectedValue(new Error("OperationError"));
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
@@ -1046,6 +1114,42 @@ describe("VaultContext", () => {
 
       expect(unlockResult?.error).toBeInstanceOf(Error);
       expect(unlockResult?.error?.message).toBe("Invalid master password");
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("blocks master-password unlock before deriving key material when Device Key is required but missing", async () => {
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "encrypted-user-key",
+            vault_protection_mode: "device_key_required",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+      mockCheckHasDeviceKey.mockResolvedValue(false);
+      mockLoadDeviceKey.mockResolvedValue(null);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error?.message).toContain("This vault is protected with a Device Key");
+      expect(mockDeriveRawKey).not.toHaveBeenCalled();
+      expect(mockImportMasterKey).not.toHaveBeenCalled();
+      expect(mockFetchRemoteOfflineSnapshot).not.toHaveBeenCalled();
       expect(result.current.isLocked).toBe(true);
     });
 
@@ -1108,7 +1212,7 @@ describe("VaultContext", () => {
         await result.current.setupMasterPassword("CorrectPassword!");
       });
 
-      const trustedSnapshot = {
+      const trustedSnapshot = withCompleteSnapshot({
         userId: mockUser.id,
         vaultId: "vault-123",
         items: [
@@ -1141,7 +1245,7 @@ describe("VaultContext", () => {
         ],
         lastSyncedAt: "2026-04-22T11:00:00.000Z",
         updatedAt: "2026-04-22T11:00:00.000Z",
-      };
+      }, "remote_with_local_overlay");
 
       mockLoadVaultSnapshot.mockResolvedValue({
         snapshot: trustedSnapshot,
@@ -1184,7 +1288,7 @@ describe("VaultContext", () => {
         await result.current.setupMasterPassword("CorrectPassword!");
       });
 
-      const mergedSnapshot = {
+      const mergedSnapshot = withCompleteSnapshot({
         userId: mockUser.id,
         vaultId: "vault-123",
         items: [],
@@ -1203,7 +1307,7 @@ describe("VaultContext", () => {
         ],
         lastSyncedAt: "2026-04-22T11:00:00.000Z",
         updatedAt: "2026-04-22T11:00:00.000Z",
-      };
+      }, "remote_with_local_overlay");
 
       mockLoadVaultSnapshot.mockClear();
       mockSaveTrustedOfflineSnapshot.mockClear();
@@ -1279,6 +1383,74 @@ describe("VaultContext", () => {
 
       expect(unlockResult?.error?.message).toContain("Too many attempts");
       expect(mockAuthenticatePasskey).not.toHaveBeenCalled();
+    });
+
+    it("blocks passkey unlock before WebAuthn when a required Device Key is missing", async () => {
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "encrypted-user-key",
+            vault_protection_mode: "device_key_required",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+      mockCheckHasDeviceKey.mockResolvedValue(false);
+      mockLoadDeviceKey.mockResolvedValue(null);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey();
+      });
+
+      expect(unlockResult?.error?.message).toContain("This vault is protected with a Device Key");
+      expect(mockAuthenticatePasskey).not.toHaveBeenCalled();
+      expect(result.current.isLocked).toBe(true);
+    });
+
+    it("does not let passkey disable Device Key enforcement when the local Device Key is available", async () => {
+      const localDeviceKey = new Uint8Array(32).fill(7);
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "encrypted-user-key",
+            vault_protection_mode: "device_key_required",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+      mockLoadDeviceKey.mockResolvedValue(localDeviceKey);
+      mockVerifyKey.mockResolvedValue(true);
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlockWithPasskey();
+      });
+
+      expect(mockLoadDeviceKey).toHaveBeenCalledWith(mockUser.id);
+      expect(mockAuthenticatePasskey).toHaveBeenCalledTimes(1);
+      expect(result.current.isLocked).toBe(false);
     });
 
     it("should record failed attempts for passkey verification errors", async () => {
@@ -1701,7 +1873,7 @@ describe("VaultContext", () => {
     });
 
     it("should encrypt vault item when unlocked", async () => {
-      mockEncryptVaultItem.mockResolvedValue("encrypted-item-json");
+      mockEncrypt.mockResolvedValue(Buffer.from(new Uint8Array(13).fill(1)).toString("base64"));
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
 
@@ -1725,8 +1897,9 @@ describe("VaultContext", () => {
         encrypted = await result.current.encryptItem(itemData, "item-1");
       });
 
-      expect(encrypted).toBe("encrypted-item-json");
-      expect(mockEncryptVaultItem).toHaveBeenCalledWith(itemData, expect.anything(), "item-1");
+      expect(encrypted).toMatch(/^sv-vault-v2:/);
+      expect(mockEncryptVaultItem).not.toHaveBeenCalled();
+      expect(mockEncrypt).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.any(String));
     });
 
     it("should decrypt vault item when unlocked", async () => {

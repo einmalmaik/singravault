@@ -102,6 +102,9 @@ export function generatePassphrase(options: PassphraseOptions): string {
 
     for (let i = 0; i < wordCount; i++) {
         let word = getSecureRandomElement(WORD_LIST);
+        if (separator.length > 0 && word.includes(separator)) {
+            word = word.split(separator).join('');
+        }
         if (capitalize) {
             word = word.charAt(0).toUpperCase() + word.slice(1);
         }

@@ -2,6 +2,11 @@
 
 > Stand: 2026-04-28
 
+> Runtime-Architektur: Die aktuelle Modulübersicht liegt in
+> `docs/architecture/vault-runtime-architecture.md`. Device-Key-required wird
+> im Unlock-Pfad über `src/services/deviceKeyUnlockOrchestrator.ts` geprüft;
+> `VaultContext` konsumiert das Ergebnis nur noch als Provider-Fassade.
+
 ## Kurzfassung
 
 Der Device Key ist ein lokal gespeicherter 32-Byte-Zufallsschlüssel. Er wird nicht aus E-Mail, User-ID oder Master-Passwort abgeleitet und wird nicht auf den Server geschrieben. Wenn Device-Key-Schutz aktiv ist, fließt er nach Argon2id per HKDF-SHA-256 in die Vault-Key-Ableitung ein:

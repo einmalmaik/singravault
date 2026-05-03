@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     Plus,
@@ -45,9 +46,49 @@ import { useToast } from '@/hooks/use-toast';
 import { getAdminEntryPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState } from '@/services/returnNavigationState';
 import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
+import type { VaultIntegrityMode, VaultIntegrityNonTamperReason } from '@/services/vaultIntegrityService';
 
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
 export type ViewMode = 'grid' | 'list';
+
+const NON_DECRYPTABLE_INTEGRITY_MODES = new Set<VaultIntegrityMode>([
+    'revalidation_failed',
+    'integrity_unknown',
+    'migration_required',
+    'scope_incomplete',
+]);
+
+function getIntegrityWarningText(
+    t: TFunction,
+    mode: VaultIntegrityMode | 'safe',
+    reason?: VaultIntegrityNonTamperReason,
+): string {
+    if (reason === 'manifest_persist_failed') {
+        return t('vault.integrity.messages.manifest_persist_failed');
+    }
+    if (reason === 'rollback_check_unavailable') {
+        return t('vault.integrity.messages.rollback_check_unavailable');
+    }
+    if (reason === 'manifest_snapshot_conflict') {
+        return t('vault.integrity.messages.manifest_snapshot_conflict');
+    }
+    if (reason === 'snapshot_source_not_authoritative') {
+        return t('vault.integrity.messages.snapshot_source_not_authoritative');
+    }
+    if (reason === 'snapshot_completeness_unknown') {
+        return t('vault.integrity.messages.snapshot_completeness_unknown');
+    }
+    if (reason === 'revalidation_failed') {
+        return t('vault.integrity.messages.revalidation_failed');
+    }
+    if (mode === 'migration_required') {
+        return t('vault.integrity.messages.migration_required');
+    }
+    if (mode === 'scope_incomplete') {
+        return t('vault.integrity.messages.scope_incomplete');
+    }
+    return t('vault.integrity.messages.default');
+}
 
 export default function VaultPage() {
     const { t } = useTranslation();
@@ -56,7 +97,14 @@ export default function VaultPage() {
     const { toast } = useToast();
     const isMobile = useIsMobile();
     const { user, isOfflineSession } = useAuth();
-    const { integrityMode, isLocked, isSetupRequired, isLoading: vaultLoading } = useVault();
+    const {
+        integrityMode,
+        isLocked,
+        isSetupRequired,
+        isLoading: vaultLoading,
+        lastIntegrityResult,
+        refreshIntegrityBaseline,
+    } = useVault();
 
     const [searchQuery, setSearchQuery] = useState('');
     const [activeFilter, setActiveFilter] = useState<ItemFilter>('all');
@@ -68,6 +116,7 @@ export default function VaultPage() {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [isOnline, setIsOnline] = useState(() => navigator.onLine);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isRecheckingIntegrity, setIsRecheckingIntegrity] = useState(false);
 
     const showWebsiteChrome = shouldShowWebsiteChrome();
     const adminEntryPath = getAdminEntryPath();
@@ -143,6 +192,82 @@ export default function VaultPage() {
 
     if (isLocked) {
         return <VaultUnlock />;
+    }
+
+    if (NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode)) {
+        const handleIntegrityRecheck = async () => {
+            setIsRecheckingIntegrity(true);
+            try {
+                const recheckResult = await refreshIntegrityBaseline();
+                if (!recheckResult) {
+                    toast({
+                        variant: 'destructive',
+                        title: t('common.error'),
+                        description: t('vault.integrity.recheckUnavailable', {
+                            defaultValue: 'Der Tresor-Schlüssel oder Snapshot ist nicht verfügbar. Sperre den Tresor und entsperre ihn erneut.',
+                        }),
+                    });
+                    return;
+                }
+                if (NON_DECRYPTABLE_INTEGRITY_MODES.has(recheckResult.mode)) {
+                    toast({
+                        variant: 'destructive',
+                        title: t('vault.integrity.revalidationTitle', {
+                            defaultValue: 'Integritätsprüfung erforderlich',
+                        }),
+                        description: getIntegrityWarningText(
+                            t,
+                            recheckResult.mode,
+                            recheckResult.nonTamperReason,
+                        ),
+                    });
+                }
+            } catch {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: t('vault.integrity.recheckFailed', {
+                        defaultValue: 'Der Integritätscheck konnte nicht abgeschlossen werden.',
+                    }),
+                });
+            } finally {
+                setIsRecheckingIntegrity(false);
+            }
+        };
+
+        return (
+            <main className="min-h-screen bg-background px-4 py-10 lg:px-8">
+                <div className="mx-auto flex max-w-3xl flex-col gap-5 rounded-lg border border-amber-500/35 bg-amber-500/5 p-6">
+                    <div className="flex items-start gap-3">
+                        <Shield className="mt-1 h-5 w-5 shrink-0 text-amber-600" />
+                        <div className="space-y-2">
+                            <h1 className="text-lg font-semibold">
+                                {t('vault.integrity.revalidationTitle', {
+                                    defaultValue: 'Integritätsprüfung erforderlich',
+                                })}
+                            </h1>
+                            <p className="text-sm text-muted-foreground">
+                                {getIntegrityWarningText(
+                                    t,
+                                    integrityMode,
+                                    lastIntegrityResult?.nonTamperReason,
+                                )}
+                            </p>
+                        </div>
+                    </div>
+                    <div>
+                        <Button onClick={handleIntegrityRecheck} disabled={isRecheckingIntegrity}>
+                            {isRecheckingIntegrity ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                            )}
+                            {t('vault.integrity.retryCheck', { defaultValue: 'Erneut prüfen' })}
+                        </Button>
+                    </div>
+                </div>
+            </main>
+        );
     }
 
     const handleOpenNewItem = () => {

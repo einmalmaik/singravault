@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { VaultUnlock } from "../VaultUnlock";
 
 // ============ Mocks ============
@@ -29,6 +30,8 @@ const mockVaultContext = {
   pendingSessionRestore: false,
   webAuthnAvailable: false,
   hasPasskeyUnlock: false,
+  deviceKeyActive: false,
+  vaultProtectionMode: "master_only",
 };
 
 vi.mock("@/contexts/VaultContext", () => ({
@@ -74,6 +77,25 @@ vi.mock("@/components/auth/TwoFactorVerificationModal", () => ({
     ) : null,
 }));
 
+function renderVaultUnlock(initialEntries = ["/vault"]) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <VaultUnlock />
+    </MemoryRouter>,
+  );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <div data-testid="location">
+      {location.pathname}
+      {location.search}
+      {location.hash}
+    </div>
+  );
+}
+
 // ============ Tests ============
 
 describe("VaultUnlock", () => {
@@ -82,20 +104,36 @@ describe("VaultUnlock", () => {
     mockVaultContext.pendingSessionRestore = false;
     mockVaultContext.webAuthnAvailable = false;
     mockVaultContext.hasPasskeyUnlock = false;
+    mockVaultContext.deviceKeyActive = false;
+    mockVaultContext.vaultProtectionMode = "master_only";
     mockVerifyTwoFactorCode.mockResolvedValue({ success: true });
     mockUnlock.mockResolvedValue({ error: null });
     mockUnlockWithPasskey.mockResolvedValue({ error: null });
   });
 
   it("should render password input and unlock button", () => {
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     expect(screen.getByLabelText("auth.unlock.password")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /auth\.unlock\.submit/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Account Settings/i })).toHaveAttribute("href", "/settings");
+  });
+
+  it("navigates to account settings from the locked vault screen", () => {
+    render(
+      <MemoryRouter initialEntries={["/vault"]}>
+        <VaultUnlock />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: /Account Settings/i }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings");
   });
 
   it("should call unlock with entered password and a 2FA callback on submit", async () => {
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     const input = screen.getByLabelText("auth.unlock.password");
     fireEvent.change(input, { target: { value: "MyMasterPassword!" } });
@@ -114,13 +152,21 @@ describe("VaultUnlock", () => {
   it("should show passkey button when passkey unlock credentials exist", () => {
     mockVaultContext.webAuthnAvailable = false;
     mockVaultContext.hasPasskeyUnlock = false;
-    const { rerender } = render(<VaultUnlock />);
+    const { rerender } = render(
+      <MemoryRouter>
+        <VaultUnlock />
+      </MemoryRouter>,
+    );
 
     expect(screen.queryByText("Unlock with Passkey")).not.toBeInTheDocument();
 
     mockVaultContext.webAuthnAvailable = false;
     mockVaultContext.hasPasskeyUnlock = true;
-    rerender(<VaultUnlock />);
+    rerender(
+      <MemoryRouter>
+        <VaultUnlock />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText("Unlock with Passkey")).toBeInTheDocument();
   });
@@ -128,7 +174,7 @@ describe("VaultUnlock", () => {
   it("should call unlockWithPasskey with a 2FA callback when passkey button clicked", async () => {
     mockVaultContext.webAuthnAvailable = true;
     mockVaultContext.hasPasskeyUnlock = true;
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     fireEvent.click(screen.getByText("Unlock with Passkey"));
 
@@ -144,7 +190,7 @@ describe("VaultUnlock", () => {
       await options.verifyTwoFactor();
       return { error: null };
     });
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     const input = screen.getByLabelText("auth.unlock.password");
     fireEvent.change(input, { target: { value: "password123" } });
@@ -162,7 +208,7 @@ describe("VaultUnlock", () => {
       const verified = await options.verifyTwoFactor();
       return verified ? { error: null } : { error: new Error("Vault 2FA verification failed.") };
     });
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     const input = screen.getByLabelText("auth.unlock.password");
     fireEvent.change(input, { target: { value: "password123" } });
@@ -191,7 +237,7 @@ describe("VaultUnlock", () => {
       const verified = await options.verifyTwoFactor();
       return verified ? { error: null } : { error: new Error("Vault 2FA verification failed.") };
     });
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     fireEvent.click(screen.getByText("Unlock with Passkey"));
 
@@ -213,7 +259,7 @@ describe("VaultUnlock", () => {
 
   it("should show the actual vault unlock error instead of generic auth credentials text", async () => {
     mockUnlock.mockResolvedValue({ error: new Error("Vault not set up") });
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     const input = screen.getByLabelText("auth.unlock.password");
     fireEvent.change(input, { target: { value: "MyMasterPassword!" } });
@@ -231,7 +277,7 @@ describe("VaultUnlock", () => {
   });
 
   it("should call signOut when logout button is clicked", async () => {
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     fireEvent.click(screen.getByText("auth.unlock.logout"));
 
@@ -241,7 +287,7 @@ describe("VaultUnlock", () => {
   });
 
   it("should toggle password visibility", () => {
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     const input = screen.getByLabelText("auth.unlock.password");
     expect(input).toHaveAttribute("type", "password");
@@ -259,10 +305,28 @@ describe("VaultUnlock", () => {
 
   it("should show session restore banner when pendingSessionRestore is true", () => {
     mockVaultContext.pendingSessionRestore = true;
-    render(<VaultUnlock />);
+    renderVaultUnlock();
 
     expect(
       screen.getByText("Please re-enter your master password to continue your session.")
     ).toBeInTheDocument();
+  });
+
+  it("shows a pre-unlock Device Key import action when this protected vault has no local key", () => {
+    mockVaultContext.vaultProtectionMode = "device_key_required";
+    mockVaultContext.deviceKeyActive = false;
+
+    render(
+      <MemoryRouter initialEntries={["/vault"]}>
+        <VaultUnlock />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Device Key required")).toBeInTheDocument();
+    const importLink = screen.getByRole("link", { name: /Import Device Key/i });
+    expect(importLink).toHaveAttribute("href", "/settings?tab=security#profile-device-key");
+    fireEvent.click(importLink);
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings?tab=security#profile-device-key");
   });
 });

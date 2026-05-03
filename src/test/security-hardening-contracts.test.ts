@@ -155,21 +155,66 @@ describe("security hardening contracts", () => {
       "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
       "utf-8",
     );
+    const manifestV2Migration = readFileSync(
+      "supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql",
+      "utf-8",
+    );
     const categoryMigration = readFileSync(
       "supabase/migrations/20260428143000_enforce_encrypted_category_metadata.sql",
       "utf-8",
     );
 
-    expect(syncMigration).toContain("Category name must be client-side encrypted");
-    expect(syncMigration).toContain("COALESCE(p_payload->>'name', '') NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("CREATE OR REPLACE FUNCTION public.assert_encrypted_category_metadata");
+    expect(categoryMigration).toContain("COALESCE(p_name, '') NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("p_icon IS NOT NULL AND p_icon NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("p_color IS NOT NULL AND p_color NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("Category name must be client-side encrypted");
+    expect(categoryMigration).toContain("Category icon must be client-side encrypted");
+    expect(categoryMigration).toContain("Category color must be client-side encrypted");
+
+    for (const migration of [syncMigration, manifestV2Migration]) {
+      expect(migration).toMatch(/perform public\.assert_encrypted_category_metadata/i);
+      expect(migration).toContain("p_payload->>'name'");
+      expect(migration).toContain("p_payload->>'icon'");
+      expect(migration).toContain("p_payload->>'color'");
+    }
+
     expect(syncMigration).toContain("parent_id = NULL");
     expect(syncMigration).toContain("sort_order = NULL");
 
     expect(categoryMigration).toContain("CREATE TRIGGER enforce_encrypted_category_metadata_trigger");
     expect(categoryMigration).toContain("BEFORE INSERT OR UPDATE ON public.categories");
-    expect(categoryMigration).toContain("NEW.name, '') NOT LIKE 'enc:cat:v1:%'");
+    expect(categoryMigration).toContain("PERFORM public.assert_encrypted_category_metadata(NEW.name, NEW.icon, NEW.color)");
     expect(categoryMigration).toContain("NEW.parent_id := NULL");
     expect(categoryMigration).toContain("NEW.sort_order := NULL");
+  });
+
+  it("does not expose the category metadata assertion helper as a client RPC", () => {
+    const categoryMigration = readFileSync(
+      "supabase/migrations/20260428143000_enforce_encrypted_category_metadata.sql",
+      "utf-8",
+    );
+    const syncMigration = readFileSync(
+      "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
+      "utf-8",
+    );
+    const manifestV2Migration = readFileSync(
+      "supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql",
+      "utf-8",
+    );
+
+    expect(syncMigration).toMatch(/CREATE OR REPLACE FUNCTION public\.apply_vault_mutation\([\s\S]*?SECURITY DEFINER/i);
+    expect(manifestV2Migration).toMatch(/create or replace function public\.apply_vault_mutation_v2\([\s\S]*?security definer/i);
+    expect(categoryMigration).toMatch(/CREATE OR REPLACE FUNCTION public\.enforce_encrypted_category_metadata\(\)[\s\S]*?SECURITY DEFINER/i);
+
+    for (const role of ["PUBLIC", "anon", "authenticated"]) {
+      expect(categoryMigration).toContain(
+        `REVOKE ALL ON FUNCTION public.assert_encrypted_category_metadata(TEXT, TEXT, TEXT) FROM ${role}`,
+      );
+    }
+    expect(categoryMigration).not.toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.assert_encrypted_category_metadata\(TEXT, TEXT, TEXT\) TO (PUBLIC|anon|authenticated)/,
+    );
   });
 
   it("keeps service worker caching scoped away from Supabase and vault API responses", () => {
@@ -187,7 +232,9 @@ describe("security hardening contracts", () => {
       "supabase/migrations/20260428203000_add_vault_protection_mode.sql",
       "utf-8",
     );
-    const vaultContext = readFileSync("src/contexts/VaultContext.tsx", "utf-8");
+    const deviceKeyActivation = readFileSync("src/services/deviceKeyActivationService.ts", "utf-8");
+    const deviceKeyUnlock = readFileSync("src/services/deviceKeyUnlockOrchestrator.ts", "utf-8");
+    const vaultMasterUnlock = readFileSync("src/services/vaultMasterUnlockService.ts", "utf-8");
 
     expect(migration).toContain("vault_protection_mode");
     expect(migration).toContain("'master_only'");
@@ -197,10 +244,19 @@ describe("security hardening contracts", () => {
     expect(migration).not.toMatch(/device_key_(hash|fingerprint|secret|value|material)/i);
     expect(migration).not.toContain("encrypted_device_key");
 
-    expect(vaultContext).toContain("VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED");
-    expect(vaultContext).toContain("requiresDeviceKey(vaultProtectionMode)");
-    expect(vaultContext).not.toContain("device_key_hash");
-    expect(vaultContext).not.toContain("device_key_fingerprint");
+    expect(deviceKeyActivation).toContain("VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED");
+    expect(`${deviceKeyUnlock}\n${vaultMasterUnlock}`).toContain("requiresDeviceKey");
+    expect(deviceKeyActivation).not.toContain("device_key_hash");
+    expect(deviceKeyActivation).not.toContain("device_key_fingerprint");
+  });
+
+  it("keeps master-password unlock Device Key enforcement ahead of alternate unlock hooks", () => {
+    const vaultMasterUnlock = readFileSync("src/services/vaultMasterUnlockService.ts", "utf-8");
+
+    expect(vaultMasterUnlock).toContain("if (!requiresDeviceKey(input.vaultProtectionMode))");
+    expect(vaultMasterUnlock).toContain("const duressResult = await tryDuressUnlock(input)");
+    expect(vaultMasterUnlock).toContain("return await unlockWithPrimaryVaultKey(input)");
+    expect(vaultMasterUnlock).toContain("const { deviceKey, deviceKeyAvailable, error: deviceKeyError } = await input.getRequiredDeviceKey()");
   });
 
   it("keeps Tauri Device Key raw material out of generic renderer reads", () => {
@@ -221,6 +277,100 @@ describe("security hardening contracts", () => {
     expect(nativeBridge).not.toContain("load_local_secret");
     expect(deviceKeyService).toContain("Tauri/Desktop keeps raw Device Key material inside Rust/OS keychain");
     expect(deviceKeyService).toContain("return null;");
+  });
+
+  it("checks Device Key deactivation confirmation and VaultFA in auth-2fa before profile persistence", () => {
+    const auth2fa = readFileSync("supabase/functions/auth-2fa/index.ts", "utf-8");
+    const deactivationService = readFileSync("src/services/deviceKeyDeactivationService.ts", "utf-8");
+    const migration = readFileSync(
+      "supabase/migrations/20260430133000_guard_device_key_deactivation_profile_update.sql",
+      "utf-8",
+    );
+
+    expect(auth2fa).toContain('DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD = "DISABLE DEVICE KEY"');
+    expect(auth2fa).toContain('action === "complete-device-key-deactivation"');
+    expect(auth2fa).toContain('confirmationWord !== DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD');
+    expect(auth2fa).toContain('getTwoFactorRequirementServer(supabaseAdmin, userId, "vault_unlock")');
+    expect(auth2fa).toContain('method: "totp"');
+    expect(auth2fa).toContain('.eq("vault_protection_mode", "device_key_required")');
+    expect(auth2fa).toContain('.select("user_id, vault_protection_mode")');
+    expect(auth2fa).toContain(".maybeSingle()");
+    expect(auth2fa).toContain("DEVICE_KEY_STATE_CONFLICT");
+    expect(auth2fa).not.toMatch(/confirmationWord[\s\S]{0,120}\.toLowerCase\(/);
+
+    expect(deactivationService).toContain("complete-device-key-deactivation");
+    expect(deactivationService).not.toContain(".from('profiles')\n    .update({");
+
+    expect(migration).toContain("prevent_direct_device_key_deactivation");
+    expect(migration).toContain("auth.role() <> 'service_role'");
+    expect(migration).toContain("OLD.vault_protection_mode = 'device_key_required'");
+    expect(migration).toContain("NEW.vault_protection_mode = 'master_only'");
+    expect(migration).toContain("device_key_deactivation_requires_server_validation");
+  });
+
+  it("prevents Passkey vault unlock material from bypassing Device Key enforcement", () => {
+    const passkeyUnlock = readFileSync("src/services/vaultPasskeyUnlockService.ts", "utf-8");
+    const providerActions = readFileSync("src/contexts/vault/useVaultProviderActions.tsx", "utf-8");
+    const webauthn = readFileSync("supabase/functions/webauthn/index.ts", "utf-8");
+
+    expect(passkeyUnlock).toContain("getRequiredDeviceKey");
+    expect(passkeyUnlock).toContain("Passkey proves user presence/authentication only");
+    expect(providerActions).toContain("getRequiredDeviceKey,");
+
+    expect(webauthn).toContain("isDeviceKeyRequiredForUser");
+    expect(webauthn).toContain('.select("vault_protection_mode")');
+    expect(webauthn).toContain('.eq("user_id", userId)');
+    expect(webauthn).not.toContain('.eq("id", userId)');
+    expect(webauthn).toContain("Missing profile while checking WebAuthn Device Key policy");
+    expect(webauthn).toContain('vault_protection_mode === "device_key_required"');
+    expect(webauthn).toContain('Device Key required for passkey vault unlock');
+    expect(webauthn).not.toMatch(/skipDeviceKey|bypassDeviceKey|deviceKeyPresent/i);
+  });
+
+  it("keeps security-definer vault mutation conflicts scoped to caller-owned rows", () => {
+    const legacyMutation = readFileSync(
+      "supabase/migrations/20260427212000_harden_emergency_access_and_sync_heads.sql",
+      "utf-8",
+    );
+    const manifestV2Mutation = readFileSync(
+      "supabase/migrations/20260430210000_vault_integrity_v2_manifests.sql",
+      "utf-8",
+    );
+
+    for (const migration of [legacyMutation, manifestV2Mutation]) {
+      expect(migration).toMatch(/get diagnostics _affected_rows = row_count/i);
+      expect(migration).toContain("ownership_conflict");
+      expect(migration).toMatch(/where public\.vault_items\.user_id = _uid/i);
+      expect(migration).toContain("public.vault_items.vault_id = _vault_id");
+      expect(migration).toMatch(/where public\.categories\.user_id = _uid/i);
+    }
+
+    expect(manifestV2Mutation).toMatch(/where public\.vault_integrity_manifests\.user_id = _uid/i);
+    expect(manifestV2Mutation).toMatch(
+      /if not exists \(\s*select 1\s*from public\.vaults\s*where id = _vault_id and user_id = _uid\s*\) then/i,
+    );
+    expect(manifestV2Mutation).not.toMatch(/_vault_id := \(p_payload->>'vault_id'\)::uuid;[\s\S]{0,360}insert into public\.vault_sync_heads/i);
+  });
+
+  it("exposes Device Key import from account security and the locked vault screen", () => {
+    const coreSections = readFileSync("src/components/settings/coreSettingsSections.tsx", "utf-8");
+    const securitySettings = readFileSync("src/components/settings/SecuritySettings.tsx", "utf-8");
+    const vaultUnlock = readFileSync("src/components/vault/VaultUnlock.tsx", "utf-8");
+    const app = readFileSync("src/App.tsx", "utf-8");
+
+    expect(app).toContain('path="/settings"');
+    expect(app).toContain("<ProtectedRoute><SettingsPage /></ProtectedRoute>");
+    expect(app).toContain("<VaultUnlockRequiredRoute>");
+    expect(app).toContain("VaultSettingsPage");
+    expect(coreSections).toContain("id: 'profile-device-key'");
+    expect(coreSections).toContain("render: () => <DeviceKeySettings />");
+    expect(securitySettings).not.toContain("DeviceKeySettings");
+    expect(vaultUnlock).toContain("/settings?tab=security#profile-device-key");
+    expect(vaultUnlock).toContain('to="/settings"');
+    expect(vaultUnlock).toContain("auth.unlock.accountSettings");
+    expect(vaultUnlock).toContain("state={buildReturnState(location)}");
+    expect(vaultUnlock).toContain("requiresDeviceKey(vaultProtectionMode) && !deviceKeyActive");
+    expect(vaultUnlock).not.toContain('href="/settings?tab=security#profile-device-key"');
   });
 
   it("centralizes server-visible vault item metadata neutralization for new writes", () => {

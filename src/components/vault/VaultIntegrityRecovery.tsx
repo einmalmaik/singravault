@@ -40,10 +40,14 @@ function getBlockedReasonMessage(reason: ReturnType<typeof useVault>['integrityB
       return 'Die lokale Integritäts-Baseline ist unlesbar oder beschädigt.';
     case 'legacy_baseline_mismatch':
       return 'Die alte Integritäts-Baseline passt nicht mehr zum aktuellen Tresorstand.';
+    case 'baseline_scope_mismatch':
+      return 'Die lokale Integritäts-Baseline gehört nicht eindeutig zu diesem Tresor.';
     case 'category_structure_mismatch':
       return 'Die verschlüsselten Kategorien wurden außerhalb des vertrauenswürdigen Änderungswegs verändert.';
     case 'snapshot_malformed':
       return 'Der aktuelle Tresorstand ist strukturell inkonsistent und wurde blockiert.';
+    case 'manifest_rollback_detected':
+      return 'Das Server-Manifest ist älter als der lokal zuletzt bestätigte Stand oder hat denselben Stand mit anderem Hash.';
     default:
       return 'Der aktuelle Tresorstand konnte nicht mehr als vertrauenswürdig bestätigt werden.';
   }
@@ -54,7 +58,7 @@ export function VaultIntegrityRecovery() {
   const { toast } = useToast();
   const { user } = useAuth();
   const {
-    decryptItem,
+    decryptTrustedRecoverySnapshotItem,
     enterSafeMode,
     exitSafeMode,
     integrityBlockedReason,
@@ -86,11 +90,19 @@ export function VaultIntegrityRecovery() {
         if (!snapshot) {
           throw new Error('No trusted recovery snapshot available');
         }
+        if (!snapshot.vaultId) {
+          throw new Error('Trusted recovery snapshot is missing vault scope');
+        }
+        const snapshotId = `trusted-recovery:${snapshot.updatedAt}`;
 
         const decryptedItems = await Promise.all(
           snapshot.items.map(async (item) => {
             try {
-              const decryptedData = await decryptItem(item.encrypted_data, item.id);
+              const decryptedData = await decryptTrustedRecoverySnapshotItem(
+                item,
+                snapshotId,
+                snapshot.vaultId,
+              );
               return {
                 id: item.id,
                 title: decryptedData.title || item.title,
@@ -136,7 +148,7 @@ export function VaultIntegrityRecovery() {
     return () => {
       cancelled = true;
     };
-  }, [decryptItem, integrityMode, t, toast, user]);
+  }, [decryptTrustedRecoverySnapshotItem, integrityMode, t, toast, user]);
 
   const safeModeDescription = useMemo(
     () => t('vault.integrity.safeModeDescription', {
@@ -170,8 +182,19 @@ export function VaultIntegrityRecovery() {
       if (!trustedSnapshot) {
         throw new Error('No trusted recovery snapshot available');
       }
+      if (!trustedSnapshot.vaultId) {
+        throw new Error('Trusted recovery snapshot is missing vault scope');
+      }
+      const snapshotId = `trusted-recovery:${trustedSnapshot.updatedAt}`;
+      const itemsById = new Map(trustedSnapshot.items.map((item) => [item.id, item]));
 
-      const exportPayload = await buildVaultExportPayload(trustedSnapshot.items, decryptItem, {
+      const exportPayload = await buildVaultExportPayload(trustedSnapshot.items, async (_encryptedData, entryId) => {
+        const item = entryId ? itemsById.get(entryId) : null;
+        if (!item) {
+          throw new Error('Trusted recovery snapshot item is unavailable');
+        }
+        return decryptTrustedRecoverySnapshotItem(item, snapshotId, trustedSnapshot.vaultId!);
+      }, {
         mode: 'safe',
         quarantinedItems,
       });

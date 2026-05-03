@@ -29,6 +29,17 @@ export interface LegacyVaultMetadataMigrationResult {
   migrated: boolean;
 }
 
+export class LegacyVaultMetadataMigrationPersistenceError extends Error {
+  constructor(
+    public readonly itemId: string,
+    message = `Could not persist legacy metadata migration for item ${itemId}.`,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'LegacyVaultMetadataMigrationPersistenceError';
+  }
+}
+
 /**
  * Migrates one legacy item after the vault is already unlocked. The function
  * never drops item payload data: it first merges server-visible legacy metadata
@@ -83,6 +94,46 @@ export async function migrateLegacyVaultItemMetadata(
       decryptedData: mergedDecryptedData,
       migrated: false,
     };
+  }
+
+  const migratedItem: VaultItemRow = {
+    ...input.item,
+    ...neutralPayload,
+    updated_at: updatedAt,
+  };
+
+  await upsertOfflineItemRow(input.userId, migratedItem, input.vaultId);
+
+  return {
+    item: migratedItem,
+    decryptedData: mergedDecryptedData,
+    migrated: true,
+  };
+}
+
+export async function migrateLegacyVaultItemEncryptionAndMetadata(
+  input: LegacyVaultMetadataMigrationInput,
+): Promise<LegacyVaultMetadataMigrationResult> {
+  const mergedDecryptedData = hasLegacyVaultItemServerMetadata(input.item)
+    ? mergeLegacyVaultItemMetadataIntoPayload(input.decryptedData, input.item)
+    : input.decryptedData;
+  const migratedEncryptedData = await input.encryptItem(mergedDecryptedData, input.item.id);
+  const neutralPayload = neutralizeVaultItemServerMetadata({
+    id: input.item.id,
+    user_id: input.item.user_id,
+    vault_id: input.item.vault_id,
+    encrypted_data: migratedEncryptedData,
+  });
+  const updatedAt = (input.now ?? (() => new Date()))().toISOString();
+
+  const { error } = await supabase
+    .from('vault_items')
+    .update(neutralPayload)
+    .eq('id', input.item.id)
+    .eq('user_id', input.userId);
+
+  if (error) {
+    throw new LegacyVaultMetadataMigrationPersistenceError(input.item.id, undefined, error);
   }
 
   const migratedItem: VaultItemRow = {

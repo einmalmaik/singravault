@@ -70,6 +70,7 @@ import {
   decrypt,
   encryptVaultItem,
   decryptVaultItem,
+  decryptVaultItemForMigration,
   createVerificationHash,
   verifyKey,
   importMasterKey,
@@ -321,6 +322,25 @@ describe("Integration: Core Cryptographic Pipeline", () => {
         allowLegacyNoAadFallback: true,
       })).resolves.toEqual(item);
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Legacy entry without AAD detected"));
+      warnSpy.mockRestore();
+    });
+
+    it("should expose whether explicit migration used the legacy no-AAD fallback", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const item: VaultItemData = { title: "Legacy no AAD", password: "secret" };
+      const legacyPayload = await encrypt(JSON.stringify(item), key);
+      const aadPayload = await encrypt(JSON.stringify(item), key, "item-legacy");
+
+      await expect(decryptVaultItemForMigration(aadPayload, key, "item-legacy")).resolves.toEqual({
+        data: item,
+        legacyEnvelopeUsed: true,
+        legacyNoAadFallbackUsed: false,
+      });
+      await expect(decryptVaultItemForMigration(legacyPayload, key, "item-legacy")).resolves.toEqual({
+        data: item,
+        legacyEnvelopeUsed: true,
+        legacyNoAadFallbackUsed: true,
+      });
       warnSpy.mockRestore();
     });
 

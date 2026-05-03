@@ -8,14 +8,15 @@
  * key from another device.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { KeyRound, QrCode, Upload, Shield, AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Copy, Download, Eye, EyeOff, KeyRound, QrCode, Shield, ShieldOff, Upload } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
     Dialog,
     DialogContent,
@@ -29,30 +30,75 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { isTauriRuntime } from '@/platform/runtime';
+import { saveExportFile } from '@/services/exportFileService';
 import {
     DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH,
     exportDeviceKeyForTransfer,
     generateDeviceKeyTransferSecret,
     importDeviceKeyFromTransfer,
 } from '@/services/deviceKeyService';
+import { DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD } from '@/services/deviceKeyDeactivationPolicy';
+import { requiresDeviceKey } from '@/services/deviceKeyProtectionPolicy';
+import { loadRemoteVaultProfile } from '@/services/offlineVaultRuntimeService';
+import { getTwoFactorRequirement } from '@/services/twoFactorService';
 
 export function DeviceKeySettings() {
     const { t } = useTranslation();
     const { toast } = useToast();
-    const { deviceKeyActive, enableDeviceKey, isLocked } = useVault();
+    const { deviceKeyActive, enableDeviceKey, disableDeviceKey, isLocked, refreshDeviceKeyState, vaultProtectionMode } = useVault();
     const { user } = useAuth();
 
     const [showEnableDialog, setShowEnableDialog] = useState(false);
     const [showExportDialog, setShowExportDialog] = useState(false);
     const [showImportDialog, setShowImportDialog] = useState(false);
+    const [showDisableDialog, setShowDisableDialog] = useState(false);
     const [masterPassword, setMasterPassword] = useState('');
+    const [disableMasterPassword, setDisableMasterPassword] = useState('');
+    const [disableTwoFactorCode, setDisableTwoFactorCode] = useState('');
+    const [disableVaultTwoFactorState, setDisableVaultTwoFactorState] = useState<'idle' | 'loading' | 'required' | 'not_required' | 'unavailable'>('idle');
+    const [disablePhrase, setDisablePhrase] = useState('');
+    const [disableAcknowledged, setDisableAcknowledged] = useState(false);
     const [pin, setPin] = useState('');
     const [exportedData, setExportedData] = useState('');
     const [importData, setImportData] = useState('');
     const [loading, setLoading] = useState(false);
     const [backupAcknowledged, setBackupAcknowledged] = useState(false);
+    const [showTransferSecret, setShowTransferSecret] = useState(false);
     const isDesktopRuntime = isTauriRuntime();
+    const disableConfirmationPhrase = DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD;
+    const disableVaultTwoFactorRequired = disableVaultTwoFactorState === 'required';
+    const deviceKeyRequired = requiresDeviceKey(vaultProtectionMode);
+    const canExportOrDisable = deviceKeyRequired && deviceKeyActive;
+
+    useEffect(() => {
+        if (!showDisableDialog || !user) {
+            setDisableVaultTwoFactorState('idle');
+            return;
+        }
+
+        let cancelled = false;
+        setDisableVaultTwoFactorState('loading');
+        void getTwoFactorRequirement({ userId: user.id, context: 'vault_unlock' })
+            .then((requirement) => {
+                if (cancelled) return;
+                setDisableVaultTwoFactorState(
+                    requirement.status === 'unavailable'
+                        ? 'unavailable'
+                        : requirement.required ? 'required' : 'not_required',
+                );
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setDisableVaultTwoFactorState('unavailable');
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [showDisableDialog, user]);
 
     const handleEnable = async () => {
         if (!masterPassword) return;
@@ -83,6 +129,21 @@ export function DeviceKeySettings() {
 
     const handleExport = async () => {
         if (!user || !pin || pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH) return;
+        const profile = await loadRemoteVaultProfile(user.id);
+        const remoteRequiresDeviceKey = profile.credentials
+            ? requiresDeviceKey(profile.credentials.vaultProtectionMode)
+            : false;
+        if (!remoteRequiresDeviceKey || !deviceKeyActive) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.exportFailed'),
+            });
+            setShowExportDialog(false);
+            setPin('');
+            await refreshDeviceKeyState();
+            return;
+        }
         setLoading(true);
 
         const data = await exportDeviceKeyForTransfer(user.id, pin);
@@ -90,6 +151,10 @@ export function DeviceKeySettings() {
         setLoading(false);
         if (data) {
             setExportedData(data);
+            await supabase
+                .from('profiles')
+                .update({ device_key_backup_acknowledged_at: new Date().toISOString() } as Record<string, unknown>)
+                .eq('user_id', user.id);
         } else {
             toast({
                 variant: 'destructive',
@@ -103,7 +168,12 @@ export function DeviceKeySettings() {
         if (!user || !importData || pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH) return;
         setLoading(true);
 
-        const success = await importDeviceKeyFromTransfer(user.id, importData, pin);
+        let success = false;
+        try {
+            success = await importDeviceKeyFromTransfer(user.id, importData, pin);
+        } catch {
+            success = false;
+        }
 
         setLoading(false);
         setShowImportDialog(false);
@@ -115,11 +185,101 @@ export function DeviceKeySettings() {
                 title: t('common.success'),
                 description: t('deviceKey.importSuccess'),
             });
+            await refreshDeviceKeyState();
         } else {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
                 description: t('deviceKey.importFailed'),
+            });
+        }
+    };
+
+    const handleImportFile = async (file: File | undefined) => {
+        if (!file) return;
+        const text = await file.text();
+        setImportData(text.trim());
+    };
+
+    const handleDisable = async () => {
+        if (!disableMasterPassword || disablePhrase !== disableConfirmationPhrase || !disableAcknowledged) return;
+        setLoading(true);
+
+        const { error } = await disableDeviceKey(
+            disableMasterPassword,
+            disableVaultTwoFactorRequired ? disableTwoFactorCode : undefined,
+            disablePhrase,
+        );
+
+        setLoading(false);
+        if (error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.disableFailed'),
+            });
+            return;
+        }
+
+        setShowDisableDialog(false);
+        setDisableMasterPassword('');
+        setDisableTwoFactorCode('');
+        setDisablePhrase('');
+        setDisableAcknowledged(false);
+        toast({
+            title: t('common.success'),
+            description: t('deviceKey.disableSuccess'),
+        });
+    };
+
+    const copyTransferSecret = async () => {
+        if (!pin) return;
+        await navigator.clipboard.writeText(pin);
+        toast({
+            title: t('common.success'),
+            description: t('deviceKey.secretCopied', 'Transfer secret copied.'),
+        });
+    };
+
+    const copyExportedData = async () => {
+        if (!exportedData) return;
+        await navigator.clipboard.writeText(exportedData);
+        toast({
+            title: t('common.success'),
+            description: t('deviceKey.exportCopied', 'Device Key transfer data copied.'),
+        });
+    };
+
+    const downloadTransferFile = async () => {
+        if (!exportedData) return;
+        try {
+            await saveExportFile({
+                name: 'singra-device-key.singra-device-key',
+                mime: 'text/plain;charset=utf-8',
+                content: `${exportedData}\n`,
+            });
+        } catch {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.exportFailed'),
+            });
+        }
+    };
+
+    const downloadTransferSecret = async () => {
+        if (!pin) return;
+        try {
+            await saveExportFile({
+                name: 'singra-device-key-transfer-secret.txt',
+                mime: 'text/plain;charset=utf-8',
+                content: `${pin}\n`,
+            });
+        } catch {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.exportFailed'),
             });
         }
     };
@@ -136,7 +296,7 @@ export function DeviceKeySettings() {
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                {deviceKeyActive ? (
+                {canExportOrDisable ? (
                     <>
                         <Alert>
                             <Shield className="w-4 h-4" />
@@ -154,6 +314,35 @@ export function DeviceKeySettings() {
                             >
                                 <QrCode className="w-4 h-4" />
                                 {t('deviceKey.export')}
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                onClick={() => setShowDisableDialog(true)}
+                                disabled={isLocked}
+                                className="gap-2"
+                            >
+                                <ShieldOff className="w-4 h-4" />
+                                {t('deviceKey.disable')}
+                            </Button>
+                        </div>
+                    </>
+                ) : deviceKeyRequired ? (
+                    <>
+                        <Alert>
+                            <AlertTriangle className="w-4 h-4" />
+                            <AlertDescription>
+                                {t('deviceKey.importRequired', 'Device Key protection is active for this vault, but this device does not have the local Device Key. Import it from a trusted device.')}
+                            </AlertDescription>
+                        </Alert>
+
+                        <div className="flex flex-col sm:flex-row gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => setShowImportDialog(true)}
+                                className="gap-2"
+                            >
+                                <Upload className="w-4 h-4" />
+                                {t('deviceKey.import')}
                             </Button>
                         </div>
                     </>
@@ -174,15 +363,6 @@ export function DeviceKeySettings() {
                             >
                                 <KeyRound className="w-4 h-4" />
                                 {t('deviceKey.enable')}
-                            </Button>
-
-                            <Button
-                                variant="outline"
-                                onClick={() => setShowImportDialog(true)}
-                                className="gap-2"
-                            >
-                                <Upload className="w-4 h-4" />
-                                {t('deviceKey.import')}
                             </Button>
                         </div>
                     </>
@@ -240,10 +420,115 @@ export function DeviceKeySettings() {
                 </DialogContent>
             </Dialog>
 
+            {/* Disable Dialog */}
+            <Dialog open={showDisableDialog} onOpenChange={(open) => {
+                setShowDisableDialog(open);
+                if (!open) {
+                    setDisableMasterPassword('');
+                    setDisableTwoFactorCode('');
+                    setDisablePhrase('');
+                    setDisableAcknowledged(false);
+                    setDisableVaultTwoFactorState('idle');
+                }
+            }}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{t('deviceKey.disableTitle')}</DialogTitle>
+                        <DialogDescription>
+                            {t('deviceKey.disableDesc')}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <Alert variant="destructive">
+                        <AlertTriangle className="w-4 h-4" />
+                        <AlertDescription>
+                            {t('deviceKey.disableWarning')}
+                        </AlertDescription>
+                    </Alert>
+                    <div className="space-y-2">
+                        <Label>{t('auth.unlock.password')}</Label>
+                        <Input
+                            type="password"
+                            value={disableMasterPassword}
+                            onChange={(e) => setDisableMasterPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                        />
+                    </div>
+                    {disableVaultTwoFactorState === 'loading' && (
+                        <p className="text-sm text-muted-foreground">
+                            {t('deviceKey.disableTwoFactorChecking')}
+                        </p>
+                    )}
+                    {disableVaultTwoFactorState === 'unavailable' && (
+                        <Alert variant="destructive">
+                            <AlertTriangle className="w-4 h-4" />
+                            <AlertDescription>
+                                {t('deviceKey.disableTwoFactorUnavailable')}
+                            </AlertDescription>
+                        </Alert>
+                    )}
+                    {disableVaultTwoFactorRequired && (
+                        <div className="space-y-2">
+                            <Label>{t('deviceKey.disableTwoFactorCode')}</Label>
+                            <Input
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                value={disableTwoFactorCode}
+                                onChange={(e) => setDisableTwoFactorCode(e.target.value)}
+                                placeholder={t('deviceKey.disableTwoFactorPlaceholder')}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                {t('deviceKey.disableTwoFactorHelp')}
+                            </p>
+                        </div>
+                    )}
+                    <div className="space-y-2">
+                        <Label>{t('deviceKey.disableConfirmLabel', { phrase: disableConfirmationPhrase })}</Label>
+                        <Input
+                            value={disablePhrase}
+                            onChange={(e) => setDisablePhrase(e.target.value)}
+                            placeholder={disableConfirmationPhrase}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            {t('deviceKey.disableConfirmHelp')}
+                        </p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                        <Checkbox
+                            id="device-key-disable-ack"
+                            checked={disableAcknowledged}
+                            onCheckedChange={(checked) => setDisableAcknowledged(checked === true)}
+                        />
+                        <Label htmlFor="device-key-disable-ack" className="text-sm font-normal leading-snug">
+                            {t('deviceKey.disableAck')}
+                        </Label>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowDisableDialog(false)}>
+                            {t('common.cancel')}
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            onClick={handleDisable}
+                            disabled={
+                                !disableMasterPassword
+                                || disablePhrase !== disableConfirmationPhrase
+                                || disableVaultTwoFactorState === 'loading'
+                                || disableVaultTwoFactorState === 'unavailable'
+                                || (disableVaultTwoFactorRequired && !disableTwoFactorCode.trim())
+                                || !disableAcknowledged
+                                || loading
+                            }
+                        >
+                            {t('deviceKey.disable')}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Export Dialog */}
             <Dialog open={showExportDialog} onOpenChange={(open) => {
                 setShowExportDialog(open);
-                if (!open) { setExportedData(''); setPin(''); }
+                if (!open) { setExportedData(''); setPin(''); setShowTransferSecret(false); }
             }}>
                 <DialogContent>
                     <DialogHeader>
@@ -264,7 +549,7 @@ export function DeviceKeySettings() {
                                 <Label>{t('deviceKey.transferPin')}</Label>
                                 <div className="flex gap-2">
                                     <Input
-                                        type="password"
+                                        type={showTransferSecret ? 'text' : 'password'}
                                         value={pin}
                                         onChange={(e) => setPin(e.target.value)}
                                         placeholder={t('deviceKey.pinPlaceholder')}
@@ -273,11 +558,32 @@ export function DeviceKeySettings() {
                                     <Button
                                         type="button"
                                         variant="outline"
+                                        size="icon"
+                                        onClick={() => setShowTransferSecret((value) => !value)}
+                                        aria-label={showTransferSecret ? t('common.hide', 'Hide') : t('common.show', 'Show')}
+                                    >
+                                        {showTransferSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
                                         onClick={() => setPin(generateDeviceKeyTransferSecret())}
                                     >
                                         {t('deviceKey.generateSecret')}
                                     </Button>
                                 </div>
+                                {pin && (
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button type="button" variant="outline" size="sm" onClick={copyTransferSecret}>
+                                            <Copy className="w-4 h-4 mr-2" />
+                                            {t('common.copy', 'Copy')}
+                                        </Button>
+                                        <Button type="button" variant="outline" size="sm" onClick={downloadTransferSecret}>
+                                            <Download className="w-4 h-4 mr-2" />
+                                            {t('deviceKey.downloadSecret', 'Download secret')}
+                                        </Button>
+                                    </div>
+                                )}
                             </div>
                             <DialogFooter>
                                 <Button variant="outline" onClick={() => setShowExportDialog(false)}>
@@ -290,8 +596,23 @@ export function DeviceKeySettings() {
                         </>
                     ) : (
                         <div className="space-y-4">
-                            <div className="p-4 rounded-lg bg-muted font-mono text-xs break-all select-all">
-                                {exportedData}
+                            <div className="space-y-2">
+                                <Label>{t('deviceKey.transferCode')}</Label>
+                                <Textarea
+                                    readOnly
+                                    value={exportedData}
+                                    className="min-h-32 font-mono text-xs"
+                                />
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <Button type="button" variant="outline" onClick={copyExportedData}>
+                                    <Copy className="w-4 h-4 mr-2" />
+                                    {t('common.copy', 'Copy')}
+                                </Button>
+                                <Button type="button" variant="outline" onClick={downloadTransferFile}>
+                                    <Download className="w-4 h-4 mr-2" />
+                                    {t('deviceKey.downloadExport', 'Download export')}
+                                </Button>
                             </div>
                             <p className="text-sm text-muted-foreground">
                                 {t('deviceKey.exportInstructions')}
@@ -307,7 +628,10 @@ export function DeviceKeySettings() {
             </Dialog>
 
             {/* Import Dialog */}
-            <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+            <Dialog open={showImportDialog} onOpenChange={(open) => {
+                setShowImportDialog(open);
+                if (!open) { setImportData(''); setPin(''); setShowTransferSecret(false); }
+            }}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>{t('deviceKey.importTitle')}</DialogTitle>
@@ -324,22 +648,37 @@ export function DeviceKeySettings() {
                     <div className="space-y-4">
                         <div className="space-y-2">
                             <Label>{t('deviceKey.transferCode')}</Label>
-                            <Input
+                            <Textarea
                                 value={importData}
                                 onChange={(e) => setImportData(e.target.value)}
                                 placeholder={t('deviceKey.codePlaceholder')}
+                                className="min-h-28 font-mono text-xs"
+                            />
+                            <Input
+                                type="file"
+                                accept=".singra-device-key,application/json,text/plain"
+                                onChange={(event) => void handleImportFile(event.target.files?.[0])}
                             />
                         </div>
                         <div className="space-y-2">
                             <Label>{t('deviceKey.transferPin')}</Label>
                             <div className="flex gap-2">
                                 <Input
-                                    type="password"
+                                    type={showTransferSecret ? 'text' : 'password'}
                                     value={pin}
                                     onChange={(e) => setPin(e.target.value)}
                                     placeholder={t('deviceKey.pinPlaceholder')}
                                     minLength={DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH}
                                 />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() => setShowTransferSecret((value) => !value)}
+                                    aria-label={showTransferSecret ? t('common.hide', 'Hide') : t('common.show', 'Show')}
+                                >
+                                    {showTransferSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </Button>
                                 <Button
                                     type="button"
                                     variant="outline"

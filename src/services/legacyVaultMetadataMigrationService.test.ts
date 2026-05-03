@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { migrateLegacyVaultItemMetadata } from './legacyVaultMetadataMigrationService';
+import {
+  migrateLegacyVaultItemEncryptionAndMetadata,
+  migrateLegacyVaultItemMetadata,
+} from './legacyVaultMetadataMigrationService';
 
 const updateEq = vi.fn();
 const update = vi.fn();
@@ -137,5 +140,48 @@ describe('legacy vault metadata migration service', () => {
       },
     });
     expect(upsertOfflineItemRow).not.toHaveBeenCalled();
+  });
+
+  it('migrates legacy encryption and server metadata in one trusted write', async () => {
+    const encryptItem = vi.fn().mockResolvedValue('aad-bound-ciphertext');
+
+    const result = await migrateLegacyVaultItemEncryptionAndMetadata({
+      userId: 'user-1',
+      vaultId: 'vault-1',
+      item: legacyItem as never,
+      decryptedData: { password: 'secret' },
+      canPersistRemote: true,
+      encryptItem,
+      now: () => new Date('2026-04-28T12:00:00.000Z'),
+    });
+
+    expect(encryptItem).toHaveBeenCalledWith({
+      password: 'secret',
+      title: 'Legacy payroll login',
+      websiteUrl: 'https://payroll.example',
+      itemType: 'totp',
+      isFavorite: true,
+      categoryId: 'cat-1',
+    }, 'item-1');
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      encrypted_data: 'aad-bound-ciphertext',
+      title: 'Encrypted Item',
+      website_url: null,
+      item_type: 'password',
+      is_favorite: false,
+      category_id: null,
+    }));
+    expect(upsertOfflineItemRow).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      encrypted_data: 'aad-bound-ciphertext',
+      title: 'Encrypted Item',
+      updated_at: '2026-04-28T12:00:00.000Z',
+    }), 'vault-1');
+    expect(result).toMatchObject({
+      migrated: true,
+      decryptedData: {
+        password: 'secret',
+        title: 'Legacy payroll login',
+      },
+    });
   });
 });

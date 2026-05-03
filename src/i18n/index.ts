@@ -62,21 +62,58 @@ export const languages = {
 } as const;
 
 export type LanguageCode = keyof typeof languages;
+export type LanguagePreference = 'system' | LanguageCode;
 
-const getInitialLanguage = (): LanguageCode => {
-  if (hasOptionalCookieConsent()) {
-    const stored = localStorage.getItem('Singra-language');
-    if (stored && stored in languages) {
-      return stored as LanguageCode;
+export const SYSTEM_LANGUAGE_PREFERENCE = 'system' as const;
+export const LANGUAGE_STORAGE_KEY = 'Singra-language';
+export const LANGUAGE_PREFERENCE_STORAGE_KEY = 'Singra-language-preference';
+
+export function isLanguageCode(value: string): value is LanguageCode {
+  return value in languages;
+}
+
+export function isLanguagePreference(value: string): value is LanguagePreference {
+  return value === SYSTEM_LANGUAGE_PREFERENCE || isLanguageCode(value);
+}
+
+export function resolveSystemLanguage(): LanguageCode {
+  if (typeof navigator !== 'undefined') {
+    const candidates = [navigator.language, ...(navigator.languages ?? [])]
+      .map((lang) => lang.split('-')[0])
+      .filter(Boolean);
+    const supported = candidates.find((lang): lang is LanguageCode => isLanguageCode(lang));
+    if (supported) {
+      return supported;
     }
   }
 
-  const browserLang = navigator.language.split('-')[0];
-  if (browserLang in languages) {
-    return browserLang as LanguageCode;
+  return 'de';
+}
+
+export function getStoredLanguagePreference(): LanguagePreference {
+  if (!hasOptionalCookieConsent()) {
+    return SYSTEM_LANGUAGE_PREFERENCE;
   }
 
-  return 'de';
+  const storedPreference = localStorage.getItem(LANGUAGE_PREFERENCE_STORAGE_KEY);
+  if (storedPreference && isLanguagePreference(storedPreference)) {
+    return storedPreference;
+  }
+
+  const legacyLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  if (legacyLanguage && isLanguageCode(legacyLanguage)) {
+    return legacyLanguage;
+  }
+
+  return SYSTEM_LANGUAGE_PREFERENCE;
+}
+
+export function resolveLanguagePreference(preference: LanguagePreference): LanguageCode {
+  return preference === SYSTEM_LANGUAGE_PREFERENCE ? resolveSystemLanguage() : preference;
+}
+
+const getInitialLanguage = (): LanguageCode => {
+  return resolveLanguagePreference(getStoredLanguagePreference());
 };
 
 i18n
@@ -94,20 +131,32 @@ i18n
     debug: import.meta.env.DEV,
   });
 
-export const changeLanguage = (lang: LanguageCode) => {
+function persistLanguagePreference(preference: LanguagePreference): void {
   const consent = localStorage.getItem('singra-cookie-consent');
   if (consent) {
     try {
       const parsed = JSON.parse(consent);
       if (parsed.optional) {
-        localStorage.setItem('Singra-language', lang);
+        localStorage.setItem(LANGUAGE_PREFERENCE_STORAGE_KEY, preference);
+        if (preference === SYSTEM_LANGUAGE_PREFERENCE) {
+          localStorage.removeItem(LANGUAGE_STORAGE_KEY);
+        } else {
+          localStorage.setItem(LANGUAGE_STORAGE_KEY, preference);
+        }
       }
     } catch {
       // If parse fails, err on safe side and don't save.
     }
   }
+}
 
-  i18n.changeLanguage(lang);
+export const changeLanguagePreference = (preference: LanguagePreference) => {
+  persistLanguagePreference(preference);
+  i18n.changeLanguage(resolveLanguagePreference(preference));
+};
+
+export const changeLanguage = (lang: LanguageCode) => {
+  changeLanguagePreference(lang);
 };
 
 export default i18n;

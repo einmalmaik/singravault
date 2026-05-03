@@ -93,6 +93,7 @@ export function VaultSidebar({
         vaultDataVersion,
     } = useVault();
     const { user } = useAuth();
+    const userId = user?.id ?? null;
     const [collapsed, setCollapsed] = useState(false);
 
     // Categories state
@@ -105,12 +106,28 @@ export function VaultSidebar({
     const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
     const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
     const fetchRequestIdRef = useRef(0);
+    const fetchingCategoriesRef = useRef(false);
+    const decryptDataRef = useRef(decryptData);
+    const decryptItemRef = useRef(decryptItem);
+    const encryptDataRef = useRef(encryptData);
+    const encryptItemRef = useRef(encryptItem);
+    const verifyIntegrityRef = useRef(verifyIntegrity);
+    const refreshIntegrityBaselineRef = useRef(refreshIntegrityBaseline);
     const quarantinedItemIdsRef = useRef<Set<string>>(new Set());
+
+    useEffect(() => {
+        decryptDataRef.current = decryptData;
+        decryptItemRef.current = decryptItem;
+        encryptDataRef.current = encryptData;
+        encryptItemRef.current = encryptItem;
+        verifyIntegrityRef.current = verifyIntegrity;
+        refreshIntegrityBaselineRef.current = refreshIntegrityBaseline;
+    }, [decryptData, decryptItem, encryptData, encryptItem, refreshIntegrityBaseline, verifyIntegrity]);
 
     useEffect(() => {
         failedDecryptPayloadByItemIdRef.current.clear();
         loggedDecryptFailuresRef.current.clear();
-    }, [user?.id, isDuressMode]);
+    }, [userId, isDuressMode]);
 
     useEffect(() => {
         quarantinedItemIdsRef.current = new Set((lastIntegrityResult?.quarantinedItems ?? []).map((item) => item.id));
@@ -118,14 +135,15 @@ export function VaultSidebar({
 
     // Fetch categories
     const fetchCategories = useCallback(async () => {
-        if (!user) return;
+        if (!userId || fetchingCategoriesRef.current) return;
 
         const requestId = fetchRequestIdRef.current + 1;
         fetchRequestIdRef.current = requestId;
+        fetchingCategoriesRef.current = true;
 
         try {
-            const { snapshot, source } = await loadVaultSnapshot(user.id);
-            const integrityResult = await verifyIntegrity(snapshot, { source });
+            const { snapshot, source } = await loadVaultSnapshot(userId);
+            const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
             if (integrityResult?.mode === 'blocked') {
                 if (fetchRequestIdRef.current === requestId) {
                     setCategories([]);
@@ -162,16 +180,16 @@ export function VaultSidebar({
                     }
 
                     try {
-                        const decryptedData = await decryptItem(item.encrypted_data, item.id);
+                        const decryptedData = await decryptItemRef.current(item.encrypted_data, item.id);
                         failedDecryptPayloadByItemIdRef.current.delete(item.id);
 
                         const migration = await migrateLegacyVaultItemMetadata({
-                            userId: user.id,
+                            userId,
                             vaultId: snapshot.vaultId,
                             item,
                             decryptedData,
                             canPersistRemote: canPersistMigrations,
-                            encryptItem,
+                            encryptItem: encryptItemRef.current,
                         });
 
                         if (migration.migrated) {
@@ -214,7 +232,7 @@ export function VaultSidebar({
 
                     if (cat.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
                         try {
-                            resolvedName = await decryptData(cat.name.slice(ENCRYPTED_CATEGORY_PREFIX.length));
+                            resolvedName = await decryptDataRef.current(cat.name.slice(ENCRYPTED_CATEGORY_PREFIX.length));
                         } catch (err) {
                             console.debug(
                                 isDuressMode
@@ -226,7 +244,7 @@ export function VaultSidebar({
                         }
                     } else if (canPersistMigrations) {
                         try {
-                            const encryptedName = await encryptData(cat.name);
+                            const encryptedName = await encryptDataRef.current(cat.name);
                             migratedName = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedName}`;
                             await supabase
                                 .from('categories')
@@ -239,7 +257,7 @@ export function VaultSidebar({
 
                     if (cat.icon && cat.icon.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
                         try {
-                            resolvedIcon = await decryptData(cat.icon.slice(ENCRYPTED_CATEGORY_PREFIX.length));
+                            resolvedIcon = await decryptDataRef.current(cat.icon.slice(ENCRYPTED_CATEGORY_PREFIX.length));
                         } catch (err) {
                             console.debug(
                                 isDuressMode
@@ -251,7 +269,7 @@ export function VaultSidebar({
                         }
                     } else if (cat.icon && canPersistMigrations) {
                         try {
-                            const encryptedIcon = await encryptData(cat.icon);
+                            const encryptedIcon = await encryptDataRef.current(cat.icon);
                             migratedIcon = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedIcon}`;
                             await supabase
                                 .from('categories')
@@ -264,7 +282,7 @@ export function VaultSidebar({
 
                     if (cat.color && cat.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
                         try {
-                            resolvedColor = await decryptData(cat.color.slice(ENCRYPTED_CATEGORY_PREFIX.length));
+                            resolvedColor = await decryptDataRef.current(cat.color.slice(ENCRYPTED_CATEGORY_PREFIX.length));
                         } catch (err) {
                             console.debug(
                                 isDuressMode
@@ -276,7 +294,7 @@ export function VaultSidebar({
                         }
                     } else if (cat.color && canPersistMigrations) {
                         try {
-                            const encryptedColor = await encryptData(cat.color);
+                            const encryptedColor = await encryptDataRef.current(cat.color);
                             migratedColor = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedColor}`;
                             await supabase
                                 .from('categories')
@@ -288,7 +306,7 @@ export function VaultSidebar({
                     }
 
                     if (canPersistMigrations && (migratedName !== cat.name || migratedIcon !== cat.icon || migratedColor !== cat.color)) {
-                        await upsertOfflineCategoryRow(user.id, {
+                        await upsertOfflineCategoryRow(userId, {
                             ...cat,
                             name: migratedName,
                             icon: migratedIcon,
@@ -310,7 +328,7 @@ export function VaultSidebar({
             );
 
             if (integrityBaselineDirty && canPersistMigrations) {
-                await refreshIntegrityBaseline({
+                await refreshIntegrityBaselineRef.current({
                     itemIds: trustedItemIds,
                     categoryIds: trustedCategoryIds,
                 });
@@ -322,19 +340,14 @@ export function VaultSidebar({
         } catch (err) {
             console.error('Error fetching categories:', err);
         } finally {
+            fetchingCategoriesRef.current = false;
             if (fetchRequestIdRef.current === requestId) {
                 setLoading(false);
             }
         }
     }, [
-        user,
-        decryptData,
-        decryptItem,
-        encryptData,
-        encryptItem,
         isDuressMode,
-        refreshIntegrityBaseline,
-        verifyIntegrity,
+        userId,
     ]);
 
     useEffect(() => {
@@ -345,7 +358,7 @@ export function VaultSidebar({
 
     useEffect(() => {
         fetchCategories();
-    }, [fetchCategories, t, vaultDataVersion]);
+    }, [fetchCategories, vaultDataVersion]);
 
     const handleAddCategory = () => {
         setEditingCategory(null);
