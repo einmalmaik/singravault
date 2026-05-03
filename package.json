@@ -1,7 +1,7 @@
 {
   "name": "singra-secure-vault",
   "private": true,
-  "version": "0.4.3",
+  "version": "0.4.4",
   "license": "BUSL-1.1",
   "type": "module",
   "engines": {
