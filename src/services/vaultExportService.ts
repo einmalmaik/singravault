@@ -31,16 +31,38 @@ export interface VaultExportPayload {
   }>;
 }
 
+export interface VaultExportOptions {
+  mode?: 'normal' | 'safe';
+  quarantinedItems?: QuarantinedVaultItem[];
+  /**
+   * Item IDs that must be excluded from the export regardless of
+   * whether they are decryptable. This is used by the Phase 10
+   * egress policy to block quarantined, pending, conflict, and
+   * unknown-author records from leaving the vault.
+   */
+  excludedItemIds?: Set<string>;
+}
+
 export async function buildVaultExportPayload(
   items: ExportableVaultItemRow[],
   decryptItem: (encryptedData: string, entryId?: string) => Promise<VaultItemData>,
-  options?: {
-    mode?: 'normal' | 'safe';
-    quarantinedItems?: QuarantinedVaultItem[];
-  },
+  options?: VaultExportOptions,
 ): Promise<VaultExportPayload> {
+  const quarantinedIds = new Set(options?.quarantinedItems?.map((q) => q.id) ?? []);
+  const excludedIds = options?.excludedItemIds ?? new Set<string>();
+
+  const eligibleItems = items.filter((item) => {
+    if (quarantinedIds.has(item.id)) {
+      return false;
+    }
+    if (excludedIds.has(item.id)) {
+      return false;
+    }
+    return true;
+  });
+
   const decryptedItems = await Promise.all(
-    items.map(async (item) => {
+    eligibleItems.map(async (item) => {
       try {
         const decrypted = await decryptItem(item.encrypted_data, item.id);
         return {
@@ -71,7 +93,7 @@ export async function buildVaultExportPayload(
     mode: options?.mode ?? 'normal',
     exportedAt: new Date().toISOString(),
     itemCount: validItems.length,
-    quarantinedItems: options?.quarantinedItems ?? [],
+    quarantinedItems: [],
     items: validItems,
   };
 }

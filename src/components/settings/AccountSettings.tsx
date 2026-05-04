@@ -43,6 +43,10 @@ import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthS
 import { clearOfflineVaultData } from '@/services/offlineVaultService';
 import { saveExportFile } from '@/services/exportFileService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
+import {
+  buildExcludedItemIdsFromOpLogView,
+  isVaultSecurityModeBlockingEgress,
+} from '@/services/vaultOpLog';
 import { verifyTwoFactorChallenge } from '@/services/twoFactorService';
 import { clearLastOAuthProvider } from '@/services/socialLoginPreferenceService';
 import { invokeAuthedFunction, isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
@@ -62,7 +66,7 @@ const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 export function AccountSettings() {
     const { t } = useTranslation();
     const { user, signOut } = useAuth();
-    const { decryptItem, isLocked } = useVault();
+    const { decryptItem, isLocked, opLogUiView } = useVault();
     const { toast } = useToast();
     const navigate = useNavigate();
 
@@ -243,6 +247,19 @@ export function AccountSettings() {
                 throw error ?? new Error('Failed to fetch items');
             }
 
+            // Phase 10: apply central egress policy.
+            if (opLogUiView && isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)) {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: t('vault.export.blockedBySecurityMode', {
+                        defaultValue: 'Export ist aufgrund des aktuellen Tresor-Sicherheitsmodus nicht erlaubt.',
+                    }),
+                });
+                return;
+            }
+            const excludedItemIds = buildExcludedItemIdsFromOpLogView(opLogUiView);
+
             const exportData = await buildVaultExportPayload(
                 items.map((item) => ({
                     ...item,
@@ -251,6 +268,9 @@ export function AccountSettings() {
                     encrypted_data: item.encrypted_data || '',
                 })),
                 decryptItem,
+                {
+                    excludedItemIds: excludedItemIds ?? undefined,
+                },
             );
 
             const saved = await saveExportFile({

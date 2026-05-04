@@ -56,6 +56,11 @@ interface VaultItemCardProps {
      *  Set to true only in read-only contexts like GrantorVaultPage where the Authenticator
      *  tab is not accessible but 2FA codes may be needed for account sign-in. */
     showTotpCode?: boolean;
+    /**
+     * Phase 10: when `false`, copy-to-clipboard actions are disabled.
+     * Defaults to `true` for backward compatibility.
+     */
+    canCopySecrets?: boolean;
 }
 
 export function VaultItemCard({
@@ -64,6 +69,7 @@ export function VaultItemCard({
     onEdit,
     readOnly = false,
     showTotpCode = false,
+    canCopySecrets = true,
 }: VaultItemCardProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
@@ -155,7 +161,7 @@ export function VaultItemCard({
 
                     {/* Actions */}
                     <div className="flex items-center gap-1">
-                        {item.decryptedData?.password && (
+                        {item.decryptedData?.password && canCopySecrets && (
                             <Button
                                 variant="ghost"
                                 size="icon"
@@ -271,7 +277,7 @@ export function VaultItemCard({
 
                 {/* Quick Actions */}
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {item.decryptedData?.username && (
+                    {item.decryptedData?.username && canCopySecrets && (
                         <Button
                             variant="ghost"
                             size="sm"
@@ -285,7 +291,7 @@ export function VaultItemCard({
                             {t('vault.actions.copyUsername')}
                         </Button>
                     )}
-                    {item.decryptedData?.password && (
+                    {item.decryptedData?.password && canCopySecrets && (
                         <Button
                             variant="ghost"
                             size="sm"

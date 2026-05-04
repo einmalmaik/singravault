@@ -31,13 +31,23 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { saveExportFile } from '@/services/exportFileService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
+import {
+  buildExcludedItemIdsFromOpLogView,
+  isVaultSecurityModeBlockingEgress,
+} from '@/services/vaultOpLog';
 
 const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
 export function DataSettings() {
     const { t } = useTranslation();
     const { user } = useAuth();
-    const { decryptItem, encryptItem, isLocked, refreshIntegrityBaseline } = useVault();
+    const {
+        decryptItem,
+        encryptItem,
+        isLocked,
+        refreshIntegrityBaseline,
+        opLogUiView,
+    } = useVault();
     const { toast } = useToast();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -80,7 +90,22 @@ export function DataSettings() {
                 throw new Error('Failed to fetch items');
             }
 
-            const exportData = await buildVaultExportPayload(items, decryptItem);
+            // Phase 10: apply central egress policy.
+            if (opLogUiView && isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)) {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: t('vault.export.blockedBySecurityMode', {
+                        defaultValue: 'Export ist aufgrund des aktuellen Tresor-Sicherheitsmodus nicht erlaubt.',
+                    }),
+                });
+                return;
+            }
+            const excludedItemIds = buildExcludedItemIdsFromOpLogView(opLogUiView);
+
+            const exportData = await buildVaultExportPayload(items, decryptItem, {
+                excludedItemIds: excludedItemIds ?? undefined,
+            });
 
             const saved = await saveExportFile({
                 name: `singra-vault-export-${new Date().toISOString().split('T')[0]}.json`,

@@ -313,3 +313,19 @@ export type {
   VaultOpLogUiOrchestratorInput,
   VaultOpLogUiOrchestratorResult,
 } from './vaultOpLogUiOrchestrator';
+
+// ---------------------------------------------------------------------------
+// Phase 10 — Data egress policy gates (Export, Search, Clipboard, Autofill)
+// ---------------------------------------------------------------------------
+
+export {
+  canExportRecord,
+  canIndexRecord,
+  canCopyRecordSecret,
+  canUseRecordForAutofill,
+  isRecordSecurityStateVerifiedForEgress,
+  isRecordSecurityStateBlockingEgress,
+  isVaultSecurityModeBlockingEgress,
+  buildExcludedItemIdsFromOpLogView,
+  getVerifiedRecordIdsForEgress,
+} from './vaultDataEgressPolicy';

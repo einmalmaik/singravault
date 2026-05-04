@@ -40,6 +40,7 @@ import {
 } from '@/services/legacyVaultMetadataMigrationService';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
 import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
+import { getVerifiedRecordIdsForEgress } from '@/services/vaultOpLog';
 import { VaultItemCard } from './VaultItemCard';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
@@ -164,6 +165,7 @@ export function VaultItemList({
     restoreQuarantinedItem,
     verifyIntegrity,
     vaultDataVersion,
+    opLogUiView,
   } = useVault();
 
   const [items, setItems] = useState<VaultItem[]>([]);
@@ -608,6 +610,15 @@ export function VaultItemList({
     });
   }, [ignoredQuarantineById, persistIgnoredQuarantine]);
 
+  // Phase 10: when OpLog UI is available, only verified items may be searched.
+  // When vault security mode is lockedCritical/safeMode/safeModeRecommended,
+  // getVerifiedRecordIdsForEgress returns an empty set, effectively hiding
+  // all items from search results.
+  const opLogVerifiedItemIds = useMemo(
+    () => getVerifiedRecordIdsForEgress(opLogUiView),
+    [opLogUiView],
+  );
+
   const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
     return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
       const quarantine = quarantinedItemsById.get(item.id);
@@ -619,6 +630,11 @@ export function VaultItemList({
       }
 
       if (!item.decryptedData) {
+        return entries;
+      }
+
+      // Phase 10: if OpLog UI is active, exclude non-verified records from search results.
+      if (opLogVerifiedItemIds && !opLogVerifiedItemIds.has(item.id)) {
         return entries;
       }
 
@@ -681,6 +697,7 @@ export function VaultItemList({
     categoryId,
     searchQuery,
     isDuressMode,
+    opLogVerifiedItemIds,
   ]);
 
   const inlineQuarantinedIds = useMemo(
@@ -950,6 +967,9 @@ export function VaultItemList({
                 item={entry.item}
                 viewMode={viewMode}
                 onEdit={() => onEditItem(entry.item.id)}
+                canCopySecrets={
+                  opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(entry.item.id)
+                }
               />
             ) : (
               <VaultQuarantinedItemCard

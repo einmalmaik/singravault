@@ -22,6 +22,10 @@ import { getTrustedOfflineSnapshot } from '@/services/offlineVaultService';
 import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
 import { VaultRecoveryResetError } from '@/services/vaultRecoveryService';
+import {
+  buildExcludedItemIdsFromOpLogView,
+  isVaultSecurityModeBlockingEgress,
+} from '@/services/vaultOpLog';
 import { VaultItemCard } from '@/components/vault/VaultItemCard';
 import { VaultQuarantinePanel } from '@/components/vault/VaultQuarantinePanel';
 
@@ -66,6 +70,7 @@ export function VaultIntegrityRecovery() {
     quarantinedItems,
     resetVaultAfterIntegrityFailure,
     trustedRecoveryAvailable,
+    opLogUiView,
   } = useVault();
 
   const [isPreparingSafeMode, setIsPreparingSafeMode] = useState(false);
@@ -188,6 +193,19 @@ export function VaultIntegrityRecovery() {
       const snapshotId = `trusted-recovery:${trustedSnapshot.updatedAt}`;
       const itemsById = new Map(trustedSnapshot.items.map((item) => [item.id, item]));
 
+      // Phase 10: apply central egress policy.
+      if (opLogUiView && isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)) {
+        toast({
+          variant: 'destructive',
+          title: t('common.error'),
+          description: t('vault.export.blockedBySecurityMode', {
+            defaultValue: 'Export ist aufgrund des aktuellen Tresor-Sicherheitsmodus nicht erlaubt.',
+          }),
+        });
+        return;
+      }
+      const excludedItemIds = buildExcludedItemIdsFromOpLogView(opLogUiView);
+
       const exportPayload = await buildVaultExportPayload(trustedSnapshot.items, async (_encryptedData, entryId) => {
         const item = entryId ? itemsById.get(entryId) : null;
         if (!item) {
@@ -197,6 +215,7 @@ export function VaultIntegrityRecovery() {
       }, {
         mode: 'safe',
         quarantinedItems,
+        excludedItemIds: excludedItemIds ?? undefined,
       });
 
       const saved = await saveExportFile({
