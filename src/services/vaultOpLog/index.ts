@@ -262,3 +262,27 @@ export {
   type BuildRestoreOperationFromSnapshotInput,
   type SnapshotStorage,
 } from './trustedSnapshotTypes';
+
+// ---------------------------------------------------------------------------
+// Phase 8 — Shadow Mode parallel verification (non-blocking, read-only)
+// ---------------------------------------------------------------------------
+
+export {
+  isVaultOpLogShadowModeEnabled,
+} from './vaultOpLogFeatureFlags';
+
+export {
+  runShadowModeVerification,
+  getShadowModeDiagnoses,
+  clearShadowModeDiagnoses,
+} from './vaultOpLogShadowMode';
+
+export type {
+  ShadowModeRunInput,
+  ShadowModeRunResult,
+  ShadowModeVaultDiagnosis,
+  ShadowModeRecordDiagnosis,
+  ShadowModeRecordClassification,
+  ShadowModeErrorKind,
+  ShadowModeRunStatus,
+} from './vaultOpLogShadowModeTypes';

@@ -14,6 +14,7 @@
  */
 
 const FEATURE_FLAG_ENV_NAME = 'VITE_VAULT_OP_LOG_REPOSITORY_ENABLED' as const;
+const SHADOW_MODE_FLAG_ENV_NAME = 'VITE_VAULT_OP_LOG_SHADOW_MODE_ENABLED' as const;
 
 /**
  * Returns `true` only when the environment explicitly enables the
@@ -24,6 +25,25 @@ const FEATURE_FLAG_ENV_NAME = 'VITE_VAULT_OP_LOG_REPOSITORY_ENABLED' as const;
 export function isVaultOpLogRepositoryEnabled(): boolean {
   try {
     const value = String((import.meta as { env?: Record<string, unknown> }).env?.[FEATURE_FLAG_ENV_NAME] ?? '');
+    return value.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns `true` only when the environment explicitly enables the
+ * vault operation log shadow mode (Phase 8).
+ *
+ * Shadow mode runs the new state machine in the background without
+ * switching UI, Autofill, Export, Search or Clipboard to the new
+ * data. It produces only sanitised diagnostics.
+ *
+ * Conservative default: `false`.
+ */
+export function isVaultOpLogShadowModeEnabled(): boolean {
+  try {
+    const value = String((import.meta as { env?: Record<string, unknown> }).env?.[SHADOW_MODE_FLAG_ENV_NAME] ?? '');
     return value.trim() === 'true';
   } catch {
     return false;
