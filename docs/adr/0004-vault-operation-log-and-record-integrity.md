@@ -217,6 +217,33 @@ opType }))`. The client stores the last locally verified head as
 rebaseline — it triggers safe mode or a fork diagnostic depending on
 severity.
 
+#### 8. Rebase model (`rebase-v1`)
+
+When a client receives a `stale_vault_head` conflict from the server,
+it may rebase the operation to the current head:
+
+1. Generate a fresh `op_id` (UUID v4).
+2. Keep the original `intent_id` unchanged to preserve user intent identity.
+3. Set `rebased_from_op_id` to the original `op_id` being rebased.
+4. Update `base_vault_head` to the current server head.
+5. For record operations, update `base_record_version` and
+   `previous_ciphertext_hash` to the current record state.
+6. Re-sign with the device's private signing key.
+7. Submit the rebased operation.
+
+The server stores `intent_id` and `rebased_from_op_id` but does not
+validate their relationship. Client-side verification ensures that:
+
+- A chain of rebased operations links back to the original intent via
+  `rebased_from_op_id`.
+- The same `intent_id` is never used for logically different user intents.
+- Rebase depth is bounded (clients enforce a maximum rebase chain length
+  to prevent abuse).
+
+`intent_id` is optional for the first submission of an intent. It becomes
+mandatory for all rebased versions of that intent. `rebased_from_op_id`
+is null for the first submission and non-null for rebased versions.
+
 ### Trust classification
 
 `deviceTrustService` classifies an operation author as one of:
@@ -287,8 +314,10 @@ implementation:
 - `vault_operations (op_id)` unique; `(vault_id, op_id)` also unique;
   attempting to insert an identical `op_id` with a different canonical
   body is an error.
-- `vault_operations.base_record_version` / `previous_record_hash` must
+- `vault_operations.base_record_version` / `previous_ciphertext_hash` must
   be non-null for `update`, `delete`, `restore`, `move`, `rekey`.
+  `previous_ciphertext_hash` is compared against `vault_records.ciphertext_hash`
+  to ensure the operation binds to the exact ciphertext state it claims to base on.
 - `vault_records.last_op_id` must reference an existing
   `vault_operations.op_id` in the same vault.
 - `deleted = true` is only reachable through a `delete` operation that
