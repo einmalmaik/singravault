@@ -140,14 +140,14 @@ describe('vault op-log phase 2 — RPC contract', () => {
     expect(rpcsMigration).toContain('IF _base_vault_head IS NOT NULL THEN');
   });
 
-  it('locks the record row before CAS on base_record_version and previous_record_hash', () => {
+  it('locks the record row before CAS on base_record_version and previous_ciphertext_hash', () => {
     expect(rpcsMigration).toContain('SELECT * INTO _existing_record');
     expect(rpcsMigration).toContain('FROM public.vault_records');
     expect(rpcsMigration).toContain("'conflict_reason', 'stale_record_version'");
-    expect(rpcsMigration).toContain("'conflict_reason', 'stale_previous_record_hash'");
+    expect(rpcsMigration).toContain("'conflict_reason', 'stale_previous_ciphertext_hash'");
   });
 
-  it('forbids create with a non-null base_record_version or previous_record_hash', () => {
+  it('forbids create with a non-null base_record_version or previous_ciphertext_hash', () => {
     expect(rpcsMigration).toContain("'conflict_reason', 'create_must_not_carry_base'");
   });
 
@@ -213,10 +213,11 @@ describe('vault op-log phase 2 — RPC contract', () => {
 });
 
 describe('vault op-log phase 2 — read RPC contracts', () => {
-  it('exposes get_vault_head, get_vault_changes_since, get_vault_records_by_ids', () => {
+  it('exposes get_vault_head, get_vault_changes_since, get_vault_records_by_ids, bootstrap_vault_trust', () => {
     expect(rpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.get_vault_head(p_vault_id UUID)');
     expect(rpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.get_vault_changes_since(');
     expect(rpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.get_vault_records_by_ids(');
+    expect(rpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.bootstrap_vault_trust(');
   });
 
   it('scopes get_vault_head to the caller', () => {
@@ -251,6 +252,41 @@ describe('vault op-log phase 2 — read RPC contracts', () => {
     expect(rpcsMigration).toContain(
       'GRANT EXECUTE ON FUNCTION public.get_vault_records_by_ids(UUID, UUID[]) TO authenticated;',
     );
+    expect(rpcsMigration).toContain(
+      'GRANT EXECUTE ON FUNCTION public.bootstrap_vault_trust(UUID, UUID, TEXT, TEXT, TEXT, UUID) TO authenticated;',
+    );
+  });
+
+  it('bootstrap_vault_trust is SECURITY DEFINER with fixed search_path', () => {
+    expect(rpcsMigration).toMatch(
+      /CREATE OR REPLACE FUNCTION public\.bootstrap_vault_trust[\s\S]*?SECURITY DEFINER[\s\S]*?SET search_path = public/u,
+    );
+  });
+
+  it('bootstrap_vault_trust rejects unauthenticated callers', () => {
+    expect(rpcsMigration).toContain("RAISE EXCEPTION 'Not authenticated'");
+  });
+
+  it('bootstrap_vault_trust verifies vault ownership', () => {
+    expect(rpcsMigration).toContain("RAISE EXCEPTION 'Vault does not belong to caller'");
+  });
+
+  it('bootstrap_vault_trust only runs when no trust list exists', () => {
+    expect(rpcsMigration).toContain('SELECT COUNT(*) INTO _existing_trust_count');
+    expect(rpcsMigration).toContain('FROM public.vault_device_trust_records');
+    expect(rpcsMigration).toContain("'reason', 'trust_list_already_exists'");
+  });
+
+  it('bootstrap_vault_trust only runs when no head exists', () => {
+    expect(rpcsMigration).toContain('SELECT * INTO _existing_head');
+    expect(rpcsMigration).toContain('FROM public.vault_op_log_heads');
+    expect(rpcsMigration).toContain("'reason', 'head_already_exists'");
+  });
+
+  it('bootstrap_vault_trust inserts the first trusted device and initial head', () => {
+    expect(rpcsMigration).toContain('INSERT INTO public.vault_device_trust_records');
+    expect(rpcsMigration).toContain('INSERT INTO public.vault_op_log_heads');
+    expect(rpcsMigration).toContain("'bootstrapped', true");
   });
 });
 
@@ -288,5 +324,32 @@ describe('vault op-log phase 2 — combined invariants', () => {
 
   it('does not introduce ENUMs whose values cannot evolve safely', () => {
     expect(combined).not.toMatch(/CREATE TYPE public\.vault_(record|op)_type/u);
+  });
+
+  it('includes previous_ciphertext_hash in vault_operations table', () => {
+    expect(tablesMigration).toContain('previous_ciphertext_hash TEXT');
+  });
+
+  it('includes intent_id and rebased_from_op_id in vault_operations table for rebase model', () => {
+    expect(tablesMigration).toContain('intent_id UUID');
+    expect(tablesMigration).toContain('rebased_from_op_id UUID');
+  });
+
+  it('includes intent_id and rebased_from_op_id in submit_vault_operation RPC', () => {
+    expect(rpcsMigration).toContain('_intent_id UUID');
+    expect(rpcsMigration).toContain('_rebased_from_op_id UUID');
+    expect(rpcsMigration).toContain("_intent_id := NULLIF(p_op->>'intent_id', '')::UUID");
+    expect(rpcsMigration).toContain("_rebased_from_op_id := NULLIF(p_op->>'rebased_from_op_id', '')::UUID");
+  });
+
+  it('includes intent_id and rebased_from_op_id in get_vault_changes_since output', () => {
+    expect(rpcsMigration).toContain('intent_id UUID');
+    expect(rpcsMigration).toContain('rebased_from_op_id UUID');
+    expect(rpcsMigration).toContain('o.intent_id');
+    expect(rpcsMigration).toContain('o.rebased_from_op_id');
+  });
+
+  it('CAS checks previous_ciphertext_hash against vault_records.ciphertext_hash', () => {
+    expect(rpcsMigration).toContain('_existing_record.ciphertext_hash <> _previous_ciphertext_hash');
   });
 });
