@@ -269,6 +269,7 @@ export {
 
 export {
   isVaultOpLogShadowModeEnabled,
+  isVaultOpLogPhase9UIEnabled,
 } from './vaultOpLogFeatureFlags';
 
 export {
@@ -286,3 +287,29 @@ export type {
   ShadowModeErrorKind,
   ShadowModeRunStatus,
 } from './vaultOpLogShadowModeTypes';
+
+// ---------------------------------------------------------------------------
+// Phase 9 — UI adapter and orchestrator
+// ---------------------------------------------------------------------------
+
+export {
+  buildVaultOpLogUiView,
+  getRecordSecurityStateUiLabel,
+  getVaultSecurityModeUiLabel,
+} from './vaultOpLogUiAdapter';
+
+export type {
+  VaultOpLogVerifiedItemUi,
+  VaultOpLogQuarantinedItemUi,
+  VaultOpLogConflictUi,
+  VaultOpLogUiView,
+} from './vaultOpLogUiAdapter';
+
+export {
+  loadVaultOpLogUiState,
+} from './vaultOpLogUiOrchestrator';
+
+export type {
+  VaultOpLogUiOrchestratorInput,
+  VaultOpLogUiOrchestratorResult,
+} from './vaultOpLogUiOrchestrator';

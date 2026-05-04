@@ -38,6 +38,9 @@ import { VaultSidebar } from '@/components/vault/VaultSidebar';
 import { VaultItemList } from '@/components/vault/VaultItemList';
 import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
 import { VaultIntegrityRecovery } from '@/components/vault/VaultIntegrityRecovery';
+import { VaultOpLogSecurityModeBanner } from '@/components/vault/VaultOpLogSecurityModeBanner';
+import { VaultOpLogQuarantinePanel } from '@/components/vault/VaultOpLogQuarantinePanel';
+import { VaultOpLogConflictPanel } from '@/components/vault/VaultOpLogConflictPanel';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { isPremiumActive } from '@/extensions/registry';
@@ -104,6 +107,13 @@ export default function VaultPage() {
         isLoading: vaultLoading,
         lastIntegrityResult,
         refreshIntegrityBaseline,
+        opLogUiView,
+        opLogUiLoading,
+        opLogUiError,
+        opLogUiRefresh,
+        opLogRestoreRecord,
+        opLogDeleteUntrustedRecord,
+        opLogResolveConflict,
     } = useVault();
 
     const [searchQuery, setSearchQuery] = useState('');
@@ -418,7 +428,31 @@ export default function VaultPage() {
                     </div>
                 </header>
 
-                <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0">
+                <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0 space-y-4">
+                    {opLogUiView && (
+                        <>
+                            <VaultOpLogSecurityModeBanner mode={opLogUiView.vaultSecurityMode} />
+                            {opLogUiLoading && (
+                                <p className="text-xs text-muted-foreground animate-pulse">
+                                    {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
+                                </p>
+                            )}
+                            {opLogUiError && (
+                                <p className="text-xs text-destructive">
+                                    {opLogUiError}
+                                </p>
+                            )}
+                            <VaultOpLogQuarantinePanel
+                                items={opLogUiView.quarantinedItems}
+                                onRestore={opLogRestoreRecord}
+                                onDelete={opLogDeleteUntrustedRecord}
+                            />
+                            <VaultOpLogConflictPanel
+                                items={opLogUiView.conflictedItems}
+                                onResolve={opLogResolveConflict}
+                            />
+                        </>
+                    )}
                     <VaultItemList
                         searchQuery={searchQuery}
                         filter={activeFilter}

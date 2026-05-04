@@ -38,7 +38,7 @@ export interface VaultPasskeyUnlockInput {
 
 export async function unlockVaultWithPasskey(
   input: VaultPasskeyUnlockInput,
-): Promise<{ error: Error | null }> {
+): Promise<{ error: Error | null; vaultEncryptionKey?: Uint8Array }> {
   const cooldown = getUnlockCooldown();
   if (cooldown !== null) {
     const seconds = Math.ceil(cooldown / 1000);
@@ -99,6 +99,7 @@ export async function unlockVaultWithPasskey(
       }
     }
 
+    let vaultEncryptionKey: Uint8Array | undefined;
     if (!input.encryptedUserKey && result.keySource === 'legacy-kdf' && result.legacyKdfOutputBytes) {
       try {
         const migration = await migrateLegacyVaultToUserKey({
@@ -115,6 +116,9 @@ export async function unlockVaultWithPasskey(
         });
         shouldBackfillVerifier = false;
       } finally {
+        vaultEncryptionKey = result.legacyKdfOutputBytes
+          ? new Uint8Array(result.legacyKdfOutputBytes)
+          : undefined;
         result.legacyKdfOutputBytes.fill(0);
       }
     } else {
@@ -146,7 +150,7 @@ export async function unlockVaultWithPasskey(
       }
     }
 
-    return { error: null };
+    return { error: null, vaultEncryptionKey };
   } catch (error) {
     console.error('Passkey unlock error:', error);
     recordFailedAttempt();

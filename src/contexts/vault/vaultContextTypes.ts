@@ -10,6 +10,7 @@ import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecove
 import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngine';
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
+import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
 
 export type VaultSnapshotSource = 'remote' | 'cache' | 'empty';
 
@@ -74,4 +75,13 @@ export interface VaultContextType {
     acceptMissingQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
     exitSafeMode: () => void;
     resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+
+    // Phase 9 — OpLog UI state (behind feature flag)
+    opLogUiView: VaultOpLogUiView | null;
+    opLogUiLoading: boolean;
+    opLogUiError: string | null;
+    opLogUiRefresh: () => Promise<void>;
+    opLogRestoreRecord: (recordId: string) => Promise<{ error: Error | null }>;
+    opLogDeleteUntrustedRecord: (recordId: string) => Promise<{ error: Error | null }>;
+    opLogResolveConflict: (recordId: string) => Promise<{ error: Error | null }>;
 }

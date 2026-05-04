@@ -23,7 +23,8 @@ import {
   isStoredVaultSessionValid,
   persistAutoLockTimeoutIfAllowed,
   wipeRuntimeDeviceKey,
-} from '@/services/vaultRuntimeCleanupService';
+} from '@/services/sessionManager';
+import { clearVaultOpLogDeviceIdentity } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
 import { buildDisplayedIntegrityResult as buildDisplayedIntegrityResultFromQuarantine } from '@/services/vaultQuarantineOrchestrator';
 
 function sameQuarantinedItems(left: QuarantinedVaultItem[], right: QuarantinedVaultItem[]): boolean {
@@ -80,6 +81,7 @@ export function useVaultProviderState() {
   const [currentDeviceKey, setCurrentDeviceKey] = useState<Uint8Array | null>(null);
   const [vaultProtectionMode, setVaultProtectionMode] = useState<VaultProtectionMode>(VAULT_PROTECTION_MODE_MASTER_ONLY);
   const [encryptedUserKey, setEncryptedUserKey] = useState<string | null>(null);
+  const [vaultEncryptionKey, setVaultEncryptionKey] = useState<Uint8Array | null>(null);
   const [integrityVerified, setIntegrityVerified] = useState(false);
   const baseIntegrityResultRef = useRef<VaultIntegrityVerificationResult | null>(null);
   const [lastIntegrityResult, setLastIntegrityResult] = useState<VaultIntegrityVerificationResult | null>(null);
@@ -195,6 +197,13 @@ export function useVaultProviderState() {
     setTrustedSnapshotItemsById({});
     setPendingSessionRestore(false);
     setLastActivity(Date.now());
+    setVaultEncryptionKey((existingKey) => {
+      if (existingKey) {
+        existingKey.fill(0);
+      }
+      return null;
+    });
+    clearVaultOpLogDeviceIdentity();
     clearRuntimeSessionMarkers();
   }, []);
 
@@ -325,6 +334,8 @@ export function useVaultProviderState() {
     setLastActivity,
     connectivityCheckNonce,
     setConnectivityCheckNonce,
+    vaultEncryptionKey,
+    setVaultEncryptionKey,
     applyCredentialsToState,
     applyTrustedRecoveryState,
     buildDisplayedIntegrityResult,

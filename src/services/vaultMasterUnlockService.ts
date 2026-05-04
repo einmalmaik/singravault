@@ -63,7 +63,7 @@ export interface VaultMasterUnlockInput {
 
 export async function unlockVaultWithMasterPassword(
   input: VaultMasterUnlockInput,
-): Promise<{ error: Error | null }> {
+): Promise<{ error: Error | null; vaultEncryptionKey?: Uint8Array }> {
   const cooldown = getUnlockCooldown();
   if (cooldown !== null) {
     const seconds = Math.ceil(cooldown / 1000);
@@ -171,7 +171,7 @@ async function tryDuressUnlock(
 
 async function unlockWithPrimaryVaultKey(
   input: VaultMasterUnlockInput,
-): Promise<{ error: Error | null }> {
+): Promise<{ error: Error | null; vaultEncryptionKey?: Uint8Array }> {
   const { deviceKey, deviceKeyAvailable, error: deviceKeyError } = await input.getRequiredDeviceKey();
   if (deviceKeyError) {
     return { error: deviceKeyError };
@@ -184,6 +184,7 @@ async function unlockWithPrimaryVaultKey(
   );
   let activeKey: CryptoKey;
   let shouldBackfillVerifier = !input.verificationHash;
+  let vaultEncryptionKey: Uint8Array | undefined;
 
   try {
     if (input.encryptedUserKey) {
@@ -221,6 +222,8 @@ async function unlockWithPrimaryVaultKey(
       activeKey = migration.userKey;
       shouldBackfillVerifier = false;
     }
+    // Copy before wipe for Phase 9 UI orchestrator.
+    vaultEncryptionKey = new Uint8Array(kdfOutputBytes);
   } finally {
     kdfOutputBytes.fill(0);
   }
@@ -259,7 +262,7 @@ async function unlockWithPrimaryVaultKey(
     await backfillVerifier(input, activeKey);
   }
 
-  return { error: null };
+  return { error: null, vaultEncryptionKey };
 }
 
 async function unwrapAndVerifyUserKey(

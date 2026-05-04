@@ -4,6 +4,7 @@ import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngi
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultContextType, VaultSnapshotSource, VaultUnlockOptions } from './vaultContextTypes';
 import type { VaultProviderState } from './useVaultProviderState';
+import type { VaultOpLogUiState } from './useVaultOpLogUiState';
 
 export interface VaultProviderActionBindings {
   setupMasterPassword: (masterPassword: string) => Promise<{ error: Error | null }>;
@@ -37,11 +38,17 @@ export interface VaultProviderActionBindings {
   acceptMissingQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
   exitSafeMode: () => void;
   resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+
+  // Phase 9 actions (optional until fully implemented)
+  opLogRestoreRecord?: (recordId: string) => Promise<{ error: Error | null }>;
+  opLogDeleteUntrustedRecord?: (recordId: string) => Promise<{ error: Error | null }>;
+  opLogResolveConflict?: (recordId: string) => Promise<{ error: Error | null }>;
 }
 
 export function buildVaultContextValue(
   state: VaultProviderState,
   actions: VaultProviderActionBindings,
+  opLogUiState: VaultOpLogUiState,
 ): VaultContextType {
   return {
     isLocked: state.isLocked,
@@ -90,5 +97,14 @@ export function buildVaultContextValue(
     acceptMissingQuarantinedItem: actions.acceptMissingQuarantinedItem,
     exitSafeMode: actions.exitSafeMode,
     resetVaultAfterIntegrityFailure: actions.resetVaultAfterIntegrityFailure,
+
+    // Phase 9 — OpLog UI state
+    opLogUiView: opLogUiState.uiView,
+    opLogUiLoading: opLogUiState.isLoading,
+    opLogUiError: opLogUiState.lastError,
+    opLogUiRefresh: opLogUiState.refresh,
+    opLogRestoreRecord: actions.opLogRestoreRecord ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
+    opLogDeleteUntrustedRecord: actions.opLogDeleteUntrustedRecord ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
+    opLogResolveConflict: actions.opLogResolveConflict ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
   };
 }

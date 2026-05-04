@@ -45,6 +45,7 @@ import { useVaultCryptoActions } from './useVaultCryptoActions';
 import { useVaultIntegrityActions } from './useVaultIntegrityActions';
 import { useVaultProviderState } from './useVaultProviderState';
 import { useVaultLifecycleEffects } from './useVaultLifecycleEffects';
+import { useVaultOpLogUiState } from './useVaultOpLogUiState';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
 
 export function useVaultProviderActions(): VaultContextType {
@@ -57,7 +58,7 @@ export function useVaultProviderActions(): VaultContextType {
     applyTrustedRecoveryState, clearActiveVaultSession, currentDeviceKey, encryptedUserKey,
     encryptionKey, isLocked, kdfVersion, salt, setCurrentDeviceKey, setDeviceKeyActive,
     setEncryptedUserKey, setEncryptionKey, setHasPasskeyUnlock, setIsLoading,
-    setKdfVersion, setVaultProtectionMode, setVerificationHash, vaultProtectionMode,
+    setKdfVersion, setVaultEncryptionKey, setVaultProtectionMode, setVerificationHash, vaultProtectionMode,
   } = state;
   const vaultProtectionModeRef = useRef<VaultProtectionMode>(vaultProtectionMode);
   vaultProtectionModeRef.current = vaultProtectionMode;
@@ -356,7 +357,7 @@ export function useVaultProviderActions(): VaultContextType {
       clearCurrentDeviceKey();
     }
 
-    return unlockVaultWithMasterPassword({
+    const unlockResult = await unlockVaultWithMasterPassword({
       userId: user.id,
       masterPassword,
       salt: credentials.salt,
@@ -380,6 +381,12 @@ export function useVaultProviderActions(): VaultContextType {
       openDuressVault,
       applyCredentialUpdates,
     });
+
+    if (unlockResult.vaultEncryptionKey) {
+      setVaultEncryptionKey(unlockResult.vaultEncryptionKey);
+    }
+
+    return { error: unlockResult.error };
   }, [
     applyCredentialUpdates,
     enforceVaultTwoFactorBeforeKeyRelease,
@@ -389,6 +396,7 @@ export function useVaultProviderActions(): VaultContextType {
     refreshRemoteCredentials,
     clearCurrentDeviceKey,
     setDeviceKeyActive,
+    setVaultEncryptionKey,
     state.duressConfig,
     state.encryptedUserKey,
     state.kdfVersion,
@@ -415,7 +423,7 @@ export function useVaultProviderActions(): VaultContextType {
       vaultProtectionMode: state.vaultProtectionMode,
     };
 
-    return unlockVaultWithPasskey({
+    const passkeyResult = await unlockVaultWithPasskey({
       userId: user.id,
       salt: credentials.salt,
       kdfVersion: credentials.kdfVersion ?? state.kdfVersion,
@@ -428,12 +436,19 @@ export function useVaultProviderActions(): VaultContextType {
       finalizeVaultUnlock,
       applyCredentialUpdates,
     });
+
+    if (passkeyResult.vaultEncryptionKey) {
+      setVaultEncryptionKey(passkeyResult.vaultEncryptionKey);
+    }
+
+    return { error: passkeyResult.error };
   }, [
     applyCredentialUpdates,
     enforceVaultTwoFactorBeforeKeyRelease,
     finalizeVaultUnlock,
     getRequiredDeviceKey,
     refreshRemoteCredentials,
+    setVaultEncryptionKey,
     state.encryptedUserKey,
     state.kdfVersion,
     state.salt,
@@ -607,6 +622,23 @@ export function useVaultProviderActions(): VaultContextType {
     decryptTrustedRecoverySnapshotItem,
   } = useVaultCryptoActions(state, user);
 
+  const opLogUiState = useVaultOpLogUiState(state, user?.id ?? null);
+
+  // Phase 9 actions — placeholders; concrete signed-operation builders
+  // will be wired here once the pending-queue submission path is fully
+  // integrated in a later phase.
+  const opLogRestoreRecord = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
+    return { error: new Error('OpLog restore not yet implemented') };
+  }, []);
+
+  const opLogDeleteUntrustedRecord = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
+    return { error: new Error('OpLog delete not yet implemented') };
+  }, []);
+
+  const opLogResolveConflict = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
+    return { error: new Error('OpLog conflict resolution not yet implemented') };
+  }, []);
+
   return buildVaultContextValue(state, {
     setupMasterPassword,
     unlock,
@@ -636,5 +668,8 @@ export function useVaultProviderActions(): VaultContextType {
     acceptMissingQuarantinedItem,
     exitSafeMode,
     resetVaultAfterIntegrityFailure,
-  });
+    opLogRestoreRecord,
+    opLogDeleteUntrustedRecord,
+    opLogResolveConflict,
+  }, opLogUiState);
 }
