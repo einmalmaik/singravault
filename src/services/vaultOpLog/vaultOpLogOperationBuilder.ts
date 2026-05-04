@@ -304,22 +304,61 @@ export async function buildDeleteRecordOperation(
 }
 
 /**
- * Build a `restore` operation.
+ * Build a `restore` operation (Phase 6).
  *
- * **Not fully implemented in Phase 4.**
  * Restore semantics are equivalent to an `update` (new version of
- * an existing record) until a dedicated restore plaintext schema is
- * defined. Callers that need restore in Phase 4 should use
- * `buildUpdateRecordOperation` with a plaintext that represents the
- * restored content.
+ * an existing record) with `opType = 'restore'`.  The caller
+ * supplies the plaintext recovered from a verified snapshot or other
+ * trusted source.  The record is re-sealed with a fresh nonce,
+ * current keyVersion, and recordVersion = baseRecordVersion + 1.
  */
 export async function buildRestoreRecordOperation(
-  _input: RestoreRecordBuilderInput,
+  input: RestoreRecordBuilderInput,
 ): Promise<BuiltVaultOperation> {
-  throw new VaultOperationBuilderError(
-    'restore operation builder is not implemented in Phase 4; ' +
-    'use update semantics as an interim path',
-  );
+  const createdAtClient = input.createdAtClient ?? new Date().toISOString();
+
+  const nextRecordVersion = input.baseRecordVersion + 1;
+  const sealed = await sealPayload({
+    vaultId: input.vaultId,
+    recordId: input.recordId,
+    recordType: input.recordType,
+    recordVersion: nextRecordVersion,
+    keyVersion: input.keyVersion,
+    vaultEncryptionKey: input.vaultEncryptionKey,
+    plaintext: input.plaintext,
+  });
+
+  const body = buildOperationSignedBody({
+    opId: input.opId,
+    intentId: input.intentId,
+    rebasedFromOpId: input.rebasedFromOpId,
+    vaultId: input.vaultId,
+    authorDeviceId: input.deviceId,
+    opType: 'restore',
+    recordId: input.recordId,
+    recordType: input.recordType,
+    baseRecordVersion: input.baseRecordVersion,
+    previousCiphertextHash: input.previousCiphertextHash,
+    newRecordHash: sealed.ciphertextHash,
+    baseVaultHead: input.baseVaultHead,
+    payloadCiphertextHash: sealed.ciphertextHash,
+    payloadAadHash: sealed.aadHash,
+    createdAtClient,
+    trustEpoch: input.trustEpoch,
+  });
+
+  const signed = await signOperation(body, input.deviceSigningKey);
+
+  const resultingVaultHead = await computeVaultHead({
+    previousVaultHead: input.baseVaultHead,
+    opHash: signed.opHash,
+    recordId: input.recordId,
+    recordType: input.recordType,
+    newRecordHash: sealed.ciphertextHash,
+    opType: 'restore',
+  });
+
+  return { signedOperation: signed, sealedRecord: sealed, resultingVaultHead };
 }
 
 // ---------------------------------------------------------------------------

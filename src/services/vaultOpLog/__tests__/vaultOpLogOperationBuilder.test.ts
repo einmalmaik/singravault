@@ -320,29 +320,32 @@ describe('buildDeleteRecordOperation', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildRestoreRecordOperation', () => {
-  it('throws VaultOperationBuilderError in Phase 4', async () => {
+  it('produces a signed restore operation in Phase 6', async () => {
     const { privateKey } = await signingFixture();
     const vaultEncKey = vaultKey();
 
-    await expect(
-      buildRestoreRecordOperation({
-        opId: 'op-res-1',
-        intentId: 'intent-1',
-        rebasedFromOpId: null,
-        vaultId: VAULT_ID,
-        recordId: RECORD_ID,
-        recordType: 'item',
-        deviceId: DEVICE_ID,
-        deviceSigningKey: privateKey,
-        trustEpoch: 0,
-        baseVaultHead: 'head-1',
-        vaultEncryptionKey: vaultEncKey,
-        plaintext: new TextEncoder().encode('restored'),
-        keyVersion: 1,
-        baseRecordVersion: 2,
-        previousCiphertextHash: 'prev-hash',
-      }),
-    ).rejects.toBeInstanceOf(VaultOperationBuilderError);
+    const result = await buildRestoreRecordOperation({
+      opId: 'op-res-1',
+      intentId: 'intent-1',
+      rebasedFromOpId: null,
+      vaultId: VAULT_ID,
+      recordId: RECORD_ID,
+      recordType: 'item',
+      deviceId: DEVICE_ID,
+      deviceSigningKey: privateKey,
+      trustEpoch: 0,
+      baseVaultHead: 'head-1',
+      vaultEncryptionKey: vaultEncKey,
+      plaintext: new TextEncoder().encode('restored'),
+      keyVersion: 1,
+      baseRecordVersion: 2,
+      previousCiphertextHash: 'prev-hash',
+    });
+
+    expect(result.signedOperation.body.opType).toBe('restore');
+    expect(result.signedOperation.body.recordId).toBe(RECORD_ID);
+    expect(result.sealedRecord.aad.recordVersion).toBe(3);
+    expect(result.signedOperation.signature).not.toBe('');
   });
 });
 

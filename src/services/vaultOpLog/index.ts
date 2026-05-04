@@ -211,3 +211,54 @@ export {
   type ApplyTrustedDeleteInput,
   type ApplyTrustedDeleteResult,
 } from './vaultStateMachine';
+
+// ---------------------------------------------------------------------------
+// Phase 6 — Trusted snapshots and recovery operations
+// ---------------------------------------------------------------------------
+
+export {
+  createTrustedSnapshot,
+  verifyTrustedSnapshot,
+  findSnapshotRecord,
+  buildRestoreOperationFromSnapshot,
+  reevaluateContainerQuarantinedItems,
+  saveSnapshotEnvelope,
+  loadAndVerifySnapshot,
+  type CreateTrustedSnapshotInput,
+  type VerifyTrustedSnapshotInput,
+  type BuildRestoreOperationFromSnapshotInputExtended,
+} from './trustedSnapshotService';
+
+export {
+  applySnapshotRetentionPolicy,
+  type RetentionDiagnosis,
+} from './snapshotRetentionPolicy';
+
+export {
+  deriveSnapshotKey,
+  sealSnapshot,
+  openSnapshot,
+  computeSnapshotHash,
+  computeSnapshotAadHash,
+  type SealSnapshotInput,
+  type SealedSnapshotV1,
+  type OpenSnapshotInput,
+} from './snapshotCrypto';
+
+export {
+  TRUSTED_SNAPSHOT_SCHEMA_V1,
+  TRUSTED_SNAPSHOT_ENVELOPE_SCHEMA_V1,
+  TRUSTED_SNAPSHOT_AEAD_SCHEMA_V1,
+  SNAPSHOT_HASH_SCHEMA_V1,
+  SNAPSHOT_AAD_SCHEMA_V1,
+  TrustedSnapshotError,
+  type TrustedSnapshotPlaintextV1,
+  type TrustedSnapshotEnvelopeV1,
+  type TrustedSnapshotCreationResult,
+  type TrustedSnapshotVerificationResult,
+  type SnapshotRecordEntryV1,
+  type SnapshotExcludedRecordDiagnosisV1,
+  type SnapshotAadV1,
+  type BuildRestoreOperationFromSnapshotInput,
+  type SnapshotStorage,
+} from './trustedSnapshotTypes';
