@@ -1,0 +1,330 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 - see LICENSE
+/**
+ * `verifyOperation` — cryptographically verify a remote operation
+ * before any record is decrypted.
+ *
+ * This module is the first gate in the Phase 5 pipeline.
+ * It re-canonicalises, re-hashes and verifies the signature of a
+ * `VaultOperationRow` against a stored device public key and the
+ * vault trust list.
+ *
+ * No decryption happens here. No plaintext is produced.
+ */
+
+import {
+  classifyOperationAuthor,
+  type TrustListInput,
+} from './deviceTrustService';
+import {
+  verifyOperationSignature,
+} from './operationSigningService';
+import {
+  computeOpHash,
+} from './recordHashes';
+import {
+  DEVICE_SIGNATURE_SCHEMA_V1,
+  isOperationType,
+  isRecordType,
+  type SignedVaultOperationV1,
+  type VaultOperationSignedBodyV1,
+} from './types';
+import type {
+  OperationVerificationResult,
+} from './vaultSecurityStates';
+import type {
+  VaultOperationRow,
+} from './vaultOpLogRpcTypes';
+
+export interface VerifyOperationInput {
+  readonly operation: VaultOperationRow;
+  readonly trust: TrustListInput;
+  readonly publicKey: CryptoKey;
+  /**
+   * Optional local record state for causal checks. If omitted,
+   * only syntactic validation is performed.
+   */
+  readonly localRecordState?: {
+    readonly recordVersion: number;
+    readonly ciphertextHash: string;
+  } | null;
+}
+
+/**
+ * Verify an operation from the repository layer.
+ *
+ * Steps:
+ * 1. Parse and validate the `signedBody` into a canonical shape.
+ * 2. Recompute `opHash` and compare.
+ * 3. Verify ECDSA signature over the canonical body.
+ * 4. Classify the author against the vault trust list.
+ * 5. Validate operation-type-specific field constraints.
+ * 6. Optionally check causal consistency against local record state.
+ */
+export async function verifyOperation(
+  input: VerifyOperationInput,
+): Promise<OperationVerificationResult> {
+  const { operation, trust, publicKey, localRecordState } = input;
+
+  // Step 1: parse signed body
+  const body = extractSignedBody(operation.signedBody);
+  if (body === null) {
+    return { kind: 'requiresLockedCritical' };
+  }
+
+  const signedOp: SignedVaultOperationV1 = {
+    body,
+    signature: operation.signature,
+    opHash: operation.opHash,
+  };
+
+  // Step 2: opHash verification
+  let recomputedOpHash: string;
+  try {
+    recomputedOpHash = await computeOpHash(body);
+  } catch {
+    return { kind: 'opHashMismatch' };
+  }
+  if (recomputedOpHash !== operation.opHash) {
+    return { kind: 'opHashMismatch' };
+  }
+
+  // Step 3: signature verification
+  let signatureValid: boolean;
+  try {
+    signatureValid = await verifyOperationSignature(signedOp, publicKey);
+  } catch {
+    return { kind: 'invalidSignature' };
+  }
+  if (!signatureValid) {
+    return { kind: 'invalidSignature' };
+  }
+
+  // Step 4: author trust classification
+  const author = classifyOperationAuthor(signedOp, trust);
+  if (author.status === 'unknown') {
+    return { kind: 'unknownAuthor', reason: author.reason };
+  }
+  if (author.status === 'revoked') {
+    return { kind: 'revokedAuthor', device: author.device, reason: author.reason };
+  }
+
+  // Step 5: operation-type syntactic validation
+  const opTypeCheck = validateOperationTypeConstraints(body);
+  if (opTypeCheck !== null) {
+    return opTypeCheck;
+  }
+
+  // Step 6: causal / consistency check against local state
+  if (localRecordState !== undefined) {
+    const causal = checkCausalConsistency(body, localRecordState);
+    if (causal !== null) {
+      return causal;
+    }
+  }
+
+  return { kind: 'validTrustedOperation', signedOperation: signedOp };
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract and structurally validate the `signedBody` field of a DB
+ * operation row. Returns `null` if the body is malformed.
+ *
+ * Every field of `VaultOperationSignedBodyV1` is checked for presence
+ * and type. No semantic validation (epoch ranges, ISO dates) is done
+ * here — that belongs to the signing service which validates during
+ * `buildOperationSignedBody` and indirectly during canonicalisation.
+ */
+function extractSignedBody(raw: unknown): VaultOperationSignedBodyV1 | null {
+  if (raw === null || typeof raw !== 'object') {
+    return null;
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const signatureSchema = expectString(obj, 'signatureSchema');
+  if (signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V1) {
+    return null;
+  }
+
+  const opId = expectString(obj, 'opId');
+  const intentId = expectString(obj, 'intentId');
+  const rebasedFromOpId = expectStringOrNull(obj, 'rebasedFromOpId');
+  const vaultId = expectString(obj, 'vaultId');
+  const authorDeviceId = expectString(obj, 'authorDeviceId');
+  const opType = expectString(obj, 'opType');
+  const recordId = expectString(obj, 'recordId');
+  const recordType = expectString(obj, 'recordType');
+  const baseRecordVersion = expectNumberOrNull(obj, 'baseRecordVersion');
+  const previousCiphertextHash = expectStringOrNull(obj, 'previousCiphertextHash');
+  const newRecordHash = expectStringOrNull(obj, 'newRecordHash');
+  const baseVaultHead = expectStringOrNull(obj, 'baseVaultHead');
+  const payloadCiphertextHash = expectStringOrNull(obj, 'payloadCiphertextHash');
+  const payloadAadHash = expectStringOrNull(obj, 'payloadAadHash');
+  const createdAtClient = expectString(obj, 'createdAtClient');
+  const trustEpoch = expectSafeInteger(obj, 'trustEpoch');
+
+  if (
+    opId === null ||
+    intentId === null ||
+    vaultId === null ||
+    authorDeviceId === null ||
+    opType === null ||
+    recordId === null ||
+    recordType === null ||
+    createdAtClient === null ||
+    trustEpoch === null
+  ) {
+    return null;
+  }
+
+  if (!isOperationType(opType)) {
+    return null;
+  }
+  if (!isRecordType(recordType)) {
+    return null;
+  }
+
+  return {
+    signatureSchema,
+    opId,
+    intentId,
+    rebasedFromOpId,
+    vaultId,
+    authorDeviceId,
+    opType,
+    recordId,
+    recordType,
+    baseRecordVersion,
+    previousCiphertextHash,
+    newRecordHash,
+    baseVaultHead,
+    payloadCiphertextHash,
+    payloadAadHash,
+    createdAtClient,
+    trustEpoch,
+  };
+}
+
+function validateOperationTypeConstraints(
+  body: VaultOperationSignedBodyV1,
+): OperationVerificationResult | null {
+  switch (body.opType) {
+    case 'create': {
+      if (body.baseRecordVersion !== null || body.previousCiphertextHash !== null) {
+        return { kind: 'unsupportedOperationType' };
+      }
+      if (body.newRecordHash === null || body.payloadCiphertextHash === null || body.payloadAadHash === null) {
+        return { kind: 'payloadHashMismatch' };
+      }
+      break;
+    }
+    case 'update':
+    case 'restore': {
+      if (body.baseRecordVersion === null || body.previousCiphertextHash === null) {
+        return { kind: 'unsupportedOperationType' };
+      }
+      if (body.newRecordHash === null || body.payloadCiphertextHash === null || body.payloadAadHash === null) {
+        return { kind: 'payloadHashMismatch' };
+      }
+      break;
+    }
+    case 'delete': {
+      if (body.baseRecordVersion === null || body.previousCiphertextHash === null) {
+        return { kind: 'unsupportedOperationType' };
+      }
+      if (body.newRecordHash === null || body.payloadCiphertextHash === null || body.payloadAadHash === null) {
+        return { kind: 'payloadHashMismatch' };
+      }
+      break;
+    }
+    case 'move':
+    case 'rekey':
+    case 'add_device':
+    case 'revoke_device': {
+      // These are currently allowed through syntactic validation.
+      // Semantic validation for device-trust ops lives in
+      // `deviceTrustService.applyDeviceTrustOperation`.
+      break;
+    }
+    default: {
+      return { kind: 'unsupportedOperationType' };
+    }
+  }
+  return null;
+}
+
+function checkCausalConsistency(
+  body: VaultOperationSignedBodyV1,
+  localRecordState: { readonly recordVersion: number; readonly ciphertextHash: string } | null,
+): OperationVerificationResult | null {
+  if (body.opType === 'create') {
+    if (localRecordState !== null) {
+      // A create on an already-existing record is a conflict candidate.
+      return { kind: 'conflictCandidate' };
+    }
+    return null;
+  }
+
+  if (body.opType === 'update' || body.opType === 'delete' || body.opType === 'restore') {
+    if (localRecordState === null) {
+      // Updating / deleting a record that does not exist locally is a gap.
+      return { kind: 'causalGap' };
+    }
+    if (body.baseRecordVersion !== localRecordState.recordVersion) {
+      return { kind: 'conflictCandidate' };
+    }
+    if (body.previousCiphertextHash !== localRecordState.ciphertextHash) {
+      return { kind: 'rollbackSuspected' };
+    }
+    return null;
+  }
+
+  // move, rekey, add_device, revoke_device: no local record causal check.
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Structural extraction helpers (return null on mismatch)
+// ---------------------------------------------------------------------------
+
+function expectString(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key];
+  if (typeof value !== 'string') {
+    return null;
+  }
+  return value;
+}
+
+function expectStringOrNull(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  return value;
+}
+
+function expectNumberOrNull(obj: Record<string, unknown>, key: string): number | null {
+  const value = obj[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function expectSafeInteger(obj: Record<string, unknown>, key: string): number | null {
+  const value = obj[key];
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    return null;
+  }
+  return value;
+}

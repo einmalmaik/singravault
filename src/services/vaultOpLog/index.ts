@@ -175,3 +175,39 @@ export type {
   PendingOperationState,
   QueuePersistence,
 } from './vaultOpLogPendingQueueTypes';
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Vault state machine and verification pipeline
+// ---------------------------------------------------------------------------
+
+export {
+  canDecryptVerifiedRecordContext,
+  type RecordSecurityState,
+  type VaultSecurityMode,
+  type OperationVerificationResult,
+  type RecordContextVerificationResult,
+} from './vaultSecurityStates';
+
+export {
+  verifyOperation,
+  type VerifyOperationInput,
+} from './verifyOperation';
+
+export {
+  verifyRecordContext,
+  type VerifyRecordContextInput,
+} from './verifyRecordContext';
+
+export {
+  applyRemoteOperation,
+  applyTrustedDelete,
+  determineVaultSecurityMode,
+  type LocalVaultState,
+  type LocalVerifiedRecord,
+  type LocalQuarantinedRecord,
+  type LocalRecordConflict,
+  type ApplyRemoteOperationInput,
+  type ApplyRemoteOperationResult,
+  type ApplyTrustedDeleteInput,
+  type ApplyTrustedDeleteResult,
+} from './vaultStateMachine';

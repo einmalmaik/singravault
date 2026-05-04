@@ -73,3 +73,5 @@ public/*.rar
 src-tauri/*backup-codes*.txt
 src-tauri/*recovery*.txt
 src-tauri/*rettung*.txt
+docs/integration Konzept/singra_vault_neues_integrations_quarantaene_konzept.md
+docs/integration Konzept/singra_vault_phasensteuerung_fuer_ki_agenten.md
