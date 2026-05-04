@@ -125,3 +125,53 @@ export type {
   VaultOperationRow,
   VaultRecordRow,
 } from './vaultOpLogRpcTypes';
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Local pending queue, operation builder, retry and rebase
+// ---------------------------------------------------------------------------
+
+export {
+  buildCreateRecordOperation,
+  buildUpdateRecordOperation,
+  buildDeleteRecordOperation,
+  buildRestoreRecordOperation,
+  toVaultOperationRow,
+  toVaultRecordRow,
+  VaultOperationBuilderError,
+  type BaseOperationBuilderInput,
+  type BuiltVaultOperation,
+  type CreateRecordBuilderInput,
+  type DeleteRecordBuilderInput,
+  type UpdateRecordBuilderInput,
+} from './vaultOpLogOperationBuilder';
+
+export {
+  VaultOpLogPendingQueue,
+  classifySubmitResult,
+  sanitizeQueueErrorForStorage,
+} from './vaultOpLogPendingQueue';
+
+export {
+  InMemoryQueuePersistence,
+  LocalStorageQueuePersistence,
+} from './vaultOpLogQueuePersistence';
+
+export {
+  InMemoryQueueLock,
+  LocalStorageLeaderQueueLock,
+  WebLocksQueueLock,
+  type QueueLock,
+} from './vaultOpLogQueueLock';
+
+export {
+  rebaseOperationWithPlaintext,
+  type RebaseContext,
+  type RebaseResult,
+} from './vaultOpLogRebaseService';
+
+export type {
+  ClassifiedSubmitResult,
+  PendingLocalOperation,
+  PendingOperationState,
+  QueuePersistence,
+} from './vaultOpLogPendingQueueTypes';
