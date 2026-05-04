@@ -80,3 +80,48 @@ export {
   type VaultOperationSignedBodyV1,
   type VaultSignatureErrorCode,
 } from './types';
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Repository layer and feature flag (isolated, gated)
+// ---------------------------------------------------------------------------
+
+export { isVaultOpLogRepositoryEnabled } from './vaultOpLogFeatureFlags';
+
+export {
+  VaultOpLogMapperError,
+  mapDbOperationRowToDomain,
+  mapDbRecordRowToDomain,
+  mapDbHeadRowToDomain,
+  buildSubmitVaultOperationRequest,
+  buildGetVaultHeadRequest,
+  buildGetVaultChangesSinceRequest,
+  buildGetVaultRecordsByIdsRequest,
+  buildBootstrapVaultTrustRequest,
+} from './vaultOpLogMappers';
+
+export {
+  submitVaultOperation,
+  getVaultHead,
+  getVaultChangesSince,
+  getVaultRecordsByIds,
+  bootstrapVaultTrust,
+} from './vaultOpLogRepository';
+
+export type {
+  BootstrapVaultTrustResult,
+  DbVaultHeadRow,
+  DbVaultOperationRow,
+  DbVaultRecordRow,
+  GetVaultChangesSinceResult,
+  GetVaultHeadResult,
+  GetVaultRecordsByIdsResult,
+  RpcBootstrapVaultTrustRequest,
+  RpcGetVaultChangesSinceRequest,
+  RpcGetVaultHeadRequest,
+  RpcGetVaultRecordsByIdsRequest,
+  RpcSubmitVaultOperationRequest,
+  SubmitVaultOperationResult,
+  VaultHeadRow,
+  VaultOperationRow,
+  VaultRecordRow,
+} from './vaultOpLogRpcTypes';
