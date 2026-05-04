@@ -14,8 +14,9 @@
 --   - vault_id ownership against auth.uid()
 --   - op_id uniqueness (idempotent retry)
 --   - base_record_version CAS against current vault_records.record_version
---   - previous_record_hash CAS against current vault_records.last_op_hash
+--   - previous_ciphertext_hash CAS against current vault_records.ciphertext_hash
 --   - base_vault_head CAS against current vault_op_log_heads.current_head
+--   - intent_id + rebased_from_op_id stored for rebase tracking (no server validation)
 --   - record-existence rules per op_type (create vs. update/delete/...)
 --   - device-trust list consistency for add_device / revoke_device
 -- ===========================================================================
@@ -44,8 +45,10 @@ DECLARE
     _op_type TEXT;
     _author_device_id UUID;
     _base_record_version BIGINT;
-    _previous_record_hash TEXT;
+    _previous_ciphertext_hash TEXT;
     _new_record_hash TEXT;
+    _intent_id UUID;
+    _rebased_from_op_id UUID;
     _base_vault_head TEXT;
     _resulting_vault_head TEXT;
     _payload_ciphertext_hash TEXT;
@@ -82,8 +85,10 @@ BEGIN
     _op_type := p_op->>'op_type';
     _author_device_id := (p_op->>'author_device_id')::UUID;
     _base_record_version := NULLIF(p_op->>'base_record_version', '')::BIGINT;
-    _previous_record_hash := NULLIF(p_op->>'previous_record_hash', '');
+    _previous_ciphertext_hash := NULLIF(p_op->>'previous_ciphertext_hash', '');
     _new_record_hash := NULLIF(p_op->>'new_record_hash', '');
+    _intent_id := NULLIF(p_op->>'intent_id', '')::UUID;
+    _rebased_from_op_id := NULLIF(p_op->>'rebased_from_op_id', '')::UUID;
     _base_vault_head := NULLIF(p_op->>'base_vault_head', '');
     _resulting_vault_head := p_op->>'resulting_vault_head';
     _payload_ciphertext_hash := NULLIF(p_op->>'payload_ciphertext_hash', '');
@@ -210,7 +215,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- ----- CAS on base_record_version and previous_record_hash -----
+    -- ----- CAS on base_record_version and previous_ciphertext_hash -----
     IF _op_type = 'create' THEN
         IF _record_exists AND NOT _existing_record.is_tombstone THEN
             RETURN jsonb_build_object(
@@ -221,7 +226,7 @@ BEGIN
                 'current_sequence_number', _current_head_row.current_sequence_number
             );
         END IF;
-        IF _base_record_version IS NOT NULL OR _previous_record_hash IS NOT NULL THEN
+        IF _base_record_version IS NOT NULL OR _previous_ciphertext_hash IS NOT NULL THEN
             RETURN jsonb_build_object(
                 'applied', false,
                 'conflict_reason', 'create_must_not_carry_base'
@@ -251,11 +256,11 @@ BEGIN
                 'current_sequence_number', _current_head_row.current_sequence_number
             );
         END IF;
-        IF _previous_record_hash IS NULL
-           OR _existing_record.last_op_hash <> _previous_record_hash THEN
+        IF _previous_ciphertext_hash IS NULL
+           OR _existing_record.ciphertext_hash <> _previous_ciphertext_hash THEN
             RETURN jsonb_build_object(
                 'applied', false,
-                'conflict_reason', 'stale_previous_record_hash',
+                'conflict_reason', 'stale_previous_ciphertext_hash',
                 'current_record_version', _existing_record.record_version,
                 'current_head', _current_head_row.current_head,
                 'current_sequence_number', _current_head_row.current_sequence_number
@@ -266,17 +271,19 @@ BEGIN
     -- ----- Insert the operation row (append-only) -----
     INSERT INTO public.vault_operations (
         op_id, op_hash, vault_id, user_id, author_device_id, op_type,
-        record_id, record_type, base_record_version, previous_record_hash,
+        record_id, record_type, base_record_version, previous_ciphertext_hash,
         new_record_hash, base_vault_head, resulting_vault_head,
         payload_ciphertext_hash, payload_aad_hash, signed_body, signature,
-        signature_schema, trust_epoch, created_at_client, sequence_number
+        signature_schema, trust_epoch, created_at_client, sequence_number,
+        intent_id, rebased_from_op_id
     )
     VALUES (
         _op_id, _op_hash, _vault_id, _uid, _author_device_id, _op_type,
-        _record_id, _record_type, _base_record_version, _previous_record_hash,
+        _record_id, _record_type, _base_record_version, _previous_ciphertext_hash,
         _new_record_hash, _base_vault_head, _resulting_vault_head,
         _payload_ciphertext_hash, _payload_aad_hash, _signed_body, _signature,
-        _signature_schema, _trust_epoch, _created_at_client, _next_sequence
+        _signature_schema, _trust_epoch, _created_at_client, _next_sequence,
+        _intent_id, _rebased_from_op_id
     );
 
     -- ----- Apply the record-level effect -----
@@ -451,7 +458,7 @@ REVOKE ALL ON FUNCTION public.submit_vault_operation(JSONB, JSONB, JSONB) FROM P
 GRANT EXECUTE ON FUNCTION public.submit_vault_operation(JSONB, JSONB, JSONB) TO authenticated;
 
 COMMENT ON FUNCTION public.submit_vault_operation(JSONB, JSONB, JSONB) IS
-    'Operation-log Phase 2: idempotent CAS write path. Enforces vault ownership, op_id uniqueness, base_record_version, previous_record_hash, base_vault_head and per-op-type record-existence rules. Returns conflict_reason instead of raising for CAS misses.';
+    'Operation-log Phase 2: idempotent CAS write path. Enforces vault ownership, op_id uniqueness, base_record_version, previous_ciphertext_hash, base_vault_head and per-op-type record-existence rules. Returns conflict_reason instead of raising for CAS misses. Stores intent_id and rebased_from_op_id for rebase tracking.';
 
 -- ---------------------------------------------------------------------------
 -- get_vault_head
@@ -501,8 +508,10 @@ RETURNS TABLE(
     record_id UUID,
     record_type TEXT,
     base_record_version BIGINT,
-    previous_record_hash TEXT,
+    previous_ciphertext_hash TEXT,
     new_record_hash TEXT,
+    intent_id UUID,
+    rebased_from_op_id UUID,
     base_vault_head TEXT,
     resulting_vault_head TEXT,
     payload_ciphertext_hash TEXT,
@@ -539,10 +548,10 @@ BEGIN
     RETURN QUERY
     SELECT o.op_id, o.op_hash, o.sequence_number, o.author_device_id,
            o.op_type, o.record_id, o.record_type, o.base_record_version,
-           o.previous_record_hash, o.new_record_hash, o.base_vault_head,
+           o.previous_ciphertext_hash, o.new_record_hash, o.base_vault_head,
            o.resulting_vault_head, o.payload_ciphertext_hash, o.payload_aad_hash,
            o.signed_body, o.signature, o.signature_schema, o.trust_epoch,
-           o.created_at_client, o.received_at_server
+           o.created_at_client, o.received_at_server, o.intent_id, o.rebased_from_op_id
     FROM public.vault_operations o
     WHERE o.vault_id = p_vault_id
       AND o.user_id = _uid
@@ -623,3 +632,111 @@ GRANT EXECUTE ON FUNCTION public.get_vault_records_by_ids(UUID, UUID[]) TO authe
 
 COMMENT ON FUNCTION public.get_vault_records_by_ids(UUID, UUID[]) IS
     'Operation-log Phase 2: on-demand record fetch by id. The client verifies each record AAD/ciphertext hash against its locally trusted operation log before opening.';
+
+-- ---------------------------------------------------------------------------
+-- bootstrap_vault_trust
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.bootstrap_vault_trust(
+    p_vault_id UUID,
+    p_device_id UUID,
+    p_public_signing_key TEXT,
+    p_device_name_encrypted TEXT,
+    p_initial_head TEXT,
+    p_initial_op_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    _uid UUID := auth.uid();
+    _existing_trust_count BIGINT;
+    _existing_head public.vault_op_log_heads%ROWTYPE;
+BEGIN
+    IF _uid IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+    IF p_vault_id IS NULL OR p_device_id IS NULL OR p_public_signing_key IS NULL
+       OR p_device_name_encrypted IS NULL OR p_initial_head IS NULL OR p_initial_op_id IS NULL THEN
+        RAISE EXCEPTION 'All parameters are required';
+    END IF;
+
+    -- ----- Vault ownership check -----
+    IF NOT EXISTS (
+        SELECT 1 FROM public.vaults
+        WHERE id = p_vault_id AND user_id = _uid
+    ) THEN
+        RAISE EXCEPTION 'Vault does not belong to caller';
+    END IF;
+
+    -- ----- One-time bootstrap: only if no trust list exists -----
+    SELECT COUNT(*) INTO _existing_trust_count
+    FROM public.vault_device_trust_records
+    WHERE vault_id = p_vault_id;
+
+    IF _existing_trust_count > 0 THEN
+        RETURN jsonb_build_object(
+            'bootstrapped', false,
+            'reason', 'trust_list_already_exists',
+            'existing_count', _existing_trust_count
+        );
+    END IF;
+
+    -- ----- One-time bootstrap: only if no head exists -----
+    SELECT * INTO _existing_head
+    FROM public.vault_op_log_heads
+    WHERE vault_id = p_vault_id;
+
+    IF FOUND THEN
+        RETURN jsonb_build_object(
+            'bootstrapped', false,
+            'reason', 'head_already_exists',
+            'current_head', _existing_head.current_head
+        );
+    END IF;
+
+    -- ----- Insert the first trusted device -----
+    INSERT INTO public.vault_device_trust_records (
+        vault_id, device_id, user_id, public_signing_key,
+        device_name_encrypted, added_by_device_id, added_op_id,
+        added_at, trust_epoch, status
+    )
+    VALUES (
+        p_vault_id,
+        p_device_id,
+        _uid,
+        p_public_signing_key,
+        p_device_name_encrypted,
+        p_device_id,
+        p_initial_op_id,
+        NOW(),
+        0,
+        'trusted'
+    );
+
+    -- ----- Insert the initial head -----
+    INSERT INTO public.vault_op_log_heads (
+        vault_id, user_id, current_head, current_op_id,
+        current_sequence_number, updated_at
+    )
+    VALUES (
+        p_vault_id, _uid, p_initial_head, p_initial_op_id, 0, NOW()
+    );
+
+    RETURN jsonb_build_object(
+        'bootstrapped', true,
+        'vault_id', p_vault_id,
+        'device_id', p_device_id,
+        'initial_head', p_initial_head,
+        'initial_op_id', p_initial_op_id
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.bootstrap_vault_trust(UUID, UUID, TEXT, TEXT, TEXT, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.bootstrap_vault_trust(UUID, UUID, TEXT, TEXT, TEXT, UUID) TO authenticated;
+
+COMMENT ON FUNCTION public.bootstrap_vault_trust(UUID, UUID, TEXT, TEXT, TEXT, UUID) IS
+    'Operation-log Phase 2: one-time bootstrap for a vault with no trust list and no head. Creates the first trusted device and the initial hash-chain head. Returns bootstrapped=false if already initialized.';

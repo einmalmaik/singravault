@@ -14,8 +14,11 @@
 --      direct INSERT / UPDATE / DELETE on the new tables for authenticated
 --      users. Only the SECURITY DEFINER RPC may write.
 --   2. The server is NOT a trust source. It enforces structural CAS only:
---      base_record_version, base_vault_head, previous_record_hash, op_id
+--      base_record_version, base_vault_head, previous_ciphertext_hash, op_id
 --      uniqueness. Signature and AAD verification stay client-side.
+--   3. Rebase model: intent_id + rebased_from_op_id allow clients to
+--      retry operations with a fresh base_vault_head while preserving
+--      intent identity. The server stores but does not interpret these fields.
 --   3. Operations are append-only. There is no UPDATE or DELETE path on
 --      public.vault_operations.
 --   4. The new tables coexist with vault_items / categories / vault_sync_heads.
@@ -115,10 +118,12 @@ CREATE TABLE IF NOT EXISTS public.vault_operations (
     record_id UUID NOT NULL,
     record_type TEXT NOT NULL,
     base_record_version BIGINT,
-    previous_record_hash TEXT,
+    previous_ciphertext_hash TEXT,
     new_record_hash TEXT,
     base_vault_head TEXT,
     resulting_vault_head TEXT NOT NULL,
+    intent_id UUID,
+    rebased_from_op_id UUID,
     payload_ciphertext_hash TEXT,
     payload_aad_hash TEXT,
     signed_body JSONB NOT NULL,
