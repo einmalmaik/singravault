@@ -13,13 +13,15 @@ import { VaultSignatureError, type VaultOperationSignedBodyV1 } from '../types';
 function baseBodyInput() {
   return {
     opId: 'op-1',
+    intentId: 'intent-1',
+    rebasedFromOpId: null,
     vaultId: 'vault-1',
     authorDeviceId: 'device-1',
     opType: 'create' as const,
     recordId: 'record-1',
     recordType: 'item' as const,
     baseRecordVersion: null,
-    previousRecordHash: null,
+    previousCiphertextHash: null,
     newRecordHash: 'hash-new',
     baseVaultHead: null,
     payloadCiphertextHash: 'hash-ct',
@@ -73,6 +75,45 @@ describe('buildOperationSignedBody', () => {
         trustEpoch: -1,
       }),
     ).toThrow(VaultSignatureError);
+  });
+
+  it('rejects an empty intentId', () => {
+    expect(() =>
+      buildOperationSignedBody({
+        ...baseBodyInput(),
+        intentId: '',
+      }),
+    ).toThrow(VaultSignatureError);
+  });
+
+  it('rejects a rebasedFromOpId equal to opId', () => {
+    expect(() =>
+      buildOperationSignedBody({
+        ...baseBodyInput(),
+        rebasedFromOpId: 'op-1',
+      }),
+    ).toThrow(VaultSignatureError);
+  });
+
+  it('accepts a rebasedFromOpId that differs from opId', () => {
+    const body = buildOperationSignedBody({
+      ...baseBodyInput(),
+      opId: 'op-2',
+      rebasedFromOpId: 'op-1',
+    });
+    expect(body.rebasedFromOpId).toBe('op-1');
+    expect(body.opId).toBe('op-2');
+    expect(body.intentId).toBe('intent-1');
+  });
+
+  it('echoes previousCiphertextHash verbatim', () => {
+    const body = buildOperationSignedBody({
+      ...baseBodyInput(),
+      opType: 'update',
+      baseRecordVersion: 1,
+      previousCiphertextHash: 'ct-hash-1',
+    });
+    expect(body.previousCiphertextHash).toBe('ct-hash-1');
   });
 });
 

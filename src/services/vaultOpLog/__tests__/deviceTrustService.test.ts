@@ -38,13 +38,15 @@ async function signedOperationForDevice(deviceId: string, overrides: {
   const keyPair = await generateDeviceSigningKeyPair();
   const body = buildOperationSignedBody({
     opId: overrides.opId ?? 'op-1',
+    intentId: 'intent-1',
+    rebasedFromOpId: null,
     vaultId: overrides.vaultId ?? 'v1',
     authorDeviceId: deviceId,
     opType: overrides.opType ?? 'create',
     recordId: 'rec-1',
     recordType: 'item',
     baseRecordVersion: null,
-    previousRecordHash: null,
+    previousCiphertextHash: null,
     newRecordHash: 'new-hash',
     baseVaultHead: null,
     payloadCiphertextHash: 'ct-hash',
