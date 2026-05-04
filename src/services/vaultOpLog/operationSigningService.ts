@@ -93,13 +93,34 @@ export async function importDevicePublicKey(publicKeyB64Url: string): Promise<Cr
  */
 export interface BuildOperationBodyInput {
   readonly opId: string;
+  /**
+   * Stable logical-intent identifier. A retry after a `stale_vault_head`
+   * conflict reuses the same `intentId` with a fresh `opId`, fresh
+   * `rebasedFromOpId` and a fresh signature. The server never
+   * interprets `intentId`; clients use it to deduplicate their own
+   * retries.
+   */
+  readonly intentId: string;
+  /**
+   * `null` for a first submission. On rebase-and-retry, set to the
+   * `opId` of the previous (now stale) attempt. Both fields enter the
+   * canonical body and therefore bind the rebase chain to the
+   * signature.
+   */
+  readonly rebasedFromOpId: string | null;
   readonly vaultId: string;
   readonly authorDeviceId: string;
   readonly opType: OperationType;
   readonly recordId: string;
   readonly recordType: RecordType;
   readonly baseRecordVersion: number | null;
-  readonly previousRecordHash: string | null;
+  /**
+   * SHA-256 of the record's current `ciphertext_hash` column that
+   * the client observed when it built this operation. See the field
+   * JSDoc on `VaultOperationSignedBodyV1.previousCiphertextHash` for
+   * the exact binding.
+   */
+  readonly previousCiphertextHash: string | null;
   readonly newRecordHash: string | null;
   readonly baseVaultHead: string | null;
   readonly payloadCiphertextHash: string | null;
@@ -129,16 +150,28 @@ export function buildOperationSignedBody(input: BuildOperationBodyInput): VaultO
   if (typeof input.createdAtClient !== 'string' || !isIsoInstant(input.createdAtClient)) {
     throw new VaultSignatureError('signed_body_invalid', 'createdAtClient must be an ISO-8601 UTC instant');
   }
+  if (typeof input.intentId !== 'string' || input.intentId.length === 0) {
+    throw new VaultSignatureError('signed_body_invalid', 'intentId must be a non-empty string');
+  }
+  if (input.rebasedFromOpId !== null
+      && (typeof input.rebasedFromOpId !== 'string' || input.rebasedFromOpId.length === 0)) {
+    throw new VaultSignatureError('signed_body_invalid', 'rebasedFromOpId must be null or a non-empty string');
+  }
+  if (input.rebasedFromOpId !== null && input.rebasedFromOpId === input.opId) {
+    throw new VaultSignatureError('signed_body_invalid', 'rebasedFromOpId must differ from opId');
+  }
   return {
     signatureSchema: DEVICE_SIGNATURE_SCHEMA_V1,
     opId: input.opId,
+    intentId: input.intentId,
+    rebasedFromOpId: input.rebasedFromOpId,
     vaultId: input.vaultId,
     authorDeviceId: input.authorDeviceId,
     opType: input.opType,
     recordId: input.recordId,
     recordType: input.recordType,
     baseRecordVersion: input.baseRecordVersion,
-    previousRecordHash: input.previousRecordHash,
+    previousCiphertextHash: input.previousCiphertextHash,
     newRecordHash: input.newRecordHash,
     baseVaultHead: input.baseVaultHead,
     payloadCiphertextHash: input.payloadCiphertextHash,

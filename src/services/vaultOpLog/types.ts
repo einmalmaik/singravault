@@ -92,13 +92,24 @@ export interface BuildRecordAadInput {
 export interface VaultOperationSignedBodyV1 {
   readonly signatureSchema: typeof DEVICE_SIGNATURE_SCHEMA_V1;
   readonly opId: string;
+  readonly intentId: string;
+  readonly rebasedFromOpId: string | null;
   readonly vaultId: string;
   readonly authorDeviceId: string;
   readonly opType: OperationType;
   readonly recordId: string;
   readonly recordType: RecordType;
   readonly baseRecordVersion: number | null;
-  readonly previousRecordHash: string | null;
+  /**
+   * SHA-256 of the record's current `ciphertext_hash` envelope
+   * column that the client observed when it built this operation.
+   * The server enforces `previousCiphertextHash === vault_records.ciphertext_hash`
+   * for every non-create op. It is NOT an operation-level hash
+   * chain link: it binds the update to a specific stored ciphertext
+   * state, so two concurrent updates based on the same record_version
+   * but different observed ciphertext cannot both win.
+   */
+  readonly previousCiphertextHash: string | null;
   readonly newRecordHash: string | null;
   readonly baseVaultHead: string | null;
   readonly payloadCiphertextHash: string | null;
