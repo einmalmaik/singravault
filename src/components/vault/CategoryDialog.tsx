@@ -45,7 +45,6 @@ import {
     buildCategoryRowFromInsert,
     buildVaultItemRowFromInsert,
     enqueueOfflineMutation,
-    invalidateVaultSnapshotCache,
     isAppOnline,
     isLikelyOfflineError,
     loadVaultSnapshot,
@@ -94,7 +93,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
-    const { encryptData, decryptItem, encryptItem, refreshIntegrityBaseline, bumpVaultDataVersion } = useVault();
+    const { encryptData, decryptItem, encryptItem, refreshIntegrityBaseline } = useVault();
 
     const [name, setName] = useState('');
     const [icon, setIcon] = useState('');
@@ -182,17 +181,9 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                     }),
             });
 
-            // Invalidate snapshot cache only when online sync succeeded, so integrity check fetches fresh remote data
-            if (syncedOnline) {
-                invalidateVaultSnapshotCache(user.id);
-            }
-
             await refreshIntegrityBaseline({
                 categoryIds: [categoryId],
             });
-
-            // Trigger data refresh in VaultSidebar
-            bumpVaultDataVersion();
 
             onOpenChange(false);
             onSave?.({ type: 'saved', categoryId });
@@ -413,11 +404,6 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
                     }),
             });
-
-            // Invalidate snapshot cache only when online sync succeeded, so integrity check fetches fresh remote data
-            if (syncedCategoryDelete) {
-                invalidateVaultSnapshotCache(user.id);
-            }
 
             await refreshIntegrityBaseline({
                 itemIds: trustedItemIds,

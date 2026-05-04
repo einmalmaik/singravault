@@ -173,11 +173,6 @@ function invalidateSnapshotRequestCache(userId: string): void {
   }
 }
 
-// Public export for explicit cache invalidation after mutations
-export function invalidateVaultSnapshotCache(userId: string): void {
-  invalidateSnapshotRequestCache(userId);
-}
-
 function getRecentLocalMutationWindow(userId: string): RecentLocalMutationWindow | null {
   const recent = recentLocalMutationsByUser.get(userId);
   if (!recent) {
@@ -1076,10 +1071,7 @@ function applyRecentLocalMutations(
   return mergedSnapshot;
 }
 
-export async function loadVaultSnapshot(
-  userId: string,
-  useLocalMutationOverlay?: boolean,
-): Promise<{
+export async function loadVaultSnapshot(userId: string): Promise<{
   snapshot: OfflineVaultSnapshot;
   source: 'remote' | 'cache' | 'empty';
 }> {
@@ -1088,46 +1080,18 @@ export async function loadVaultSnapshot(
     return existing;
   }
 
-  const request = loadVaultSnapshotUncached(userId, useLocalMutationOverlay).finally(() => {
+  const request = loadVaultSnapshotUncached(userId).finally(() => {
     vaultSnapshotRequests.delete(userId);
   });
   vaultSnapshotRequests.set(userId, request);
   return request;
 }
 
-async function loadVaultSnapshotUncached(
-  userId: string,
-  useLocalMutationOverlay?: boolean,
-): Promise<{
+async function loadVaultSnapshotUncached(userId: string): Promise<{
   snapshot: OfflineVaultSnapshot;
   source: 'remote' | 'cache' | 'empty';
 }> {
   if (isTauriDevUserId(userId)) {
-    // When useLocalMutationOverlay is true, fetch remote and apply mutations
-    // This ensures the integrity check includes recently created/modified items
-    if (useLocalMutationOverlay && isAppOnline()) {
-      try {
-        const recent = getRecentLocalMutationWindow(userId);
-        if (recent) {
-          const cached = await getOfflineSnapshot(userId);
-          if (cached) {
-            const remoteSnapshot = await fetchRemoteOfflineSnapshot(userId, { persist: false });
-            const mergedSnapshot = applyRecentLocalMutations(remoteSnapshot, cached, recent);
-            await saveOfflineSnapshot(mergedSnapshot);
-            return { snapshot: mergedSnapshot, source: 'cache' };
-          }
-        }
-        // No recent mutations, fetch fresh remote
-        const snapshot = await fetchRemoteOfflineSnapshot(userId);
-        return { snapshot, source: 'remote' };
-      } catch (err) {
-        if (!isLikelyOfflineError(err)) {
-          throw err;
-        }
-        // Fall through to cache on error
-      }
-    }
-    // Default: load from cache only
     const cached = await getOfflineSnapshot(userId);
     return cached
       ? { snapshot: cached, source: 'cache' }
