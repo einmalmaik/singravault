@@ -11,6 +11,7 @@ import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngi
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
 import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
+import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 
 export type VaultSnapshotSource = 'remote' | 'cache' | 'empty';
 
@@ -64,6 +65,8 @@ export interface VaultContextType {
     integrityVerified: boolean;
     lastIntegrityResult: VaultIntegrityVerificationResult | null;
     integrityMode: VaultIntegrityMode | 'safe';
+    vaultMigrationStatus: VaultMigrationRolloutStatus | null;
+    vaultMigrationError: string | null;
     quarantinedItems: QuarantinedVaultItem[];
     quarantineResolutionById: Record<string, QuarantineResolutionState>;
     vaultDataVersion: number;

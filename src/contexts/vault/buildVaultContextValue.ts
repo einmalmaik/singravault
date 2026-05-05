@@ -86,6 +86,8 @@ export function buildVaultContextValue(
     integrityVerified: state.integrityVerified,
     lastIntegrityResult: state.lastIntegrityResult,
     integrityMode: state.integrityMode,
+    vaultMigrationStatus: state.vaultMigrationStatus,
+    vaultMigrationError: state.vaultMigrationError,
     quarantinedItems: state.quarantinedItems,
     quarantineResolutionById: state.quarantineResolutionById,
     vaultDataVersion: state.vaultDataVersion,

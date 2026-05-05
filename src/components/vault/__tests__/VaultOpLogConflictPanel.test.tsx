@@ -49,6 +49,16 @@ describe('VaultOpLogConflictPanel', () => {
     expect(screen.queryByText('Auflösen')).not.toBeInTheDocument();
   });
 
+  it('disables resolve action when signed action is unavailable', () => {
+    const onResolve = vi.fn();
+    render(<VaultOpLogConflictPanel items={mockItems} onResolve={onResolve} actionsDisabled />);
+
+    const resolveButton = screen.getAllByText(/sen$/)[0].closest('button');
+    expect(resolveButton).toBeDisabled();
+    fireEvent.click(resolveButton!);
+    expect(onResolve).not.toHaveBeenCalled();
+  });
+
   it('returns null for empty items', () => {
     const { container } = render(<VaultOpLogConflictPanel items={[]} />);
     expect(container.firstChild).toBeNull();

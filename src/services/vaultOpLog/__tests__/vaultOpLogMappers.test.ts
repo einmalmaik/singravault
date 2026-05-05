@@ -439,7 +439,7 @@ describe('op_hash stability after JSONB roundtrip', () => {
 });
 
 describe('vaultOpLogFeatureFlags', () => {
-  it('defaults to false (conservative) when env variable is unset', () => {
-    expect(isVaultOpLogRepositoryEnabled()).toBe(false);
+  it('keeps repository path enabled after Phase 11 cleanup', () => {
+    expect(isVaultOpLogRepositoryEnabled()).toBe(true);
   });
 });

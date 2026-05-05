@@ -35,17 +35,14 @@ import {
   buildExcludedItemIdsFromOpLogView,
   isVaultSecurityModeBlockingEgress,
 } from '@/services/vaultOpLog';
-
-const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
+import { LEGACY_VAULT_WRITE_BLOCKED_MESSAGE } from '@/services/vaultOpLog/vaultLegacyWriteBlocker';
 
 export function DataSettings() {
     const { t } = useTranslation();
     const { user } = useAuth();
     const {
         decryptItem,
-        encryptItem,
         isLocked,
-        refreshIntegrityBaseline,
         opLogUiView,
     } = useVault();
     const { toast } = useToast();
@@ -146,77 +143,11 @@ export function DataSettings() {
 
         setIsImporting(true);
         try {
-            const content = await importFile.text();
-            const data = JSON.parse(content);
-
-            if (!data.items || !Array.isArray(data.items)) {
-                throw new Error('Invalid format');
-            }
-
-            // Get user's vault
-            const { data: vault } = await supabase
-                .from('vaults')
-                .select('id')
-                .eq('user_id', user.id)
-                .eq('is_default', true)
-                .single();
-
-            if (!vault) {
-                throw new Error('No vault found');
-            }
-
-            let imported = 0;
-            const importedItemIds: string[] = [];
-
-            // Import each item
-            for (const item of data.items) {
-                try {
-                    // SECURITY: Generate ID client-side for AAD binding
-                    const newItemId = crypto.randomUUID();
-
-                    // Encrypt the data (with entry ID as AAD)
-                    const encryptedData = await encryptItem({
-                        ...item.data,
-                        title: item.title || item.data?.title || 'Imported Item',
-                        websiteUrl: item.website_url || item.data?.websiteUrl || undefined,
-                        itemType: item.item_type || item.data?.itemType || 'password',
-                        isFavorite: typeof item.is_favorite === 'boolean'
-                            ? item.is_favorite
-                            : !!item.data?.isFavorite,
-                        categoryId: item.category_id ?? item.data?.categoryId ?? null,
-                    }, newItemId);
-
-                    // Insert into database
-                    await supabase.from('vault_items').insert({
-                        id: newItemId,
-                        user_id: user.id,
-                        vault_id: vault.id,
-                        title: ENCRYPTED_ITEM_TITLE_PLACEHOLDER,
-                        website_url: null,
-                        icon_url: null,
-                        item_type: 'password',
-                        is_favorite: false,
-                        category_id: null,
-                        encrypted_data: encryptedData,
-                    });
-
-                    importedItemIds.push(newItemId);
-                    imported++;
-                } catch (err) {
-                    console.error('Failed to import item:', err);
-                }
-            }
-
             toast({
-                title: t('common.success'),
-                description: t('settings.data.importSuccess', { count: imported }),
+                variant: 'destructive',
+                title: t('common.error'),
+                description: LEGACY_VAULT_WRITE_BLOCKED_MESSAGE,
             });
-
-            if (imported > 0) {
-                await refreshIntegrityBaseline({
-                    itemIds: importedItemIds,
-                });
-            }
         } catch (error) {
             console.error('Import failed:', error);
             toast({

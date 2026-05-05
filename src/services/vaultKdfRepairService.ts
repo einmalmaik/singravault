@@ -2,7 +2,6 @@ import {
   decrypt,
   decryptVaultItem,
   deriveKey,
-  reEncryptVault,
 } from '@/services/cryptoService';
 import { supabase } from '@/integrations/supabase/client';
 import { isTauriDevUserId } from '@/platform/tauriDevMode';
@@ -102,11 +101,8 @@ export async function repairBrokenKdfUpgradeIfNeeded(input: {
       try {
         const oldKey = await deriveKey(masterPassword, salt, oldVersion);
         await assertOldKeyMatchesBrokenRows(oldKey, brokenItems, brokenCategories);
-        const repairResult = await reEncryptVault(brokenItems, brokenCategories, oldKey, activeKey);
-        await persistRepairResult(userId, repairResult);
-        console.info(
-          `KDF repair${formatContext(contextLabel)} complete: re-encrypted `
-          + `${repairResult.itemsReEncrypted} items, ${repairResult.categoriesReEncrypted} categories.`,
+        console.warn(
+          `KDF repair${formatContext(contextLabel)} is blocked because legacy vault table writes are disabled.`,
         );
         break;
       } catch (error) {
@@ -199,43 +195,6 @@ async function assertOldKeyMatchesBrokenRows(
   }
 
   await decryptCategoryFields(brokenCategories[0], oldKey);
-}
-
-async function persistRepairResult(
-  userId: string,
-  repairResult: Awaited<ReturnType<typeof reEncryptVault>>,
-): Promise<void> {
-  for (const itemUpdate of repairResult.itemUpdates) {
-    const { error } = await supabase
-      .from('vault_items')
-      .update({ encrypted_data: itemUpdate.encrypted_data })
-      .eq('id', itemUpdate.id)
-      .eq('user_id', userId);
-    if (error) {
-      throw new KdfRepairPersistenceError(
-        `KDF repair could not persist vault item ${itemUpdate.id}. Repair is incomplete and retryable.`,
-        'vault_item',
-        itemUpdate.id,
-        error,
-      );
-    }
-  }
-
-  for (const categoryUpdate of repairResult.categoryUpdates) {
-    const { error } = await supabase
-      .from('categories')
-      .update({ name: categoryUpdate.name, icon: categoryUpdate.icon, color: categoryUpdate.color })
-      .eq('id', categoryUpdate.id)
-      .eq('user_id', userId);
-    if (error) {
-      throw new KdfRepairPersistenceError(
-        `KDF repair could not persist category ${categoryUpdate.id}. Repair is incomplete and retryable.`,
-        'category',
-        categoryUpdate.id,
-        error,
-      );
-    }
-  }
 }
 
 function formatContext(contextLabel: string | undefined): string {

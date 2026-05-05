@@ -50,6 +50,28 @@ describe('VaultOpLogQuarantinePanel', () => {
     expect(screen.queryByText('Löschen')).not.toBeInTheDocument();
   });
 
+  it('disables restore and delete actions when signed actions are unavailable', () => {
+    const onRestore = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <VaultOpLogQuarantinePanel
+        items={mockItems}
+        onRestore={onRestore}
+        onDelete={onDelete}
+        actionsDisabled
+      />,
+    );
+
+    const restoreButton = screen.getAllByText('Wiederherstellen')[0].closest('button');
+    const deleteButton = screen.getAllByText(/schen$/)[0].closest('button');
+    expect(restoreButton).toBeDisabled();
+    expect(deleteButton).toBeDisabled();
+    fireEvent.click(restoreButton!);
+    fireEvent.click(deleteButton!);
+    expect(onRestore).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
   it('returns null for empty items', () => {
     const { container } = render(<VaultOpLogQuarantinePanel items={[]} />);
     expect(container.firstChild).toBeNull();

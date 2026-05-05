@@ -180,6 +180,22 @@ describe('migrateVault', () => {
     };
   }
 
+  function makeObservedCheckpointStorage(events: string[]): MigrationStorage {
+    const memory = new Map<string, string>();
+    return {
+      getItem: (k) => memory.get(k) ?? null,
+      setItem: (k, v) => {
+        const parsed = JSON.parse(v) as { state?: string };
+        events.push(`checkpoint:${parsed.state ?? 'unknown'}`);
+        memory.set(k, v);
+      },
+      removeItem: (k) => {
+        events.push('checkpoint:cleared');
+        memory.delete(k);
+      },
+    };
+  }
+
   it('migrates a single legacy category successfully', async () => {
     const vaultId = nextVaultId();
     const keyPair = await generateDeviceSigningKeyPair();
@@ -451,6 +467,64 @@ describe('migrateVault', () => {
     expect(result.success).toBe(true);
     expect(result.progress.snapshotId).not.toBeNull();
     expect(result.progress.snapshotId).toMatch(/^pre-migration-/);
+  });
+
+  it('creates the pre-migration snapshot before trust bootstrap and operation commit RPCs', async () => {
+    const events: string[] = [];
+    const keyPair = await generateDeviceSigningKeyPair();
+    const mockClient = makeMockRpcClient('success');
+    const originalRpc = mockClient.rpc;
+    mockClient.rpc = (async (fn, params, options) => {
+      events.push(`rpc:${fn}`);
+      return originalRpc(fn, params, options);
+    }) as typeof mockClient.rpc;
+
+    const result = await migrateVault({
+      vaultId: nextVaultId(),
+      userId: 'user-1',
+      deviceId: 'device-1',
+      deviceSigningKey: keyPair.privateKey,
+      publicSigningKeyB64Url: keyPair.publicKeyB64Url,
+      vaultEncryptionKey: makeVaultEncryptionKey(),
+      legacyItems: [makeLegacyItem()],
+      legacyCategories: [],
+      decryptItem: makeDecryptItem({ title: 'Test' }),
+      rpcClient: mockClient,
+      checkpointStorage: makeObservedCheckpointStorage(events),
+    });
+
+    expect(result.success).toBe(true);
+    expect(events.indexOf('checkpoint:preMigrationSnapshotCreated')).toBeLessThan(
+      events.indexOf('rpc:bootstrap_vault_trust'),
+    );
+    expect(events.indexOf('checkpoint:preMigrationSnapshotCreated')).toBeLessThan(
+      events.indexOf('rpc:submit_vault_operation'),
+    );
+  });
+
+  it('does not perform server-side trust or commit writes when snapshot creation fails', async () => {
+    const keyPair = await generateDeviceSigningKeyPair();
+    const mockClient = makeMockRpcClient('success');
+    const signSpy = vi.spyOn(crypto.subtle, 'sign').mockRejectedValueOnce(new Error('snapshot signing failed'));
+
+    const result = await migrateVault({
+      vaultId: nextVaultId(),
+      userId: 'user-1',
+      deviceId: 'device-1',
+      deviceSigningKey: keyPair.privateKey,
+      publicSigningKeyB64Url: keyPair.publicKeyB64Url,
+      vaultEncryptionKey: makeVaultEncryptionKey(),
+      legacyItems: [makeLegacyItem()],
+      legacyCategories: [],
+      decryptItem: makeDecryptItem({ title: 'Test' }),
+      rpcClient: mockClient,
+      checkpointStorage: makeCheckpointStorage(),
+    });
+
+    signSpy.mockRestore();
+    expect(result.success).toBe(false);
+    expect(result.error?.kind).toBe('snapshotFailed');
+    expect((mockClient.rpc as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
   });
 
   it('blocks migration when feature flag is disabled', async () => {

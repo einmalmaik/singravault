@@ -9,21 +9,21 @@ import {
 } from '../vaultOpLogFeatureFlags';
 
 describe('vaultOpLogFeatureFlags', () => {
-  it('isVaultOpLogRepositoryEnabled returns false by default', () => {
-    expect(isVaultOpLogRepositoryEnabled()).toBe(false);
+  it('keeps the operation-log repository path enabled', () => {
+    expect(isVaultOpLogRepositoryEnabled()).toBe(true);
   });
 
-  it('isVaultOpLogShadowModeEnabled returns false by default', () => {
+  it('keeps shadow mode disabled as a diagnostic-only stub', () => {
     expect(isVaultOpLogShadowModeEnabled()).toBe(false);
   });
 
-  it('isVaultOpLogPhase9UIEnabled returns false by default', () => {
-    expect(isVaultOpLogPhase9UIEnabled()).toBe(false);
+  it('keeps the security UI enabled', () => {
+    expect(isVaultOpLogPhase9UIEnabled()).toBe(true);
   });
 
-  it('Phase 9 flag is independent from Shadow Mode flag', () => {
-    // Both default to false, but they are separate concepts.
-    expect(isVaultOpLogPhase9UIEnabled()).toBe(false);
+  it('does not let shadow mode reactivate old runtime logic', () => {
+    expect(isVaultOpLogRepositoryEnabled()).toBe(true);
+    expect(isVaultOpLogPhase9UIEnabled()).toBe(true);
     expect(isVaultOpLogShadowModeEnabled()).toBe(false);
   });
 });

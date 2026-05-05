@@ -42,13 +42,10 @@ import { cn } from '@/lib/utils';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
 import { CategoryIcon } from './CategoryIcon';
 import { CategoryDialog, type CategoryChangeEvent } from './CategoryDialog';
 import {
-    isAppOnline,
     loadVaultSnapshot,
-    upsertOfflineCategoryRow,
 } from '@/services/offlineVaultService';
 import { migrateLegacyVaultItemMetadata } from '@/services/legacyVaultMetadataMigrationService';
 import { isPremiumActive } from '@/extensions/registry';
@@ -82,13 +79,10 @@ export function VaultSidebar({
     const location = useLocation();
     const {
         lock,
-        encryptData,
         decryptData,
         decryptItem,
-        encryptItem,
         isDuressMode,
         lastIntegrityResult,
-        refreshIntegrityBaseline,
         verifyIntegrity,
         vaultDataVersion,
     } = useVault();
@@ -109,20 +103,14 @@ export function VaultSidebar({
     const fetchingCategoriesRef = useRef(false);
     const decryptDataRef = useRef(decryptData);
     const decryptItemRef = useRef(decryptItem);
-    const encryptDataRef = useRef(encryptData);
-    const encryptItemRef = useRef(encryptItem);
     const verifyIntegrityRef = useRef(verifyIntegrity);
-    const refreshIntegrityBaselineRef = useRef(refreshIntegrityBaseline);
     const quarantinedItemIdsRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         decryptDataRef.current = decryptData;
         decryptItemRef.current = decryptItem;
-        encryptDataRef.current = encryptData;
-        encryptItemRef.current = encryptItem;
         verifyIntegrityRef.current = verifyIntegrity;
-        refreshIntegrityBaselineRef.current = refreshIntegrityBaseline;
-    }, [decryptData, decryptItem, encryptData, encryptItem, refreshIntegrityBaseline, verifyIntegrity]);
+    }, [decryptData, decryptItem, verifyIntegrity]);
 
     useEffect(() => {
         failedDecryptPayloadByItemIdRef.current.clear();
@@ -150,14 +138,7 @@ export function VaultSidebar({
                 }
                 return;
             }
-            const canPersistMigrations = integrityResult?.mode === 'healthy'
-                && integrityResult.isFirstCheck
-                && source === 'remote'
-                && isAppOnline();
             const counts: Record<string, number> = {};
-            let integrityBaselineDirty = false;
-            const trustedItemIds = new Set<string>();
-            const trustedCategoryIds = new Set<string>();
 
             await Promise.all(
                 snapshot.items.map(async (item) => {
@@ -188,14 +169,11 @@ export function VaultSidebar({
                             vaultId: snapshot.vaultId,
                             item,
                             decryptedData,
-                            canPersistRemote: canPersistMigrations,
-                            encryptItem: encryptItemRef.current,
+                            canPersistRemote: false,
+                            encryptItem: async () => {
+                                throw new Error('legacy metadata writes are disabled');
+                            },
                         });
-
-                        if (migration.migrated) {
-                            integrityBaselineDirty = true;
-                            trustedItemIds.add(item.id);
-                        }
 
                         const resolvedCategoryId = migration.decryptedData.categoryId ?? migration.item.category_id;
 
@@ -226,9 +204,6 @@ export function VaultSidebar({
                     let resolvedName = cat.name;
                     let resolvedIcon = cat.icon;
                     let resolvedColor = cat.color;
-                    let migratedName = cat.name;
-                    let migratedIcon = cat.icon;
-                    let migratedColor = cat.color;
 
                     if (cat.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
                         try {
@@ -241,17 +216,6 @@ export function VaultSidebar({
                                 cat.id
                             );
                             resolvedName = 'Beschädigte Kategorie';
-                        }
-                    } else if (canPersistMigrations) {
-                        try {
-                            const encryptedName = await encryptDataRef.current(cat.name);
-                            migratedName = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedName}`;
-                            await supabase
-                                .from('categories')
-                                .update({ name: migratedName })
-                                .eq('id', cat.id);
-                        } catch (err) {
-                            console.error('Failed to migrate category name:', cat.id, err);
                         }
                     }
 
@@ -267,17 +231,6 @@ export function VaultSidebar({
                             );
                             resolvedIcon = null;
                         }
-                    } else if (cat.icon && canPersistMigrations) {
-                        try {
-                            const encryptedIcon = await encryptDataRef.current(cat.icon);
-                            migratedIcon = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedIcon}`;
-                            await supabase
-                                .from('categories')
-                                .update({ icon: migratedIcon })
-                                .eq('id', cat.id);
-                        } catch (err) {
-                            console.error('Failed to migrate category icon:', cat.id, err);
-                        }
                     }
 
                     if (cat.color && cat.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
@@ -292,29 +245,6 @@ export function VaultSidebar({
                             );
                             resolvedColor = '#3b82f6';
                         }
-                    } else if (cat.color && canPersistMigrations) {
-                        try {
-                            const encryptedColor = await encryptDataRef.current(cat.color);
-                            migratedColor = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedColor}`;
-                            await supabase
-                                .from('categories')
-                                .update({ color: migratedColor })
-                                .eq('id', cat.id);
-                        } catch (err) {
-                            console.error('Failed to migrate category color:', cat.id, err);
-                        }
-                    }
-
-                    if (canPersistMigrations && (migratedName !== cat.name || migratedIcon !== cat.icon || migratedColor !== cat.color)) {
-                        await upsertOfflineCategoryRow(userId, {
-                            ...cat,
-                            name: migratedName,
-                            icon: migratedIcon,
-                            color: migratedColor,
-                            updated_at: new Date().toISOString(),
-                        });
-                        integrityBaselineDirty = true;
-                        trustedCategoryIds.add(cat.id);
                     }
 
                     return {
@@ -326,13 +256,6 @@ export function VaultSidebar({
                     };
                 }),
             );
-
-            if (integrityBaselineDirty && canPersistMigrations) {
-                await refreshIntegrityBaselineRef.current({
-                    itemIds: trustedItemIds,
-                    categoryIds: trustedCategoryIds,
-                });
-            }
 
             if (fetchRequestIdRef.current === requestId) {
                 setCategories(resolvedCategories);

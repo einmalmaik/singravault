@@ -26,6 +26,7 @@ import {
 } from '@/services/sessionManager';
 import { clearVaultOpLogDeviceIdentity } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
 import { buildDisplayedIntegrityResult as buildDisplayedIntegrityResultFromQuarantine } from '@/services/vaultQuarantineOrchestrator';
+import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 
 function sameQuarantinedItems(left: QuarantinedVaultItem[], right: QuarantinedVaultItem[]): boolean {
   if (left.length !== right.length) {
@@ -86,6 +87,8 @@ export function useVaultProviderState() {
   const baseIntegrityResultRef = useRef<VaultIntegrityVerificationResult | null>(null);
   const [lastIntegrityResult, setLastIntegrityResult] = useState<VaultIntegrityVerificationResult | null>(null);
   const [integrityMode, setIntegrityMode] = useState<VaultIntegrityMode | 'safe'>('healthy');
+  const [vaultMigrationStatus, setVaultMigrationStatus] = useState<VaultMigrationRolloutStatus | null>(null);
+  const [vaultMigrationError, setVaultMigrationError] = useState<string | null>(null);
   const [quarantinedItems, setQuarantinedItems] = useState<QuarantinedVaultItem[]>([]);
   const runtimeUnreadableItemsRef = useRef<QuarantinedVaultItem[]>([]);
   const [vaultDataVersion, setVaultDataVersion] = useState(0);
@@ -188,6 +191,8 @@ export function useVaultProviderState() {
     baseIntegrityResultRef.current = null;
     setLastIntegrityResult(null);
     setIntegrityMode('healthy');
+    setVaultMigrationStatus(null);
+    setVaultMigrationError(null);
     setQuarantinedItems([]);
     runtimeUnreadableItemsRef.current = [];
     setVaultDataVersion(0);
@@ -319,6 +324,10 @@ export function useVaultProviderState() {
     setLastIntegrityResult,
     integrityMode,
     setIntegrityMode,
+    vaultMigrationStatus,
+    setVaultMigrationStatus,
+    vaultMigrationError,
+    setVaultMigrationError,
     quarantinedItems,
     setQuarantinedItems,
     runtimeUnreadableItemsRef,

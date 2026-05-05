@@ -47,6 +47,8 @@ import { useVaultProviderState } from './useVaultProviderState';
 import { useVaultLifecycleEffects } from './useVaultLifecycleEffects';
 import { useVaultOpLogUiState } from './useVaultOpLogUiState';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
+import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+import { createLegacyVaultRuntimeWriteBlockedError } from '@/services/vaultOpLog/vaultLegacyWriteBlocker';
 
 export function useVaultProviderActions(): VaultContextType {
   const { user, authReady } = useAuth();
@@ -270,6 +272,25 @@ export function useVaultProviderActions(): VaultContextType {
     });
     if (integrityResult.error) {
       return integrityResult;
+    }
+
+    const migrationGate = await evaluateVaultMigrationGate({ userId: user.id });
+    state.setVaultMigrationStatus(migrationGate.status);
+    state.setVaultMigrationError(migrationGate.reason);
+    if (!migrationGate.allowNormalUnlock) {
+      state.setEncryptionKey(null);
+      state.setIsLocked(true);
+      state.setIsDuressMode(false);
+      state.setPendingSessionRestore(false);
+      state.setIntegrityMode('migration_required');
+      state.setIntegrityBlockedReason(null);
+      state.setLastActivity(Date.now());
+      clearVaultSessionMarkers(sessionStorage);
+      return {
+        error: new Error(
+          migrationGate.reason ?? `Tresor-Migration blockiert normalen Unlock: ${migrationGate.status}`,
+        ),
+      };
     }
 
     state.setEncryptionKey(activeKey);
@@ -628,15 +649,15 @@ export function useVaultProviderActions(): VaultContextType {
   // will be wired here once the pending-queue submission path is fully
   // integrated in a later phase.
   const opLogRestoreRecord = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
-    return { error: new Error('OpLog restore not yet implemented') };
+    return { error: createLegacyVaultRuntimeWriteBlockedError('oplog-restore-record') };
   }, []);
 
   const opLogDeleteUntrustedRecord = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
-    return { error: new Error('OpLog delete not yet implemented') };
+    return { error: createLegacyVaultRuntimeWriteBlockedError('oplog-delete-record') };
   }, []);
 
   const opLogResolveConflict = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
-    return { error: new Error('OpLog conflict resolution not yet implemented') };
+    return { error: createLegacyVaultRuntimeWriteBlockedError('oplog-resolve-conflict') };
   }, []);
 
   return buildVaultContextValue(state, {

@@ -1,7 +1,6 @@
 import {
   attemptKdfUpgrade,
   importMasterKey,
-  reEncryptVault,
   unwrapUserKey,
   verifyKey,
 } from '@/services/cryptoService';
@@ -346,7 +345,7 @@ async function upgradeUserKeyWrapperIfNeeded(
 
 async function upgradeLegacyDirectKdfIfNeeded(
   input: VaultMasterUnlockInput,
-  currentKey: CryptoKey,
+  _currentKey: CryptoKey,
 ): Promise<{ activeKey: CryptoKey | null }> {
   try {
     const upgrade = await attemptKdfUpgrade(input.masterPassword, input.salt, input.kdfVersion);
@@ -354,76 +353,12 @@ async function upgradeLegacyDirectKdfIfNeeded(
       return { activeKey: null };
     }
 
-    const { data: vaultItems } = await supabase
-      .from('vault_items')
-      .select('id, encrypted_data')
-      .eq('user_id', input.userId);
-    const { data: categories } = await supabase
-      .from('categories')
-      .select('id, name, icon, color')
-      .eq('user_id', input.userId);
-    const reEncResult = await reEncryptVault(vaultItems || [], categories || [], currentKey, upgrade.newKey);
-    await persistReencryptedVaultRows(input.userId, reEncResult);
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        master_password_verifier: upgrade.newVerifier,
-        kdf_version: upgrade.activeVersion,
-      } as Record<string, unknown>)
-      .eq('user_id', input.userId);
-    if (!error) {
-      await input.applyCredentialUpdates({
-        verificationHash: upgrade.newVerifier,
-        kdfVersion: upgrade.activeVersion,
-      });
-      await saveOfflineCredentials(
-        input.userId,
-        input.salt,
-        upgrade.newVerifier,
-        upgrade.activeVersion,
-        input.encryptedUserKey,
-        input.vaultProtectionMode,
-      );
-      console.info(
-        `KDF upgraded from v${input.kdfVersion} to v${upgrade.activeVersion}. `
-        + `Re-encrypted ${reEncResult.itemsReEncrypted} items and `
-        + `${reEncResult.categoriesReEncrypted} categories.`,
-      );
-      return { activeKey: upgrade.newKey };
-    }
+    console.warn('Legacy direct-KDF vault re-encryption is disabled until signed Operation Log migration is available.');
   } catch (error) {
     console.warn('KDF upgrade: re-encryption failed, staying on old version', error);
   }
 
   return { activeKey: null };
-}
-
-async function persistReencryptedVaultRows(
-  userId: string,
-  reEncResult: Awaited<ReturnType<typeof reEncryptVault>>,
-): Promise<void> {
-  for (const itemUpdate of reEncResult.itemUpdates) {
-    const { error } = await supabase
-      .from('vault_items')
-      .update({ encrypted_data: itemUpdate.encrypted_data })
-      .eq('id', itemUpdate.id)
-      .eq('user_id', userId);
-    if (error) {
-      throw new Error(`Failed to update item ${itemUpdate.id}: ${error.message}`);
-    }
-  }
-
-  for (const categoryUpdate of reEncResult.categoryUpdates) {
-    const { error } = await supabase
-      .from('categories')
-      .update({ name: categoryUpdate.name, icon: categoryUpdate.icon, color: categoryUpdate.color })
-      .eq('id', categoryUpdate.id)
-      .eq('user_id', userId);
-    if (error) {
-      throw new Error(`Failed to update category ${categoryUpdate.id}: ${error.message}`);
-    }
-  }
 }
 
 async function backfillVerifier(

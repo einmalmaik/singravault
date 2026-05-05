@@ -446,10 +446,12 @@ export default function VaultPage() {
                                 items={opLogUiView.quarantinedItems}
                                 onRestore={opLogRestoreRecord}
                                 onDelete={opLogDeleteUntrustedRecord}
+                                actionsDisabled
                             />
                             <VaultOpLogConflictPanel
                                 items={opLogUiView.conflictedItems}
                                 onResolve={opLogResolveConflict}
+                                actionsDisabled
                             />
                         </>
                     )}

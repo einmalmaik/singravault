@@ -24,11 +24,13 @@ import type { VaultOpLogConflictUi } from '@/services/vaultOpLog/vaultOpLogUiAda
 interface VaultOpLogConflictPanelProps {
   items: readonly VaultOpLogConflictUi[];
   onResolve?: (recordId: string) => void;
+  actionsDisabled?: boolean;
 }
 
 export function VaultOpLogConflictPanel({
   items,
   onResolve,
+  actionsDisabled = false,
 }: VaultOpLogConflictPanelProps) {
   const { t } = useTranslation();
 
@@ -81,6 +83,8 @@ export function VaultOpLogConflictPanel({
                       type="button"
                       size="sm"
                       variant="outline"
+                      disabled={actionsDisabled}
+                      title={actionsDisabled ? t('vault.oplog.actionUnavailable', { defaultValue: 'Signierte OpLog-Aktion noch nicht verfügbar' }) : undefined}
                       onClick={() => { onResolve(item.recordId); }}
                     >
                       {t('vault.oplog.resolveAction', { defaultValue: 'Auflösen' })}

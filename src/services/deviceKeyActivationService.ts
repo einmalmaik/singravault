@@ -1,12 +1,10 @@
 import {
   createVerificationHash,
   CURRENT_KDF_VERSION,
-  deriveKey,
   deriveRawKey,
   importMasterKey,
   KDF_PARAMS,
   migrateToUserKey,
-  reEncryptVault,
   rewrapUserKey,
   unwrapUserKey,
   verifyKey,
@@ -261,50 +259,8 @@ async function activateBrowserDeviceKeyProtection(
     };
   }
 
-  const newKey = await deriveKey(masterPassword, salt, targetKdfVersion, newDeviceKey);
-  const newVerifier = await createVerificationHash(newKey);
-  const { data: vaultItems } = await supabase
-    .from('vault_items')
-    .select('id, encrypted_data')
-    .eq('user_id', userId);
-  const { data: categories } = await supabase
-    .from('categories')
-    .select('id, name, icon, color')
-    .eq('user_id', userId);
-
-  const reEncResult = await reEncryptVault(vaultItems || [], categories || [], encryptionKey, newKey);
-  await persistReencryptedVaultRows(userId, reEncResult);
-  await storeDeviceKey(userId, newDeviceKey);
-  await persistDeviceKeyProfileState({
-    userId,
-    kdfVersion: targetKdfVersion,
-    newVerifier,
-    newEncryptedUserKey: null,
-  });
-  await saveOfflineCredentialsAfterDeviceKeyCommit(
-    userId,
-    salt,
-    newVerifier,
-    targetKdfVersion,
-    null,
-    VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
-  );
-
-  console.info(
-    `Device Key enabled. Re-encrypted ${reEncResult.itemsReEncrypted} items, `
-    + `${reEncResult.categoriesReEncrypted} categories.`,
-  );
   return {
-    error: null,
-    state: {
-      encryptionKey: newKey,
-      encryptedUserKey: null,
-      verificationHash: newVerifier,
-      currentDeviceKey: newDeviceKey,
-      deviceKeyActive: true,
-      kdfVersion: targetKdfVersion,
-      vaultProtectionMode: VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
-    },
+    error: createUserKeyMigrationRequiredError(),
   };
 }
 
@@ -473,36 +429,5 @@ async function saveOfflineCredentialsAfterDeviceKeyCommit(
       'Device Key profile state was updated, but offline credential cache persistence failed. '
       + 'Offline unlock will retry after the next successful credential refresh.',
     );
-  }
-}
-
-async function persistReencryptedVaultRows(
-  userId: string,
-  reEncResult: Awaited<ReturnType<typeof reEncryptVault>>,
-): Promise<void> {
-  for (const itemUpdate of reEncResult.itemUpdates) {
-    const { error } = await supabase
-      .from('vault_items')
-      .update({ encrypted_data: itemUpdate.encrypted_data })
-      .eq('id', itemUpdate.id)
-      .eq('user_id', userId);
-    if (error) {
-      throw new Error(`Failed to update item ${itemUpdate.id}: ${error.message}`);
-    }
-  }
-
-  for (const categoryUpdate of reEncResult.categoryUpdates) {
-    const { error } = await supabase
-      .from('categories')
-      .update({
-        name: categoryUpdate.name,
-        icon: categoryUpdate.icon,
-        color: categoryUpdate.color,
-      })
-      .eq('id', categoryUpdate.id)
-      .eq('user_id', userId);
-    if (error) {
-      throw new Error(`Failed to update category ${categoryUpdate.id}: ${error.message}`);
-    }
   }
 }

@@ -43,10 +43,10 @@ describe('legacy vault metadata migration service', () => {
     from.mockReturnValue({ update });
   });
 
-  it('merges legacy server metadata into encrypted payload and writes only neutral server fields', async () => {
+  it('blocks runtime metadata migration writes until signed operations are available', async () => {
     const encryptItem = vi.fn().mockResolvedValue('new-ciphertext');
 
-    const result = await migrateLegacyVaultItemMetadata({
+    await expect(migrateLegacyVaultItemMetadata({
       userId: 'user-1',
       vaultId: 'vault-1',
       item: legacyItem as never,
@@ -54,35 +54,10 @@ describe('legacy vault metadata migration service', () => {
       canPersistRemote: true,
       encryptItem,
       now: () => new Date('2026-04-28T12:00:00.000Z'),
-    });
-
-    expect(encryptItem).toHaveBeenCalledWith({
-      password: 'secret',
-      title: 'Legacy payroll login',
-      websiteUrl: 'https://payroll.example',
-      itemType: 'totp',
-      isFavorite: true,
-      categoryId: 'cat-1',
-    }, 'item-1');
-
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({
-      encrypted_data: 'new-ciphertext',
-      title: 'Encrypted Item',
-      website_url: null,
-      icon_url: null,
-      item_type: 'password',
-      is_favorite: false,
-      category_id: null,
-      sort_order: null,
-      last_used_at: null,
-    }));
-    expect(updateEq).toHaveBeenCalledWith('user_id', 'user-1');
-    expect(upsertOfflineItemRow).toHaveBeenCalledWith('user-1', expect.objectContaining({
-      encrypted_data: 'new-ciphertext',
-      title: 'Encrypted Item',
-      website_url: null,
-    }), 'vault-1');
-    expect(result.migrated).toBe(true);
+    })).rejects.toMatchObject({ name: 'LegacyVaultRuntimeWriteBlockedError' });
+    expect(encryptItem).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(upsertOfflineItemRow).not.toHaveBeenCalled();
   });
 
   it('is idempotent for already neutral rows', async () => {
@@ -113,39 +88,26 @@ describe('legacy vault metadata migration service', () => {
     expect(upsertOfflineItemRow).not.toHaveBeenCalled();
   });
 
-  it('keeps the unlocked item usable when the remote neutralization write fails', async () => {
+  it('does not fall back to legacy writes when persistence would have failed', async () => {
     updateEq.mockResolvedValueOnce({ error: new Error('network unavailable') });
     const encryptItem = vi.fn().mockResolvedValue('new-ciphertext');
 
-    const result = await migrateLegacyVaultItemMetadata({
+    await expect(migrateLegacyVaultItemMetadata({
       userId: 'user-1',
       vaultId: 'vault-1',
       item: legacyItem as never,
       decryptedData: { password: 'secret' },
       canPersistRemote: true,
       encryptItem,
-    });
-
-    expect(result).toMatchObject({
-      migrated: false,
-      decryptedData: {
-        password: 'secret',
-        title: 'Legacy payroll login',
-        websiteUrl: 'https://payroll.example',
-      },
-      item: {
-        title: 'Encrypted Item',
-        website_url: null,
-        item_type: 'password',
-      },
-    });
+    })).rejects.toMatchObject({ name: 'LegacyVaultRuntimeWriteBlockedError' });
+    expect(update).not.toHaveBeenCalled();
     expect(upsertOfflineItemRow).not.toHaveBeenCalled();
   });
 
-  it('migrates legacy encryption and server metadata in one trusted write', async () => {
+  it('blocks combined legacy encryption and metadata migration writes', async () => {
     const encryptItem = vi.fn().mockResolvedValue('aad-bound-ciphertext');
 
-    const result = await migrateLegacyVaultItemEncryptionAndMetadata({
+    await expect(migrateLegacyVaultItemEncryptionAndMetadata({
       userId: 'user-1',
       vaultId: 'vault-1',
       item: legacyItem as never,
@@ -153,35 +115,9 @@ describe('legacy vault metadata migration service', () => {
       canPersistRemote: true,
       encryptItem,
       now: () => new Date('2026-04-28T12:00:00.000Z'),
-    });
-
-    expect(encryptItem).toHaveBeenCalledWith({
-      password: 'secret',
-      title: 'Legacy payroll login',
-      websiteUrl: 'https://payroll.example',
-      itemType: 'totp',
-      isFavorite: true,
-      categoryId: 'cat-1',
-    }, 'item-1');
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({
-      encrypted_data: 'aad-bound-ciphertext',
-      title: 'Encrypted Item',
-      website_url: null,
-      item_type: 'password',
-      is_favorite: false,
-      category_id: null,
-    }));
-    expect(upsertOfflineItemRow).toHaveBeenCalledWith('user-1', expect.objectContaining({
-      encrypted_data: 'aad-bound-ciphertext',
-      title: 'Encrypted Item',
-      updated_at: '2026-04-28T12:00:00.000Z',
-    }), 'vault-1');
-    expect(result).toMatchObject({
-      migrated: true,
-      decryptedData: {
-        password: 'secret',
-        title: 'Legacy payroll login',
-      },
-    });
+    })).rejects.toMatchObject({ name: 'LegacyVaultRuntimeWriteBlockedError' });
+    expect(encryptItem).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(upsertOfflineItemRow).not.toHaveBeenCalled();
   });
 });

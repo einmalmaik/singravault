@@ -1,7 +1,6 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
-import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import type { VaultItemData } from '@/services/cryptoService';
 import {
@@ -9,7 +8,7 @@ import {
   mergeLegacyVaultItemMetadataIntoPayload,
   neutralizeVaultItemServerMetadata,
 } from '@/services/vaultMetadataPolicy';
-import { upsertOfflineItemRow } from '@/services/offlineVaultService';
+import { blockLegacyVaultRuntimeWrite } from '@/services/vaultOpLog/vaultLegacyWriteBlocker';
 
 type VaultItemRow = Database['public']['Tables']['vault_items']['Row'];
 
@@ -70,45 +69,7 @@ export async function migrateLegacyVaultItemMetadata(
     };
   }
 
-  const migratedEncryptedData = await input.encryptItem(mergedDecryptedData, input.item.id);
-  const neutralPayload = neutralizeVaultItemServerMetadata({
-    id: input.item.id,
-    user_id: input.item.user_id,
-    vault_id: input.item.vault_id,
-    encrypted_data: migratedEncryptedData,
-  });
-  const updatedAt = (input.now ?? (() => new Date()))().toISOString();
-
-  const { error } = await supabase
-    .from('vault_items')
-    .update(neutralPayload)
-    .eq('id', input.item.id)
-    .eq('user_id', input.userId);
-
-  if (error) {
-    return {
-      item: {
-        ...input.item,
-        ...neutralizeVaultItemServerMetadata({}),
-      },
-      decryptedData: mergedDecryptedData,
-      migrated: false,
-    };
-  }
-
-  const migratedItem: VaultItemRow = {
-    ...input.item,
-    ...neutralPayload,
-    updated_at: updatedAt,
-  };
-
-  await upsertOfflineItemRow(input.userId, migratedItem, input.vaultId);
-
-  return {
-    item: migratedItem,
-    decryptedData: mergedDecryptedData,
-    migrated: true,
-  };
+  blockLegacyVaultRuntimeWrite('legacy-vault-item-metadata-migration');
 }
 
 export async function migrateLegacyVaultItemEncryptionAndMetadata(
@@ -117,36 +78,5 @@ export async function migrateLegacyVaultItemEncryptionAndMetadata(
   const mergedDecryptedData = hasLegacyVaultItemServerMetadata(input.item)
     ? mergeLegacyVaultItemMetadataIntoPayload(input.decryptedData, input.item)
     : input.decryptedData;
-  const migratedEncryptedData = await input.encryptItem(mergedDecryptedData, input.item.id);
-  const neutralPayload = neutralizeVaultItemServerMetadata({
-    id: input.item.id,
-    user_id: input.item.user_id,
-    vault_id: input.item.vault_id,
-    encrypted_data: migratedEncryptedData,
-  });
-  const updatedAt = (input.now ?? (() => new Date()))().toISOString();
-
-  const { error } = await supabase
-    .from('vault_items')
-    .update(neutralPayload)
-    .eq('id', input.item.id)
-    .eq('user_id', input.userId);
-
-  if (error) {
-    throw new LegacyVaultMetadataMigrationPersistenceError(input.item.id, undefined, error);
-  }
-
-  const migratedItem: VaultItemRow = {
-    ...input.item,
-    ...neutralPayload,
-    updated_at: updatedAt,
-  };
-
-  await upsertOfflineItemRow(input.userId, migratedItem, input.vaultId);
-
-  return {
-    item: migratedItem,
-    decryptedData: mergedDecryptedData,
-    migrated: true,
-  };
+  blockLegacyVaultRuntimeWrite('legacy-vault-item-encryption-metadata-migration');
 }

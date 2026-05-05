@@ -168,6 +168,7 @@ export async function migrateVault(input: MigrateVaultInput): Promise<MigrateVau
     publicSigningKeyB64Url: input.publicSigningKeyB64Url,
     vaultEncryptionKey: input.vaultEncryptionKey,
     rpcClient: input.rpcClient,
+    checkpointStorage: input.checkpointStorage,
     now: input.now ?? new Date().toISOString(),
     // Runtime accumulators (not persisted; rebuilt on resume)
     validatedItems: [],
@@ -191,15 +192,20 @@ export async function migrateVault(input: MigrateVaultInput): Promise<MigrateVau
       await writeCheckpoint(state, null, input.checkpointStorage);
     }
 
-    // Step 2: Device trust bootstrap (must happen before snapshot)
-    if (isBefore(state.currentState, 'deviceTrustPrepared')) {
-      await bootstrapDeviceTrust(state);
+    // Step 2: Pre-migration snapshot. This must be the first step after
+    // preflight/checkpoint validation that can have an irreversible security
+    // meaning for support and recovery. No server-side trust/head/op-log write
+    // is allowed before this checkpoint exists.
+    if (isBefore(state.currentState, 'preMigrationSnapshotCreated')) {
+      await createPreMigrationSnapshot(state);
       await writeCheckpoint(state, null, input.checkpointStorage);
     }
 
-    // Step 3: Pre-migration snapshot
-    if (isBefore(state.currentState, 'preMigrationSnapshotCreated')) {
-      await createPreMigrationSnapshot(state);
+    // Step 3: Device trust bootstrap. Bootstrap is still required before
+    // operation commits, but Phase 12 preflight forbids running it before the
+    // pre-migration snapshot.
+    if (isBefore(state.currentState, 'deviceTrustPrepared')) {
+      await bootstrapDeviceTrust(state);
       await writeCheckpoint(state, null, input.checkpointStorage);
     }
 
@@ -261,6 +267,7 @@ interface MigrationOrchestratorState {
   publicSigningKeyB64Url: string;
   vaultEncryptionKey: Uint8Array;
   rpcClient: SupabaseRpcClient;
+  checkpointStorage?: MigrationStorage;
   now: string;
 
   currentState: MigrationState;
@@ -317,7 +324,7 @@ function runPreflight(
   // no other migration checkpoint exists for this vault in a
   // non-terminal state. (In a real UI integration this would be a
   // stronger lock.)
-  const existing = loadMigrationCheckpoint(state.vaultId);
+  const existing = loadMigrationCheckpoint(state.vaultId, state.checkpointStorage);
   if (existing && !isTerminalState(existing.state)) {
     throw migrationError(
       'preflightFailed',
@@ -956,8 +963,8 @@ const STATE_ORDER: readonly MigrationState[] = [
   'failedRetryable',
   'preflightChecked',
   'safetyFreezeActive',
-  'deviceTrustPrepared',
   'preMigrationSnapshotCreated',
+  'deviceTrustPrepared',
   'legacyRead',
   'legacyValidated',
   'legacyQuarantinePrepared',

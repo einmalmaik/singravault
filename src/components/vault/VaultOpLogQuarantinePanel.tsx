@@ -26,12 +26,14 @@ interface VaultOpLogQuarantinePanelProps {
   items: readonly VaultOpLogQuarantinedItemUi[];
   onRestore?: (recordId: string) => void;
   onDelete?: (recordId: string) => void;
+  actionsDisabled?: boolean;
 }
 
 export function VaultOpLogQuarantinePanel({
   items,
   onRestore,
   onDelete,
+  actionsDisabled = false,
 }: VaultOpLogQuarantinePanelProps) {
   const { t } = useTranslation();
 
@@ -78,6 +80,8 @@ export function VaultOpLogQuarantinePanel({
                       type="button"
                       size="sm"
                       variant="outline"
+                      disabled={actionsDisabled}
+                      title={actionsDisabled ? t('vault.oplog.actionUnavailable', { defaultValue: 'Signierte OpLog-Aktion noch nicht verfügbar' }) : undefined}
                       onClick={() => { onRestore(item.recordId); }}
                     >
                       {t('vault.oplog.restoreAction', { defaultValue: 'Wiederherstellen' })}
@@ -88,6 +92,8 @@ export function VaultOpLogQuarantinePanel({
                       type="button"
                       size="sm"
                       variant="outline"
+                      disabled={actionsDisabled}
+                      title={actionsDisabled ? t('vault.oplog.actionUnavailable', { defaultValue: 'Signierte OpLog-Aktion noch nicht verfügbar' }) : undefined}
                       onClick={() => { onDelete(item.recordId); }}
                     >
                       {t('vault.oplog.deleteAction', { defaultValue: 'Löschen' })}

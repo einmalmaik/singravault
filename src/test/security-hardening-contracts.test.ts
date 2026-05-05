@@ -373,22 +373,25 @@ describe("security hardening contracts", () => {
     expect(vaultUnlock).not.toContain('href="/settings?tab=security#profile-device-key"');
   });
 
-  it("centralizes server-visible vault item metadata neutralization for new writes", () => {
+  it("blocks legacy vault table writes until signed operation-log writes are available", () => {
     const policy = readFileSync("src/services/vaultMetadataPolicy.ts", "utf-8");
     const itemDialog = readFileSync("src/components/vault/VaultItemDialog.tsx", "utf-8");
     const categoryDialog = readFileSync("src/components/vault/CategoryDialog.tsx", "utf-8");
     const offlineService = readFileSync("src/services/offlineVaultService.ts", "utf-8");
     const recoveryService = readFileSync("src/services/vaultQuarantineRecoveryService.ts", "utf-8");
     const legacyMigrationService = readFileSync("src/services/legacyVaultMetadataMigrationService.ts", "utf-8");
+    const blocker = readFileSync("src/services/vaultOpLog/vaultLegacyWriteBlocker.ts", "utf-8");
 
     expect(policy).toContain("neutralizeVaultItemServerMetadata");
     expect(policy).toContain("hasLegacyVaultItemServerMetadata");
     expect(policy).toContain("mergeLegacyVaultItemMetadataIntoPayload");
-    expect(itemDialog).toContain("neutralizeVaultItemServerMetadata");
-    expect(categoryDialog).toContain("neutralizeVaultItemServerMetadata");
+    expect(itemDialog).toContain("LEGACY_VAULT_WRITE_BLOCKED_MESSAGE");
+    expect(categoryDialog).toContain("LEGACY_VAULT_WRITE_BLOCKED_MESSAGE");
     expect(offlineService).toContain("neutralizeVaultItemServerMetadata(mutation.payload)");
-    expect(recoveryService).toContain("neutralizeVaultItemServerMetadata");
+    expect(recoveryService).toContain("Direct vault item restore is disabled");
+    expect(recoveryService).toContain("Direct vault item delete is disabled");
     expect(legacyMigrationService).toContain("migrateLegacyVaultItemMetadata");
-    expect(legacyMigrationService).toContain(".eq('user_id', input.userId)");
+    expect(legacyMigrationService).toContain("blockLegacyVaultRuntimeWrite");
+    expect(blocker).toContain("LegacyVaultRuntimeWriteBlockedError");
   });
 });

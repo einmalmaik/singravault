@@ -3,7 +3,6 @@ import {
   decrypt,
   decryptPrivateKeyLegacy,
   decryptVaultItem,
-  reEncryptVault,
   wrapPrivateKeyWithUserKey,
 } from './cryptoService';
 
@@ -230,31 +229,8 @@ export async function repairLegacyVaultCandidates(input: {
     try {
       const oldKey = await deriveOldKey(masterPassword, salt, oldVersion);
       await assertOldKeyMatchesCandidate(candidates.brokenItems, candidates.brokenCategories, oldKey);
-      const repairResult = await reEncryptVault(
-        candidates.brokenItems,
-        candidates.brokenCategories,
-        oldKey,
-        activeKey,
-      );
-
-      for (const itemUpdate of repairResult.itemUpdates) {
-        await supabase
-          .from('vault_items')
-          .update({ encrypted_data: itemUpdate.encrypted_data })
-          .eq('id', itemUpdate.id)
-          .eq('user_id', userId);
-      }
-
-      for (const catUpdate of repairResult.categoryUpdates) {
-        await supabase
-          .from('categories')
-          .update({ name: catUpdate.name, icon: catUpdate.icon, color: catUpdate.color })
-          .eq('id', catUpdate.id)
-          .eq('user_id', userId);
-      }
-
-      console.info(`KDF repair complete: re-encrypted ${repairResult.itemsReEncrypted} items and ${repairResult.categoriesReEncrypted} categories.`);
-      return true;
+      console.warn('Legacy vault KDF repair is blocked because legacy vault table writes are disabled.');
+      return false;
     } catch {
       continue;
     }
