@@ -26,17 +26,6 @@ const TRUSTED_SNAPSHOTS_STORE = 'trusted-snapshots';
 const MUTATIONS_STORE = 'mutations';
 const MUTATIONS_USER_INDEX = 'by_user';
 export const REMOTE_SNAPSHOT_PAGE_SIZE = 1000;
-// Keeps legitimate local writes authoritative while follow-up reads and remote
-// replication settle. The window is scoped to the exact changed row IDs.
-const LOCAL_WRITE_CACHE_TTL_MS = 60_000;
-
-interface RecentLocalMutationWindow {
-  freshUntil: number;
-  itemIds: Set<string>;
-  categoryIds: Set<string>;
-}
-
-const recentLocalMutationsByUser = new Map<string, RecentLocalMutationWindow>();
 
 export type OfflineVaultSnapshotCompletenessKind = 'complete' | 'unknown' | 'scope_incomplete';
 export type OfflineVaultSnapshotCompletenessReason =
@@ -140,30 +129,6 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function markLocalSnapshotFresh(
-  userId: string,
-  mutation: { itemId?: string; categoryId?: string },
-): void {
-  invalidateSnapshotRequestCache(userId);
-
-  const current = recentLocalMutationsByUser.get(userId);
-  const next: RecentLocalMutationWindow = {
-    freshUntil: Date.now() + LOCAL_WRITE_CACHE_TTL_MS,
-    itemIds: new Set(current?.itemIds),
-    categoryIds: new Set(current?.categoryIds),
-  };
-
-  if (mutation.itemId) {
-    next.itemIds.add(mutation.itemId);
-  }
-
-  if (mutation.categoryId) {
-    next.categoryIds.add(mutation.categoryId);
-  }
-
-  recentLocalMutationsByUser.set(userId, next);
-}
-
 function invalidateSnapshotRequestCache(userId: string): void {
   vaultSnapshotRequests.delete(userId);
   for (const key of remoteSnapshotRequests.keys()) {
@@ -171,39 +136,6 @@ function invalidateSnapshotRequestCache(userId: string): void {
       remoteSnapshotRequests.delete(key);
     }
   }
-}
-
-function getRecentLocalMutationWindow(userId: string): RecentLocalMutationWindow | null {
-  const recent = recentLocalMutationsByUser.get(userId);
-  if (!recent) {
-    return null;
-  }
-
-  if (Date.now() <= recent.freshUntil) {
-    return recent;
-  }
-
-  recentLocalMutationsByUser.delete(userId);
-  return null;
-}
-
-export function isRecentLocalVaultMutation(
-  userId: string,
-  mutation: { itemIds?: Iterable<string>; categoryIds?: Iterable<string> },
-): boolean {
-  const itemIds = [...(mutation.itemIds ?? [])];
-  const categoryIds = [...(mutation.categoryIds ?? [])];
-  if (itemIds.length === 0 && categoryIds.length === 0) {
-    return false;
-  }
-
-  const recent = getRecentLocalMutationWindow(userId);
-  if (!recent) {
-    return false;
-  }
-
-  return itemIds.every((itemId) => recent.itemIds.has(itemId))
-    && categoryIds.every((categoryId) => recent.categoryIds.has(categoryId));
 }
 
 function sanitizeOptionalUuid(value: string | null | undefined): string | null {
@@ -695,7 +627,6 @@ export async function upsertOfflineItemRow(
   snapshot.updatedAt = nowIso();
   snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
-  markLocalSnapshotFresh(userId, { itemId: row.id });
 }
 
 export async function removeOfflineItemRow(userId: string, itemId: string): Promise<void> {
@@ -704,7 +635,6 @@ export async function removeOfflineItemRow(userId: string, itemId: string): Prom
   snapshot.updatedAt = nowIso();
   snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
-  markLocalSnapshotFresh(userId, { itemId });
 }
 
 export async function upsertOfflineCategoryRow(userId: string, row: CategoryRow): Promise<void> {
@@ -721,7 +651,6 @@ export async function upsertOfflineCategoryRow(userId: string, row: CategoryRow)
   snapshot.updatedAt = nowIso();
   snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
-  markLocalSnapshotFresh(userId, { categoryId: row.id });
 }
 
 export async function removeOfflineCategoryRow(userId: string, categoryId: string): Promise<void> {
@@ -730,7 +659,6 @@ export async function removeOfflineCategoryRow(userId: string, categoryId: strin
   snapshot.updatedAt = nowIso();
   snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
-  markLocalSnapshotFresh(userId, { categoryId });
 }
 
 export async function applyOfflineCategoryDeletion(
@@ -756,11 +684,6 @@ export async function applyOfflineCategoryDeletion(
   snapshot.updatedAt = nowIso();
   snapshot.completeness = withLocalMutationCompleteness(snapshot);
   await saveOfflineSnapshot(snapshot);
-
-  for (const itemId of new Set([...updatedItemIds, ...deletedItemIds])) {
-    markLocalSnapshotFresh(userId, { itemId });
-  }
-  markLocalSnapshotFresh(userId, { categoryId });
 }
 
 export async function enqueueOfflineMutation(
@@ -1011,64 +934,10 @@ async function fetchRemoteOfflineSnapshotUncached(
   const snapshot = preserveLocalSecurityState(remoteSnapshot, cachedSnapshot);
   snapshot.remoteRevision = remoteRevision ?? cachedSnapshot?.remoteRevision ?? null;
 
-  const recent = getRecentLocalMutationWindow(userId);
   if (options?.persist !== false) {
-    if (recent) {
-      const latestCachedSnapshot = await getOfflineSnapshot(userId);
-      if (latestCachedSnapshot) {
-        const mergedSnapshot = applyRecentLocalMutations(snapshot, latestCachedSnapshot, recent);
-        await saveOfflineSnapshot(mergedSnapshot);
-        return mergedSnapshot;
-      }
-    }
-
     await saveOfflineSnapshot(snapshot);
   }
   return snapshot;
-}
-
-function applyRecentLocalMutations(
-  remoteSnapshot: OfflineVaultSnapshot,
-  cachedSnapshot: OfflineVaultSnapshot,
-  recent: RecentLocalMutationWindow,
-): OfflineVaultSnapshot {
-  const itemsById = new Map(remoteSnapshot.items.map((item) => [item.id, item]));
-  const cachedItemsById = new Map(cachedSnapshot.items.map((item) => [item.id, item]));
-  for (const itemId of recent.itemIds) {
-    const cachedItem = cachedItemsById.get(itemId);
-    if (cachedItem) {
-      itemsById.set(itemId, cachedItem);
-    } else {
-      itemsById.delete(itemId);
-    }
-  }
-
-  const categoriesById = new Map(remoteSnapshot.categories.map((category) => [category.id, category]));
-  const cachedCategoriesById = new Map(cachedSnapshot.categories.map((category) => [category.id, category]));
-  for (const categoryId of recent.categoryIds) {
-    const cachedCategory = cachedCategoriesById.get(categoryId);
-    if (cachedCategory) {
-      categoriesById.set(categoryId, cachedCategory);
-    } else {
-      categoriesById.delete(categoryId);
-    }
-  }
-
-  const mergedSnapshot: OfflineVaultSnapshot = {
-    ...remoteSnapshot,
-    items: [...itemsById.values()],
-    categories: [...categoriesById.values()],
-    updatedAt: nowIso(),
-    encryptionSalt: cachedSnapshot.encryptionSalt ?? remoteSnapshot.encryptionSalt,
-    masterPasswordVerifier: cachedSnapshot.masterPasswordVerifier ?? remoteSnapshot.masterPasswordVerifier,
-    kdfVersion: cachedSnapshot.kdfVersion ?? remoteSnapshot.kdfVersion,
-    encryptedUserKey: cachedSnapshot.encryptedUserKey ?? remoteSnapshot.encryptedUserKey,
-    vaultProtectionMode: cachedSnapshot.vaultProtectionMode ?? remoteSnapshot.vaultProtectionMode ?? VAULT_PROTECTION_MODE_MASTER_ONLY,
-    vaultTwoFactorRequired: cachedSnapshot.vaultTwoFactorRequired ?? remoteSnapshot.vaultTwoFactorRequired,
-    remoteRevision: remoteSnapshot.remoteRevision ?? cachedSnapshot.remoteRevision ?? null,
-  };
-  mergedSnapshot.completeness = withLocalMutationCompleteness(mergedSnapshot);
-  return mergedSnapshot;
 }
 
 export async function loadVaultSnapshot(userId: string): Promise<{
@@ -1105,17 +974,6 @@ async function loadVaultSnapshotUncached(userId: string): Promise<{
         const cached = await getOfflineSnapshot(userId);
         if (cached) {
           return { snapshot: cached, source: 'cache' };
-        }
-      }
-
-      const recent = getRecentLocalMutationWindow(userId);
-      if (recent) {
-        const cached = await getOfflineSnapshot(userId);
-        if (cached) {
-          const remoteSnapshot = await fetchRemoteOfflineSnapshot(userId, { persist: false });
-          const mergedSnapshot = applyRecentLocalMutations(remoteSnapshot, cached, recent);
-          await saveOfflineSnapshot(mergedSnapshot);
-          return { snapshot: mergedSnapshot, source: 'cache' };
         }
       }
 

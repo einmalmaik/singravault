@@ -54,7 +54,7 @@ export async function restoreQuarantinedVaultItem(input: {
   activeKey: CryptoKey;
   encryptedUserKey?: string | null;
   trustedSnapshotItem: TrustedSnapshotItem;
-  refreshIntegrityBaseline: (mutation: { itemIds: string[] }) => Promise<unknown>;
+  refreshIntegrityBaseline: () => Promise<unknown>;
   verifyIntegrity: () => Promise<{ quarantinedItems: Array<{ id: string }> } | null>;
 }): Promise<void> {
   let trustedSnapshotItem = input.trustedSnapshotItem;
@@ -107,7 +107,7 @@ export async function restoreQuarantinedVaultItem(input: {
     throw new Error('Die Wiederherstellung konnte nicht mit dem Server synchronisiert werden.');
   }
 
-  await input.refreshIntegrityBaseline({ itemIds: [input.itemId] });
+  await input.refreshIntegrityBaseline();
   const integrityResult = await input.verifyIntegrity();
   if (integrityResult?.quarantinedItems.some((quarantinedItem) => quarantinedItem.id === input.itemId)) {
     throw new Error('Die Wiederherstellung konnte nicht bestätigt werden. Der Eintrag bleibt in Quarantäne.');
@@ -119,7 +119,7 @@ export async function deleteQuarantinedVaultItem(input: {
   itemId: string;
   reason: string;
   verifyIntegrity: () => Promise<unknown>;
-  refreshIntegrityBaseline: (mutation: { itemIds: string[] }) => Promise<unknown>;
+  refreshIntegrityBaseline: () => Promise<unknown>;
 }): Promise<void> {
   const { syncedOnline } = await deleteQuarantinedItemFromVault(input.userId, input.itemId);
   if (isAppOnline() && !syncedOnline) {
@@ -127,7 +127,7 @@ export async function deleteQuarantinedVaultItem(input: {
   }
 
   if (isActiveQuarantineReasonV2(input.reason)) {
-    await input.refreshIntegrityBaseline({ itemIds: [input.itemId] });
+    await input.refreshIntegrityBaseline();
   } else {
     await input.verifyIntegrity();
   }
@@ -135,9 +135,9 @@ export async function deleteQuarantinedVaultItem(input: {
 
 export async function acceptMissingQuarantinedVaultItem(input: {
   itemId: string;
-  refreshIntegrityBaseline: (mutation: { itemIds: string[] }) => Promise<unknown>;
+  refreshIntegrityBaseline: () => Promise<unknown>;
 }): Promise<void> {
-  await input.refreshIntegrityBaseline({ itemIds: [input.itemId] });
+  await input.refreshIntegrityBaseline();
 }
 
 export async function resetVaultAfterIntegrityFailureForUser(

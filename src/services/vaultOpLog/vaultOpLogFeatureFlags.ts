@@ -1,71 +1,31 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 /**
- * Feature flags for the vault operation log repository layer (Phase 3).
+ * Feature flags for the vault operation log repository layer.
  *
- * The new repository path is strictly opt-in.  Default is `false` so
- * that existing UI, VaultContext, Autofill, Export, Search and
- * Clipboard paths cannot accidentally use unfinished infrastructure.
+ * Phase 11 removed all old runtime security logic (rebaseline, snapshot-digest
+ * trust, TTL-based trust, category global blockade, direct old vault writes).
+ * These flags are now hard-coded structural stubs for Phase 12 rollout
+ * planning. They MUST NOT reactivate old security logic.
  *
- * Activation:
- *   VITE_VAULT_OP_LOG_REPOSITORY_ENABLED=true
- *
- * No production path may bypass this flag.
+ * - Repository enabled: true  (new model is the only runtime path)
+ * - Shadow mode enabled: false (no parallel old logic to shadow against)
+ * - Phase 9 UI enabled: true  (security-mode UI is mandatory)
  */
 
-const FEATURE_FLAG_ENV_NAME = 'VITE_VAULT_OP_LOG_REPOSITORY_ENABLED' as const;
-const SHADOW_MODE_FLAG_ENV_NAME = 'VITE_VAULT_OP_LOG_SHADOW_MODE_ENABLED' as const;
-const PHASE_9_UI_FLAG_ENV_NAME = 'VITE_VAULT_OP_LOG_PHASE_9_UI_ENABLED' as const;
-
-/**
- * Returns `true` only when the environment explicitly enables the
- * vault operation log repository layer.
- *
- * Conservative default: `false`.
- */
 export function isVaultOpLogRepositoryEnabled(): boolean {
-  try {
-    const value = String((import.meta as { env?: Record<string, unknown> }).env?.[FEATURE_FLAG_ENV_NAME] ?? '');
-    return value.trim() === 'true';
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 /**
- * Returns `true` only when the environment explicitly enables the
- * vault operation log shadow mode (Phase 8).
- *
- * Shadow mode runs the new state machine in the background without
- * switching UI, Autofill, Export, Search or Clipboard to the new
- * data. It produces only sanitised diagnostics.
- *
- * Conservative default: `false`.
+ * Shadow mode is permanently disabled after Phase 11.
+ * If diagnostics are needed, they must be read-only and must never
+ * execute old integration, rebaseline, digest, TTL or quarantine paths.
  */
 export function isVaultOpLogShadowModeEnabled(): boolean {
-  try {
-    const value = String((import.meta as { env?: Record<string, unknown> }).env?.[SHADOW_MODE_FLAG_ENV_NAME] ?? '');
-    return value.trim() === 'true';
-  } catch {
-    return false;
-  }
+  return false;
 }
 
-/**
- * Returns `true` only when the environment explicitly enables the
- * Phase 9 UI integration for vault security modes, quarantine,
- * conflicts and safe mode display.
- *
- * Phase 9 UI is strictly opt-in and separate from Shadow Mode.
- * When disabled, the old productive vault path remains unchanged.
- *
- * Conservative default: `false`.
- */
 export function isVaultOpLogPhase9UIEnabled(): boolean {
-  try {
-    const value = String((import.meta as { env?: Record<string, unknown> }).env?.[PHASE_9_UI_FLAG_ENV_NAME] ?? '');
-    return value.trim() === 'true';
-  } catch {
-    return false;
-  }
+  return true;
 }

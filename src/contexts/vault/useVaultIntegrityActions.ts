@@ -12,7 +12,6 @@ import {
   verifyVaultIntegrity,
   type VaultIntegrityRuntimeCallbacks,
 } from '@/services/vaultIntegrityRuntimeService';
-import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngine';
 import type { VaultIntegrityVerificationResult } from '@/services/vaultIntegrityService';
 import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import type { VaultSnapshotSource } from './vaultContextTypes';
@@ -32,7 +31,6 @@ export function useVaultIntegrityActions({
   integrityCallbacks,
 }: VaultIntegrityActionsInput) {
   const refreshIntegrityBaseline = useCallback(async (
-    trustedMutation?: TrustedVaultMutation,
   ): Promise<VaultIntegrityVerificationResult | null> => {
     if (!user || !state.encryptionKey) {
       return null;
@@ -42,7 +40,6 @@ export function useVaultIntegrityActions({
       userId: user.id,
       encryptionKey: state.encryptionKey,
       encryptedUserKey: state.encryptedUserKey,
-      trustedMutation,
       callbacks: integrityCallbacks(),
     });
   }, [integrityCallbacks, state.encryptedUserKey, state.encryptionKey, user]);
@@ -66,9 +63,9 @@ export function useVaultIntegrityActions({
   }, [integrityCallbacks, state.encryptedUserKey, state.encryptionKey, user]);
 
   const updateIntegrity = useCallback(async (
-    items: VaultItemForIntegrity[],
+    _items: VaultItemForIntegrity[],
   ): Promise<void> => {
-    await refreshIntegrityBaseline({ itemIds: items.map((item) => item.id) });
+    await refreshIntegrityBaseline();
   }, [refreshIntegrityBaseline]);
 
   const restoreQuarantinedItem = useCallback(async (
@@ -91,7 +88,7 @@ export function useVaultIntegrityActions({
         activeKey: state.encryptionKey!,
         encryptedUserKey: state.encryptedUserKey,
         trustedSnapshotItem,
-        refreshIntegrityBaseline: (mutation) => refreshIntegrityBaseline(mutation),
+        refreshIntegrityBaseline: () => refreshIntegrityBaseline(),
         verifyIntegrity: () => {
           state.removeRuntimeUnreadableItems([itemId]);
           return verifyIntegrity();

@@ -128,7 +128,6 @@ const mockLoadVaultSnapshot = vi.fn();
 const mockFetchRemoteOfflineSnapshot = vi.fn();
 const mockGetOfflineSnapshot = vi.fn();
 const mockGetTrustedOfflineSnapshot = vi.fn();
-const mockIsRecentLocalVaultMutation = vi.fn();
 const mockResolveDefaultVaultId = vi.fn();
 const mockSaveTrustedOfflineSnapshot = vi.fn();
 const mockClearOfflineVaultData = vi.fn();
@@ -142,7 +141,6 @@ vi.mock("@/services/offlineVaultService", () => ({
   getOfflineCredentials: (...args: unknown[]) => mockGetOfflineCredentials(...args),
   getOfflineVaultTwoFactorRequirement: (...args: unknown[]) => mockGetOfflineVaultTwoFactorRequirement(...args),
   getTrustedOfflineSnapshot: (...args: unknown[]) => mockGetTrustedOfflineSnapshot(...args),
-  isRecentLocalVaultMutation: (...args: unknown[]) => mockIsRecentLocalVaultMutation(...args),
   saveOfflineCredentials: (...args: unknown[]) => mockSaveOfflineCredentials(...args),
   saveOfflineVaultTwoFactorRequirement: (...args: unknown[]) => mockSaveOfflineVaultTwoFactorRequirement(...args),
   saveTrustedOfflineSnapshot: (...args: unknown[]) => mockSaveTrustedOfflineSnapshot(...args),
@@ -307,7 +305,6 @@ describe("VaultContext", () => {
     mockGetOfflineSnapshot.mockResolvedValue(null);
     mockResolveDefaultVaultId.mockResolvedValue("vault-123");
     mockGetTrustedOfflineSnapshot.mockResolvedValue(null);
-    mockIsRecentLocalVaultMutation.mockReturnValue(false);
     mockSaveTrustedOfflineSnapshot.mockResolvedValue(undefined);
     mockClearOfflineVaultData.mockResolvedValue(undefined);
     mockStoreDeviceKey.mockResolvedValue(undefined);

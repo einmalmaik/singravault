@@ -8,7 +8,6 @@ import {
   saveOfflineSnapshot,
   type OfflineVaultSnapshot,
 } from '@/services/offlineVaultService';
-import { buildVaultIntegritySnapshot } from '@/services/vaultIntegrityDecisionEngine';
 import type { VaultIntegritySnapshot } from '@/services/vaultIntegrityService';
 import { isTauriDevUserId, TAURI_DEV_VAULT_ID } from '@/platform/tauriDevMode';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
@@ -71,6 +70,23 @@ export async function loadCachedVaultCredentials(
   };
 }
 
+function toIntegritySnapshot(snapshot: OfflineVaultSnapshot): VaultIntegritySnapshot {
+  return {
+    items: snapshot.items.map((item) => ({
+      id: item.id,
+      encrypted_data: item.encrypted_data,
+      updated_at: item.updated_at ?? null,
+      item_type: 'item_type' in item ? item.item_type : null,
+    })),
+    categories: snapshot.categories.map((category) => ({
+      id: category.id,
+      name: category.name,
+      icon: typeof category.icon === 'string' ? category.icon : null,
+      color: typeof category.color === 'string' ? category.color : null,
+    })),
+  };
+}
+
 export async function loadCurrentVaultIntegritySnapshot(input: {
   userId: string;
   persistRemoteSnapshot?: boolean;
@@ -83,7 +99,7 @@ export async function loadCurrentVaultIntegritySnapshot(input: {
     const { snapshot, source } = await loadVaultSnapshot(userId);
     return {
       rawSnapshot: snapshot,
-      integritySnapshot: buildVaultIntegritySnapshot(snapshot),
+      integritySnapshot: toIntegritySnapshot(snapshot),
       source,
     };
   }
@@ -97,7 +113,7 @@ export async function loadCurrentVaultIntegritySnapshot(input: {
       logIntegritySnapshotSource('remote', rawSnapshot, input);
       return {
         rawSnapshot,
-        integritySnapshot: buildVaultIntegritySnapshot(rawSnapshot),
+        integritySnapshot: toIntegritySnapshot(rawSnapshot),
         source: 'remote',
       };
     } catch (error) {
@@ -115,7 +131,7 @@ export async function loadCurrentVaultIntegritySnapshot(input: {
   logIntegritySnapshotSource(source, snapshot, input);
   return {
     rawSnapshot: snapshot,
-    integritySnapshot: buildVaultIntegritySnapshot(snapshot),
+    integritySnapshot: toIntegritySnapshot(snapshot),
     source,
   };
 }
