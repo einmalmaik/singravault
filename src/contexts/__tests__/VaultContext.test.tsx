@@ -203,6 +203,25 @@ vi.mock("@/services/vaultIntegrityV2/runtimeBridge", () => ({
   ]).has(reason)),
 }));
 
+const mockFinalizeVaultUnlockIntegrity = vi.hoisted(() => vi.fn());
+const mockRefreshVaultIntegrityBaseline = vi.hoisted(() => vi.fn());
+const mockVerifyVaultIntegrity = vi.hoisted(() => vi.fn());
+vi.mock("@/services/vaultIntegrityRuntimeService", () => ({
+  finalizeVaultUnlockIntegrity: (...args: unknown[]) => mockFinalizeVaultUnlockIntegrity(...args),
+  refreshVaultIntegrityBaseline: (...args: unknown[]) => mockRefreshVaultIntegrityBaseline(...args),
+  verifyVaultIntegrity: (...args: unknown[]) => mockVerifyVaultIntegrity(...args),
+}));
+
+const mockEvaluateVaultMigrationGate = vi.hoisted(() => vi.fn());
+vi.mock("@/services/vaultOpLog/vaultMigrationRolloutService", () => ({
+  evaluateVaultMigrationGate: (...args: unknown[]) => mockEvaluateVaultMigrationGate(...args),
+}));
+
+const mockRunControlledMigration = vi.hoisted(() => vi.fn());
+vi.mock("@/services/vaultOpLog/vaultMigrationRuntimeOrchestrator", () => ({
+  runControlledMigration: (...args: unknown[]) => mockRunControlledMigration(...args),
+}));
+
 // ============ Test Helpers ============
 
 function createWrapper() {
@@ -279,6 +298,33 @@ function withCompleteSnapshot<T extends {
   };
 }
 
+function createHealthyIntegrityResult() {
+  return {
+    valid: true,
+    isFirstCheck: false,
+    computedRoot: "oplog-verified-root",
+    storedRoot: "oplog-verified-root",
+    itemCount: 0,
+    categoryCount: 0,
+    mode: "healthy" as const,
+    quarantinedItems: [],
+  };
+}
+
+function createBlockedIntegrityResult(reason: "category_structure_mismatch" | "unknown_integrity_failure") {
+  return {
+    valid: false,
+    isFirstCheck: false,
+    computedRoot: "blocked-root",
+    storedRoot: "trusted-root",
+    itemCount: 0,
+    categoryCount: 1,
+    mode: "blocked" as const,
+    blockedReason: reason,
+    quarantinedItems: [],
+  };
+}
+
 // ============ Test Suite ============
 
 describe("VaultContext", () => {
@@ -333,6 +379,42 @@ describe("VaultContext", () => {
       context: "vault_unlock",
       required: false,
       status: "loaded",
+    });
+    mockFinalizeVaultUnlockIntegrity.mockImplementation(async (input: {
+      callbacks: { applyIntegrityResultState: (result: ReturnType<typeof createHealthyIntegrityResult>) => void };
+    }) => {
+      input.callbacks.applyIntegrityResultState(createHealthyIntegrityResult());
+      return { error: null };
+    });
+    mockRefreshVaultIntegrityBaseline.mockImplementation(async (input: {
+      callbacks: { applyIntegrityResultState: (result: ReturnType<typeof createHealthyIntegrityResult>) => void };
+    }) => {
+      const result = createHealthyIntegrityResult();
+      input.callbacks.applyIntegrityResultState(result);
+      return result;
+    });
+    mockVerifyVaultIntegrity.mockImplementation(async (input: {
+      callbacks: { applyIntegrityResultState: (result: ReturnType<typeof createHealthyIntegrityResult>) => void };
+    }) => {
+      const result = createHealthyIntegrityResult();
+      input.callbacks.applyIntegrityResultState(result);
+      return result;
+    });
+    mockEvaluateVaultMigrationGate.mockResolvedValue({
+      allowNormalUnlock: true,
+      status: "notNeeded",
+      vaultId: "vault-123",
+      reason: null,
+    });
+    mockRunControlledMigration.mockResolvedValue({
+      success: true,
+      migrationResult: {
+        success: true,
+        finalState: "legacyMarkedMigrated",
+        progress: {},
+        error: null,
+      },
+      error: null,
     });
 
     // Default Supabase profile response - no vault setup yet
@@ -747,6 +829,88 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(false);
     });
 
+    it.each([
+      "required",
+      "ready",
+      "running",
+      "committed",
+      "failed",
+      "preflightFailed",
+    ] as const)("keeps the normal vault locked when migration status is %s", async (status) => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32).fill(7));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockEvaluateVaultMigrationGate.mockResolvedValueOnce({
+        allowNormalUnlock: false,
+        status,
+        vaultId: "vault-123",
+        reason: `migration ${status}`,
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error?.message).toContain(`migration ${status}`);
+      expect(result.current.isLocked).toBe(true);
+      expect(result.current.integrityMode).toBe("migration_required");
+      expect(result.current.vaultMigrationStatus).toBe(status);
+      expect(result.current.vaultMigrationCanStart).toBe(true);
+      expect(mockRunControlledMigration).not.toHaveBeenCalled();
+    });
+
+    it("starts migration only after explicit user consent and unlocks after verified gate", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32).fill(9));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockEvaluateVaultMigrationGate
+        .mockResolvedValueOnce({
+          allowNormalUnlock: false,
+          status: "required",
+          vaultId: "vault-123",
+          reason: "legacy vault requires controlled migration",
+        })
+        .mockResolvedValueOnce({
+          allowNormalUnlock: true,
+          status: "verified",
+          vaultId: "vault-123",
+          reason: null,
+        });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(result.current.isLocked).toBe(true);
+      expect(mockRunControlledMigration).not.toHaveBeenCalled();
+
+      let migrationResult: { error: Error | null } | undefined;
+      await act(async () => {
+        migrationResult = await result.current.startVaultMigration();
+      });
+
+      expect(migrationResult?.error).toBeNull();
+      expect(mockRunControlledMigration).toHaveBeenCalledTimes(1);
+      expect(result.current.vaultMigrationStatus).toBe("verified");
+      expect(result.current.vaultMigrationCanStart).toBe(false);
+      expect(result.current.isLocked).toBe(false);
+    });
+
     it("blocks master-password unlock when vault 2FA is required but no verifier callback is supplied", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
@@ -891,7 +1055,7 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
     });
 
-    it("legacy Tauri dev user unlock uses the normal remote snapshot path", async () => {
+    it("legacy Tauri dev user unlock uses the normal profile and migration-gate path", async () => {
       const devUserId = "00000000-0000-4000-8000-000000000001";
       mockUseAuth.mockReturnValue({
         user: { id: devUserId, email: "tauri-dev@singra.local" },
@@ -955,12 +1119,13 @@ describe("VaultContext", () => {
       expect(unlockResult?.error).toBeNull();
       expect(result.current.isLocked).toBe(false);
       expect(result.current.integrityMode).toBe("healthy");
-      expect(mockFetchRemoteOfflineSnapshot).toHaveBeenCalledWith(devUserId, { persist: false });
+      expect(mockFetchRemoteOfflineSnapshot).not.toHaveBeenCalledWith(devUserId, { persist: false });
       expect(mockLoadVaultSnapshot).not.toHaveBeenCalledWith(devUserId);
+      expect(mockEvaluateVaultMigrationGate).toHaveBeenCalledWith({ userId: devUserId });
       expect(mockSupabase.from).toHaveBeenCalledWith("profiles");
     });
 
-    it("keeps unlock digest-based and treats deferred unreadable items as revalidation failure", async () => {
+    it("keeps unlock state-machine-based and treats deferred unreadable items as revalidation failure", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
@@ -1050,32 +1215,20 @@ describe("VaultContext", () => {
       expect(mockDeleteQuarantinedItemFromVault).not.toHaveBeenCalled();
     });
 
-    it("blocks unlock when encrypted categories can no longer be decrypted", async () => {
+    it("keeps category integrity failures as explicit integrity failures without rebaseline", async () => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
       mockImportMasterKey.mockResolvedValue({ type: 'secret', extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
       mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
-      mockFetchRemoteOfflineSnapshot.mockResolvedValue(withCompleteSnapshot({
-        userId: mockUser.id,
-        vaultId: "vault-123",
-        items: [],
-        categories: [
-          {
-            id: "cat-bad",
-            user_id: mockUser.id,
-            name: "enc:cat:v1:broken",
-            icon: null,
-            color: null,
-            parent_id: null,
-            sort_order: null,
-            created_at: "2026-04-22T10:00:00.000Z",
-            updated_at: "2026-04-22T10:00:00.000Z",
-          },
-        ],
-        lastSyncedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }));
-      mockDecrypt.mockRejectedValue(new Error("OperationError"));
+      mockFinalizeVaultUnlockIntegrity.mockImplementationOnce(async (input: {
+        callbacks: { applyIntegrityResultState: (result: ReturnType<typeof createBlockedIntegrityResult>) => void };
+      }) => {
+        const blocked = createBlockedIntegrityResult("category_structure_mismatch");
+        input.callbacks.applyIntegrityResultState(blocked);
+        return {
+          error: new Error("Die Integritätsprüfung des Tresors ist fehlgeschlagen. Safe Mode oder Reset ist erforderlich."),
+        };
+      });
 
       const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
 
@@ -1092,6 +1245,7 @@ describe("VaultContext", () => {
       expect(result.current.isLocked).toBe(true);
       expect(result.current.integrityMode).toBe("blocked");
       expect(result.current.integrityBlockedReason).toBe("category_structure_mismatch");
+      expect(mockSaveTrustedOfflineSnapshot).not.toHaveBeenCalled();
     });
 
     it("should return error with incorrect password", async () => {
@@ -1195,7 +1349,7 @@ describe("VaultContext", () => {
   });
 
   describe("refreshIntegrityBaseline", () => {
-    it("should re-baseline decryptable trusted changes instead of blocking them", async () => {
+    it("delegates to the Phase-11/12 runtime verifier without snapshot rebaseline", async () => {
       mockGenerateSalt.mockReturnValue("fresh-salt");
       mockCreateVerificationHash.mockResolvedValue("fresh-verifier");
 
@@ -1209,64 +1363,25 @@ describe("VaultContext", () => {
         await result.current.setupMasterPassword("CorrectPassword!");
       });
 
-      const trustedSnapshot = withCompleteSnapshot({
-        userId: mockUser.id,
-        vaultId: "vault-123",
-        items: [
-          {
-            id: "item-1",
-            vault_id: "vault-123",
-            title: "Encrypted Item",
-            website_url: null,
-            icon_url: null,
-            item_type: "password",
-            is_favorite: false,
-            category_id: "cat-1",
-            created_at: "2026-04-22T10:00:00.000Z",
-            updated_at: "2026-04-22T11:00:00.000Z",
-            encrypted_data: "cipher-updated",
-          },
-        ],
-        categories: [
-          {
-            id: "cat-1",
-            user_id: mockUser.id,
-            name: "enc:cat:v1:rotated",
-            icon: null,
-            color: null,
-            parent_id: null,
-            sort_order: null,
-            created_at: "2026-04-22T10:00:00.000Z",
-            updated_at: "2026-04-22T11:00:00.000Z",
-          },
-        ],
-        lastSyncedAt: "2026-04-22T11:00:00.000Z",
-        updatedAt: "2026-04-22T11:00:00.000Z",
-      }, "remote_with_local_overlay");
-
-      mockLoadVaultSnapshot.mockResolvedValue({
-        snapshot: trustedSnapshot,
-        source: "cache",
-      });
-      mockDecryptVaultItem.mockResolvedValue({ id: "item-1" });
-      mockDecrypt.mockResolvedValue("decrypted-category");
+      mockLoadVaultSnapshot.mockClear();
+      mockSaveTrustedOfflineSnapshot.mockClear();
 
       await act(async () => {
-        await result.current.refreshIntegrityBaseline({
-          itemIds: ["item-1"],
-          categoryIds: ["cat-1"],
-        });
+        await result.current.refreshIntegrityBaseline();
       });
 
       expect(result.current.isLocked).toBe(false);
       expect(result.current.integrityMode).toBe("healthy");
       expect(result.current.integrityBlockedReason).toBeNull();
       expect(result.current.quarantinedItems).toEqual([]);
-      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(mockUser.id);
-      expect(mockSaveTrustedOfflineSnapshot).toHaveBeenLastCalledWith(trustedSnapshot);
+      expect(mockRefreshVaultIntegrityBaseline).toHaveBeenCalledWith(expect.objectContaining({
+        userId: mockUser.id,
+      }));
+      expect(mockLoadVaultSnapshot).not.toHaveBeenCalled();
+      expect(mockSaveTrustedOfflineSnapshot).not.toHaveBeenCalled();
     });
 
-    it("uses the local mutation overlay for trusted category re-baselining", async () => {
+    it("does not use local mutation overlay as a trusted rebaseline source", async () => {
       mockGenerateSalt.mockReturnValue("fresh-salt");
       mockCreateVerificationHash.mockResolvedValue("fresh-verifier");
       mockEncrypt.mockImplementation(async (plaintext: unknown) => String(plaintext));
@@ -1314,13 +1429,12 @@ describe("VaultContext", () => {
       });
 
       await act(async () => {
-        await result.current.refreshIntegrityBaseline({
-          categoryIds: ["cat-1"],
-        });
+        await result.current.refreshIntegrityBaseline();
       });
 
-      expect(mockLoadVaultSnapshot).toHaveBeenCalledWith(mockUser.id);
-      expect(mockSaveTrustedOfflineSnapshot).toHaveBeenLastCalledWith(mergedSnapshot);
+      expect(mockLoadVaultSnapshot).not.toHaveBeenCalled();
+      expect(mockSaveTrustedOfflineSnapshot).not.toHaveBeenCalled();
+      expect(mockRefreshVaultIntegrityBaseline).toHaveBeenCalled();
       expect(result.current.isLocked).toBe(false);
       expect(result.current.integrityMode).toBe("healthy");
       expect(result.current.integrityBlockedReason).toBeNull();

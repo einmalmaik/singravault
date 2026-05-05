@@ -101,6 +101,7 @@ import {
   saveMigrationCheckpoint,
   loadMigrationCheckpoint,
   clearMigrationCheckpoint,
+  saveMigrationCompletionMarker,
   type MigrationStorage,
 } from './legacyMigrationStateStore';
 import {
@@ -243,6 +244,12 @@ export async function migrateVault(input: MigrateVaultInput): Promise<MigrateVau
     if (isBefore(state.currentState, 'legacyMarkedMigrated')) {
       markLegacyMigrated(state);
       await writeCheckpoint(state, null, input.checkpointStorage);
+      saveMigrationCompletionMarker({
+        version: 1,
+        vaultId: state.vaultId,
+        state: 'verified',
+        completedAt: state.now,
+      }, input.checkpointStorage);
       clearMigrationCheckpoint(state.vaultId, input.checkpointStorage);
     }
 

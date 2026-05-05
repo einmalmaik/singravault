@@ -38,6 +38,7 @@ import { VaultSidebar } from '@/components/vault/VaultSidebar';
 import { VaultItemList } from '@/components/vault/VaultItemList';
 import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
 import { VaultIntegrityRecovery } from '@/components/vault/VaultIntegrityRecovery';
+import { VaultMigrationRequiredPanel } from '@/components/vault/VaultMigrationRequiredPanel';
 import { VaultOpLogSecurityModeBanner } from '@/components/vault/VaultOpLogSecurityModeBanner';
 import { VaultOpLogQuarantinePanel } from '@/components/vault/VaultOpLogQuarantinePanel';
 import { VaultOpLogConflictPanel } from '@/components/vault/VaultOpLogConflictPanel';
@@ -106,6 +107,7 @@ export default function VaultPage() {
         isSetupRequired,
         isLoading: vaultLoading,
         lastIntegrityResult,
+        vaultMigrationStatus,
         refreshIntegrityBaseline,
         opLogUiView,
         opLogUiLoading,
@@ -198,6 +200,15 @@ export default function VaultPage() {
 
     if (integrityMode === 'blocked' || integrityMode === 'safe') {
         return <VaultIntegrityRecovery />;
+    }
+
+    if (
+        isLocked
+        && vaultMigrationStatus
+        && vaultMigrationStatus !== 'notNeeded'
+        && vaultMigrationStatus !== 'verified'
+    ) {
+        return <VaultMigrationRequiredPanel />;
     }
 
     if (isLocked) {

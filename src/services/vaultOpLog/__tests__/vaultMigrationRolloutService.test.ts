@@ -7,7 +7,11 @@ import { join, relative } from 'node:path';
 import {
   evaluateVaultMigrationGate,
 } from '../vaultMigrationRolloutService';
-import { saveMigrationCheckpoint, type MigrationStorage } from '../legacyMigrationStateStore';
+import {
+  saveMigrationCheckpoint,
+  saveMigrationCompletionMarker,
+  type MigrationStorage,
+} from '../legacyMigrationStateStore';
 import type { MigrationState } from '../migrationTypes';
 import type { SupabaseRpcClient } from '../vaultOpLogRepository';
 
@@ -139,6 +143,28 @@ describe('evaluateVaultMigrationGate', () => {
       userId: 'user-1',
       client: makeClient({ vaultId: 'vault-1' }),
       rpcClient: makeRpc(false),
+      checkpointStorage: storage,
+    });
+
+    expect(result).toMatchObject({
+      allowNormalUnlock: true,
+      status: 'verified',
+    });
+  });
+
+  it('allows normal unlock after verified completion even when legacy rows remain', async () => {
+    const storage = makeStorage();
+    saveMigrationCompletionMarker({
+      version: 1,
+      vaultId: 'vault-1',
+      state: 'verified',
+      completedAt: '2026-05-05T00:00:00.000Z',
+    }, storage);
+
+    const result = await evaluateVaultMigrationGate({
+      userId: 'user-1',
+      client: makeClient({ vaultId: 'vault-1', itemCount: 1, categoryCount: 1 }),
+      rpcClient: makeRpc(true),
       checkpointStorage: storage,
     });
 

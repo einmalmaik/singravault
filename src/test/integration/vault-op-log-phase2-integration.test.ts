@@ -21,6 +21,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import {
+  buildCreateRecordOperation,
+  submitVaultOperation,
+  toVaultOperationRow,
+  type VaultOperationRow,
+} from '@/services/vaultOpLog';
 
 const supabaseUrl = import.meta.env.VITE_INTEGRATION_TEST_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_INTEGRATION_TEST_SUPABASE_ANON_KEY;
@@ -40,6 +46,7 @@ describe.runIf(runIntegration)('vault op-log phase 2 — integration tests', () 
   let testUserId: string;
   let testVaultId: string;
   let testDeviceId: string;
+  const initialHead = 'initial-head-hash';
 
   beforeAll(async () => {
     supabase = createClient(supabaseUrl!, supabaseAnonKey!);
@@ -81,6 +88,22 @@ describe.runIf(runIntegration)('vault op-log phase 2 — integration tests', () 
 
     testVaultId = vaultData.id;
     testDeviceId = crypto.randomUUID();
+
+    const { data: bootstrapData, error: bootstrapError } = await supabase.rpc(
+      'bootstrap_vault_trust',
+      {
+        p_vault_id: testVaultId,
+        p_device_id: testDeviceId,
+        p_public_signing_key: 'test-key',
+        p_device_name_encrypted: 'encrypted-name',
+        p_initial_head: initialHead,
+        p_initial_op_id: crypto.randomUUID(),
+      }
+    );
+
+    if (bootstrapError || bootstrapData?.bootstrapped !== true) {
+      throw new Error(`Bootstrap setup failed: ${bootstrapError?.message ?? 'not bootstrapped'}`);
+    }
   });
 
   afterAll(async () => {
@@ -94,22 +117,6 @@ describe.runIf(runIntegration)('vault op-log phase 2 — integration tests', () 
 
   describe('RLS enforcement', () => {
     it('allows user to read their own vault_records', async () => {
-      // First, bootstrap trust to enable operations
-      const { data: bootstrapData, error: bootstrapError } = await supabase.rpc(
-        'bootstrap_vault_trust',
-        {
-          p_vault_id: testVaultId,
-          p_device_id: testDeviceId,
-          p_public_signing_key: 'test-key',
-          p_device_name_encrypted: 'encrypted-name',
-          p_initial_head: 'initial-head-hash',
-          p_initial_op_id: crypto.randomUUID(),
-        }
-      );
-
-      expect(bootstrapError).toBeNull();
-      expect(bootstrapData?.bootstrapped).toBe(true);
-
       // Try to read vault_records (should be empty but accessible)
       const { data: records, error: readError } = await supabase
         .from('vault_records')
@@ -136,9 +143,11 @@ describe.runIf(runIntegration)('vault op-log phase 2 — integration tests', () 
         last_op_hash: 'test-hash',
       });
 
-      // RLS should block direct insert
+      // Direct insert must be blocked. Depending on Supabase/Postgres
+      // privilege evaluation, this can surface as either a privilege denial
+      // or an RLS violation; both are acceptable deny outcomes.
       expect(error).not.toBeNull();
-      expect(error?.message).toMatch(/new row violates row-level security policy/i);
+      expect(error?.message).toMatch(/(permission denied|row-level security policy)/i);
     });
 
     it('blocks direct UPDATE on vault_records', async () => {
@@ -202,24 +211,22 @@ describe.runIf(runIntegration)('vault op-log phase 2 — integration tests', () 
 
   describe('submit_vault_operation RPC', () => {
     it('rejects unauthenticated calls', async () => {
-      // Sign out temporarily
-      await supabase.auth.signOut();
-
-      const { error } = await supabase.rpc('submit_vault_operation', {
-        p_op: {},
-        p_record_payload: null,
-        p_device_trust_payload: null,
+      const response = await fetch(`${supabaseUrl}/rest/v1/rpc/submit_vault_operation`, {
+        method: 'POST',
+        headers: {
+          apikey: supabaseAnonKey!,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          p_op: {},
+          p_record_payload: null,
+          p_device_trust_payload: null,
+        }),
       });
 
-      expect(error).not.toBeNull();
-      expect(error?.message).toMatch(/Not authenticated/i);
-
-      // Sign back in for other tests
-      const { data: authData } = await supabase.auth.signInWithPassword({
-        email: userEmail!,
-        password: userPassword!,
-      });
-      testUserId = authData.user!.id;
+      const body = await response.text();
+      expect(response.ok).toBe(false);
+      expect(body).toMatch(/Not authenticated/i);
     });
 
     it('enforces vault ownership', async () => {
@@ -265,20 +272,131 @@ describe.runIf(runIntegration)('vault op-log phase 2 — integration tests', () 
   });
 
   describe('Atomicity', () => {
-    it('writes operation and record in one transaction', async () => {
-      // This requires a valid signed operation, which is complex to generate
-      // For now, we verify the transaction structure in the migration contract test
-      // Real atomicity testing requires proper operation signing setup
-      expect(true).toBe(true); // Placeholder
+    it('writes a signed create operation and record in one transaction', async () => {
+      const { operation, recordPayload } = await buildSignedCreateFixture({
+        vaultId: testVaultId,
+        deviceId: testDeviceId,
+        baseVaultHead: initialHead,
+      });
+
+      const submit = await submitVaultOperation(supabase, operation, recordPayload, null);
+      expect(submit).toMatchObject({
+        kind: 'applied',
+        idempotent: false,
+        opId: operation.opId,
+      });
+
+      const { data: record, error } = await supabase
+        .from('vault_records')
+        .select('record_id,last_op_id,ciphertext_hash')
+        .eq('vault_id', testVaultId)
+        .eq('record_id', operation.recordId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(record?.last_op_id).toBe(operation.opId);
+      expect(record?.ciphertext_hash).toBe(operation.payloadCiphertextHash);
     });
   });
 
   describe('Idempotency', () => {
-    it('returns idempotent response for retry of same op_id', async () => {
-      // This requires a valid signed operation to be submitted first
-      // For now, we verify the idempotency logic in the migration contract test
-      // Real idempotency testing requires proper operation signing setup
-      expect(true).toBe(true); // Placeholder
+    it('returns idempotent response for retry of same op_id and rejects reused op_id with a different op_hash', async () => {
+      const { data: heads, error: headError } = await supabase.rpc('get_vault_head', {
+        p_vault_id: testVaultId,
+      });
+      expect(headError).toBeNull();
+      const baseVaultHead = heads?.[0]?.current_head ?? initialHead;
+
+      const { operation, recordPayload } = await buildSignedCreateFixture({
+        vaultId: testVaultId,
+        deviceId: testDeviceId,
+        baseVaultHead,
+      });
+
+      const first = await submitVaultOperation(supabase, operation, recordPayload, null);
+      expect(first).toMatchObject({
+        kind: 'applied',
+        idempotent: false,
+        opId: operation.opId,
+      });
+
+      const retry = await submitVaultOperation(supabase, operation, recordPayload, null);
+      expect(retry).toMatchObject({
+        kind: 'applied',
+        idempotent: true,
+        opId: operation.opId,
+      });
+
+      const reusedOpId: VaultOperationRow = {
+        ...operation,
+        opHash: `${operation.opHash}-different`,
+      };
+      const rejected = await submitVaultOperation(supabase, reusedOpId, recordPayload, null);
+      expect(rejected).toEqual({ kind: 'duplicateOpIdDifferentHash' });
+    });
+
+    it('returns operation changes with intent and rebase fields in the declared order', async () => {
+      const { data, error } = await supabase.rpc('get_vault_changes_since', {
+        p_vault_id: testVaultId,
+        p_since_sequence: 0,
+        p_limit: 100,
+      });
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+      expect(data?.[0]).toHaveProperty('intent_id');
+      expect(data?.[0]).toHaveProperty('rebased_from_op_id');
+      expect(data?.[0]).toHaveProperty('base_vault_head');
     });
   });
 });
+
+async function buildSignedCreateFixture(input: {
+  readonly vaultId: string;
+  readonly deviceId: string;
+  readonly baseVaultHead: string | null;
+}): Promise<{
+  readonly operation: VaultOperationRow;
+  readonly recordPayload: {
+    readonly aadHash: string;
+    readonly ciphertextHash: string;
+    readonly nonce: string;
+    readonly ciphertext: string;
+    readonly keyVersion: number;
+  };
+}> {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign', 'verify'],
+  );
+  const built = await buildCreateRecordOperation({
+    opId: crypto.randomUUID(),
+    intentId: crypto.randomUUID(),
+    rebasedFromOpId: null,
+    vaultId: input.vaultId,
+    recordId: crypto.randomUUID(),
+    deviceId: input.deviceId,
+    deviceSigningKey: keyPair.privateKey,
+    trustEpoch: 0,
+    baseVaultHead: input.baseVaultHead,
+    recordType: 'item',
+    vaultEncryptionKey: crypto.getRandomValues(new Uint8Array(32)),
+    plaintext: new TextEncoder().encode(JSON.stringify({
+      kind: 'phase12-integration-fixture',
+      title: 'fixture',
+    })),
+    keyVersion: 1,
+  });
+  const operation = toVaultOperationRow(built);
+  return {
+    operation,
+    recordPayload: {
+      aadHash: built.sealedRecord.aadHash,
+      ciphertextHash: built.sealedRecord.ciphertextHash,
+      nonce: built.sealedRecord.nonceB64Url,
+      ciphertext: built.sealedRecord.ciphertextB64Url,
+      keyVersion: built.sealedRecord.aad.keyVersion,
+    },
+  };
+}

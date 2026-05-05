@@ -9,7 +9,11 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
-import { loadMigrationCheckpoint, type MigrationStorage } from './legacyMigrationStateStore';
+import {
+  loadMigrationCheckpoint,
+  loadMigrationCompletionMarker,
+  type MigrationStorage,
+} from './legacyMigrationStateStore';
 import type { MigrationState } from './migrationTypes';
 import { getVaultHead, type SupabaseRpcClient } from './vaultOpLogRepository';
 
@@ -53,6 +57,11 @@ export async function evaluateVaultMigrationGate(
       return legacySignals.hasLegacyRows
         ? block('preflightFailed', null, 'legacy rows exist but no default vault could be resolved')
         : allow('notNeeded', null);
+    }
+
+    const completionMarker = loadMigrationCompletionMarker(legacySignals.vaultId, input.checkpointStorage);
+    if (completionMarker) {
+      return allow('verified', legacySignals.vaultId);
     }
 
     const checkpoint = loadMigrationCheckpoint(legacySignals.vaultId, input.checkpointStorage);

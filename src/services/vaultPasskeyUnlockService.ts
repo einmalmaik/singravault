@@ -29,7 +29,7 @@ export interface VaultPasskeyUnlockInput {
   options?: VaultUnlockOptions;
   getRequiredDeviceKey: () => Promise<RequiredDeviceKeyResult>;
   enforceVaultTwoFactorBeforeKeyRelease: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
-  finalizeVaultUnlock: (activeKey: CryptoKey) => Promise<{ error: Error | null }>;
+  finalizeVaultUnlock: (activeKey: CryptoKey, vaultEncryptionKey?: Uint8Array) => Promise<{ error: Error | null }>;
   applyCredentialUpdates: (updates: {
     verificationHash?: string;
     encryptedUserKey?: string | null;
@@ -131,7 +131,7 @@ export async function unlockVaultWithPasskey(
       return twoFactorResult;
     }
 
-    const finalizeResult = await input.finalizeVaultUnlock(activeKey);
+    const finalizeResult = await input.finalizeVaultUnlock(activeKey, vaultEncryptionKey);
     if (finalizeResult.error) {
       return finalizeResult;
     }

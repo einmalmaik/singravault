@@ -548,10 +548,11 @@ BEGIN
     RETURN QUERY
     SELECT o.op_id, o.op_hash, o.sequence_number, o.author_device_id,
            o.op_type, o.record_id, o.record_type, o.base_record_version,
-           o.previous_ciphertext_hash, o.new_record_hash, o.base_vault_head,
-           o.resulting_vault_head, o.payload_ciphertext_hash, o.payload_aad_hash,
-           o.signed_body, o.signature, o.signature_schema, o.trust_epoch,
-           o.created_at_client, o.received_at_server, o.intent_id, o.rebased_from_op_id
+           o.previous_ciphertext_hash, o.new_record_hash, o.intent_id,
+           o.rebased_from_op_id, o.base_vault_head, o.resulting_vault_head,
+           o.payload_ciphertext_hash, o.payload_aad_hash, o.signed_body,
+           o.signature, o.signature_schema, o.trust_epoch,
+           o.created_at_client, o.received_at_server
     FROM public.vault_operations o
     WHERE o.vault_id = p_vault_id
       AND o.user_id = _uid
@@ -710,7 +711,7 @@ BEGIN
         p_public_signing_key,
         p_device_name_encrypted,
         p_device_id,
-        p_initial_op_id,
+        NULL,
         NOW(),
         0,
         'trusted'

@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { clearOfflineVaultData } from '@/services/offlineVaultService';
-import { clearIntegrityBaseline } from '@/services/vaultIntegrityService';
+import { removeIntegrityBaselineEnvelope } from '@/services/integrityBaselineStore';
 import { deleteDeviceKey } from '@/services/deviceKeyService';
 
 const BEGIN_VAULT_RESET_RECOVERY_RPC = 'begin_vault_reset_recovery';
@@ -39,7 +39,7 @@ export async function resetUserVaultState(userId: string): Promise<void> {
 
   await Promise.all([
     clearOfflineVaultData(userId),
-    clearIntegrityBaseline(userId),
+    removeIntegrityBaselineEnvelope(userId),
     deleteDeviceKey(userId),
   ]);
 }

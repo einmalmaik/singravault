@@ -38,6 +38,8 @@ export interface VaultProviderActionBindings {
   acceptMissingQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
   exitSafeMode: () => void;
   resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+  startVaultMigration: () => Promise<{ error: Error | null }>;
+  retryVaultMigration: () => Promise<{ error: Error | null }>;
 
   // Phase 9 actions (optional until fully implemented)
   opLogRestoreRecord?: (recordId: string) => Promise<{ error: Error | null }>;
@@ -88,6 +90,9 @@ export function buildVaultContextValue(
     integrityMode: state.integrityMode,
     vaultMigrationStatus: state.vaultMigrationStatus,
     vaultMigrationError: state.vaultMigrationError,
+    vaultMigrationCanStart: state.vaultMigrationCanStart,
+    startVaultMigration: actions.startVaultMigration,
+    retryVaultMigration: actions.retryVaultMigration,
     quarantinedItems: state.quarantinedItems,
     quarantineResolutionById: state.quarantineResolutionById,
     vaultDataVersion: state.vaultDataVersion,

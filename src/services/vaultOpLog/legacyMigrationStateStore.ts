@@ -17,6 +17,7 @@
 import type { MigrationCheckpoint, MigrationState } from './migrationTypes';
 
 const STORAGE_KEY_PREFIX = 'singra_vault_migration_checkpoint_' as const;
+const COMPLETION_STORAGE_KEY_PREFIX = 'singra_vault_migration_completed_' as const;
 
 export interface MigrationStorage {
   readonly getItem: (key: string) => string | null;
@@ -44,6 +45,10 @@ function defaultStorage(): MigrationStorage {
 
 function storageKey(vaultId: string): string {
   return `${STORAGE_KEY_PREFIX}${vaultId}`;
+}
+
+function completionStorageKey(vaultId: string): string {
+  return `${COMPLETION_STORAGE_KEY_PREFIX}${vaultId}`;
 }
 
 export function saveMigrationCheckpoint(
@@ -80,6 +85,40 @@ export function clearMigrationCheckpoint(
   storage.removeItem(storageKey(vaultId));
 }
 
+export interface MigrationCompletionMarker {
+  readonly version: 1;
+  readonly vaultId: string;
+  readonly state: 'verified';
+  readonly completedAt: string;
+}
+
+export function saveMigrationCompletionMarker(
+  marker: MigrationCompletionMarker,
+  storage: MigrationStorage = defaultStorage(),
+): void {
+  storage.setItem(completionStorageKey(marker.vaultId), JSON.stringify(marker));
+}
+
+export function loadMigrationCompletionMarker(
+  vaultId: string,
+  storage: MigrationStorage = defaultStorage(),
+): MigrationCompletionMarker | null {
+  const raw = storage.getItem(completionStorageKey(vaultId));
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isMigrationCompletionMarker(parsed)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Schema validation (defensive, does not trust storage)
 // ---------------------------------------------------------------------------
@@ -111,6 +150,18 @@ function isMigrationCheckpoint(value: unknown): value is MigrationCheckpoint {
     return false;
   }
   return true;
+}
+
+function isMigrationCompletionMarker(value: unknown): value is MigrationCompletionMarker {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  return obj.version === 1
+    && typeof obj.vaultId === 'string'
+    && obj.vaultId.length > 0
+    && obj.state === 'verified'
+    && typeof obj.completedAt === 'string';
 }
 
 const VALID_MIGRATION_STATES: Set<string> = new Set([

@@ -1,5 +1,18 @@
 project_id = "lcrtadxlojaucwapgzmy"
 
+[api]
+port = 54331
+
+[db]
+port = 54332
+shadow_port = 54330
+
+[studio]
+port = 54333
+
+[inbucket]
+port = 54334
+
 [auth]
 jwt_expiry = 600
 

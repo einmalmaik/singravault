@@ -220,7 +220,9 @@ CREATE TABLE IF NOT EXISTS public.vault_device_trust_records (
     public_signing_key TEXT NOT NULL,
     device_name_encrypted TEXT NOT NULL,
     added_by_device_id UUID,
-    added_op_id UUID NOT NULL REFERENCES public.vault_operations(op_id) ON DELETE RESTRICT,
+    -- NULL is allowed only for the initial bootstrap trust root. All later
+    -- add/revoke device changes are represented by signed operations.
+    added_op_id UUID REFERENCES public.vault_operations(op_id) ON DELETE RESTRICT,
     added_at TIMESTAMPTZ NOT NULL,
     trust_epoch BIGINT NOT NULL CHECK (trust_epoch >= 0),
     status TEXT NOT NULL DEFAULT 'trusted',

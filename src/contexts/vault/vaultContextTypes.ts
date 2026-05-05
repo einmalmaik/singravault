@@ -67,6 +67,9 @@ export interface VaultContextType {
     integrityMode: VaultIntegrityMode | 'safe';
     vaultMigrationStatus: VaultMigrationRolloutStatus | null;
     vaultMigrationError: string | null;
+    vaultMigrationCanStart: boolean;
+    startVaultMigration: () => Promise<{ error: Error | null }>;
+    retryVaultMigration: () => Promise<{ error: Error | null }>;
     quarantinedItems: QuarantinedVaultItem[];
     quarantineResolutionById: Record<string, QuarantineResolutionState>;
     vaultDataVersion: number;

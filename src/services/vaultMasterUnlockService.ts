@@ -51,7 +51,7 @@ export interface VaultMasterUnlockInput {
     deviceKeyAvailable: boolean,
   ) => Promise<Uint8Array>;
   enforceVaultTwoFactorBeforeKeyRelease: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
-  finalizeVaultUnlock: (activeKey: CryptoKey) => Promise<{ error: Error | null }>;
+  finalizeVaultUnlock: (activeKey: CryptoKey, vaultEncryptionKey?: Uint8Array) => Promise<{ error: Error | null }>;
   openDuressVault: (activeKey: CryptoKey) => void;
   applyCredentialUpdates: (updates: {
     verificationHash?: string;
@@ -252,7 +252,7 @@ async function unlockWithPrimaryVaultKey(
     return twoFactorResult;
   }
 
-  const finalizeResult = await input.finalizeVaultUnlock(activeKey);
+  const finalizeResult = await input.finalizeVaultUnlock(activeKey, vaultEncryptionKey);
   if (finalizeResult.error) {
     return finalizeResult;
   }

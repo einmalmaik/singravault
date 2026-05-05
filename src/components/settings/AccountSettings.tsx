@@ -38,7 +38,7 @@ import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { deleteDeviceKey } from '@/services/deviceKeyService';
-import { clearIntegrityBaseline } from '@/services/vaultIntegrityService';
+import { removeIntegrityBaselineEnvelope } from '@/services/integrityBaselineStore';
 import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthService';
 import { clearOfflineVaultData } from '@/services/offlineVaultService';
 import { saveExportFile } from '@/services/exportFileService';
@@ -174,7 +174,7 @@ export function AccountSettings() {
             localStorage.removeItem(`singra_verify_${user.id}`);
             await Promise.allSettled([
                 clearOfflineVaultData(user.id),
-                clearIntegrityBaseline(user.id),
+                removeIntegrityBaselineEnvelope(user.id),
                 deleteDeviceKey(user.id),
             ]);
             clearLastOAuthProvider();
