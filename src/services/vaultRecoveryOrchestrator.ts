@@ -1,22 +1,10 @@
-import { isAppOnline, type OfflineVaultSnapshot } from '@/services/offlineVaultService';
+import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import {
-  deleteQuarantinedItemFromVault,
   indexTrustedSnapshotItems,
-  restoreQuarantinedItemFromTrustedSnapshot,
   type TrustedSnapshotItemsById,
 } from '@/services/vaultQuarantineRecoveryService';
 import { getTrustedOfflineSnapshot, saveTrustedOfflineSnapshot } from '@/services/offlineVaultService';
 import { resetUserVaultState } from '@/services/vaultRecoveryService';
-import {
-  hasLegacyVaultItemServerMetadata,
-  mergeLegacyVaultItemMetadataIntoPayload,
-} from '@/services/vaultMetadataPolicy';
-import {
-  decryptProductVaultItem,
-  decryptProductVaultItemForMigration,
-  encryptProductVaultItemV2,
-} from '@/services/vaultIntegrityV2/productItemEnvelope';
-import { isActiveQuarantineReasonV2 } from '@/services/vaultIntegrityV2/runtimeBridge';
 
 export interface TrustedRecoverySnapshotState {
   trustedRecoveryAvailable: boolean;
@@ -46,98 +34,6 @@ export async function persistTrustedRecoverySnapshot(
     trustedSnapshotItemsById: indexTrustedSnapshotItems(snapshot),
     trustedSnapshot: snapshot,
   };
-}
-
-export async function restoreQuarantinedVaultItem(input: {
-  userId: string;
-  itemId: string;
-  activeKey: CryptoKey;
-  encryptedUserKey?: string | null;
-  trustedSnapshotItem: TrustedSnapshotItem;
-  refreshIntegrityBaseline: () => Promise<unknown>;
-  verifyIntegrity: () => Promise<{ quarantinedItems: Array<{ id: string }> } | null>;
-}): Promise<void> {
-  let trustedSnapshotItem = input.trustedSnapshotItem;
-  try {
-    const migrationDecrypt = await decryptProductVaultItemForMigration({
-      encryptedData: input.trustedSnapshotItem.encrypted_data,
-      vaultKey: input.activeKey,
-      entryId: input.itemId,
-    });
-    const decryptedData = hasLegacyVaultItemServerMetadata(input.trustedSnapshotItem)
-      ? mergeLegacyVaultItemMetadataIntoPayload(migrationDecrypt.data, input.trustedSnapshotItem)
-      : migrationDecrypt.data;
-    if (migrationDecrypt.legacyEnvelopeUsed) {
-      trustedSnapshotItem = {
-        ...input.trustedSnapshotItem,
-        encrypted_data: await encryptProductVaultItemV2({
-          userId: input.userId,
-          encryptedUserKey: input.encryptedUserKey,
-          vaultKey: input.activeKey,
-          data: decryptedData,
-          entryId: input.itemId,
-        }),
-      };
-    } else {
-      await decryptProductVaultItem({
-        encryptedData: input.trustedSnapshotItem.encrypted_data,
-        vaultKey: input.activeKey,
-        entryId: input.itemId,
-      });
-      trustedSnapshotItem = {
-        ...input.trustedSnapshotItem,
-        encrypted_data: await encryptProductVaultItemV2({
-          userId: input.userId,
-          encryptedUserKey: input.encryptedUserKey,
-          vaultKey: input.activeKey,
-          data: decryptedData,
-          entryId: input.itemId,
-        }),
-      };
-    }
-  } catch {
-    throw new Error('Die lokale Wiederherstellungskopie für diesen Eintrag ist nicht mehr entschlüsselbar.');
-  }
-
-  const { syncedOnline } = await restoreQuarantinedItemFromTrustedSnapshot(
-    input.userId,
-    trustedSnapshotItem,
-  );
-  if (isAppOnline() && !syncedOnline) {
-    throw new Error('Die Wiederherstellung konnte nicht mit dem Server synchronisiert werden.');
-  }
-
-  await input.refreshIntegrityBaseline();
-  const integrityResult = await input.verifyIntegrity();
-  if (integrityResult?.quarantinedItems.some((quarantinedItem) => quarantinedItem.id === input.itemId)) {
-    throw new Error('Die Wiederherstellung konnte nicht bestätigt werden. Der Eintrag bleibt in Quarantäne.');
-  }
-}
-
-export async function deleteQuarantinedVaultItem(input: {
-  userId: string;
-  itemId: string;
-  reason: string;
-  verifyIntegrity: () => Promise<unknown>;
-  refreshIntegrityBaseline: () => Promise<unknown>;
-}): Promise<void> {
-  const { syncedOnline } = await deleteQuarantinedItemFromVault(input.userId, input.itemId);
-  if (isAppOnline() && !syncedOnline) {
-    throw new Error('Der Quarantäne-Eintrag konnte nicht mit dem Server synchronisiert gelöscht werden.');
-  }
-
-  if (isActiveQuarantineReasonV2(input.reason)) {
-    await input.refreshIntegrityBaseline();
-  } else {
-    await input.verifyIntegrity();
-  }
-}
-
-export async function acceptMissingQuarantinedVaultItem(input: {
-  itemId: string;
-  refreshIntegrityBaseline: () => Promise<unknown>;
-}): Promise<void> {
-  await input.refreshIntegrityBaseline();
 }
 
 export async function resetVaultAfterIntegrityFailureForUser(

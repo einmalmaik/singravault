@@ -117,7 +117,7 @@ export async function loadCurrentVaultIntegritySnapshot(input: {
         source: 'remote',
       };
     } catch (error) {
-      console.warn('[VaultIntegrity] Remote snapshot load failed.', {
+      console.warn('[VaultRuntime] Remote snapshot load failed.', {
         code: safeSnapshotLoadErrorCode(error),
         preferRemote: input.preferRemote === true,
       });
@@ -145,7 +145,7 @@ function logIntegritySnapshotSource(
     useLocalMutationOverlay?: boolean;
   },
 ): void {
-  console.info('[VaultIntegrity] Snapshot selected.', {
+  console.info('[VaultRuntime] Snapshot selected.', {
     source,
     preferRemote: input.preferRemote === true,
     persistRemoteSnapshot: input.persistRemoteSnapshot !== false,

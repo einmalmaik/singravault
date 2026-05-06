@@ -36,7 +36,7 @@ function logIntegrityRuntimeDecision(
     source?: 'remote' | 'cache' | 'empty';
   },
 ): void {
-  console.info('[VaultIntegrity] Runtime decision.', {
+  console.info('[VaultRuntime] Integrity decision.', {
     stage,
     source: input.source ?? 'unknown',
     mode: input.result.mode,
@@ -125,7 +125,7 @@ export async function finalizeVaultUnlockIntegrity(input: {
       return { error: null };
     }
 
-    console.warn('[VaultIntegrity] V2 evaluation returned null during unlock. Falling back to safe error.');
+    console.warn('[VaultRuntime] V2 evaluation returned null during unlock. Falling back to safe error.');
     const safeError: VaultIntegrityVerificationResult = {
       valid: false,
       isFirstCheck: false,
@@ -191,7 +191,7 @@ export async function refreshVaultIntegrityBaseline(input: {
     return v2Result;
   }
 
-  console.warn('[VaultIntegrity] V2 evaluation returned null during refresh. Returning safe error.');
+  console.warn('[VaultRuntime] V2 evaluation returned null during refresh. Returning safe error.');
   const safeError: VaultIntegrityVerificationResult = {
     valid: false,
     isFirstCheck: false,
@@ -266,7 +266,7 @@ export async function verifyVaultIntegrity(input: {
       return v2Result;
     }
 
-    console.warn('[VaultIntegrity] V2 evaluation returned null during manual verify. Returning safe error.');
+    console.warn('[VaultRuntime] V2 evaluation returned null during manual verify. Returning safe error.');
     const failureResult: VaultIntegrityVerificationResult = {
       valid: false,
       isFirstCheck: false,

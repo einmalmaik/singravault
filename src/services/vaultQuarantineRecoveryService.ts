@@ -14,7 +14,6 @@ export interface QuarantineResolutionState extends QuarantineResolutionRuntimeSt
   reason: QuarantinedVaultItem['reason'];
   canRestore: boolean;
   canDelete: boolean;
-  canAcceptMissing: boolean;
   hasTrustedLocalCopy: boolean;
 }
 
@@ -48,7 +47,6 @@ export function buildQuarantineResolutionMap(
           reason: item.reason,
           canRestore: hasTrustedLocalCopy && isActiveQuarantineReasonV2(item.reason),
           canDelete: isActiveQuarantineReasonV2(item.reason) || item.reason === 'unknown_on_server',
-          canAcceptMissing: item.reason === 'missing_on_server',
           hasTrustedLocalCopy,
           isBusy: runtimeState.isBusy,
           lastError: runtimeState.lastError,
@@ -58,20 +56,3 @@ export function buildQuarantineResolutionMap(
   );
 }
 
-export async function restoreQuarantinedItemFromTrustedSnapshot(
-  _userId: string,
-  _trustedItem: VaultItemRow,
-): Promise<{ syncedOnline: boolean }> {
-  throw new Error(
-    'Direct vault item restore is disabled in Phase 11. Use the operation log / record integrity state machine instead.',
-  );
-}
-
-export async function deleteQuarantinedItemFromVault(
-  _userId: string,
-  _itemId: string,
-): Promise<{ syncedOnline: boolean }> {
-  throw new Error(
-    'Direct vault item delete is disabled in Phase 11. Use the operation log / record integrity state machine instead.',
-  );
-}
