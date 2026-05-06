@@ -8,7 +8,7 @@ Das Ziel ist ein robustes, offline-first, Ende-zu-Ende-verschlüsseltes Vault-Sy
 
 Dieses Dokument ist als verbindlicher Plan zu verstehen. Es soll verhindern, dass dieselbe Sicherheitsfrage später mehrfach unterschiedlich interpretiert wird.
 
----
+--- 
 
 # 1. Grundentscheidung
 
