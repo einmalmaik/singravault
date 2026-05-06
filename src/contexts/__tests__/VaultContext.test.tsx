@@ -859,10 +859,11 @@ describe("VaultContext", () => {
         unlockResult = await result.current.unlock("CorrectPassword!");
       });
 
-      expect(unlockResult?.error?.message).toContain(`migration ${status}`);
+      expect(unlockResult?.error).toBeNull();
       expect(result.current.isLocked).toBe(true);
       expect(result.current.integrityMode).toBe("migration_required");
       expect(result.current.vaultMigrationStatus).toBe(status);
+      expect(result.current.vaultMigrationError).toBeNull();
       expect(result.current.vaultMigrationCanStart).toBe(true);
       expect(mockRunControlledMigration).not.toHaveBeenCalled();
     });
@@ -1562,6 +1563,54 @@ describe("VaultContext", () => {
       expect(mockLoadDeviceKey).toHaveBeenCalledWith(mockUser.id);
       expect(mockAuthenticatePasskey).toHaveBeenCalledTimes(1);
       expect(result.current.isLocked).toBe(false);
+    });
+
+    it("allows controlled migration to start after passkey unlock when vault key bytes are available", async () => {
+      const vaultKeyBytes = new Uint8Array(32).fill(11);
+      mockSupabase.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue(createSelectQueryMock({
+            encryption_salt: "existing-salt",
+            master_password_verifier: "existing-verifier",
+            kdf_version: 2,
+            encrypted_user_key: "encrypted-user-key",
+            vault_protection_mode: "master_only",
+          })),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+      mockAuthenticatePasskey.mockResolvedValue({
+        success: true,
+        encryptionKey: {} as CryptoKey,
+        vaultKeyBytes,
+        keySource: "vault-key",
+      });
+      mockVerifyKey.mockResolvedValue(true);
+      mockEvaluateVaultMigrationGate.mockResolvedValueOnce({
+        allowNormalUnlock: false,
+        status: "required",
+        vaultId: "vault-123",
+        reason: "legacy vault requires controlled migration",
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlockWithPasskey();
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(true);
+      expect(result.current.integrityMode).toBe("migration_required");
+      expect(result.current.vaultMigrationCanStart).toBe(true);
+      expect(mockRunControlledMigration).not.toHaveBeenCalled();
     });
 
     it("should record failed attempts for passkey verification errors", async () => {

@@ -180,8 +180,8 @@ describe('legacy vault runtime write contract', () => {
     const runtimeFiles = listSourceFiles(join(process.cwd(), 'src'))
       .filter((file) => !file.includes(`${join('src', 'services', 'vaultOpLog', '__tests__')}`))
       .filter((file) => !file.includes(`${join('src', 'test')}`));
-    const fromVaultItems = String.raw`\.from\((['"])vault_items\1\)`;
-    const fromCategories = String.raw`\.from\((['"])categories\1\)`;
+    const fromVaultItems = String.raw`\.from\((?:['"])vault_items(?:['"])\)`;
+    const fromCategories = String.raw`\.from\((?:['"])categories(?:['"])\)`;
     const writeMethod = String.raw`\.(insert|update|upsert|delete)\s*\(`;
     const forbidden = new RegExp(`(?:${fromVaultItems}|${fromCategories})[\\s\\S]{0,240}${writeMethod}`, 'm');
 

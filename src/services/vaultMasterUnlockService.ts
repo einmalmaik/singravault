@@ -1,7 +1,7 @@
 import {
   attemptKdfUpgrade,
   importMasterKey,
-  unwrapUserKey,
+  unwrapUserKeyBytes,
   verifyKey,
 } from '@/services/cryptoService';
 import {
@@ -156,14 +156,18 @@ async function unlockWithPrimaryVaultKey(
   let activeKey: CryptoKey;
   let shouldBackfillVerifier = !input.verificationHash;
   let vaultEncryptionKey: Uint8Array | undefined;
+  let userKeyBytes: Uint8Array | null = null;
 
   try {
     if (input.encryptedUserKey) {
-      activeKey = await unwrapAndVerifyUserKey(input, kdfOutputBytes, deviceKeyAvailable);
+      const unwrapped = await unwrapAndVerifyUserKey(input, kdfOutputBytes, deviceKeyAvailable);
+      activeKey = unwrapped.userKey;
+      userKeyBytes = unwrapped.userKeyBytes;
       const upgraded = await upgradeUserKeyWrapperIfNeeded(input, kdfOutputBytes, deviceKey, deviceKeyAvailable);
       if (upgraded) {
         shouldBackfillVerifier = false;
       }
+      vaultEncryptionKey = new Uint8Array(userKeyBytes);
     } else {
       const legacyKey = await importMasterKey(kdfOutputBytes);
       const isValid = input.verificationHash
@@ -192,10 +196,10 @@ async function unlockWithPrimaryVaultKey(
       });
       activeKey = migration.userKey;
       shouldBackfillVerifier = false;
+      vaultEncryptionKey = new Uint8Array(kdfOutputBytes);
     }
-    // Copy before wipe for Phase 9 UI orchestrator.
-    vaultEncryptionKey = new Uint8Array(kdfOutputBytes);
   } finally {
+    userKeyBytes?.fill(0);
     kdfOutputBytes.fill(0);
   }
 
@@ -240,10 +244,10 @@ async function unwrapAndVerifyUserKey(
   input: VaultMasterUnlockInput,
   kdfOutputBytes: Uint8Array,
   deviceKeyAvailable: boolean,
-): Promise<CryptoKey> {
-  let userKey: CryptoKey;
+): Promise<{ userKey: CryptoKey; userKeyBytes: Uint8Array }> {
+  let userKeyBytes: Uint8Array;
   try {
-    userKey = await unwrapUserKey(input.encryptedUserKey!, kdfOutputBytes);
+    userKeyBytes = await unwrapUserKeyBytes(input.encryptedUserKey!, kdfOutputBytes);
   } catch (error) {
     if (requiresDeviceKey(input.vaultProtectionMode) && deviceKeyAvailable) {
       throw createDeviceKeyInvalidError();
@@ -251,17 +255,24 @@ async function unwrapAndVerifyUserKey(
     throw error;
   }
 
-  if (input.verificationHash) {
-    const isValid = await verifyKey(input.verificationHash, userKey);
-    if (!isValid) {
-      throw requiresDeviceKey(input.vaultProtectionMode) && deviceKeyAvailable
-        ? createDeviceKeyInvalidError()
-        : createMasterPasswordInvalidError();
-    }
-  }
+  try {
+    const userKey = await importMasterKey(userKeyBytes);
 
-  resetUnlockAttempts();
-  return userKey;
+    if (input.verificationHash) {
+      const isValid = await verifyKey(input.verificationHash, userKey);
+      if (!isValid) {
+        throw requiresDeviceKey(input.vaultProtectionMode) && deviceKeyAvailable
+          ? createDeviceKeyInvalidError()
+          : createMasterPasswordInvalidError();
+      }
+    }
+
+    resetUnlockAttempts();
+    return { userKey, userKeyBytes };
+  } catch (error) {
+    userKeyBytes.fill(0);
+    throw error;
+  }
 }
 
 async function upgradeUserKeyWrapperIfNeeded(

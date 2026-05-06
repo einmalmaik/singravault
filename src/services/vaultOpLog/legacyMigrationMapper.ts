@@ -30,6 +30,9 @@ import {
   type PreparedCategoryMigration,
 } from './migrationTypes';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MIGRATION_ID_NAMESPACE = 'singra-vault-oplog-migration-v1:';
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -171,13 +174,57 @@ export function buildMigratedItemPlaintext(
 // ---------------------------------------------------------------------------
 
 /**
- * Derive a deterministic new record ID from a legacy ID.
+ * Derive a deterministic UUID-compatible new record ID from a legacy ID.
  *
  * The mapping must be stable so that retrying the migration does not
- * create duplicate records.  We prefix the legacy UUID with the
- * migration namespace so that collisions with genuinely new records
- * are impossible.
+ * create duplicate records. Supabase stores OpLog record, operation and
+ * intent IDs in UUID columns, so the mapping must never emit prefixed
+ * string IDs such as `mig-*`.
  */
 export function legacyToNewRecordId(legacyId: string): string {
-  return `mig-${legacyId}`;
+  const normalized = legacyId.trim();
+  if (!normalized) {
+    throw new Error('legacy ID is required');
+  }
+
+  if (UUID_PATTERN.test(normalized)) {
+    return normalized.toLowerCase();
+  }
+
+  return deterministicUuidV8(`${MIGRATION_ID_NAMESPACE}${normalized}`);
+}
+
+function deterministicUuidV8(input: string): string {
+  const bytes = new Uint8Array(16);
+  writeUint32(bytes, 0, fnv1a32(input, 0x811c9dc5));
+  writeUint32(bytes, 4, fnv1a32(input, 0x9e3779b9));
+  writeUint32(bytes, 8, fnv1a32(input, 0x85ebca6b));
+  writeUint32(bytes, 12, fnv1a32(input, 0xc2b2ae35));
+
+  // UUIDv8 shape with RFC 4122 variant. This is an identifier format, not a
+  // cryptographic boundary; collisions are still handled by the DB idempotency checks.
+  bytes[6] = (bytes[6] & 0x0f) | 0x80;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function writeUint32(target: Uint8Array, offset: number, value: number): void {
+  target[offset] = (value >>> 24) & 0xff;
+  target[offset + 1] = (value >>> 16) & 0xff;
+  target[offset + 2] = (value >>> 8) & 0xff;
+  target[offset + 3] = value & 0xff;
+}
+
+function fnv1a32(input: string, seed: number): number {
+  let hash = seed >>> 0;
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i);
+    hash ^= code & 0xff;
+    hash = Math.imul(hash, 0x01000193);
+    hash ^= code >>> 8;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
 }

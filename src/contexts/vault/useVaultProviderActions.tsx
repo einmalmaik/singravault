@@ -278,7 +278,7 @@ export function useVaultProviderActions(): VaultContextType {
 
     const migrationGate = await evaluateVaultMigrationGate({ userId: user.id });
     state.setVaultMigrationStatus(migrationGate.status);
-    state.setVaultMigrationError(migrationGate.reason);
+    state.setVaultMigrationError(null);
     if (!migrationGate.allowNormalUnlock) {
       state.setEncryptionKey(null);
       state.setIsLocked(true);
@@ -294,11 +294,7 @@ export function useVaultProviderActions(): VaultContextType {
       });
       state.setLastActivity(Date.now());
       clearVaultSessionMarkers(sessionStorage);
-      return {
-        error: new Error(
-          migrationGate.reason ?? `Tresor-Migration blockiert normalen Unlock: ${migrationGate.status}`,
-        ),
-      };
+      return { error: null };
     }
 
     state.setEncryptionKey(activeKey);

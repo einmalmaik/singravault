@@ -6,7 +6,8 @@ const mockAttemptDualUnlock = vi.fn();
 const mockGetUnlockCooldown = vi.fn(() => null);
 const mockRecordFailedAttempt = vi.fn();
 const mockResetUnlockAttempts = vi.fn();
-const mockUnwrapUserKey = vi.fn();
+const mockImportMasterKey = vi.fn();
+const mockUnwrapUserKeyBytes = vi.fn();
 const mockVerifyKey = vi.fn();
 const mockAttemptKdfUpgrade = vi.fn();
 const mockRepairBrokenKdfUpgradeIfNeeded = vi.fn();
@@ -18,8 +19,8 @@ vi.mock('@/extensions/registry', () => ({
 
 vi.mock('@/services/cryptoService', () => ({
   attemptKdfUpgrade: (...args: unknown[]) => mockAttemptKdfUpgrade(...args),
-  importMasterKey: vi.fn(),
-  unwrapUserKey: (...args: unknown[]) => mockUnwrapUserKey(...args),
+  importMasterKey: (...args: unknown[]) => mockImportMasterKey(...args),
+  unwrapUserKeyBytes: (...args: unknown[]) => mockUnwrapUserKeyBytes(...args),
   verifyKey: (...args: unknown[]) => mockVerifyKey(...args),
 }));
 
@@ -95,12 +96,14 @@ describe('vaultMasterUnlockService', () => {
 
   it('uses the primary unlock path for normal dual-unlock results so migration receives the vault key', async () => {
     const activeKey = { type: 'secret' } as CryptoKey;
-    const vaultEncryptionKey = new Uint8Array([1, 2, 3, 4]);
-    const deriveVaultKdfOutput = vi.fn(async () => new Uint8Array(vaultEncryptionKey));
+    const kdfOutput = new Uint8Array([1, 2, 3, 4]);
+    const vaultEncryptionKey = new Uint8Array([5, 6, 7, 8]);
+    const deriveVaultKdfOutput = vi.fn(async () => new Uint8Array(kdfOutput));
     const finalizeVaultUnlock = vi.fn(async () => ({ error: null }));
 
     mockAttemptDualUnlock.mockResolvedValue({ mode: 'normal', key: activeKey });
-    mockUnwrapUserKey.mockResolvedValue(activeKey);
+    mockImportMasterKey.mockResolvedValue(activeKey);
+    mockUnwrapUserKeyBytes.mockResolvedValue(new Uint8Array(vaultEncryptionKey));
     mockVerifyKey.mockResolvedValue(true);
 
     const result = await unlockVaultWithMasterPassword({

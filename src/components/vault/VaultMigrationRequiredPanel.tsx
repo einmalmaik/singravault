@@ -9,7 +9,7 @@
  */
 
 import { useState } from 'react';
-import { AlertTriangle, Loader2, Lock, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Info, Loader2, Lock, RefreshCw, ShieldCheck } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -114,6 +114,15 @@ export function VaultMigrationRequiredPanel() {
             <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
               Die normale Tresoransicht bleibt gesperrt, bis Migration, Reload und State-Machine-Verifikation erfolgreich abgeschlossen sind.
             </div>
+
+            {!vaultMigrationCanStart && (
+              <div className="flex gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
+                <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>
+                  Die Migration kann erst starten, wenn der Tresor mit einem migrationsfähigen Schlüsselkontext entsperrt wurde. Sperre den Tresor und entsperre ihn mit dem Masterpasswort erneut.
+                </p>
+              </div>
+            )}
 
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button

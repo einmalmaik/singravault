@@ -768,8 +768,15 @@ describe('legacyToNewRecordId', () => {
     expect(id1).toBe(id2);
   });
 
-  it('prefixes with migration namespace', () => {
-    expect(legacyToNewRecordId('x')).toBe('mig-x');
+  it('emits UUID-compatible ids for Supabase OpLog columns', () => {
+    expect(legacyToNewRecordId('x')).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it('preserves existing UUID legacy ids', () => {
+    const legacyId = '550E8400-E29B-41D4-A716-446655440000';
+    expect(legacyToNewRecordId(legacyId)).toBe('550e8400-e29b-41d4-a716-446655440000');
   });
 });
 
