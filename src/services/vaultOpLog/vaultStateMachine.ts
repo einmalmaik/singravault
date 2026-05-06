@@ -90,7 +90,7 @@ export interface ApplyRemoteOperationInput {
   readonly operation: VaultOperationRow;
   readonly record: VaultRecordRow;
   readonly trust: TrustListInput;
-  readonly publicKey: CryptoKey;
+  readonly publicKey?: CryptoKey;
   readonly vaultEncryptionKey: Uint8Array;
 }
 
@@ -106,7 +106,7 @@ export interface ApplyTrustedDeleteInput {
   readonly operation: VaultOperationRow;
   readonly record: VaultRecordRow;
   readonly trust: TrustListInput;
-  readonly publicKey: CryptoKey;
+  readonly publicKey?: CryptoKey;
 }
 
 export interface ApplyTrustedDeleteResult {

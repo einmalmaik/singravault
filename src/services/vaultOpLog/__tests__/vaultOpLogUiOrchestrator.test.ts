@@ -5,6 +5,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { loadVaultOpLogUiState } from '../vaultOpLogUiOrchestrator';
 import type { SupabaseRpcClient } from '../vaultOpLogRepository';
 import type { VaultOperationRow, VaultRecordRow } from '../vaultOpLogRpcTypes';
+import type { VaultOpLogTrustReadClient } from '../vaultOpLogUiOrchestrator';
 
 let importKeySpy: ReturnType<typeof vi.spyOn>;
 
@@ -80,6 +81,16 @@ function createMockRpcClient(pages: VaultOperationRow[][]): SupabaseRpcClient {
   } as unknown as SupabaseRpcClient;
 }
 
+function createTrustClient(rows: unknown[]): VaultOpLogTrustReadClient {
+  return {
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(async () => ({ data: rows, error: null })),
+      })),
+    })),
+  } as unknown as VaultOpLogTrustReadClient;
+}
+
 function makeOp(seq: number, opId: string, recordId: string): VaultOperationRow {
   return {
     opId,
@@ -125,6 +136,48 @@ describe('vaultOpLogUiOrchestrator', () => {
     expect(result.uiView!.verifiedItems).toHaveLength(0);
     expect(result.uiView!.quarantinedItems).toHaveLength(0);
     expect(result.uiView!.conflictedItems).toHaveLength(0);
+  });
+
+  it('loads trusted devices from the remote trust table instead of only trusting the local device', async () => {
+    const client = createMockRpcClient([[]]);
+    const trustClient = createTrustClient([
+      {
+        vault_id: 'vault-1',
+        device_id: 'device-1',
+        public_signing_key: 'pub-local',
+        device_name_encrypted: '',
+        added_by_device_id: null,
+        added_at: '2025-01-01T00:00:00Z',
+        trust_epoch: 0,
+        status: 'trusted',
+        revoked_at: null,
+        revoked_by_device_id: null,
+      },
+      {
+        vault_id: 'vault-1',
+        device_id: 'device-2',
+        public_signing_key: 'pub-remote',
+        device_name_encrypted: '',
+        added_by_device_id: 'device-1',
+        added_at: '2025-01-02T00:00:00Z',
+        trust_epoch: 0,
+        status: 'trusted',
+        revoked_at: null,
+        revoked_by_device_id: null,
+      },
+    ]);
+
+    const result = await loadVaultOpLogUiState({
+      rpcClient: client,
+      trustClient,
+      vaultId: 'vault-1',
+      deviceId: 'device-1',
+      publicSigningKeyB64Url: 'MEkwEwYHKoZIzj0CAQYIKoZIzj0DAQEDMgAEsPH3N7n90R0D1TdX',
+      vaultEncryptionKey: new Uint8Array(32),
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.localVaultState?.trustedDevicesById.has('device-2')).toBe(true);
   });
 
   it('paginates through multiple pages of operations', async () => {

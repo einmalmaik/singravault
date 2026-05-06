@@ -32,7 +32,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { saveExportFile } from '@/services/exportFileService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
 import {
-  buildExcludedItemIdsFromOpLogView,
+  getVerifiedRecordIdsForEgress,
   isVaultSecurityModeBlockingEgress,
 } from '@/services/vaultOpLog';
 import { LEGACY_VAULT_WRITE_BLOCKED_MESSAGE } from '@/services/vaultOpLog/vaultLegacyWriteBlocker';
@@ -98,10 +98,10 @@ export function DataSettings() {
                 });
                 return;
             }
-            const excludedItemIds = buildExcludedItemIdsFromOpLogView(opLogUiView);
+            const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView);
 
             const exportData = await buildVaultExportPayload(items, decryptItem, {
-                excludedItemIds: excludedItemIds ?? undefined,
+                allowedItemIds: allowedItemIds ?? undefined,
             });
 
             const saved = await saveExportFile({

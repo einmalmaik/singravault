@@ -38,9 +38,6 @@ import {
   buildVaultOpLogUiView,
   type VaultOpLogUiView,
 } from './vaultOpLogUiAdapter';
-import {
-  decodeBase64Url,
-} from './canonicalJson';
 import type {
   TrustListInput,
 } from './deviceTrustService';
@@ -57,6 +54,7 @@ import type { SupabaseRpcClient } from './vaultOpLogRepository';
 
 export interface VaultOpLogUiOrchestratorInput {
   readonly rpcClient: SupabaseRpcClient;
+  readonly trustClient?: VaultOpLogTrustReadClient;
   readonly vaultId: string;
   readonly deviceId: string;
   readonly publicSigningKeyB64Url: string;
@@ -68,6 +66,24 @@ export interface VaultOpLogUiOrchestratorResult {
   readonly localVaultState: LocalVaultState | null;
   readonly error: string | null;
 }
+
+export interface VaultOpLogTrustReadClient {
+  readonly from: (table: 'vault_device_trust_records') => {
+    readonly select: (columns: string) => {
+      readonly eq: (
+        column: 'vault_id',
+        value: string,
+      ) => Promise<{
+        readonly data: unknown[] | null;
+        readonly error: { readonly message?: string; readonly code?: string } | null;
+      }>;
+    };
+  };
+}
+
+type TrustLoadResult =
+  | { readonly kind: 'success'; readonly trust: TrustListInput }
+  | { readonly kind: 'error' };
 
 // ---------------------------------------------------------------------------
 // Public orchestrator
@@ -126,6 +142,16 @@ export async function loadVaultOpLogUiState(
     }
     deduplicatedOps.sort((a, b) => a.sequenceNumber - b.sequenceNumber);
 
+    const trustResult = await loadTrustList(input);
+    if (trustResult.kind !== 'success') {
+      return {
+        uiView: null,
+        localVaultState: null,
+        error: 'vault_trust_load_failed',
+      };
+    }
+    const trust = trustResult.trust;
+
     // Step 3: Load records referenced by those operations
     const recordIds = [...new Set(deduplicatedOps.map((op) => op.recordId))];
 
@@ -135,7 +161,7 @@ export async function loadVaultOpLogUiState(
         recordsById: new Map(),
         quarantinedRecordsById: new Map(),
         conflictsByRecordId: new Map(),
-        trustedDevicesById: new Map(),
+        trustedDevicesById: trust.trustedDevicesById,
         lastVerifiedVaultHead: null,
       };
       return {
@@ -163,41 +189,12 @@ export async function loadVaultOpLogUiState(
       recordsById.set(record.recordId, record);
     }
 
-    // Step 4: Build a minimal trust list containing only the current device.
-    // In a full deployment this would load the remote trust list.
-    const now = new Date().toISOString();
-    const trustedDevice: TrustedDeviceRecordV1 = {
-      vaultId: input.vaultId,
-      deviceId: input.deviceId,
-      publicSigningKey: input.publicSigningKeyB64Url,
-      deviceNameEncrypted: '',
-      addedByDeviceId: null,
-      addedAt: now,
-      trustEpoch: 0,
-      status: 'trusted',
-      revokedAt: null,
-      revokedByDeviceId: null,
-    };
-
-    const trust: TrustListInput = {
-      vaultId: input.vaultId,
-      trustedDevicesById: new Map([[input.deviceId, trustedDevice]]),
-    };
-
-    const publicKey = await crypto.subtle.importKey(
-      'spki',
-      decodeBase64Url(input.publicSigningKeyB64Url).buffer as ArrayBuffer,
-      { name: 'ECDSA', namedCurve: 'P-256' },
-      false,
-      ['verify'],
-    );
-
     // Step 5: Run the state machine over every operation
     let localState: LocalVaultState = {
       recordsById: new Map(),
       quarantinedRecordsById: new Map(),
       conflictsByRecordId: new Map(),
-      trustedDevicesById: new Map([[input.deviceId, trustedDevice]]),
+      trustedDevicesById: trust.trustedDevicesById,
       lastVerifiedVaultHead: null,
     };
 
@@ -224,7 +221,6 @@ export async function loadVaultOpLogUiState(
           operation,
           record,
           trust,
-          publicKey,
           vaultEncryptionKey: input.vaultEncryptionKey,
         });
 
@@ -259,4 +255,122 @@ export async function loadVaultOpLogUiState(
       error: err instanceof Error ? err.message : 'unknown_orchestrator_error',
     };
   }
+}
+
+async function loadTrustList(
+  input: VaultOpLogUiOrchestratorInput,
+): Promise<TrustLoadResult> {
+  if (!input.trustClient) {
+    return {
+      kind: 'success',
+      trust: buildLocalDeviceOnlyTrust(input),
+    };
+  }
+
+  try {
+    const { data, error } = await input.trustClient
+      .from('vault_device_trust_records')
+      .select('vault_id,device_id,public_signing_key,device_name_encrypted,added_by_device_id,added_at,trust_epoch,status,revoked_at,revoked_by_device_id')
+      .eq('vault_id', input.vaultId);
+
+    if (error || !Array.isArray(data) || data.length === 0) {
+      return { kind: 'error' };
+    }
+
+    const trustedDevicesById = new Map<string, TrustedDeviceRecordV1>();
+    for (const row of data) {
+      const device = mapTrustRow(row, input.vaultId);
+      if (!device) {
+        return { kind: 'error' };
+      }
+      trustedDevicesById.set(device.deviceId, device);
+    }
+
+    return {
+      kind: 'success',
+      trust: { vaultId: input.vaultId, trustedDevicesById },
+    };
+  } catch {
+    return { kind: 'error' };
+  }
+}
+
+function buildLocalDeviceOnlyTrust(
+  input: Pick<VaultOpLogUiOrchestratorInput, 'vaultId' | 'deviceId' | 'publicSigningKeyB64Url'>,
+): TrustListInput {
+  const trustedDevice: TrustedDeviceRecordV1 = {
+    vaultId: input.vaultId,
+    deviceId: input.deviceId,
+    publicSigningKey: input.publicSigningKeyB64Url,
+    deviceNameEncrypted: '',
+    addedByDeviceId: null,
+    addedAt: new Date().toISOString(),
+    trustEpoch: 0,
+    status: 'trusted',
+    revokedAt: null,
+    revokedByDeviceId: null,
+  };
+
+  return {
+    vaultId: input.vaultId,
+    trustedDevicesById: new Map([[input.deviceId, trustedDevice]]),
+  };
+}
+
+function mapTrustRow(row: unknown, vaultId: string): TrustedDeviceRecordV1 | null {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+
+  const value = row as Record<string, unknown>;
+  const rowVaultId = readString(value, 'vault_id');
+  const deviceId = readString(value, 'device_id');
+  const publicSigningKey = readString(value, 'public_signing_key');
+  const deviceNameEncrypted = readString(value, 'device_name_encrypted');
+  const addedAt = readString(value, 'added_at');
+  const trustEpoch = readNumber(value, 'trust_epoch');
+  const status = readString(value, 'status');
+
+  if (
+    rowVaultId !== vaultId
+    || !deviceId
+    || !publicSigningKey
+    || deviceNameEncrypted === null
+    || !addedAt
+    || trustEpoch === null
+    || (status !== 'trusted' && status !== 'revoked')
+  ) {
+    return null;
+  }
+
+  return {
+    vaultId,
+    deviceId,
+    publicSigningKey,
+    deviceNameEncrypted,
+    addedByDeviceId: readNullableString(value, 'added_by_device_id'),
+    addedAt,
+    trustEpoch,
+    status,
+    revokedAt: readNullableString(value, 'revoked_at'),
+    revokedByDeviceId: readNullableString(value, 'revoked_by_device_id'),
+  };
+}
+
+function readString(row: Record<string, unknown>, key: string): string | null {
+  const value = row[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function readNullableString(row: Record<string, unknown>, key: string): string | null {
+  const value = row[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return typeof value === 'string' ? value : null;
+}
+
+function readNumber(row: Record<string, unknown>, key: string): number | null {
+  const value = row[key];
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 }

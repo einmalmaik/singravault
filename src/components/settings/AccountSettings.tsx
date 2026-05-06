@@ -44,7 +44,7 @@ import { clearOfflineVaultData } from '@/services/offlineVaultService';
 import { saveExportFile } from '@/services/exportFileService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
 import {
-  buildExcludedItemIdsFromOpLogView,
+  getVerifiedRecordIdsForEgress,
   isVaultSecurityModeBlockingEgress,
 } from '@/services/vaultOpLog';
 import { verifyTwoFactorChallenge } from '@/services/twoFactorService';
@@ -258,7 +258,7 @@ export function AccountSettings() {
                 });
                 return;
             }
-            const excludedItemIds = buildExcludedItemIdsFromOpLogView(opLogUiView);
+            const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView);
 
             const exportData = await buildVaultExportPayload(
                 items.map((item) => ({
@@ -269,7 +269,7 @@ export function AccountSettings() {
                 })),
                 decryptItem,
                 {
-                    excludedItemIds: excludedItemIds ?? undefined,
+                    allowedItemIds: allowedItemIds ?? undefined,
                 },
             );
 

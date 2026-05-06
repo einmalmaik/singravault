@@ -35,6 +35,13 @@ export interface VaultExportOptions {
   mode?: 'normal' | 'safe';
   quarantinedItems?: QuarantinedVaultItem[];
   /**
+   * When present, export is allowlist-based: only these item IDs may be
+   * decrypted and included. This is the OpLog Phase-10 path where "not
+   * verified" must fail closed even when the record is not explicitly listed
+   * as quarantined or conflicted.
+   */
+  allowedItemIds?: Set<string>;
+  /**
    * Item IDs that must be excluded from the export regardless of
    * whether they are decryptable. This is used by the Phase 10
    * egress policy to block quarantined, pending, conflict, and
@@ -49,9 +56,13 @@ export async function buildVaultExportPayload(
   options?: VaultExportOptions,
 ): Promise<VaultExportPayload> {
   const quarantinedIds = new Set(options?.quarantinedItems?.map((q) => q.id) ?? []);
+  const allowedIds = options?.allowedItemIds ?? null;
   const excludedIds = options?.excludedItemIds ?? new Set<string>();
 
   const eligibleItems = items.filter((item) => {
+    if (allowedIds && !allowedIds.has(item.id)) {
+      return false;
+    }
     if (quarantinedIds.has(item.id)) {
       return false;
     }
@@ -93,7 +104,7 @@ export async function buildVaultExportPayload(
     mode: options?.mode ?? 'normal',
     exportedAt: new Date().toISOString(),
     itemCount: validItems.length,
-    quarantinedItems: [],
+    quarantinedItems: options?.quarantinedItems ?? [],
     items: validItems,
   };
 }

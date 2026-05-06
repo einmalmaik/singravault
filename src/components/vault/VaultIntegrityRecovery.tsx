@@ -23,7 +23,7 @@ import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthS
 import { buildVaultExportPayload } from '@/services/vaultExportService';
 import { VaultRecoveryResetError } from '@/services/vaultRecoveryService';
 import {
-  buildExcludedItemIdsFromOpLogView,
+  getVerifiedRecordIdsForEgress,
   isVaultSecurityModeBlockingEgress,
 } from '@/services/vaultOpLog';
 import { VaultItemCard } from '@/components/vault/VaultItemCard';
@@ -204,7 +204,7 @@ export function VaultIntegrityRecovery() {
         });
         return;
       }
-      const excludedItemIds = buildExcludedItemIdsFromOpLogView(opLogUiView);
+      const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView);
 
       const exportPayload = await buildVaultExportPayload(trustedSnapshot.items, async (_encryptedData, entryId) => {
         const item = entryId ? itemsById.get(entryId) : null;
@@ -215,7 +215,7 @@ export function VaultIntegrityRecovery() {
       }, {
         mode: 'safe',
         quarantinedItems,
-        excludedItemIds: excludedItemIds ?? undefined,
+        allowedItemIds: allowedItemIds ?? undefined,
       });
 
       const saved = await saveExportFile({

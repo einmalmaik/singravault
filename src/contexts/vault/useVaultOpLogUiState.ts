@@ -23,6 +23,8 @@ import {
 import {
   loadVaultOpLogUiState,
 } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
+import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
+import type { VaultOpLogTrustReadClient } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type {
   VaultOpLogUiView,
 } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
@@ -74,9 +76,18 @@ export function useVaultOpLogUiState(
     setLastError(null);
 
     try {
+      const vaultId = vaultProviderState.vaultMigrationKeyContext?.vaultId
+        ?? await loadDefaultVaultId(userId);
+      if (!vaultId) {
+        setUiView(null);
+        setLastError('vault_id_load_failed');
+        return;
+      }
+
       const result = await loadVaultOpLogUiState({
-        rpcClient: supabase as unknown as import('@/services/vaultOpLog/vaultOpLogRepository').SupabaseRpcClient,
-        vaultId: userId,
+        rpcClient: supabase as unknown as SupabaseRpcClient,
+        trustClient: supabase as unknown as VaultOpLogTrustReadClient,
+        vaultId,
         deviceId: deviceIdentity.deviceId,
         publicSigningKeyB64Url: deviceIdentity.publicSigningKeyB64Url,
         vaultEncryptionKey,
@@ -95,7 +106,7 @@ export function useVaultOpLogUiState(
       setIsLoading(false);
       isRunningRef.current = false;
     }
-  }, [isEnabled, vaultProviderState.vaultEncryptionKey, userId]);
+  }, [isEnabled, vaultProviderState.vaultEncryptionKey, vaultProviderState.vaultMigrationKeyContext?.vaultId, userId]);
 
   useEffect(() => {
     if (!isEnabled) {
@@ -116,4 +127,19 @@ export function useVaultOpLogUiState(
     lastError,
     refresh,
   };
+}
+
+async function loadDefaultVaultId(userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('vaults')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('is_default', true)
+    .maybeSingle();
+
+  if (error || typeof data?.id !== 'string') {
+    return null;
+  }
+
+  return data.id;
 }

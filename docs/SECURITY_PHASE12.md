@@ -1,6 +1,6 @@
 # Singra Vault Security Notes - Phase 12
 
-Stand: 2026-05-05
+Stand: 2026-05-06
 
 ## Sicherheitsinvarianten
 
@@ -11,6 +11,8 @@ Stand: 2026-05-05
 - Legacy-Zeilen werden nicht destruktiv gelöscht und nach verifizierter Migration nicht als Runtime-Trust-Quelle genutzt.
 - Alte Rebaseline-, TTL-, Snapshot-Digest- und Kategorie-Globalblockade-Logik bleibt deaktiviert.
 - Runtime-Writes auf `vault_items` und `categories` bleiben verboten.
+- Export und andere Data-Egress-Flows arbeiten im OpLog-Pfad verified-only. Eine Blocklist reicht nicht aus.
+- Operationen anderer Geräte werden mit den Public Keys aus `vault_device_trust_records` geprüft, nicht mit dem aktuellen lokalen Device-Key.
 
 ## Migration-Sicherheitsmodell
 
@@ -26,6 +28,8 @@ Der Start der Migration erfolgt nur über expliziten User Consent im Migrationsp
 6. verifiziert ihn mit der State Machine,
 7. erlaubt erst danach den normalen Unlock.
 
+Normale Dual-Unlock-Ergebnisse laufen weiter über den primären Unlock-Pfad, damit der Migrationskontext den Vault-KDF-Output erhält. Der Duress-Pfad bleibt davon getrennt und öffnet keinen normalen Migrationszustand.
+
 `migrateVault()` schreibt keinen Device-Trust-/Head-/Commit-Zustand vor Preflight und Pre-Migration-Snapshot. Nach erfolgreicher Verifikation wird ein nicht geheimer lokaler Completion-Marker geschrieben, damit verbleibende Legacy-Zeilen nicht erneut als inkonsistenter Teilzustand blockieren.
 
 ## Supabase/RPC-Evidenz
@@ -40,9 +44,9 @@ Gefundene und behobene DB-Blocker:
 
 ## Data-Egress-Gates
 
-Export, Suche, Clipboard und UI-Normalanzeige dürfen nur verified Records verwenden. Quarantined Records und Conflict Records dürfen nicht als normale Items erscheinen. Passwort-Autofill bleibt gemäß Phase-10-Policy blockiert, wenn der verified-only Kontext nicht erfüllt ist.
+Export, Suche, Clipboard und UI-Normalanzeige dürfen nur verified Records verwenden. Quarantined Records, Conflict Records und Records ohne verified-Status dürfen nicht als normale Items erscheinen. Passwort-Autofill bleibt gemäß Phase-10-Policy blockiert, wenn der verified-only Kontext nicht erfüllt ist.
 
-Aktueller Status: Die zentralen OpLog-Data-Egress-Policies sind getestet. Vollständige echte Runtime-Evidenz, dass alle UI-Listen und Exportpfade ausschließlich aus dem verified OpLog-State lesen, ist noch nicht abgeschlossen.
+Aktueller Status: Die zentralen OpLog-Data-Egress-Policies sind getestet. Die Exportpfade verwenden im OpLog-Kontext eine verified-Allowlist und entschlüsseln nicht-allowlistete Rows nicht. Vollständige echte Runtime-Evidenz, dass alle UI-Listen ausschließlich aus dem verified OpLog-State lesen, ist noch nicht abgeschlossen.
 
 ## Runtime-Writes
 

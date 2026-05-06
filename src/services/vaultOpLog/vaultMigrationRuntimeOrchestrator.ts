@@ -20,6 +20,7 @@ import {
   saveVaultOpLogDeviceSigningKey,
 } from './vaultOpLogDeviceSigningKeyStore';
 import { loadVaultOpLogUiState } from './vaultOpLogUiOrchestrator';
+import type { VaultOpLogTrustReadClient } from './vaultOpLogUiOrchestrator';
 import type { SupabaseRpcClient } from './vaultOpLogRepository';
 
 export interface MigrationKeyContext {
@@ -90,6 +91,7 @@ export async function runControlledMigration(
 
     const verification = await loadVaultOpLogUiState({
       rpcClient,
+      trustClient: client as unknown as VaultOpLogTrustReadClient,
       vaultId: input.vaultId,
       deviceId: device.deviceId,
       publicSigningKeyB64Url: device.publicSigningKeyB64Url,

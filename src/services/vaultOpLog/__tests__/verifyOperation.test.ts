@@ -72,7 +72,7 @@ async function buildSignedOperation(
   const keyPair = await generateDeviceSigningKeyPair();
   const body = buildOperationSignedBody(baseBodyInput(overrides));
   const signed = await signOperation(body, keyPair.privateKey);
-  return { signed, publicKey: keyPair.publicKey };
+  return { signed, publicKey: keyPair.publicKey, publicKeyB64Url: keyPair.publicKeyB64Url };
 }
 
 function toVaultOperationRow(signed: SignedVaultOperationV1): VaultOperationRow {
@@ -127,6 +127,17 @@ describe('verifyOperation — positive path', () => {
     if (result.kind === 'validTrustedOperation') {
       expect(result.signedOperation.body.opId).toBe('op-1');
     }
+  });
+
+  it('imports the trusted author public key when no caller key is supplied', async () => {
+    const { signed, publicKeyB64Url } = await buildSignedOperation();
+    const row = toVaultOperationRow(signed);
+    const result = await verifyOperation({
+      operation: row,
+      trust: buildTrust('device-1', { publicSigningKey: publicKeyB64Url }),
+    });
+
+    expect(result.kind).toBe('validTrustedOperation');
   });
 });
 

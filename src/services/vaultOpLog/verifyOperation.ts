@@ -17,6 +17,7 @@ import {
   type TrustListInput,
 } from './deviceTrustService';
 import {
+  importDevicePublicKey,
   verifyOperationSignature,
 } from './operationSigningService';
 import {
@@ -39,7 +40,7 @@ import type {
 export interface VerifyOperationInput {
   readonly operation: VaultOperationRow;
   readonly trust: TrustListInput;
-  readonly publicKey: CryptoKey;
+  readonly publicKey?: CryptoKey;
   /**
    * Optional local record state for causal checks. If omitted,
    * only syntactic validation is performed.
@@ -64,7 +65,7 @@ export interface VerifyOperationInput {
 export async function verifyOperation(
   input: VerifyOperationInput,
 ): Promise<OperationVerificationResult> {
-  const { operation, trust, publicKey, localRecordState } = input;
+  const { operation, trust, localRecordState } = input;
 
   // Step 1: parse signed body
   const body = extractSignedBody(operation.signedBody);
@@ -89,24 +90,27 @@ export async function verifyOperation(
     return { kind: 'opHashMismatch' };
   }
 
-  // Step 3: signature verification
-  let signatureValid: boolean;
-  try {
-    signatureValid = await verifyOperationSignature(signedOp, publicKey);
-  } catch {
-    return { kind: 'invalidSignature' };
-  }
-  if (!signatureValid) {
-    return { kind: 'invalidSignature' };
-  }
-
-  // Step 4: author trust classification
+  // Step 3: author trust classification. This must happen before signature
+  // verification so the signature is checked with the author's public key,
+  // not with the current local device key.
   const author = classifyOperationAuthor(signedOp, trust);
   if (author.status === 'unknown') {
     return { kind: 'unknownAuthor', reason: author.reason };
   }
   if (author.status === 'revoked') {
     return { kind: 'revokedAuthor', device: author.device, reason: author.reason };
+  }
+
+  // Step 4: signature verification
+  let signatureValid: boolean;
+  try {
+    const publicKey = input.publicKey ?? await importDevicePublicKey(author.device.publicSigningKey);
+    signatureValid = await verifyOperationSignature(signedOp, publicKey);
+  } catch {
+    return { kind: 'invalidSignature' };
+  }
+  if (!signatureValid) {
+    return { kind: 'invalidSignature' };
   }
 
   // Step 5: operation-type syntactic validation

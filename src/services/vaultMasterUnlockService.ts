@@ -134,38 +134,10 @@ async function tryDuressUnlock(
     return { handled: true, error: null };
   }
 
-  let activeKey = result.key!;
-  let shouldBackfillVerifier = !input.verificationHash;
-  const upgraded = await upgradeLegacyDirectKdfIfNeeded(input, activeKey);
-  if (upgraded.activeKey) {
-    activeKey = upgraded.activeKey;
-    shouldBackfillVerifier = false;
-  }
-
-  await repairBrokenKdfUpgradeIfNeeded({
-    userId: input.userId,
-    masterPassword: input.masterPassword,
-    salt: input.salt,
-    kdfVersion: input.kdfVersion,
-    activeKey,
-    contextLabel: 'duress path',
-  });
-
-  const twoFactorResult = await input.enforceVaultTwoFactorBeforeKeyRelease(input.options);
-  if (twoFactorResult.error) {
-    return { handled: true, error: twoFactorResult.error };
-  }
-
-  const finalizeResult = await input.finalizeVaultUnlock(activeKey);
-  if (finalizeResult.error) {
-    return { handled: true, error: finalizeResult.error };
-  }
-
-  if (shouldBackfillVerifier) {
-    await backfillVerifier(input, activeKey);
-  }
-
-  return { handled: true, error: null };
+  // A normal dual-unlock result must still use the primary unlock path.
+  // Phase-12 migration needs a copy of the vault KDF output; the duress hook
+  // only returns the active key and cannot safely supply that migration key.
+  return { handled: false, error: null };
 }
 
 async function unlockWithPrimaryVaultKey(
@@ -341,24 +313,6 @@ async function upgradeUserKeyWrapperIfNeeded(
   }
 
   return false;
-}
-
-async function upgradeLegacyDirectKdfIfNeeded(
-  input: VaultMasterUnlockInput,
-  _currentKey: CryptoKey,
-): Promise<{ activeKey: CryptoKey | null }> {
-  try {
-    const upgrade = await attemptKdfUpgrade(input.masterPassword, input.salt, input.kdfVersion);
-    if (!upgrade.upgraded || !upgrade.newKey || !upgrade.newVerifier) {
-      return { activeKey: null };
-    }
-
-    console.warn('Legacy direct-KDF vault re-encryption is disabled until signed Operation Log migration is available.');
-  } catch (error) {
-    console.warn('KDF upgrade: re-encryption failed, staying on old version', error);
-  }
-
-  return { activeKey: null };
 }
 
 async function backfillVerifier(
