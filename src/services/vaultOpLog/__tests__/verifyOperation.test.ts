@@ -165,7 +165,7 @@ describe('verifyOperation — signature and hash integrity', () => {
     // Tamper the signature (flip a character)
     const tamperedRow: VaultOperationRow = {
       ...row,
-      signature: row.signature.slice(0, -1) + (row.signature.slice(-1) === 'A' ? 'B' : 'A'),
+      signature: row.signature.slice(0, -5) + 'abcde',
     };
     const result = await verifyOperation({
       operation: tamperedRow,

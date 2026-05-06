@@ -1,0 +1,7 @@
+fix(oplog): correct verifyOperation test signature tamper logic
+
+The `verifyOperation` test for manipulated signatures was failing because a simple `a` to `b` character replacement at the end of the base64url string did not reliably invalidate the cryptographic signature bytes, or the resulting string was still decoding successfully without causing an expected throw or verification failure in the library. Replaced the last 5 characters with 'abcde' to guarantee a structural/byte manipulation that correctly raises the `invalidSignature` error.
+
+Also added the requested Phase 12 Audit Report to `docs/vault-op-log/phase12-audit-report.md`. The report notes that CRUD operations remain blocked (by design for this phase) to prevent writes without proper verifiable bases.
+
+All unit tests passing.
