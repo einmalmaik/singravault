@@ -329,3 +329,36 @@ export {
   buildExcludedItemIdsFromOpLogView,
   getVerifiedRecordIdsForEgress,
 } from './vaultDataEgressPolicy';
+
+// ---------------------------------------------------------------------------
+// Phase 12 - Signed OpLog CRUD orchestration
+// ---------------------------------------------------------------------------
+
+export {
+  CategoryStillReferencedError,
+  MissingVerifiedBaseMetadataError,
+  MissingVerifiedVaultHeadError,
+  OperationSubmissionFailedError,
+  OperationSubmissionRetryableError,
+  OperationVerificationAfterCommitError,
+  RebaseRequiredError,
+  RecordConflictError,
+  VaultOpLogCrudServiceError,
+  createCategory,
+  createItem,
+  deleteCategory,
+  deleteItem,
+  getVerifiedRecordBase,
+  requireVerifiedBaseMetadata,
+  requireVerifiedVaultBase,
+  resolveConflict,
+  restoreRecord,
+  updateCategory,
+  updateItem,
+  type CategoryPlaintext,
+  type ItemPlaintext,
+  type SubmissionPipelineResult,
+  type VaultOpLogCrudServiceDependencies,
+  type VerifiedRecordBase,
+  type VerifiedVaultBase,
+} from './vaultOpLogCrudService';

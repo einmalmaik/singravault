@@ -23,6 +23,7 @@ import {
   type OpenedRecordV1,
 } from './cryptoRecordService';
 import { buildRecordAad } from './recordAad';
+import { computeVaultHead } from './recordHashes';
 import type {
   RecordSecurityState,
   VaultSecurityMode,
@@ -92,6 +93,8 @@ export interface ApplyRemoteOperationInput {
   readonly trust: TrustListInput;
   readonly publicKey?: CryptoKey;
   readonly vaultEncryptionKey: Uint8Array;
+  readonly verifiedBaseRecordState?: VerifiedBaseRecordState;
+  readonly vaultHeadTransitionVerified?: boolean;
 }
 
 export interface ApplyRemoteOperationResult {
@@ -107,12 +110,19 @@ export interface ApplyTrustedDeleteInput {
   readonly record: VaultRecordRow;
   readonly trust: TrustListInput;
   readonly publicKey?: CryptoKey;
+  readonly verifiedBaseRecordState?: VerifiedBaseRecordState;
+  readonly vaultHeadTransitionVerified?: boolean;
 }
 
 export interface ApplyTrustedDeleteResult {
   readonly nextState: LocalVaultState;
   readonly recordState: RecordSecurityState;
   readonly vaultMode: VaultSecurityMode;
+}
+
+export interface VerifiedBaseRecordState {
+  readonly recordVersion: number;
+  readonly ciphertextHash: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,9 +147,9 @@ export async function applyRemoteOperation(
   const { state, operation, record, trust, publicKey, vaultEncryptionKey } = input;
 
   const localRecord = state.recordsById.get(record.recordId) ?? null;
-  const localRecordState = localRecord
+  const localRecordState = input.verifiedBaseRecordState ?? (localRecord
     ? { recordVersion: localRecord.record.recordVersion, ciphertextHash: localRecord.record.ciphertextHash }
-    : null;
+    : null);
 
   // Gate 1: operation verification
   const opResult = await verifyOperation({
@@ -152,6 +162,13 @@ export async function applyRemoteOperation(
   if (opResult.kind !== 'validTrustedOperation') {
     const recordState = classifyRecordFromOperationFailure(opResult);
     const nextState = updateStateWithQuarantine(state, record, recordState, `operation:${opResult.kind}`);
+    const vaultMode = determineVaultSecurityMode(nextState);
+    return { nextState, recordState, vaultMode, openedRecord: null };
+  }
+
+  if (!input.vaultHeadTransitionVerified && !(await verifyVaultHeadTransition(state, operation))) {
+    const recordState: RecordSecurityState = 'quarantinedTampered';
+    const nextState = updateStateWithQuarantine(state, record, recordState, 'vault_head_transition_mismatch');
     const vaultMode = determineVaultSecurityMode(nextState);
     return { nextState, recordState, vaultMode, openedRecord: null };
   }
@@ -211,6 +228,7 @@ export async function applyRemoteOperation(
   const nextState: LocalVaultState = {
     ...state,
     recordsById: nextRecords,
+    lastVerifiedVaultHead: operation.resultingVaultHead,
   };
 
   const vaultMode = determineVaultSecurityMode(nextState);
@@ -245,15 +263,25 @@ export async function applyTrustedDelete(
   }
 
   const localRecord = state.recordsById.get(record.recordId) ?? null;
-  const localRecordState = localRecord
+  const localRecordState = input.verifiedBaseRecordState ?? (localRecord
     ? { recordVersion: localRecord.record.recordVersion, ciphertextHash: localRecord.record.ciphertextHash }
-    : null;
+    : null);
 
   const opResult = await verifyOperation({ operation, trust, publicKey, localRecordState });
   if (opResult.kind !== 'validTrustedOperation') {
     const recordState = classifyRecordFromOperationFailure(opResult);
     const nextState = updateStateWithQuarantine(state, record, recordState, `delete_operation_untrusted:${opResult.kind}`);
     return { nextState, recordState, vaultMode: determineVaultSecurityMode(nextState) };
+  }
+
+  if (!input.vaultHeadTransitionVerified && !(await verifyVaultHeadTransition(state, operation))) {
+    const nextState = updateStateWithQuarantine(
+      state,
+      record,
+      'quarantinedTampered',
+      'delete_vault_head_transition_mismatch',
+    );
+    return { nextState, recordState: 'quarantinedTampered', vaultMode: determineVaultSecurityMode(nextState) };
   }
 
   const ctxResult = await verifyRecordContext({ record, operation });
@@ -286,6 +314,7 @@ export async function applyTrustedDelete(
   const nextState: LocalVaultState = {
     ...state,
     recordsById: nextRecords,
+    lastVerifiedVaultHead: operation.resultingVaultHead,
   };
 
   const vaultMode = determineVaultSecurityMode(nextState);
@@ -408,6 +437,26 @@ function detectConflict(
   // If the local record version equals the base but the hash differs,
   // a rollback or fork is suspected (handled elsewhere).
   return false;
+}
+
+async function verifyVaultHeadTransition(
+  state: LocalVaultState,
+  operation: VaultOperationRow,
+): Promise<boolean> {
+  if (operation.baseVaultHead !== state.lastVerifiedVaultHead) {
+    return false;
+  }
+
+  const expectedHead = await computeVaultHead({
+    previousVaultHead: state.lastVerifiedVaultHead,
+    opHash: operation.opHash,
+    recordId: operation.recordId,
+    recordType: operation.recordType,
+    newRecordHash: operation.newRecordHash,
+    opType: operation.opType,
+  });
+
+  return expectedHead === operation.resultingVaultHead;
 }
 
 async function decryptVerifiedRecord(

@@ -83,8 +83,6 @@ vi.mock("@/services/cryptoService", () => ({
   CURRENT_KDF_VERSION: 2,
 }));
 
-const mockRestoreQuarantinedItemFromTrustedSnapshot = vi.fn();
-const mockDeleteQuarantinedItemFromVault = vi.fn();
 vi.mock("@/services/vaultQuarantineRecoveryService", () => ({
   indexTrustedSnapshotItems: (snapshot: { items: Array<{ id: string }> } | null) => {
     if (!snapshot) return {};
@@ -105,7 +103,6 @@ vi.mock("@/services/vaultQuarantineRecoveryService", () => ({
             reason: item.reason,
             canRestore: hasTrustedLocalCopy && item.reason !== "unknown_on_server",
             canDelete: item.reason === "ciphertext_changed" || item.reason === "unknown_on_server",
-            canAcceptMissing: item.reason === "missing_on_server",
             hasTrustedLocalCopy,
             isBusy: runtimeState.isBusy,
             lastError: runtimeState.lastError,
@@ -113,10 +110,6 @@ vi.mock("@/services/vaultQuarantineRecoveryService", () => ({
         ];
       }),
     ),
-  restoreQuarantinedItemFromTrustedSnapshot: (...args: unknown[]) =>
-    mockRestoreQuarantinedItemFromTrustedSnapshot(...args),
-  deleteQuarantinedItemFromVault: (...args: unknown[]) =>
-    mockDeleteQuarantinedItemFromVault(...args),
 }));
 
 // Mock offline vault service
@@ -371,8 +364,6 @@ describe("VaultContext", () => {
       keySource: "vault-key",
     });
     mockListPasskeys.mockResolvedValue([]);
-    mockRestoreQuarantinedItemFromTrustedSnapshot.mockResolvedValue({ syncedOnline: true });
-    mockDeleteQuarantinedItemFromVault.mockResolvedValue({ syncedOnline: true });
     mockGetUnlockCooldown.mockReturnValue(null);
     mockUnwrapUserKeyBytes.mockResolvedValue(new Uint8Array(32));
     mockGetTwoFactorRequirement.mockResolvedValue({
@@ -1213,7 +1204,6 @@ describe("VaultContext", () => {
 
       expect(result.current.integrityMode).toBe("revalidation_failed");
       expect(result.current.quarantinedItems).toEqual([]);
-      expect(mockDeleteQuarantinedItemFromVault).not.toHaveBeenCalled();
     });
 
     it("keeps category integrity failures as explicit integrity failures without rebaseline", async () => {

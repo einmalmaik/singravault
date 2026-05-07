@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { VaultQuarantineActions } from '../VaultQuarantineActions';
@@ -15,27 +15,30 @@ vi.mock('react-i18next', () => ({
         'common.success': 'Erfolgreich',
         'common.error': 'Fehler',
         'common.cancel': 'Abbrechen',
+        'vault.integrity.restoreAction': 'Wiederherstellen',
+        'vault.integrity.deleteEntry': 'Endgueltig loeschen',
+        'vault.integrity.noTrustedLocalCopy': 'Auf diesem Geraet ist keine verifizierte lokale Kopie verfuegbar.',
+        'vault.integrity.restoreSuccess': 'Die letzte verifizierte Version wurde ueber das Operation Log wiederhergestellt.',
+        'vault.integrity.deleteSuccess': 'Der Quarantaene-Eintrag wurde ueber eine signierte Tombstone-Operation entfernt.',
+        'vault.integrity.confirmDeleteTitle': 'Eintrag endgueltig loeschen?',
       };
 
-      return options?.defaultValue || fixedTranslations[key] || key;
+      return fixedTranslations[key] || options?.defaultValue || key;
     },
   }),
 }));
 
-const mockRestoreQuarantinedItem = vi.fn();
-const mockDeleteQuarantinedItem = vi.fn();
-const mockAcceptMissingQuarantinedItem = vi.fn();
+const mockOpLogRestoreRecord = vi.fn();
+const mockOpLogDeleteUntrustedRecord = vi.fn();
 const mockToast = vi.fn();
 
 const mockVaultContext = {
-  restoreQuarantinedItem: (...args: unknown[]) => mockRestoreQuarantinedItem(...args),
-  deleteQuarantinedItem: (...args: unknown[]) => mockDeleteQuarantinedItem(...args),
-  acceptMissingQuarantinedItem: (...args: unknown[]) => mockAcceptMissingQuarantinedItem(...args),
+  opLogRestoreRecord: (...args: unknown[]) => mockOpLogRestoreRecord(...args),
+  opLogDeleteUntrustedRecord: (...args: unknown[]) => mockOpLogDeleteUntrustedRecord(...args),
   quarantineResolutionById: {} as Record<string, {
     reason: 'ciphertext_changed' | 'missing_on_server' | 'unknown_on_server';
     canRestore: boolean;
     canDelete: boolean;
-    canAcceptMissing: boolean;
     hasTrustedLocalCopy: boolean;
     isBusy: boolean;
     lastError: string | null;
@@ -56,9 +59,8 @@ describe('VaultQuarantineActions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockVaultContext.quarantineResolutionById = {};
-    mockRestoreQuarantinedItem.mockResolvedValue({ error: null });
-    mockDeleteQuarantinedItem.mockResolvedValue({ error: null });
-    mockAcceptMissingQuarantinedItem.mockResolvedValue({ error: null });
+    mockOpLogRestoreRecord.mockResolvedValue({ error: null });
+    mockOpLogDeleteUntrustedRecord.mockResolvedValue({ error: null });
   });
 
   it('shows restore and delete for ciphertext drift with a trusted local copy', () => {
@@ -67,7 +69,6 @@ describe('VaultQuarantineActions', () => {
         reason: 'ciphertext_changed',
         canRestore: true,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: true,
         isBusy: false,
         lastError: null,
@@ -81,18 +82,17 @@ describe('VaultQuarantineActions', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Wiederherstellen' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Endgültig löschen' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Löschung akzeptieren' })).not.toBeInTheDocument();
-    expect(screen.queryByText(/keine vertrauenswürdige lokale Kopie/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Endgueltig loeschen' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Loeschung akzeptieren' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/keine verifizierte lokale Kopie/i)).not.toBeInTheDocument();
   });
 
-  it('shows accept-missing and missing trusted-copy hint for missing entries', () => {
+  it('shows the missing trusted-copy hint without a generic accept action', () => {
     mockVaultContext.quarantineResolutionById = {
       'item-2': {
         reason: 'missing_on_server',
         canRestore: false,
         canDelete: false,
-        canAcceptMissing: true,
         hasTrustedLocalCopy: false,
         isBusy: false,
         lastError: null,
@@ -105,18 +105,17 @@ describe('VaultQuarantineActions', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Löschung akzeptieren' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Loeschung akzeptieren' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Wiederherstellen' })).not.toBeInTheDocument();
-    expect(screen.getByText(/keine vertrauenswürdige lokale Kopie/i)).toBeInTheDocument();
+    expect(screen.getByText(/keine verifizierte lokale Kopie/i)).toBeInTheDocument();
   });
 
-  it('calls restore directly for restorable entries', async () => {
+  it('calls OpLog restore directly for restorable entries', async () => {
     mockVaultContext.quarantineResolutionById = {
       'item-restore': {
         reason: 'ciphertext_changed',
         canRestore: true,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: true,
         isBusy: false,
         lastError: null,
@@ -132,11 +131,11 @@ describe('VaultQuarantineActions', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Wiederherstellen' }));
 
     await waitFor(() => {
-      expect(mockRestoreQuarantinedItem).toHaveBeenCalledWith('item-restore');
+      expect(mockOpLogRestoreRecord).toHaveBeenCalledWith('item-restore');
     });
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Erfolgreich',
-      description: 'Die letzte vertrauenswürdige lokale Version wurde wiederhergestellt.',
+      description: expect.stringContaining('Operation Log'),
     }));
   });
 
@@ -146,7 +145,6 @@ describe('VaultQuarantineActions', () => {
         reason: 'ciphertext_changed',
         canRestore: true,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: true,
         isBusy: false,
         lastError: null,
@@ -155,7 +153,6 @@ describe('VaultQuarantineActions', () => {
         reason: 'ciphertext_changed',
         canRestore: false,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: false,
         isBusy: false,
         lastError: null,
@@ -176,53 +173,18 @@ describe('VaultQuarantineActions', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Wiederherstellen' }));
 
     await waitFor(() => {
-      expect(mockRestoreQuarantinedItem).toHaveBeenCalledWith('item-restorable');
+      expect(mockOpLogRestoreRecord).toHaveBeenCalledWith('item-restorable');
     });
-    expect(mockRestoreQuarantinedItem).toHaveBeenCalledTimes(1);
-    expect(mockRestoreQuarantinedItem).not.toHaveBeenCalledWith('item-not-restorable');
+    expect(mockOpLogRestoreRecord).toHaveBeenCalledTimes(1);
+    expect(mockOpLogRestoreRecord).not.toHaveBeenCalledWith('item-not-restorable');
   });
 
-  it('confirms accepting a missing entry before updating the baseline', async () => {
-    mockVaultContext.quarantineResolutionById = {
-      'item-missing': {
-        reason: 'missing_on_server',
-        canRestore: false,
-        canDelete: false,
-        canAcceptMissing: true,
-        hasTrustedLocalCopy: false,
-        isBusy: false,
-        lastError: null,
-      },
-    };
-
-    render(
-      <VaultQuarantineActions
-        item={{ id: 'item-missing', reason: 'missing_on_server', updatedAt: null }}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: 'Löschung akzeptieren' }));
-    const dialog = await screen.findByRole('alertdialog');
-    expect(within(dialog).getByText('Löschung akzeptieren?')).toBeInTheDocument();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Löschung akzeptieren' }));
-
-    await waitFor(() => {
-      expect(mockAcceptMissingQuarantinedItem).toHaveBeenCalledWith('item-missing');
-    });
-    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Erfolgreich',
-      description: 'Die Löschung wurde akzeptiert und die lokale Vertrauensbasis aktualisiert.',
-    }));
-  });
-
-  it('confirms deletion for unknown server items and calls the delete action', async () => {
+  it('confirms deletion for unknown server items and calls the OpLog delete action', async () => {
     mockVaultContext.quarantineResolutionById = {
       'item-3': {
         reason: 'unknown_on_server',
         canRestore: false,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: false,
         isBusy: false,
         lastError: null,
@@ -235,17 +197,17 @@ describe('VaultQuarantineActions', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Endgültig löschen' }));
-    expect(screen.getByText('Eintrag endgültig löschen?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Endgueltig loeschen' }));
+    expect(screen.getByText('Eintrag endgueltig loeschen?')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Endgültig löschen' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Endgueltig loeschen' }));
 
     await waitFor(() => {
-      expect(mockDeleteQuarantinedItem).toHaveBeenCalledWith('item-3');
+      expect(mockOpLogDeleteUntrustedRecord).toHaveBeenCalledWith('item-3');
     });
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Erfolgreich',
-      description: 'Der Quarantäne-Eintrag wurde entfernt.',
+      description: expect.stringContaining('Tombstone'),
     }));
   });
 });

@@ -13,7 +13,7 @@
  * - It does NOT decrypt or persist plaintexts beyond the state machine
  *   invocation.
  * - If RPC or state-machine failures occur, it returns `null` so the
- *   UI can fall back to the old integrity path.
+ *   UI can keep normal egress blocked or show migration/quarantine state.
  * - It reuses the existing repository RPCs (Phase 3) and state machine
  *   (Phase 5) — no second state machine, no direct table writes.
  *
@@ -30,10 +30,14 @@ import {
   getVaultRecordsByIds,
 } from './vaultOpLogRepository';
 import {
+  applyTrustedDelete,
   applyRemoteOperation,
   determineVaultSecurityMode,
   type LocalVaultState,
+  type VerifiedBaseRecordState,
 } from './vaultStateMachine';
+import { verifyOperation } from './verifyOperation';
+import { computeVaultHead } from './recordHashes';
 import {
   buildVaultOpLogUiView,
   type VaultOpLogUiView,
@@ -84,6 +88,17 @@ export interface VaultOpLogTrustReadClient {
 type TrustLoadResult =
   | { readonly kind: 'success'; readonly trust: TrustListInput }
   | { readonly kind: 'error' };
+
+type OperationChainVerificationResult =
+  | {
+      readonly kind: 'success';
+      readonly latestOperationByRecordId: ReadonlyMap<string, VaultOperationRow>;
+      readonly verifiedHead: string | null;
+    }
+  | {
+      readonly kind: 'error';
+      readonly error: string;
+    };
 
 // ---------------------------------------------------------------------------
 // Public orchestrator
@@ -162,7 +177,7 @@ export async function loadVaultOpLogUiState(
         quarantinedRecordsById: new Map(),
         conflictsByRecordId: new Map(),
         trustedDevicesById: trust.trustedDevicesById,
-        lastVerifiedVaultHead: null,
+        lastVerifiedVaultHead: headResult.head.currentHead,
       };
       return {
         uiView: buildVaultOpLogUiView(emptyState),
@@ -189,16 +204,28 @@ export async function loadVaultOpLogUiState(
       recordsById.set(record.recordId, record);
     }
 
-    // Step 5: Run the state machine over every operation
+    const chainResult = await verifyOperationChain({
+      operations: deduplicatedOps,
+      trust,
+      expectedHead: headResult.head.currentHead,
+    });
+    if (chainResult.kind !== 'success') {
+      return {
+        uiView: null,
+        localVaultState: null,
+        error: chainResult.error,
+      };
+    }
+
     let localState: LocalVaultState = {
       recordsById: new Map(),
       quarantinedRecordsById: new Map(),
       conflictsByRecordId: new Map(),
       trustedDevicesById: trust.trustedDevicesById,
-      lastVerifiedVaultHead: null,
+      lastVerifiedVaultHead: chainResult.verifiedHead,
     };
 
-    for (const operation of deduplicatedOps) {
+    for (const operation of chainResult.latestOperationByRecordId.values()) {
       const record = recordsById.get(operation.recordId) ?? null;
       if (!record) {
         // Missing record without a valid delete operation → quarantine
@@ -216,15 +243,44 @@ export async function loadVaultOpLogUiState(
       }
 
       try {
-        const applyResult = await applyRemoteOperation({
-          state: localState,
-          operation,
-          record,
-          trust,
-          vaultEncryptionKey: input.vaultEncryptionKey,
-        });
+        const verifiedBaseRecordState = buildVerifiedBaseRecordState(operation);
+        if (operation.opType !== 'create' && !verifiedBaseRecordState) {
+          const nextQuarantined = new Map(localState.quarantinedRecordsById);
+          nextQuarantined.set(operation.recordId, {
+            record,
+            recordState: 'quarantinedTampered',
+            reason: 'operation_missing_verified_base_record_state',
+          });
+          localState = {
+            ...localState,
+            quarantinedRecordsById: nextQuarantined,
+          };
+          continue;
+        }
 
-        localState = applyResult.nextState;
+        const applyResult = operation.opType === 'delete'
+          ? await applyTrustedDelete({
+              state: localState,
+              operation,
+              record,
+              trust,
+              verifiedBaseRecordState,
+              vaultHeadTransitionVerified: true,
+            })
+          : await applyRemoteOperation({
+              state: localState,
+              operation,
+              record,
+              trust,
+              vaultEncryptionKey: input.vaultEncryptionKey,
+              verifiedBaseRecordState,
+              vaultHeadTransitionVerified: true,
+            });
+
+        localState = {
+          ...applyResult.nextState,
+          lastVerifiedVaultHead: headResult.head.currentHead,
+        };
       } catch {
         // State machine threw — quarantine the record and continue
         const nextQuarantined = new Map(localState.quarantinedRecordsById);
@@ -255,6 +311,82 @@ export async function loadVaultOpLogUiState(
       error: err instanceof Error ? err.message : 'unknown_orchestrator_error',
     };
   }
+}
+
+async function verifyOperationChain(input: {
+  readonly operations: readonly VaultOperationRow[];
+  readonly trust: TrustListInput;
+  readonly expectedHead: string | null;
+}): Promise<OperationChainVerificationResult> {
+  const { operations, trust, expectedHead } = input;
+  let verifiedHead = operations[0]?.baseVaultHead ?? null;
+  const latestOperationByRecordId = new Map<string, VaultOperationRow>();
+
+  for (const operation of operations) {
+    const operationResult = await verifyOperation({ operation, trust });
+    if (operationResult.kind !== 'validTrustedOperation') {
+      return {
+        kind: 'error',
+        error: `operation_verification_failed:${operationResult.kind}`,
+      };
+    }
+
+    if (operation.baseVaultHead !== verifiedHead) {
+      return {
+        kind: 'error',
+        error: 'vault_head_mismatch',
+      };
+    }
+
+    const expectedResultingHead = await computeVaultHead({
+      previousVaultHead: verifiedHead,
+      opHash: operation.opHash,
+      recordId: operation.recordId,
+      recordType: operation.recordType,
+      newRecordHash: operation.newRecordHash,
+      opType: operation.opType,
+    });
+    if (expectedResultingHead !== operation.resultingVaultHead) {
+      return {
+        kind: 'error',
+        error: 'vault_head_mismatch',
+      };
+    }
+
+    verifiedHead = operation.resultingVaultHead;
+    latestOperationByRecordId.set(operation.recordId, operation);
+  }
+
+  if (verifiedHead !== expectedHead) {
+    return {
+      kind: 'error',
+      error: 'vault_head_mismatch',
+    };
+  }
+
+  return {
+    kind: 'success',
+    latestOperationByRecordId,
+    verifiedHead,
+  };
+}
+
+function buildVerifiedBaseRecordState(
+  operation: VaultOperationRow,
+): VerifiedBaseRecordState | undefined {
+  if (operation.opType === 'create') {
+    return undefined;
+  }
+  if (
+    operation.baseRecordVersion === null
+    || operation.previousCiphertextHash === null
+  ) {
+    return undefined;
+  }
+  return {
+    recordVersion: operation.baseRecordVersion,
+    ciphertextHash: operation.previousCiphertextHash,
+  };
 }
 
 async function loadTrustList(

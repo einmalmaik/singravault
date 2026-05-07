@@ -159,10 +159,10 @@ export function VaultItemList({
     encryptItem,
     isDuressMode,
     lastIntegrityResult,
+    opLogRestoreRecord,
     quarantineResolutionById,
     reportUnreadableItems,
     refreshIntegrityBaseline,
-    restoreQuarantinedItem,
     verifyIntegrity,
     vaultDataVersion,
     opLogUiView,
@@ -477,10 +477,7 @@ export function VaultItemList({
             (integrityBaselineDirty && (canPersistMigrations || canPersistLegacyEncryptionMigration))
             || canPersistTrustedFirstBaseline
           ) {
-            await refreshIntegrityBaselineRef.current({
-              itemIds: new Set([...decryptableItemIds, ...trustedItemIds]),
-              categoryIds: snapshot.categories.map((category) => category.id),
-            });
+            await refreshIntegrityBaselineRef.current();
           }
 
           setItems(decryptedItems as VaultItem[]);
@@ -772,7 +769,7 @@ export function VaultItemList({
         currentItemId: item.id,
       }));
 
-      const result = await restoreQuarantinedItem(item.id);
+      const result = await opLogRestoreRecord(item.id);
       if (result.error) {
         failed += 1;
         lastError = result.error.message;
@@ -794,7 +791,7 @@ export function VaultItemList({
       currentItemId: null,
       lastError,
     }));
-  }, [restorablePanelItems, restoreQuarantinedItem]);
+  }, [opLogRestoreRecord, restorablePanelItems]);
 
   const renderableItemCount = items.filter((item) => item.decryptedData).length;
 

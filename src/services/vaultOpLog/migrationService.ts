@@ -182,6 +182,7 @@ export async function migrateVault(input: MigrateVaultInput): Promise<MigrateVau
     // Loaded from checkpoint if resuming
     currentState: checkpoint?.state ?? 'notStarted',
     snapshotId: checkpoint?.snapshotId ?? null,
+    initialVaultHead: null,
     legacyToNewRecordIdMap: checkpoint ? new Map(Object.entries(checkpoint.legacyToNewRecordIdMap)) : new Map(),
     committedOpIds: checkpoint ? new Set(checkpoint.committedOpIds) : new Set(),
   };
@@ -279,6 +280,7 @@ interface MigrationOrchestratorState {
 
   currentState: MigrationState;
   snapshotId: string | null;
+  initialVaultHead: string | null;
   legacyToNewRecordIdMap: Map<string, string>;
   committedOpIds: Set<string>;
 
@@ -354,14 +356,8 @@ function runPreflight(
 // ---------------------------------------------------------------------------
 
 async function bootstrapDeviceTrust(state: MigrationOrchestratorState): Promise<void> {
-  const initialHead = await computeVaultHead({
-    previousVaultHead: null,
-    opHash: await sha256Base64Url(new TextEncoder().encode(`migration-bootstrap-${state.vaultId}`)),
-    recordId: 'bootstrap',
-    recordType: 'manifest',
-    newRecordHash: null,
-    opType: 'create',
-  });
+  const initialHead = await buildBootstrapVaultHead(state.vaultId);
+  state.initialVaultHead = initialHead;
 
   const initialOpId = crypto.randomUUID();
 
@@ -389,6 +385,17 @@ async function bootstrapDeviceTrust(state: MigrationOrchestratorState): Promise<
   }
 
   state.currentState = 'deviceTrustPrepared';
+}
+
+async function buildBootstrapVaultHead(vaultId: string): Promise<string> {
+  return computeVaultHead({
+    previousVaultHead: null,
+    opHash: await sha256Base64Url(new TextEncoder().encode(`migration-bootstrap-${vaultId}`)),
+    recordId: 'bootstrap',
+    recordType: 'manifest',
+    newRecordHash: null,
+    opType: 'create',
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -561,6 +568,8 @@ function prepareNewRecords(state: MigrationOrchestratorState): void {
 
 async function buildInitialOperations(state: MigrationOrchestratorState): Promise<void> {
   const operations: BuiltMigrationOperation[] = [];
+  const initialVaultHead = state.initialVaultHead ?? await buildBootstrapVaultHead(state.vaultId);
+  state.initialVaultHead = initialVaultHead;
 
   // Build a manifest create operation first so the vault has a manifest.
   const manifestRecordId = legacyToNewRecordId(`manifest-${state.vaultId}`);
@@ -592,7 +601,7 @@ async function buildInitialOperations(state: MigrationOrchestratorState): Promis
     deviceId: state.deviceId,
     deviceSigningKey: state.deviceSigningKey,
     trustEpoch: 0,
-    baseVaultHead: null,
+    baseVaultHead: initialVaultHead,
     recordType: 'manifest',
     vaultEncryptionKey: state.vaultEncryptionKey,
     plaintext: manifestPlaintext,
@@ -739,7 +748,7 @@ async function verifyCommittedState(state: MigrationOrchestratorState): Promise<
     quarantinedRecordsById: new Map(),
     conflictsByRecordId: new Map(),
     trustedDevicesById: new Map([[state.deviceId, trustedDevice]]),
-    lastVerifiedVaultHead: null,
+    lastVerifiedVaultHead: state.initialVaultHead ?? await buildBootstrapVaultHead(state.vaultId),
   };
 
   const publicKey = await crypto.subtle.importKey(

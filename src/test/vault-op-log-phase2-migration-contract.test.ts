@@ -175,10 +175,15 @@ describe('vault op-log phase 2 — RPC contract', () => {
     );
   });
 
-  it('soft-deletes records (is_tombstone = TRUE) on op_type=delete and bumps record_version', () => {
-    expect(rpcsMigration).toContain("ELSIF _op_type = 'delete' THEN");
+  it('soft-deletes records with a signed tombstone payload on op_type=delete', () => {
+    expect(rpcsMigration).toContain("IF _op_type = 'delete' THEN");
+    expect(rpcsMigration).toContain("'create', 'update', 'delete', 'restore', 'move', 'rekey'");
+    expect(rpcsMigration).toContain("RAISE EXCEPTION 'record_payload is required for op_type %', _op_type");
     expect(rpcsMigration).toContain('is_tombstone = TRUE');
     expect(rpcsMigration).toContain('record_version = record_version + 1');
+    expect(rpcsMigration).toContain("ciphertext_hash = p_record_payload->>'ciphertext_hash'");
+    expect(rpcsMigration).toContain("nonce = p_record_payload->>'nonce'");
+    expect(rpcsMigration).toContain("ciphertext = p_record_payload->>'ciphertext'");
   });
 
   it('rejects add_device for a device already on the trust list', () => {

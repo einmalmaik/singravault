@@ -1,97 +1,96 @@
 # Singra Vault Security Notes - Phase 12
 
-Stand: 2026-05-06
+Stand: 2026-05-07
+
+## Ergebnis
+
+Status: teilweise abgeschlossen, nicht releasefähig.
+
+Umgesetzt und verifiziert sind der zentrale OpLog-CRUD-Service auf Service-Ebene, signierte Tombstone-Deletes, OpLog-Head-Chain-Verifikation beim UI-Reload, die Entfernung der alten Quarantäne-Write-Actions und verified-only Egress-Tests. Nicht vollständig abgeschlossen ist die produktive UI-Anbindung für Item-/Kategorie-CRUD sowie Restore/Delete/Resolve mit vollständigem verifiziertem Record-/Snapshot-Kontext.
 
 ## Sicherheitsinvarianten
 
-- Serverdaten sind keine Wahrheit. Normaler Vault-Zustand entsteht nur aus lokal verifizierten Operationen vertrauenswürdiger Geräte.
-- Records werden erst nach Operation-, Autor-, Signatur-, AAD- und CiphertextHash-Prüfung entschlüsselt.
-- Migration ist ein separater Zustand und kein normaler Vault-Betrieb.
-- Teilmigrationen blockieren normale UI und Datenabfluss.
-- Legacy-Zeilen werden nicht destruktiv gelöscht und nach verifizierter Migration nicht als Runtime-Trust-Quelle genutzt.
-- Alte Rebaseline-, TTL-, Snapshot-Digest- und Kategorie-Globalblockade-Logik bleibt deaktiviert.
-- Runtime-Writes auf `vault_items` und `categories` bleiben verboten.
-- Export und andere Data-Egress-Flows arbeiten im OpLog-Pfad verified-only. Eine Blocklist reicht nicht aus.
-- Operationen anderer Geräte werden mit den Public Keys aus `vault_device_trust_records` geprüft, nicht mit dem aktuellen lokalen Device-Key.
+- Serverdaten sind keine Wahrheit. Runtime-Records werden erst nach lokaler Operation-, Autor-, Signatur-, Head-, AAD- und CiphertextHash-Prüfung entschlüsselt.
+- Quarantäne-, Conflict-, Unknown-Author-, Invalid-Signature-, AAD-Mismatch- und CiphertextHash-Mismatch-Records dürfen nicht entschlüsselt oder normal exportiert/gesucht/kopiert werden.
+- Delete ist eine signierte Tombstone-Operation mit Record-Payload, keine direkte DB-Löschung.
+- Restore ist nur mit vollständigem verifiziertem Snapshot-/Record-Kontext zulässig; der aktuelle UI-Action-Pfad blockiert fail-closed.
+- Resolve erfindet keinen neuen Op-Type. Der Service modelliert Resolve als signierte Update-Operation.
+- Kategorie-Delete löscht niemals automatisch Items; der Service blockiert bei referenzierenden Items.
+- Keine automatische Rebaseline, kein TTL-Trust, kein Recent-Local-Mutation-Trust, keine Kategorie-Globalblockade als OpLog-Ersatz.
+- Direkte Runtime-Writes auf `vault_items` und `categories` bleiben in UI/Import blockiert, bis die UI sichere OpLog-Base-Metadaten besitzt.
 
-## Migration-Sicherheitsmodell
+## Implementierter Stand
 
-Der Unlock-Finalizer prüft nach erfolgreicher Schlüsselableitung `evaluateVaultMigrationGate()`. Nur `notNeeded` und `verified` geben den normalen Vault frei. `required`, `ready`, `running`, `committed`, `failed` und `preflightFailed` halten den Vault gesperrt und zeigen den Migrationsstatus.
+- `vaultOpLogCrudService.ts` orchestriert Operation Builder, Pending Queue, `submit_vault_operation`, Reload und State-Machine-Verifikation.
+- Create/Update/Delete für Item- und Kategorie-Records sind im Service implementiert und getestet.
+- Delete sendet jetzt eine signierte Tombstone-Payload; SQL/RPC aktualisiert den Record als Tombstone statt alte Ciphertext-Spalten unverändert zu lassen.
+- `vaultOpLogUiOrchestrator.ts` verifiziert die globale Head-Chain vor Record-Egress und verarbeitet danach nur den letzten verifizierten Record-Zustand pro Record.
+- Alte UI-Actions `restoreQuarantinedItem`, `deleteQuarantinedItem`, `acceptMissingQuarantinedItem` sind aus Context/Komponenten entfernt.
+- `VaultQuarantineActions` nutzt nur noch `opLogRestoreRecord`/`opLogDeleteUntrustedRecord`; beide blockieren ohne Base-/Snapshot-Kontext typisiert.
+- Export-Flows in `DataSettings` und `AccountSettings` blockieren fail-closed, wenn keine verifizierte OpLog-Allowlist verfügbar ist.
 
-Der Start der Migration erfolgt nur über expliziten User Consent im Migrationspanel. Der Runtime-Orchestrator:
-
-1. lädt Legacy-Zeilen read-only,
-2. lädt oder erzeugt eine lokale Device-Signing-Identity,
-3. verlangt einen nicht extrahierbaren lokalen Device-Signing-Key,
-4. ruft `migrateVault()` auf,
-5. lädt danach den Operation-Log-Zustand neu,
-6. verifiziert ihn mit der State Machine,
-7. erlaubt erst danach den normalen Unlock.
-
-Normale Dual-Unlock-Ergebnisse laufen weiter über den primären Unlock-Pfad, damit der Migrationskontext den Vault-KDF-Output erhält. Der Duress-Pfad bleibt davon getrennt und öffnet keinen normalen Migrationszustand.
-
-`migrateVault()` schreibt keinen Device-Trust-/Head-/Commit-Zustand vor Preflight und Pre-Migration-Snapshot. Nach erfolgreicher Verifikation wird ein nicht geheimer lokaler Completion-Marker geschrieben, damit verbleibende Legacy-Zeilen nicht erneut als inkonsistenter Teilzustand blockieren.
-
-## Supabase/RPC-Evidenz
-
-Supabase-local läuft in dieser Arbeitskopie auf alternativen Ports, damit das fremde lokale Projekt `ndrfhipyjwwhzsqhzkrs` auf `54322` nicht gestoppt oder gelöscht werden musste. Die Phase-2-RPC/RLS-Integrationstests wurden gegen die lokale Instanz ausgeführt.
-
-Gefundene und behobene DB-Blocker:
-
-- `bootstrap_vault_trust` verletzte die FK von `vault_device_trust_records.added_op_id`, weil der initiale Trust-Root vor der ersten Operation existiert. Der initiale Bootstrap darf nun `added_op_id = NULL` setzen; spätere Trust-Änderungen bleiben signierte Operationen.
-- `get_vault_changes_since` lieferte `intent_id`/`rebased_from_op_id` nicht in der deklarierten Spaltenreihenfolge zurück.
-- Zwei ältere lokale Migrationen waren unter Supabase-local nicht sauber ausführbar und wurden für lokale Bootstrap-Kompatibilität gehärtet, ohne Runtime-Trust-Regeln zu ändern.
-
-## Data-Egress-Gates
-
-Export, Suche, Clipboard und UI-Normalanzeige dürfen nur verified Records verwenden. Quarantined Records, Conflict Records und Records ohne verified-Status dürfen nicht als normale Items erscheinen. Passwort-Autofill bleibt gemäß Phase-10-Policy blockiert, wenn der verified-only Kontext nicht erfüllt ist.
-
-Aktueller Status: Die zentralen OpLog-Data-Egress-Policies sind getestet. Die Exportpfade verwenden im OpLog-Kontext eine verified-Allowlist und entschlüsseln nicht-allowlistete Rows nicht. Vollständige echte Runtime-Evidenz, dass alle UI-Listen ausschließlich aus dem verified OpLog-State lesen, ist noch nicht abgeschlossen.
-
-## Runtime-Writes
-
-Direkte Runtime-Writes auf `vault_items` und `categories` bleiben verboten. Die aktuellen Item-/Kategorie-UI-Schreibaktionen sind blockiert, weil der produktive signierte CRUD-Service noch nicht vollständig existiert.
-
-Eine Freigabe darf erst erfolgen, wenn Create/Update/Delete über Operation Builder, Pending Queue, `submit_vault_operation`, Reload und State-Machine-Verifikation laufen und ihre Base-Record-Metadaten aus verified OpLog-State beziehen. Der vorhandene UI-State enthält dafür aktuell noch nicht die nötigen verified Base-Metadaten für sichere Update-/Delete-CAS-Entscheidungen.
-
-Restore/Delete/Resolve bleiben blockiert, solange kein vollständiger verifizierter Record-/Snapshot-Kontext an einen signierten Commit-Pfad gebunden ist. Keine generische Accept-Aktion ist erlaubt.
-
-## Tests und Evidenz
-
-Ausgeführt:
+## Verifizierte Tests
 
 - `npx tsc --noEmit` - bestanden.
 - `npm run build` - bestanden.
-- `npx vitest run src/contexts` - 4 Dateien, 91 Tests bestanden.
-- `npx vitest run src/services/vaultOpLog/__tests__` - 24 Dateien, 428 Tests bestanden.
-- `npx vitest run src/components/vault` - 13 Dateien, 110 Tests bestanden; bestehende React-act/i18n-Warnungen.
-- `npx vitest run src/test/security-hardening-contracts.test.ts` - 20 Tests bestanden.
-- `npx vitest run src/test/vault-op-log-phase2-migration-contract.test.ts` - 50 Tests bestanden.
-- `npx vitest run src/test/integration/vault-op-log-phase2-integration.test.ts` gegen Supabase-local - 12 Tests bestanden.
+- `npm run lint` - bestanden mit 7 bestehenden Warnungen.
+- `npm audit --omit=dev` - bestanden, 0 Vulnerabilities.
+- Runtime-Smoke per Playwright-Fallback:
+  - `/vault/settings` geöffnet und erwartungsgemäß nach `/auth?redirect=%2Fvault%2Fsettings` geleitet.
+  - `/vault` geöffnet und erwartungsgemäß nach `/auth?redirect=%2Fvault` geleitet.
+  - Keine Provider-/Hook-/Context-Crashes; Konsole enthielt den erwarteten 401 im ausgeloggten Zustand sowie Dev-/Autocomplete-Hinweise.
+- Ziel-Suite: 11 Dateien, 290 Tests bestanden:
+  - `vaultOpLogCrudService.test.ts`
+  - `vaultOpLogOperationBuilder.test.ts`
+  - `vaultDataEgressPolicy.test.ts`
+  - `vaultStateMachine.test.ts`
+  - `vaultOpLogUiOrchestrator.test.ts`
+  - `vault-op-log-phase2-migration-contract.test.ts`
+  - `VaultQuarantineActions.test.tsx`
+  - `VaultItemList.test.tsx`
+  - `VaultContext.test.tsx`
+  - `vaultQuarantineRecoveryService.test.ts`
+  - `vaultRecoveryOrchestrator.test.ts`
+  - `security-hardening-contracts.test.ts`
+- Nach der Export-Egress-Verschärfung erneut ausgeführt: 6 Dateien, 220 Tests bestanden:
+  - `vaultOpLogCrudService.test.ts`
+  - `vaultDataEgressPolicy.test.ts`
+  - `VaultQuarantineActions.test.tsx`
+  - `VaultItemList.test.tsx`
+  - `VaultContext.test.tsx`
+  - `security-hardening-contracts.test.ts`
+- Zusätzlicher Export-Egress-Contract: `security-hardening-contracts.test.ts` mit 21 Tests bestanden.
 
-Runtime-Smoke:
+## Nicht bestanden / Nicht verifiziert
 
-- `/vault` im Browser geöffnet: Route rendert ohne Provider-/Hook-Crash und leitet erwartungsgemäß nach `/auth?redirect=%2Fvault`.
-- `/vault/settings` im Browser geöffnet: Route rendert ohne Provider-/Hook-Crash und leitet erwartungsgemäß nach `/auth?redirect=%2Fvault%2Fsettings`.
-- Console: erwarteter 401 vom Auth-Session-Endpunkt im ausgeloggten Zustand, plus nicht-blockierende Dev-/Autocomplete-Hinweise.
+- `npm run test -- --reporter=dot` wurde nach 364 Sekunden durch Timeout beendet. Nicht als bestanden gewertet.
+- `npx tsc -p tsconfig.app.json --noEmit --pretty false` wurde in diesem Lauf nicht separat ausgeführt; `npx tsc --noEmit` war erfolgreich.
+- Supabase-local/RPC-Integration wurde in diesem Lauf nicht gestartet und nicht erneut gegen eine echte lokale DB ausgeführt.
+- Web/Tauri/Multi-Client/Offline/Reconnect-E2E wurde in diesem Lauf nicht ausgeführt.
+- In-App-Browser-Smoke war nicht ausführbar, weil `node_repl` Node >= 22.22.0 verlangt, lokal aber Node 22.16.0 auflöst; Runtime-Smoke erfolgte deshalb per Playwright-Fallback.
 
-Nicht ausgeführt:
+## Manueller Testplan
 
-- Tauri-Runtime mit echten Testdaten.
-- Vollständige Multi-Client-/Offline-/Online-E2E-Flows mit realen Clients.
-- Produktive Item-/Kategorie-CRUD-E2E-Flows, weil diese Flows sicher blockiert bleiben.
+- Supabase lokal starten und Migrationen vollständig anwenden: `supabase start`, danach Phase-2/Phase-12-RPC-Integrationstests ausführen.
+- Zwei Browserprofile oder zwei Clients mit getrennten Device-Signing-Keys verwenden:
+  - Web erstellt Item, Tauri/zweiter Client lädt ohne Quarantäne.
+  - Kategorie-Änderung auf Client A blockiert Client B nicht global.
+  - Offline-Konflikt desselben Items erzeugt Conflict, nicht Quarantäne.
+  - Server-Ciphertext-Manipulation führt zu Quarantäne ohne Decrypt.
+  - Server-Delete ohne Delete-Operation führt zu Missing-Without-Delete und Recovery-Option nur aus verifiziertem Snapshot.
+- Tauri mit persistiertem nicht-extrahierbarem `CryptoKey`-Handle testen.
+- UI-CRUD erst freigeben, wenn Create/Update/Delete die Base-Metadaten aus verified OpLog-State beziehen und UI-Erfolg erst nach Reload/Verify angezeigt wird.
 
 ## Restrisiken
 
-- Kompromittierte vertrauenswürdige Geräte können legitime signierte Operationen erzeugen.
-- Vollständige Serverlöschung bleibt ein Verfügbarkeitsproblem und braucht Recovery/Snapshot-Prozesse.
-- Malware im entsperrten Client-Prozess kann Klartext lesen.
-- Signierte Item-/Kategorie-CRUD-Flows sind noch nicht vollständig produktiv verdrahtet; betroffene UI-Aktionen bleiben blockiert.
-- Restore/Delete/Resolve sind sicher blockiert, aber nicht produktiv nutzbar.
-- Multi-Client-/Offline-Runtime-Evidenz fehlt noch.
+- Kompromittierte vertrauenswürdige Geräte können weiterhin gültig signierte bösartige Operationen erzeugen.
+- Persistenz nicht-extrahierbarer `CryptoKey`-Handles ist nicht in allen Ziel-Web-/Tauri-Laufzeiten bewiesen.
+- Vollständige Serverlöschung bleibt ein Verfügbarkeitsproblem und braucht verifizierte Snapshot-/Recovery-Prozesse.
+- Alte V2-/Integrity-Brücken sind noch im Unlock-/Verify-Pfad erreichbar; sie treffen keine alten Write-Entscheidungen, sind aber nicht der finale Phase-12-Zielzustand.
+- UI-CRUD und Import bleiben blockiert; produktive Schreibbarkeit ist deshalb noch nicht releasefähig.
 
-## Nicht verifizierte Annahmen
+## Rollback-Risiken
 
-- Persistenz nicht extrahierbarer `CryptoKey`-Handles ist in allen Ziel-Web-/Tauri-Laufzeiten verfügbar.
-- Premium-Overlay nutzt die entfernten alten Integrity-ServiceHooks nicht produktiv; die Registrierung wurde entfernt, damit keine Legacy-Trust-API Build-Abhängigkeit bleibt.
-- Der endgültige produktive OpLog-CRUD-Service kann ohne Legacy-Table-Fallback an die bestehende UI angebunden werden.
+- App-Rollback darf alte Trust-Logik, TTL-Trust, automatische Rebaseline oder Legacy-Snapshot-Digest nicht reaktivieren.
+- App-Rollback darf neue `vault_records`, `vault_operations`, `vault_op_log_heads` oder Device-Trust-Records nicht löschen.
+- Teilmigrationen (`ready`, `running`, `committed`, `failed`, `preflightFailed`) müssen blockiert bleiben und dürfen nicht als normaler Legacy-Vault angezeigt werden.

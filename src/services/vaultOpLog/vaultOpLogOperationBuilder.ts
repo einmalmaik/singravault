@@ -17,7 +17,7 @@
  * Supported:
  *   - create  (seals a new record, version = 1)
  *   - update  (seals a new version, CAS via previousCiphertextHash)
- *   - delete  (seals a tombstone record, version = base + 1)
+ *   - delete  (seals a typed tombstone payload, version = base + 1)
  *
  * Restore is documented as intentionally not implemented in Phase 4
  * because no restore-specific plaintext schema exists yet. Callers
@@ -241,11 +241,12 @@ export async function buildUpdateRecordOperation(
  * Build a `delete` operation for an existing verified record.
  *
  * Delete is never a bare row removal. It produces a signed
- * operation and a sealed **tombstone** record whose plaintext is
+ * operation and a sealed typed tombstone payload whose plaintext is
  * a minimal canonical marker (`{ tombstone: true }`).
  *
- * The operation's `recordType` remains the original type (e.g.
- * `item`). The tombstone record's `recordType` is `tombstone`.
+ * The record AAD keeps the original type (for example `item`), while
+ * the DB row marks `is_tombstone = true`. Keeping the logical type in
+ * AAD preserves restore/update CAS checks for the same physical row.
  */
 export async function buildDeleteRecordOperation(
   input: DeleteRecordBuilderInput,
@@ -263,7 +264,7 @@ export async function buildDeleteRecordOperation(
   const sealed = await sealPayload({
     vaultId: input.vaultId,
     recordId: input.recordId,
-    recordType: 'tombstone',
+    recordType: input.recordType,
     recordVersion: nextRecordVersion,
     keyVersion: input.keyVersion,
     vaultEncryptionKey: input.vaultEncryptionKey,

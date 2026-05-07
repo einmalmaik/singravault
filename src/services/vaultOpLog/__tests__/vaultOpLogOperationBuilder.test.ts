@@ -285,7 +285,7 @@ describe('buildDeleteRecordOperation', () => {
     expect(body.opType).toBe('delete');
     expect(body.baseRecordVersion).toBe(2);
     expect(body.previousCiphertextHash).toBe('prev-hash');
-    expect(built.sealedRecord.aad.recordType).toBe('tombstone');
+    expect(built.sealedRecord.aad.recordType).toBe('item');
     expect(built.sealedRecord.aad.recordVersion).toBe(3);
   });
 

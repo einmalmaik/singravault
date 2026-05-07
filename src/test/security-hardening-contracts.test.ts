@@ -388,10 +388,23 @@ describe("security hardening contracts", () => {
     expect(itemDialog).toContain("LEGACY_VAULT_WRITE_BLOCKED_MESSAGE");
     expect(categoryDialog).toContain("LEGACY_VAULT_WRITE_BLOCKED_MESSAGE");
     expect(offlineService).toContain("neutralizeVaultItemServerMetadata(mutation.payload)");
-    expect(recoveryService).toContain("Direct vault item restore is disabled");
-    expect(recoveryService).toContain("Direct vault item delete is disabled");
+    expect(recoveryService).not.toContain("restoreQuarantinedItemFromTrustedSnapshot");
+    expect(recoveryService).not.toContain("deleteQuarantinedItemFromVault");
+    expect(recoveryService).not.toContain("canAcceptMissing");
     expect(legacyMigrationService).toContain("migrateLegacyVaultItemMetadata");
     expect(legacyMigrationService).toContain("blockLegacyVaultRuntimeWrite");
     expect(blocker).toContain("LegacyVaultRuntimeWriteBlockedError");
+  });
+
+  it("requires a verified OpLog allowlist before export decrypts legacy vault rows", () => {
+    const dataSettings = readFileSync("src/components/settings/DataSettings.tsx", "utf-8");
+    const accountSettings = readFileSync("src/components/settings/AccountSettings.tsx", "utf-8");
+
+    for (const source of [dataSettings, accountSettings]) {
+      expect(source).toContain("const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView)");
+      expect(source).toContain("!opLogUiView || !allowedItemIds || isVaultSecurityModeBlockingEgress");
+      expect(source).toContain("allowedItemIds,");
+      expect(source).not.toContain("allowedItemIds: allowedItemIds ?? undefined");
+    }
   });
 });

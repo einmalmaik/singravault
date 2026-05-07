@@ -65,6 +65,18 @@ export function DataSettings() {
 
         setIsExporting(true);
         try {
+            const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView);
+            if (!opLogUiView || !allowedItemIds || isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)) {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: t('vault.export.blockedBySecurityMode', {
+                        defaultValue: 'Export ist ohne verifizierten Tresor-Zustand nicht erlaubt.',
+                    }),
+                });
+                return;
+            }
+
             // Get user's vault
             const { data: vault } = await supabase
                 .from('vaults')
@@ -87,21 +99,8 @@ export function DataSettings() {
                 throw new Error('Failed to fetch items');
             }
 
-            // Phase 10: apply central egress policy.
-            if (opLogUiView && isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)) {
-                toast({
-                    variant: 'destructive',
-                    title: t('common.error'),
-                    description: t('vault.export.blockedBySecurityMode', {
-                        defaultValue: 'Export ist aufgrund des aktuellen Tresor-Sicherheitsmodus nicht erlaubt.',
-                    }),
-                });
-                return;
-            }
-            const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView);
-
             const exportData = await buildVaultExportPayload(items, decryptItem, {
-                allowedItemIds: allowedItemIds ?? undefined,
+                allowedItemIds,
             });
 
             const saved = await saveExportFile({

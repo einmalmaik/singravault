@@ -11,8 +11,8 @@
  * performs no RPC calls.
  *
  * When the flag is on but required credentials (device identity,
- * vault encryption key) are missing, it also returns `null` so the
- * old productive vault path remains unchanged.
+ * vault encryption key) are missing, it returns `null` and exposes no
+ * verified OpLog egress state.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -65,7 +65,6 @@ export function useVaultOpLogUiState(
     const vaultEncryptionKey = vaultProviderState.vaultEncryptionKey;
 
     if (!deviceIdentity || !vaultEncryptionKey || !userId) {
-      // Required Phase 9 credentials not available — fall back to old path.
       setUiView(null);
       setLastError(null);
       return;

@@ -74,14 +74,12 @@ const mockVaultContext = {
   quarantineResolutionById: {} as Record<string, {
     canRestore: boolean;
     canDelete: boolean;
-    canAcceptMissing: boolean;
     hasTrustedLocalCopy: boolean;
     isBusy: boolean;
     lastError: string | null;
   }>,
-  restoreQuarantinedItem: vi.fn(),
-  deleteQuarantinedItem: vi.fn(),
-  acceptMissingQuarantinedItem: vi.fn(),
+  opLogRestoreRecord: vi.fn(),
+  opLogDeleteUntrustedRecord: vi.fn(),
   lastIntegrityResult: null as
     | null
     | {
@@ -212,9 +210,8 @@ describe.sequential('VaultItemList', () => {
     mockVaultContext.lastIntegrityResult = null;
     mockVaultContext.vaultDataVersion = 0;
     mockVaultContext.quarantineResolutionById = {};
-    mockVaultContext.restoreQuarantinedItem.mockResolvedValue({ error: null });
-    mockVaultContext.deleteQuarantinedItem.mockResolvedValue({ error: null });
-    mockVaultContext.acceptMissingQuarantinedItem.mockResolvedValue({ error: null });
+    mockVaultContext.opLogRestoreRecord.mockResolvedValue({ error: null });
+    mockVaultContext.opLogDeleteUntrustedRecord.mockResolvedValue({ error: null });
     mockEncryptItem.mockResolvedValue('encrypted');
     mockDecryptItemForLegacyMigration.mockRejectedValue(new Error('not legacy'));
     mockMigrateLegacyVaultItemEncryptionAndMetadata.mockImplementation(async (input: {
@@ -695,11 +692,7 @@ describe.sequential('VaultItemList', () => {
       }),
     );
     expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
-    expect(mockRefreshIntegrityBaseline).toHaveBeenCalledWith(
-      expect.objectContaining({
-        itemIds: expect.any(Set),
-      }),
-    );
+    expect(mockRefreshIntegrityBaseline).toHaveBeenCalledWith();
   });
 
   it('renders V2-native item envelopes without sending them through legacy migration', async () => {
@@ -921,7 +914,6 @@ describe.sequential('VaultItemList', () => {
       'item-bad': {
         canRestore: true,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: true,
         isBusy: false,
         lastError: null,
@@ -929,7 +921,6 @@ describe.sequential('VaultItemList', () => {
       'item-bad-totp': {
         canRestore: true,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: true,
         isBusy: false,
         lastError: null,
@@ -958,8 +949,8 @@ describe.sequential('VaultItemList', () => {
     }));
 
     await waitFor(() => {
-      expect(mockVaultContext.restoreQuarantinedItem).toHaveBeenCalledWith('item-bad');
-      expect(mockVaultContext.restoreQuarantinedItem).toHaveBeenCalledWith('item-bad-totp');
+      expect(mockVaultContext.opLogRestoreRecord).toHaveBeenCalledWith('item-bad');
+      expect(mockVaultContext.opLogRestoreRecord).toHaveBeenCalledWith('item-bad-totp');
     });
     expect(await screen.findByText('2 Einträge wurden wiederhergestellt')).toBeInTheDocument();
   });

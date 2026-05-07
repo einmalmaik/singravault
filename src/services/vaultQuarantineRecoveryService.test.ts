@@ -1,8 +1,19 @@
-import { describe, it } from "vitest";
+import { describe, expect, it } from 'vitest';
 
-describe("vaultQuarantineRecoveryService", () => {
-  it("Phase 11: direct vault writes removed", () => {
-    // restoreQuarantinedItemFromTrustedSnapshot and deleteQuarantinedItemFromVault
-    // now throw controlled errors instead of performing direct vault writes.
+import { buildQuarantineResolutionMap } from './vaultQuarantineRecoveryService';
+
+describe('vaultQuarantineRecoveryService', () => {
+  it('does not expose a generic accept-missing quarantine action', () => {
+    const resolution = buildQuarantineResolutionMap(
+      [{ id: 'item-1', reason: 'missing_on_server', updatedAt: null }],
+      {},
+    );
+
+    expect(resolution['item-1']).toMatchObject({
+      canRestore: false,
+      canDelete: false,
+      hasTrustedLocalCopy: false,
+    });
+    expect(Object.prototype.hasOwnProperty.call(resolution['item-1'], 'canAcceptMissing')).toBe(false);
   });
 });

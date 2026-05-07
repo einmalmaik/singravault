@@ -1,6 +1,5 @@
 import type { VaultItemData } from '@/services/cryptoService';
 import type { QuarantinedVaultItem, VaultIntegrityVerificationResult } from '@/services/vaultIntegrityService';
-import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngine';
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultContextType, VaultSnapshotSource, VaultUnlockOptions } from './vaultContextTypes';
 import type { VaultProviderState } from './useVaultProviderState';
@@ -33,9 +32,6 @@ export interface VaultProviderActionBindings {
   refreshIntegrityBaseline: VaultContextType['refreshIntegrityBaseline'];
   reportUnreadableItems: (items: QuarantinedVaultItem[]) => void;
   enterSafeMode: () => Promise<{ error: Error | null }>;
-  restoreQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
-  deleteQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
-  acceptMissingQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
   exitSafeMode: () => void;
   resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
   startVaultMigration: () => Promise<{ error: Error | null }>;
@@ -99,9 +95,6 @@ export function buildVaultContextValue(
     integrityBlockedReason: state.integrityBlockedReason,
     trustedRecoveryAvailable: state.trustedRecoveryAvailable,
     enterSafeMode: actions.enterSafeMode,
-    restoreQuarantinedItem: actions.restoreQuarantinedItem,
-    deleteQuarantinedItem: actions.deleteQuarantinedItem,
-    acceptMissingQuarantinedItem: actions.acceptMissingQuarantinedItem,
     exitSafeMode: actions.exitSafeMode,
     resetVaultAfterIntegrityFailure: actions.resetVaultAfterIntegrityFailure,
 

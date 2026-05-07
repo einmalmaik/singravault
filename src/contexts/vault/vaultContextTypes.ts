@@ -7,7 +7,6 @@ import type {
     VaultIntegrityVerificationResult,
 } from '@/services/vaultIntegrityService';
 import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecoveryService';
-import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngine';
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
 import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
@@ -60,7 +59,7 @@ export interface VaultContextType {
         options?: { source?: VaultSnapshotSource },
     ) => Promise<VaultIntegrityVerificationResult | null>;
     updateIntegrity: (items: VaultItemForIntegrity[]) => Promise<void>;
-    refreshIntegrityBaseline: (trustedMutation?: TrustedVaultMutation) => Promise<VaultIntegrityVerificationResult | null>;
+    refreshIntegrityBaseline: () => Promise<VaultIntegrityVerificationResult | null>;
     reportUnreadableItems: (items: QuarantinedVaultItem[]) => void;
     integrityVerified: boolean;
     lastIntegrityResult: VaultIntegrityVerificationResult | null;
@@ -76,9 +75,6 @@ export interface VaultContextType {
     integrityBlockedReason: VaultIntegrityBlockedReason | null;
     trustedRecoveryAvailable: boolean;
     enterSafeMode: () => Promise<{ error: Error | null }>;
-    restoreQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
-    deleteQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
-    acceptMissingQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
     exitSafeMode: () => void;
     resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
 

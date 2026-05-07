@@ -287,7 +287,7 @@ BEGIN
     );
 
     -- ----- Apply the record-level effect -----
-    IF _op_type IN ('create', 'update', 'restore', 'move', 'rekey') THEN
+    IF _op_type IN ('create', 'update', 'delete', 'restore', 'move', 'rekey') THEN
         IF p_record_payload IS NULL THEN
             RAISE EXCEPTION 'record_payload is required for op_type %', _op_type;
         END IF;
@@ -305,6 +305,22 @@ BEGIN
             RAISE EXCEPTION 'record_payload ciphertext_hash does not match operation';
         END IF;
 
+        IF _op_type = 'delete' THEN
+            UPDATE public.vault_records
+            SET record_version = record_version + 1,
+                key_version = (p_record_payload->>'key_version')::BIGINT,
+                aad_hash = p_record_payload->>'aad_hash',
+                ciphertext_hash = p_record_payload->>'ciphertext_hash',
+                nonce = p_record_payload->>'nonce',
+                ciphertext = p_record_payload->>'ciphertext',
+                is_tombstone = TRUE,
+                last_op_id = _op_id,
+                last_op_hash = _op_hash,
+                updated_at = NOW()
+            WHERE vault_id = _vault_id
+              AND record_id = _record_id
+              AND user_id = _uid;
+        ELSE
         INSERT INTO public.vault_records (
             vault_id, record_id, user_id, record_type, record_version,
             key_version, aad_hash, ciphertext_hash, nonce, ciphertext,
@@ -339,18 +355,7 @@ BEGIN
             is_tombstone = FALSE,
             updated_at = NOW()
         WHERE public.vault_records.user_id = _uid;
-    ELSIF _op_type = 'delete' THEN
-        UPDATE public.vault_records
-        SET record_version = record_version + 1,
-            is_tombstone = TRUE,
-            last_op_id = _op_id,
-            last_op_hash = _op_hash,
-            -- Keep ciphertext columns so a `restore` can be a pure
-            -- record-version bump on the same physical row.
-            updated_at = NOW()
-        WHERE vault_id = _vault_id
-          AND record_id = _record_id
-          AND user_id = _uid;
+        END IF;
     ELSIF _op_type IN ('add_device', 'revoke_device') THEN
         IF p_device_trust_payload IS NULL THEN
             RAISE EXCEPTION 'device_trust_payload is required for op_type %', _op_type;
