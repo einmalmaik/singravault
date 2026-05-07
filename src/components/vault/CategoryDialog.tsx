@@ -42,7 +42,7 @@ import type { VaultItemData } from '@/services/cryptoService';
 import {
     loadVaultSnapshot,
 } from '@/services/offlineVaultService';
-import { LEGACY_VAULT_WRITE_BLOCKED_MESSAGE } from '@/services/vaultOpLog/vaultLegacyWriteBlocker';
+import type { CategoryPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
 
 // Preset colors
 const PRESET_COLORS = [
@@ -81,7 +81,12 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
-    const { decryptItem } = useVault();
+    const {
+        decryptItem,
+        opLogCreateCategory,
+        opLogUpdateCategory,
+        opLogDeleteCategory,
+    } = useVault();
 
     const [name, setName] = useState('');
     const [icon, setIcon] = useState('');
@@ -110,12 +115,39 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         if (!user || !name.trim()) return;
 
         setLoading(true);
-        toast({
-            variant: 'destructive',
-            title: t('common.error'),
-            description: LEGACY_VAULT_WRITE_BLOCKED_MESSAGE,
-        });
-        setLoading(false);
+        try {
+            const plaintext: CategoryPlaintext = {
+                name: name.trim(),
+                icon: normalizeCategoryIcon(icon),
+                color,
+                parentCategoryRecordId: null,
+                sortOrder: null,
+            };
+            const result = isEditing
+                ? await opLogUpdateCategory(category.id, plaintext)
+                : await opLogCreateCategory(plaintext);
+            if (result.error) {
+                throw result.error;
+            }
+
+            const categoryId = isEditing
+                ? category.id
+                : 'recordId' in result ? result.recordId : null;
+            toast({
+                title: t('common.success'),
+                description: t('categories.saved'),
+            });
+            onSave?.({ type: 'saved', categoryId: categoryId ?? category?.id ?? '' });
+            onOpenChange(false);
+        } catch (error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: error instanceof Error ? error.message : t('categories.saveError'),
+            });
+        } finally {
+            setLoading(false);
+        }
     };
 
     const loadItemsInCategory = useCallback(async (): Promise<CategoryItemMatch[]> => {
@@ -186,12 +218,28 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         if (!category || !user) return;
 
         setLoading(true);
-        toast({
-            variant: 'destructive',
-            title: t('common.error'),
-            description: LEGACY_VAULT_WRITE_BLOCKED_MESSAGE,
-        });
-        setLoading(false);
+        try {
+            const result = await opLogDeleteCategory(category.id);
+            if (result.error) {
+                throw result.error;
+            }
+
+            toast({
+                title: t('common.success'),
+                description: t('categories.deleted'),
+            });
+            onSave?.({ type: 'deleted', categoryId: category.id });
+            setShowDeleteConfirm(false);
+            onOpenChange(false);
+        } catch (error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: error instanceof Error ? error.message : t('categories.deleteError'),
+            });
+        } finally {
+            setLoading(false);
+        }
     };
 
     const categoryDeleteItemCount = deleteImpactCount ?? 0;

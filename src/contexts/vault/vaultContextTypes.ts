@@ -10,6 +10,10 @@ import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecove
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
 import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
+import type {
+    CategoryPlaintext,
+    ItemPlaintext,
+} from '@/services/vaultOpLog/vaultOpLogCrudService';
 import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 
 export type VaultSnapshotSource = 'remote' | 'cache' | 'empty';
@@ -83,6 +87,12 @@ export interface VaultContextType {
     opLogUiLoading: boolean;
     opLogUiError: string | null;
     opLogUiRefresh: () => Promise<void>;
+    opLogCreateItem: (plaintext: ItemPlaintext) => Promise<{ error: Error | null; recordId: string | null }>;
+    opLogUpdateItem: (recordId: string, plaintext: ItemPlaintext) => Promise<{ error: Error | null }>;
+    opLogDeleteItem: (recordId: string) => Promise<{ error: Error | null }>;
+    opLogCreateCategory: (plaintext: CategoryPlaintext) => Promise<{ error: Error | null; recordId: string | null }>;
+    opLogUpdateCategory: (recordId: string, plaintext: CategoryPlaintext) => Promise<{ error: Error | null }>;
+    opLogDeleteCategory: (recordId: string) => Promise<{ error: Error | null }>;
     opLogRestoreRecord: (recordId: string) => Promise<{ error: Error | null }>;
     opLogDeleteUntrustedRecord: (recordId: string) => Promise<{ error: Error | null }>;
     opLogResolveConflict: (recordId: string) => Promise<{ error: Error | null }>;

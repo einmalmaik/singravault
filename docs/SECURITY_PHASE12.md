@@ -2,6 +2,30 @@
 
 Stand: 2026-05-07
 
+## Update 2026-05-07 - UI-CRUD/Quarantaene-Actions
+
+- Item-CRUD ist produktiv an den OpLog-CRUD-Service angebunden: `VaultItemDialog` ruft `opLogCreateItem`, `opLogUpdateItem` und `opLogDeleteItem`.
+- Kategorie-CRUD ist produktiv an den OpLog-CRUD-Service angebunden: `CategoryDialog` ruft `opLogCreateCategory`, `opLogUpdateCategory` und `opLogDeleteCategory`.
+- UI-Erfolg wird erst nach Service-Erfolg angezeigt; der Service fuehrt Submit, Reload und State-Machine-Verifikation aus.
+- OpLog-Quarantaene-/Konfliktpanels sind nicht mehr pauschal deaktiviert. Restore/Delete/Resolve werden ausgefuehrt, wenn verified Record-/Snapshot-Kontext vorhanden ist, und blockieren sonst fail-closed mit sichtbarer Fehlermeldung.
+- Direkte UI-Schreibpfade auf `vault_items` und `categories` sind aus Item-/Kategorie-Dialogen entfernt.
+- Weiterhin vorhanden sind Legacy-Lesebruecken in Settings-Export, Repair, Offline-Snapshot und Migration. Diese Pfade schreiben keine normalen UI-CRUD-Mutationen, bedeuten aber: Das alte Integritaets-/Quarantaene-System ist noch nicht rueckstandslos aus jedem Produktiv-Lesepfad entfernt.
+- Nach dieser Aenderung verifiziert: `npx tsc --noEmit`, `npm run build`, `npm run lint` und eine gezielte Vitest-Suite mit 6 Dateien / 126 Tests.
+
+## Update 2026-05-07 - Cloud-Supabase-Read-only-Check
+
+- Projekt: `lcrtadxlojaucwapgzmy`.
+- Umfang: Nur lesende Schema-/Metadata-/Count-Pruefung und unauthentifizierte Negativtests. Keine Cloud-Schreiboperationen, keine produktionsnahen Vault-Daten veraendert, keine Klartext-/Secret-Daten gelesen.
+- Lokale und Cloud-Migrationsanzahl stimmen ueberein: 82 Migrationen; Cloud-Latest ist `20260505193000_vault_op_log_bootstrap_fk_fix`.
+- Phase-2/Phase-12-Migrationen sind in Cloud-Migrationshistorie vorhanden: `20260504130000_vault_op_log_phase2_records_operations_trust`, `20260504130100_vault_op_log_phase2_rpcs`, `20260505193000_vault_op_log_bootstrap_fk_fix`.
+- OpLog-Tabellen existieren mit aktivem RLS: `vault_records`, `vault_operations`, `vault_device_trust_records`, `vault_op_log_heads`.
+- OpLog-RPCs existieren mit erwarteten Signaturen, `SECURITY DEFINER` und `search_path=public`: `submit_vault_operation`, `get_vault_head`, `get_vault_changes_since`, `get_vault_records_by_ids`, `bootstrap_vault_trust`.
+- RPC-Definitionsmarker fuer CAS/Head-Felder sind vorhanden: `submit_vault_operation` referenziert `previous_ciphertext_hash`, `base_vault_head`, `resulting_vault_head`, `op_id`, `op_hash`, `intent_id`, `rebased_from_op_id`.
+- Negativtests ohne Auth gegen `submit_vault_operation`, `bootstrap_vault_trust` und `get_vault_changes_since` schlagen mit `Not authenticated` fehl.
+- Aktueller Cloud-Datenstand per Count-only: `vault_records` 0, `vault_operations` 0, `vault_device_trust_records` 2, `vault_op_log_heads` 2, Legacy `vault_items` 31, Legacy `categories` 3.
+- Review-Punkt vor Release: Die OpLog-Tabellen und OpLog-RPCs haben `anon`-Grants. RLS und `auth.uid()`-Checks blockieren die getesteten unauthentifizierten RPC-Pfade, die unnoetigen `anon`-Grants sollten trotzdem entfernt oder in einer Migration explizit begruendet werden.
+- Nicht verifiziert: Authentifizierte Cloud-E2E-Schreibtests, Web/Tauri-/Multi-Client-/Offline-Flows und echte OpLog-CRUD-Roundtrips gegen Cloud. Grund: Es lag kein isolierter Cloud-Testnutzer/Test-Vault mit ausdruecklicher Erlaubnis fuer Mutationen vor.
+
 ## Ergebnis
 
 Status: teilweise abgeschlossen, nicht releasefähig.

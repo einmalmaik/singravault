@@ -37,7 +37,13 @@ export interface VaultProviderActionBindings {
   startVaultMigration: () => Promise<{ error: Error | null }>;
   retryVaultMigration: () => Promise<{ error: Error | null }>;
 
-  // Phase 9 actions (optional until fully implemented)
+  // OpLog actions (optional until fully implemented)
+  opLogCreateItem?: VaultContextType['opLogCreateItem'];
+  opLogUpdateItem?: VaultContextType['opLogUpdateItem'];
+  opLogDeleteItem?: VaultContextType['opLogDeleteItem'];
+  opLogCreateCategory?: VaultContextType['opLogCreateCategory'];
+  opLogUpdateCategory?: VaultContextType['opLogUpdateCategory'];
+  opLogDeleteCategory?: VaultContextType['opLogDeleteCategory'];
   opLogRestoreRecord?: (recordId: string) => Promise<{ error: Error | null }>;
   opLogDeleteUntrustedRecord?: (recordId: string) => Promise<{ error: Error | null }>;
   opLogResolveConflict?: (recordId: string) => Promise<{ error: Error | null }>;
@@ -103,6 +109,12 @@ export function buildVaultContextValue(
     opLogUiLoading: opLogUiState.isLoading,
     opLogUiError: opLogUiState.lastError,
     opLogUiRefresh: opLogUiState.refresh,
+    opLogCreateItem: actions.opLogCreateItem ?? (() => Promise.resolve({ error: new Error('Not implemented'), recordId: null })),
+    opLogUpdateItem: actions.opLogUpdateItem ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
+    opLogDeleteItem: actions.opLogDeleteItem ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
+    opLogCreateCategory: actions.opLogCreateCategory ?? (() => Promise.resolve({ error: new Error('Not implemented'), recordId: null })),
+    opLogUpdateCategory: actions.opLogUpdateCategory ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
+    opLogDeleteCategory: actions.opLogDeleteCategory ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     opLogRestoreRecord: actions.opLogRestoreRecord ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     opLogDeleteUntrustedRecord: actions.opLogDeleteUntrustedRecord ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     opLogResolveConflict: actions.opLogResolveConflict ?? (() => Promise.resolve({ error: new Error('Not implemented') })),

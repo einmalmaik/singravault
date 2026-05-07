@@ -207,7 +207,11 @@ export function getVerifiedRecordBase(
   record: LocalVerifiedRecord | null,
   baseVaultHead: string | null,
 ): VerifiedRecordBase {
-  if (!record || record.recordState !== 'verified' || !baseVaultHead) {
+  if (
+    !record
+    || (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+    || !baseVaultHead
+  ) {
     throw new MissingVerifiedBaseMetadataError();
   }
 

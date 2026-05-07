@@ -88,7 +88,7 @@ import {
 import {
     ENCRYPTED_CATEGORY_PREFIX,
 } from '@/services/vaultMetadataPolicy';
-import { LEGACY_VAULT_WRITE_BLOCKED_MESSAGE } from '@/services/vaultOpLog/vaultLegacyWriteBlocker';
+import type { ItemPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
 
 interface Category {
     id: string;
@@ -238,6 +238,33 @@ export function buildVaultItemPayloadForEncryption(
     return itemData;
 }
 
+function buildOpLogItemPlaintext(itemData: VaultItemData): ItemPlaintext {
+    return {
+        title: itemData.title ?? '',
+        websiteUrl: itemData.websiteUrl ?? null,
+        username: itemData.username ?? null,
+        password: itemData.password ?? null,
+        notes: itemData.notes ?? null,
+        itemType: itemData.itemType === 'note'
+            ? 'note'
+            : itemData.itemType === 'totp'
+                ? 'totp'
+                : itemData.itemType === 'card'
+                    ? 'card'
+                    : 'password',
+        categoryRecordId: itemData.categoryId ?? null,
+        isFavorite: itemData.isFavorite ?? false,
+        sortOrder: null,
+        totpSecret: itemData.totpSecret ?? null,
+        totpIssuer: itemData.totpIssuer ?? null,
+        totpLabel: itemData.totpLabel ?? null,
+        totpAlgorithm: itemData.totpAlgorithm ?? null,
+        totpDigits: itemData.totpDigits ?? null,
+        totpPeriod: itemData.totpPeriod ?? null,
+        customFields: null,
+    };
+}
+
 export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialType = 'password' }: VaultItemDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
@@ -245,6 +272,9 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const {
         decryptItem,
         decryptData,
+        opLogCreateItem,
+        opLogUpdateItem,
+        opLogDeleteItem,
         verifyIntegrity,
     } = useVault();
     const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
@@ -465,23 +495,90 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             }
         }
 
-        toast({
-            variant: 'destructive',
-            title: t('common.error'),
-            description: LEGACY_VAULT_WRITE_BLOCKED_MESSAGE,
-        });
+        setLoading(true);
+        try {
+            const itemData = buildVaultItemPayloadForEncryption(data, itemType, selectedCategoryId);
+            const plaintext = buildOpLogItemPlaintext(itemData);
+            const result = isEditing && normalizedItemId
+                ? await opLogUpdateItem(normalizedItemId, plaintext)
+                : await opLogCreateItem(plaintext);
+
+            if (result.error) {
+                throw result.error;
+            }
+
+            const savedRecordId = isEditing ? normalizedItemId : 'recordId' in result ? result.recordId : null;
+            let pendingAttachmentFailureCount = 0;
+            if (pendingAttachmentCount > 0) {
+                if (savedRecordId && uploadPendingAttachmentsRef.current) {
+                    try {
+                        const uploadResult = await uploadPendingAttachmentsRef.current(savedRecordId);
+                        pendingAttachmentFailureCount = uploadResult.failureCount;
+                    } catch {
+                        pendingAttachmentFailureCount = pendingAttachmentCount;
+                    }
+                } else {
+                    pendingAttachmentFailureCount = pendingAttachmentCount;
+                }
+                setPendingAttachmentCount(0);
+                uploadPendingAttachmentsRef.current = null;
+            }
+
+            toast({
+                title: t('common.success'),
+                description: isEditing ? t('vault.itemUpdated') : t('vault.itemCreated'),
+            });
+
+            if (pendingAttachmentFailureCount > 0) {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: t('fileAttachments.pendingUploadFailed', {
+                        count: pendingAttachmentFailureCount,
+                        defaultValue: '{{count}} Dateianhang/Dateianhänge konnten nicht hochgeladen werden. Der Eintrag wurde ohne diese Anhänge gespeichert.',
+                    }),
+                });
+            }
+
+            clearSensitiveDialogState();
+            onSave?.();
+            onOpenChange(false);
+        } catch (error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: error instanceof Error ? error.message : t('vault.saveError'),
+            });
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleDelete = async () => {
         if (!normalizedItemId || !user) return;
 
         setDeleting(true);
-        toast({
-            variant: 'destructive',
-            title: t('common.error'),
-            description: LEGACY_VAULT_WRITE_BLOCKED_MESSAGE,
-        });
-        setDeleting(false);
+        try {
+            const result = await opLogDeleteItem(normalizedItemId);
+            if (result.error) {
+                throw result.error;
+            }
+            toast({
+                title: t('common.success'),
+                description: t('vault.itemDeleted'),
+            });
+            clearSensitiveDialogState();
+            onSave?.();
+            onOpenChange(false);
+        } catch (error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: error instanceof Error ? error.message : t('vault.deleteError'),
+            });
+        } finally {
+            setDeleting(false);
+        }
     };
 
     const handleGeneratedPassword = (password: string) => {

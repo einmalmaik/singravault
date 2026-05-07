@@ -7,7 +7,7 @@
  * secure notes, and TOTP entries.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -305,6 +305,29 @@ export default function VaultPage() {
         setRefreshKey((prev) => prev + 1);
     };
 
+    const runOpLogRecordAction = useCallback(async (
+        action: (recordId: string) => Promise<{ error: Error | null }>,
+        recordId: string,
+    ): Promise<void> => {
+        const result = await action(recordId);
+        if (result.error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: result.error.message,
+            });
+            return;
+        }
+
+        setRefreshKey((prev) => prev + 1);
+        toast({
+            title: t('common.success'),
+            description: t('vault.oplog.actionCompleted', {
+                defaultValue: 'OpLog-Aktion wurde verifiziert abgeschlossen.',
+            }),
+        });
+    }, [t, toast]);
+
     return (
         <div className="min-h-screen flex overflow-hidden bg-background">
             {!isMobile && (
@@ -455,14 +478,18 @@ export default function VaultPage() {
                             )}
                             <VaultOpLogQuarantinePanel
                                 items={opLogUiView.quarantinedItems}
-                                onRestore={opLogRestoreRecord}
-                                onDelete={opLogDeleteUntrustedRecord}
-                                actionsDisabled
+                                onRestore={(recordId) => {
+                                    void runOpLogRecordAction(opLogRestoreRecord, recordId);
+                                }}
+                                onDelete={(recordId) => {
+                                    void runOpLogRecordAction(opLogDeleteUntrustedRecord, recordId);
+                                }}
                             />
                             <VaultOpLogConflictPanel
                                 items={opLogUiView.conflictedItems}
-                                onResolve={opLogResolveConflict}
-                                actionsDisabled
+                                onResolve={(recordId) => {
+                                    void runOpLogRecordAction(opLogResolveConflict, recordId);
+                                }}
                             />
                         </>
                     )}

@@ -373,7 +373,7 @@ describe("security hardening contracts", () => {
     expect(vaultUnlock).not.toContain('href="/settings?tab=security#profile-device-key"');
   });
 
-  it("blocks legacy vault table writes until signed operation-log writes are available", () => {
+  it("routes vault item/category UI writes through signed OpLog actions", () => {
     const policy = readFileSync("src/services/vaultMetadataPolicy.ts", "utf-8");
     const itemDialog = readFileSync("src/components/vault/VaultItemDialog.tsx", "utf-8");
     const categoryDialog = readFileSync("src/components/vault/CategoryDialog.tsx", "utf-8");
@@ -385,8 +385,14 @@ describe("security hardening contracts", () => {
     expect(policy).toContain("neutralizeVaultItemServerMetadata");
     expect(policy).toContain("hasLegacyVaultItemServerMetadata");
     expect(policy).toContain("mergeLegacyVaultItemMetadataIntoPayload");
-    expect(itemDialog).toContain("LEGACY_VAULT_WRITE_BLOCKED_MESSAGE");
-    expect(categoryDialog).toContain("LEGACY_VAULT_WRITE_BLOCKED_MESSAGE");
+    expect(itemDialog).toContain("opLogCreateItem");
+    expect(itemDialog).toContain("opLogUpdateItem");
+    expect(itemDialog).toContain("opLogDeleteItem");
+    expect(itemDialog).not.toContain("from('vault_items')");
+    expect(categoryDialog).toContain("opLogCreateCategory");
+    expect(categoryDialog).toContain("opLogUpdateCategory");
+    expect(categoryDialog).toContain("opLogDeleteCategory");
+    expect(categoryDialog).not.toContain("from('categories')");
     expect(offlineService).toContain("neutralizeVaultItemServerMetadata(mutation.payload)");
     expect(recoveryService).not.toContain("restoreQuarantinedItemFromTrustedSnapshot");
     expect(recoveryService).not.toContain("deleteQuarantinedItemFromVault");

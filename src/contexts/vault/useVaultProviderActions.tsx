@@ -44,12 +44,12 @@ import { buildVaultContextValue } from './buildVaultContextValue';
 import { useVaultCryptoActions } from './useVaultCryptoActions';
 import { useVaultIntegrityActions } from './useVaultIntegrityActions';
 import { useVaultMigrationActions } from './useVaultMigrationActions';
+import { useVaultOpLogCrudActions } from './useVaultOpLogCrudActions';
 import { useVaultProviderState } from './useVaultProviderState';
 import { useVaultLifecycleEffects } from './useVaultLifecycleEffects';
 import { useVaultOpLogUiState } from './useVaultOpLogUiState';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
 import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
-import { MissingVerifiedBaseMetadataError } from '@/services/vaultOpLog/vaultOpLogCrudService';
 
 export function useVaultProviderActions(): VaultContextType {
   const { user, authReady } = useAuth();
@@ -631,18 +631,12 @@ export function useVaultProviderActions(): VaultContextType {
     user,
     decryptItemForLegacyMigration,
   });
-
-  const opLogRestoreRecord = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
-    return { error: new MissingVerifiedBaseMetadataError() };
-  }, []);
-
-  const opLogDeleteUntrustedRecord = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
-    return { error: new MissingVerifiedBaseMetadataError() };
-  }, []);
-
-  const opLogResolveConflict = useCallback(async (_recordId: string): Promise<{ error: Error | null }> => {
-    return { error: new MissingVerifiedBaseMetadataError() };
-  }, []);
+  const opLogActions = useVaultOpLogCrudActions({
+    state,
+    user,
+    decryptTrustedRecoverySnapshotItem,
+    opLogUiRefresh: opLogUiState.refresh,
+  });
 
   return buildVaultContextValue(state, {
     setupMasterPassword,
@@ -672,8 +666,6 @@ export function useVaultProviderActions(): VaultContextType {
     resetVaultAfterIntegrityFailure,
     startVaultMigration,
     retryVaultMigration,
-    opLogRestoreRecord,
-    opLogDeleteUntrustedRecord,
-    opLogResolveConflict,
+    ...opLogActions,
   }, opLogUiState);
 }
