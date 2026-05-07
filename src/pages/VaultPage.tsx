@@ -183,6 +183,29 @@ export default function VaultPage() {
         };
     }, [user, isLocked, isSetupRequired, isOnline, toast, t]);
 
+    const runOpLogRecordAction = useCallback(async (
+        action: (recordId: string) => Promise<{ error: Error | null }>,
+        recordId: string,
+    ): Promise<void> => {
+        const result = await action(recordId);
+        if (result.error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: result.error.message,
+            });
+            return;
+        }
+
+        setRefreshKey((prev) => prev + 1);
+        toast({
+            title: t('common.success'),
+            description: t('vault.oplog.actionCompleted', {
+                defaultValue: 'OpLog-Aktion wurde verifiziert abgeschlossen.',
+            }),
+        });
+    }, [t, toast]);
+
     if (vaultLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-background">
@@ -304,29 +327,6 @@ export default function VaultPage() {
     const handleItemSaved = () => {
         setRefreshKey((prev) => prev + 1);
     };
-
-    const runOpLogRecordAction = useCallback(async (
-        action: (recordId: string) => Promise<{ error: Error | null }>,
-        recordId: string,
-    ): Promise<void> => {
-        const result = await action(recordId);
-        if (result.error) {
-            toast({
-                variant: 'destructive',
-                title: t('common.error'),
-                description: result.error.message,
-            });
-            return;
-        }
-
-        setRefreshKey((prev) => prev + 1);
-        toast({
-            title: t('common.success'),
-            description: t('vault.oplog.actionCompleted', {
-                defaultValue: 'OpLog-Aktion wurde verifiziert abgeschlossen.',
-            }),
-        });
-    }, [t, toast]);
 
     return (
         <div className="min-h-screen flex overflow-hidden bg-background">

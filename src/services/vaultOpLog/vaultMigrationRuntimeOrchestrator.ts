@@ -14,6 +14,7 @@ import type { VaultItemData } from '@/services/cryptoService';
 import { generateDeviceSigningKeyPair } from './operationSigningService';
 import { migrateVault, type MigrateVaultResult } from './migrationService';
 import type { LegacyCategoryRow, LegacyVaultItemRow } from './migrationTypes';
+import { loadMigrationCheckpoint } from './legacyMigrationStateStore';
 import { saveVaultOpLogDeviceIdentity, loadVaultOpLogDeviceIdentity } from './vaultOpLogDeviceStore';
 import {
   loadVaultOpLogDeviceSigningKey,
@@ -128,6 +129,23 @@ async function getOrCreateDeviceSigningContext(
   userId: string,
   vaultId: string,
 ): Promise<DeviceSigningContext> {
+  const checkpoint = loadMigrationCheckpoint(vaultId);
+  if (checkpoint?.signingDeviceId && checkpoint.signingPublicKeyB64Url) {
+    const privateKey = await loadVaultOpLogDeviceSigningKey({
+      userId,
+      vaultId,
+      deviceId: checkpoint.signingDeviceId,
+    });
+    if (!privateKey) {
+      throw new Error('Lokaler Device-Signing-Key der begonnenen Migration fehlt. Migration kann nicht sicher fortgesetzt werden.');
+    }
+    return {
+      deviceId: checkpoint.signingDeviceId,
+      privateKey,
+      publicSigningKeyB64Url: checkpoint.signingPublicKeyB64Url,
+    };
+  }
+
   const existingIdentity = loadVaultOpLogDeviceIdentity();
   if (existingIdentity) {
     const privateKey = await loadVaultOpLogDeviceSigningKey({

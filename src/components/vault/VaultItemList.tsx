@@ -90,8 +90,14 @@ interface BulkRestoreProgress {
   lastError: string | null;
 }
 
+interface VaultItemListIntegrityGate {
+  readonly mode?: string;
+  readonly quarantinedItems: QuarantinedVaultItem[];
+  readonly isFirstCheck?: boolean;
+}
+
 function canDecryptFromIntegrityResult(
-  result: { mode?: string; quarantinedItems: QuarantinedVaultItem[] } | null | undefined,
+  result: VaultItemListIntegrityGate | null | undefined,
   itemId: string,
 ): boolean {
   if (!result?.mode) {
@@ -115,6 +121,14 @@ function canDecryptFromIntegrityResult(
   } catch {
     return false;
   }
+}
+
+function buildOpLogVerifiedListGate(): VaultItemListIntegrityGate {
+  return {
+    mode: 'healthy',
+    quarantinedItems: [],
+    isFirstCheck: false,
+  };
 }
 
 function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
@@ -165,8 +179,10 @@ export function VaultItemList({
     refreshIntegrityBaseline,
     verifyIntegrity,
     vaultDataVersion,
+    vaultMigrationStatus,
     opLogUiView,
   } = useVault();
+  const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
 
   const [items, setItems] = useState<VaultItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -260,7 +276,7 @@ export function VaultItemList({
   }, [userId]);
 
   const revalidateRemoteIntegrity = useCallback(async () => {
-    if (!userId || revalidatingRef.current) {
+    if (!userId || revalidatingRef.current || useOpLogVerifiedRuntime) {
       return;
     }
 
@@ -276,7 +292,7 @@ export function VaultItemList({
         setRevalidating(false);
       }
     }
-  }, [userId]);
+  }, [useOpLogVerifiedRuntime, userId]);
 
   useEffect(() => {
     async function fetchItems() {
@@ -296,16 +312,20 @@ export function VaultItemList({
       }
       try {
         const { snapshot, source } = await loadVaultSnapshot(userId);
-        const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
+        const integrityResult: VaultItemListIntegrityGate | null = useOpLogVerifiedRuntime
+          ? buildOpLogVerifiedListGate()
+          : await verifyIntegrityRef.current(snapshot, { source });
         const allowsAnyDecrypt = integrityResult?.mode === 'healthy' || integrityResult?.mode === 'quarantine';
         if (!allowsAnyDecrypt) {
           setItems([]);
         } else {
-          const canPersistMigrations = integrityResult?.mode === 'healthy'
+          const canPersistMigrations = !useOpLogVerifiedRuntime
+            && integrityResult?.mode === 'healthy'
             && integrityResult.isFirstCheck
             && source === 'remote'
             && isAppOnline();
-          const canPersistLegacyEncryptionMigration = source === 'remote'
+          const canPersistLegacyEncryptionMigration = !useOpLogVerifiedRuntime
+            && source === 'remote'
             && isAppOnline()
             && (
               integrityResult?.mode === 'healthy'
@@ -488,7 +508,7 @@ export function VaultItemList({
           // Cached snapshots keep the vault usable offline and while local writes
           // are pending. A lightweight remote revalidation follows so DB-side
           // tampering can move items into quarantine without waiting for edit/open.
-          if (source !== 'remote' && isAppOnline()) {
+          if (!useOpLogVerifiedRuntime && source !== 'remote' && isAppOnline()) {
             void revalidateRemoteIntegrity();
           }
         }
@@ -514,6 +534,7 @@ export function VaultItemList({
     cloudSyncTick,
     isDuressMode,
     revalidateRemoteIntegrity,
+    useOpLogVerifiedRuntime,
     userId,
     vaultDataVersion,
   ]);

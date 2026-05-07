@@ -36,6 +36,7 @@ import {
 } from '../legacyMigrationMapper';
 import {
   loadMigrationCheckpoint,
+  saveMigrationCheckpoint,
   type MigrationStorage,
 } from '../legacyMigrationStateStore';
 import {
@@ -148,6 +149,152 @@ function makeMockRpcClient(behavior: 'success' | 'failCommit' | 'alreadyBootstra
   } as SupabaseRpcClient & { callCount: () => number };
 }
 
+interface HeadCheckingServerState {
+  currentHead: string | null;
+  sequenceNumber: number;
+  submitAttempts: number;
+  failSubmitAttempts: Set<number>;
+  operationRows: Record<string, unknown>[];
+  recordRowsById: Map<string, Record<string, unknown>>;
+}
+
+function makeHeadCheckingServerState(failSubmitAttempts: readonly number[] = []): HeadCheckingServerState {
+  return {
+    currentHead: null,
+    sequenceNumber: 0,
+    submitAttempts: 0,
+    failSubmitAttempts: new Set(failSubmitAttempts),
+    operationRows: [],
+    recordRowsById: new Map(),
+  };
+}
+
+function makeHeadCheckingRpcClient(
+  serverState: HeadCheckingServerState = makeHeadCheckingServerState(),
+): SupabaseRpcClient {
+  const rpc = vi.fn(async <T = unknown>(
+    fn: string,
+    params: Record<string, unknown>,
+  ): Promise<{ data: T | null; error: { code: string; message: string; details?: string; hint?: string } | null }> => {
+    if (fn === 'bootstrap_vault_trust') {
+      if (serverState.currentHead !== null) {
+        return {
+          data: {
+            bootstrapped: false,
+            reason: 'trust_list_already_exists',
+            existing_count: 1,
+          } as T,
+          error: null,
+        };
+      }
+
+      serverState.currentHead = String(params.p_initial_head);
+      return {
+        data: {
+          bootstrapped: true,
+          vault_id: params.p_vault_id,
+          device_id: params.p_device_id,
+          initial_head: params.p_initial_head,
+          initial_op_id: params.p_initial_op_id,
+        } as T,
+        error: null,
+      };
+    }
+
+    if (fn === 'submit_vault_operation') {
+      serverState.submitAttempts += 1;
+      const op = params.p_op as {
+        op_id: string;
+        base_vault_head: string | null;
+        resulting_vault_head: string;
+      };
+
+      if (serverState.failSubmitAttempts.delete(serverState.submitAttempts)) {
+        return { data: null, error: { code: '57014', message: 'RPC timeout' } };
+      }
+
+      if (op.base_vault_head !== serverState.currentHead) {
+        return {
+          data: {
+            applied: false,
+            conflict_reason: 'stale_vault_head',
+            current_head: serverState.currentHead,
+            current_sequence_number: serverState.sequenceNumber,
+          } as T,
+          error: null,
+        };
+      }
+
+      serverState.sequenceNumber += 1;
+      serverState.currentHead = op.resulting_vault_head;
+      const operationRow = {
+        ...(params.p_op as Record<string, unknown>),
+        sequence_number: serverState.sequenceNumber,
+        received_at_server: `2026-05-07T10:00:${String(serverState.sequenceNumber).padStart(2, '0')}.000Z`,
+      };
+      serverState.operationRows.push(operationRow);
+
+      const recordPayload = params.p_record_payload as Record<string, unknown> | null;
+      if (recordPayload) {
+        serverState.recordRowsById.set(String(operationRow.record_id), {
+          vault_id: operationRow.vault_id,
+          record_id: operationRow.record_id,
+          record_type: operationRow.record_type,
+          record_version: 1,
+          key_version: recordPayload.key_version,
+          aad_hash: recordPayload.aad_hash,
+          ciphertext_hash: recordPayload.ciphertext_hash,
+          nonce: recordPayload.nonce,
+          ciphertext: recordPayload.ciphertext,
+          last_op_id: operationRow.op_id,
+          last_op_hash: operationRow.op_hash,
+          is_tombstone: false,
+          created_at: operationRow.created_at_client,
+          updated_at: operationRow.received_at_server,
+        });
+      }
+
+      return {
+        data: {
+          applied: true,
+          idempotent: false,
+          op_id: op.op_id,
+          sequence_number: serverState.sequenceNumber,
+          resulting_vault_head: op.resulting_vault_head,
+          current_head: serverState.currentHead,
+          current_sequence_number: serverState.sequenceNumber,
+        } as T,
+        error: null,
+      };
+    }
+
+    if (fn === 'get_vault_changes_since') {
+      const sinceSequence = Number(params.p_since_sequence ?? 0);
+      const limit = Number(params.p_limit ?? 500);
+      return {
+        data: serverState.operationRows
+          .filter((row) => Number(row.sequence_number) > sinceSequence)
+          .slice(0, limit) as T,
+        error: null,
+      };
+    }
+
+    if (fn === 'get_vault_records_by_ids') {
+      const recordIds = Array.isArray(params.p_record_ids) ? params.p_record_ids.map(String) : [];
+      return {
+        data: recordIds
+          .map((recordId) => serverState.recordRowsById.get(recordId))
+          .filter((row): row is Record<string, unknown> => row !== undefined) as T,
+        error: null,
+      };
+    }
+
+    return { data: [] as T, error: null };
+  });
+
+  return { rpc: rpc as unknown as SupabaseRpcClient['rpc'] };
+}
+
 function makeDecryptItem(decryptedData: unknown) {
   return vi.fn(async (_item: LegacyVaultItemRow) => decryptedData);
 }
@@ -196,6 +343,18 @@ describe('migrateVault', () => {
     };
   }
 
+  function makeCapturingCheckpointStorage(capturedWrites: string[]): MigrationStorage {
+    const memory = new Map<string, string>();
+    return {
+      getItem: (k) => memory.get(k) ?? null,
+      setItem: (k, v) => {
+        capturedWrites.push(v);
+        memory.set(k, v);
+      },
+      removeItem: (k) => memory.delete(k),
+    };
+  }
+
   it('migrates a single legacy category successfully', async () => {
     const vaultId = nextVaultId();
     const keyPair = await generateDeviceSigningKeyPair();
@@ -220,6 +379,200 @@ describe('migrateVault', () => {
     expect(result.finalState).toBe('legacyMarkedMigrated');
     expect(result.progress.preparedCategoryCount).toBe(1);
     expect(result.progress.quarantinedCategoryCount).toBe(0);
+  });
+
+  it('chains multiple migrated category creates through the previous operation head', async () => {
+    const vaultId = nextVaultId();
+    const keyPair = await generateDeviceSigningKeyPair();
+    const mockClient = makeHeadCheckingRpcClient();
+    const categories = [
+      makeLegacyCategory({ id: 'cat-one', name: 'Social' }),
+      makeLegacyCategory({ id: 'cat-two', name: 'Work' }),
+      makeLegacyCategory({ id: 'cat-three', name: 'Private' }),
+    ];
+
+    const result = await migrateVault({
+      vaultId,
+      userId: 'user-1',
+      deviceId: 'device-1',
+      deviceSigningKey: keyPair.privateKey,
+      publicSigningKeyB64Url: keyPair.publicKeyB64Url,
+      vaultEncryptionKey: makeVaultEncryptionKey(),
+      legacyItems: [],
+      legacyCategories: categories,
+      decryptItem: makeDecryptItem({}),
+      rpcClient: mockClient,
+      checkpointStorage: makeCheckpointStorage(),
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.finalState).toBe('legacyMarkedMigrated');
+    expect(result.progress.preparedCategoryCount).toBe(3);
+  });
+
+  it('resumes category commit with the original operation timestamps after a retryable failure', async () => {
+    const vaultId = nextVaultId();
+    const keyPair = await generateDeviceSigningKeyPair();
+    const checkpointStorage = makeCheckpointStorage();
+    const serverState = makeHeadCheckingServerState([3]);
+    const vaultEncryptionKey = makeVaultEncryptionKey();
+    const categories = [
+      makeLegacyCategory({ id: 'cat-one', name: 'Social' }),
+      makeLegacyCategory({ id: 'cat-two', name: 'Work' }),
+    ];
+
+    const firstResult = await migrateVault({
+      vaultId,
+      userId: 'user-1',
+      deviceId: 'device-1',
+      deviceSigningKey: keyPair.privateKey,
+      publicSigningKeyB64Url: keyPair.publicKeyB64Url,
+      vaultEncryptionKey,
+      legacyItems: [],
+      legacyCategories: categories,
+      decryptItem: makeDecryptItem({}),
+      rpcClient: makeHeadCheckingRpcClient(serverState),
+      checkpointStorage,
+      now: '2026-05-07T10:00:00.000Z',
+    });
+
+    expect(firstResult.success).toBe(false);
+    expect(firstResult.error?.kind).toBe('commitFailed');
+    expect(firstResult.progress.committedOperationCount).toBe(2);
+
+    const retryResult = await migrateVault({
+      vaultId,
+      userId: 'user-1',
+      deviceId: 'device-1',
+      deviceSigningKey: keyPair.privateKey,
+      publicSigningKeyB64Url: keyPair.publicKeyB64Url,
+      vaultEncryptionKey,
+      legacyItems: [],
+      legacyCategories: categories,
+      decryptItem: makeDecryptItem({}),
+      rpcClient: makeHeadCheckingRpcClient(serverState),
+      checkpointStorage,
+      now: '2026-05-07T11:00:00.000Z',
+    });
+
+    if (!retryResult.success) {
+      throw new Error(
+        `retry failed: kind=${retryResult.error?.kind ?? 'none'} message=${retryResult.error?.message ?? 'none'} state=${retryResult.finalState}`,
+      );
+    }
+    expect(retryResult.success).toBe(true);
+    expect(retryResult.finalState).toBe('legacyMarkedMigrated');
+    expect(retryResult.progress.preparedCategoryCount).toBe(2);
+  });
+
+  it('verifies retry checkpoints with the original migration signing identity', async () => {
+    const vaultId = nextVaultId();
+    const originalKeyPair = await generateDeviceSigningKeyPair();
+    const newKeyPair = await generateDeviceSigningKeyPair();
+    const checkpointStorage = makeCheckpointStorage();
+    const serverState = makeHeadCheckingServerState([3]);
+    const vaultEncryptionKey = makeVaultEncryptionKey();
+    const categories = [
+      makeLegacyCategory({ id: 'cat-one', name: 'Social' }),
+      makeLegacyCategory({ id: 'cat-two', name: 'Work' }),
+    ];
+
+    const firstResult = await migrateVault({
+      vaultId,
+      userId: 'user-1',
+      deviceId: 'original-device',
+      deviceSigningKey: originalKeyPair.privateKey,
+      publicSigningKeyB64Url: originalKeyPair.publicKeyB64Url,
+      vaultEncryptionKey,
+      legacyItems: [],
+      legacyCategories: categories,
+      decryptItem: makeDecryptItem({}),
+      rpcClient: makeHeadCheckingRpcClient(serverState),
+      checkpointStorage,
+      now: '2026-05-07T10:00:00.000Z',
+    });
+
+    expect(firstResult.success).toBe(false);
+    const checkpoint = loadMigrationCheckpoint(vaultId, checkpointStorage);
+    expect(checkpoint?.signingDeviceId).toBe('original-device');
+    expect(checkpoint?.signingPublicKeyB64Url).toBe(originalKeyPair.publicKeyB64Url);
+
+    const retryResult = await migrateVault({
+      vaultId,
+      userId: 'user-1',
+      deviceId: 'new-device',
+      deviceSigningKey: newKeyPair.privateKey,
+      publicSigningKeyB64Url: newKeyPair.publicKeyB64Url,
+      vaultEncryptionKey,
+      legacyItems: [],
+      legacyCategories: categories,
+      decryptItem: makeDecryptItem({}),
+      rpcClient: makeHeadCheckingRpcClient(serverState),
+      checkpointStorage,
+      now: '2026-05-07T11:00:00.000Z',
+    });
+
+    expect(retryResult.success).toBe(true);
+    expect(retryResult.finalState).toBe('legacyMarkedMigrated');
+  });
+
+  it('recovers an older partial checkpoint by reloading committed operations through the OpLog RPCs', async () => {
+    const vaultId = nextVaultId();
+    const keyPair = await generateDeviceSigningKeyPair();
+    const checkpointStorage = makeCheckpointStorage();
+    const serverState = makeHeadCheckingServerState([3]);
+    const vaultEncryptionKey = makeVaultEncryptionKey();
+    const categories = [
+      makeLegacyCategory({ id: 'cat-one', name: 'Social' }),
+      makeLegacyCategory({ id: 'cat-two', name: 'Work' }),
+    ];
+
+    const firstResult = await migrateVault({
+      vaultId,
+      userId: 'user-1',
+      deviceId: 'device-1',
+      deviceSigningKey: keyPair.privateKey,
+      publicSigningKeyB64Url: keyPair.publicKeyB64Url,
+      vaultEncryptionKey,
+      legacyItems: [],
+      legacyCategories: categories,
+      decryptItem: makeDecryptItem({}),
+      rpcClient: makeHeadCheckingRpcClient(serverState),
+      checkpointStorage,
+      now: '2026-05-07T10:00:00.000Z',
+    });
+
+    expect(firstResult.success).toBe(false);
+    const checkpoint = loadMigrationCheckpoint(vaultId, checkpointStorage);
+    expect(checkpoint?.committedOpIds.length).toBe(2);
+    expect(checkpoint?.builtOperations?.length).toBeGreaterThan(0);
+
+    saveMigrationCheckpoint(
+      {
+        ...checkpoint!,
+        builtOperations: undefined,
+      },
+      checkpointStorage,
+    );
+
+    const retryResult = await migrateVault({
+      vaultId,
+      userId: 'user-1',
+      deviceId: 'device-1',
+      deviceSigningKey: keyPair.privateKey,
+      publicSigningKeyB64Url: keyPair.publicKeyB64Url,
+      vaultEncryptionKey,
+      legacyItems: [],
+      legacyCategories: categories,
+      decryptItem: makeDecryptItem({}),
+      rpcClient: makeHeadCheckingRpcClient(serverState),
+      checkpointStorage,
+      now: '2026-05-07T11:00:00.000Z',
+    });
+
+    expect(retryResult.success).toBe(true);
+    expect(retryResult.finalState).toBe('legacyMarkedMigrated');
+    expect(retryResult.progress.committedOperationCount).toBe(3);
   });
 
   it('migrates a single legacy item successfully', async () => {
@@ -403,6 +756,7 @@ describe('migrateVault', () => {
     const failClient = makeMockRpcClient('failCommit');
     const item = makeLegacyItem();
     const vaultId = nextVaultId();
+    const vaultEncryptionKey = makeVaultEncryptionKey();
 
     // First attempt fails during commit
     const firstResult = await migrateVault({
@@ -411,7 +765,7 @@ describe('migrateVault', () => {
       deviceId: 'device-1',
       deviceSigningKey: keyPair.privateKey,
       publicSigningKeyB64Url: keyPair.publicKeyB64Url,
-      vaultEncryptionKey: makeVaultEncryptionKey(),
+      vaultEncryptionKey,
       legacyItems: [item],
       legacyCategories: [],
       decryptItem: makeDecryptItem({ title: 'Test' }),
@@ -434,7 +788,7 @@ describe('migrateVault', () => {
       deviceId: 'device-1',
       deviceSigningKey: keyPair.privateKey,
       publicSigningKeyB64Url: keyPair.publicKeyB64Url,
-      vaultEncryptionKey: makeVaultEncryptionKey(),
+      vaultEncryptionKey,
       legacyItems: [item],
       legacyCategories: [],
       decryptItem: makeDecryptItem({ title: 'Test' }),
@@ -645,6 +999,37 @@ describe('migrateVault', () => {
     expect(msg).not.toContain('super-secret-123');
     expect(msg).not.toContain('password');
     expect(msg).not.toContain('token');
+  });
+
+  it('persists sealed migration checkpoints without decrypted vault plaintext or key bytes', async () => {
+    const keyPair = await generateDeviceSigningKeyPair();
+    const capturedWrites: string[] = [];
+    const item = makeLegacyItem();
+    const vaultEncryptionKey = new Uint8Array(32);
+    vaultEncryptionKey.fill(7);
+
+    await migrateVault({
+      vaultId: nextVaultId(),
+      userId: 'user-1',
+      deviceId: 'device-1',
+      deviceSigningKey: keyPair.privateKey,
+      publicSigningKeyB64Url: keyPair.publicKeyB64Url,
+      vaultEncryptionKey,
+      legacyItems: [item],
+      legacyCategories: [],
+      decryptItem: makeDecryptItem({
+        title: 'Checkpoint Plaintext Title',
+        password: 'checkpoint-plaintext-password',
+      }),
+      rpcClient: makeMockRpcClient('failCommit'),
+      checkpointStorage: makeCapturingCheckpointStorage(capturedWrites),
+    });
+
+    const serializedCheckpoints = capturedWrites.join('\n');
+    expect(serializedCheckpoints).toContain('builtOperations');
+    expect(serializedCheckpoints).not.toContain('Checkpoint Plaintext Title');
+    expect(serializedCheckpoints).not.toContain('checkpoint-plaintext-password');
+    expect(serializedCheckpoints).not.toContain(Array.from(vaultEncryptionKey).join(','));
   });
 
   it('survives a simulated crash and resumes from checkpoint', async () => {

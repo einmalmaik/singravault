@@ -114,6 +114,36 @@ function sampleRecord(overrides?: Partial<VaultRecordRow>): VaultRecordRow {
   };
 }
 
+function sampleDbOperationRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const op = sampleOperation();
+  return {
+    op_id: op.opId,
+    op_hash: op.opHash,
+    vault_id: op.vaultId,
+    author_device_id: op.authorDeviceId,
+    op_type: op.opType,
+    record_id: op.recordId,
+    record_type: op.recordType,
+    base_record_version: op.baseRecordVersion,
+    previous_ciphertext_hash: op.previousCiphertextHash,
+    new_record_hash: op.newRecordHash,
+    intent_id: op.intentId,
+    rebased_from_op_id: op.rebasedFromOpId,
+    base_vault_head: op.baseVaultHead,
+    resulting_vault_head: op.resultingVaultHead,
+    payload_ciphertext_hash: op.payloadCiphertextHash,
+    payload_aad_hash: op.payloadAadHash,
+    signed_body: op.signedBody,
+    signature: op.signature,
+    signature_schema: op.signatureSchema,
+    trust_epoch: op.trustEpoch,
+    created_at_client: op.createdAtClient,
+    received_at_server: op.receivedAtServer,
+    sequence_number: op.sequenceNumber,
+    ...overrides,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // submit_vault_operation
 // ---------------------------------------------------------------------------
@@ -541,6 +571,23 @@ describe('getVaultChangesSince', () => {
     const result = await getVaultChangesSince(client, 'v1', 0, 100);
 
     expect(result.kind).toBe('malformedResponse');
+  });
+
+  it('rejects get_vault_changes_since rows without vault_id with a sanitized reason', async () => {
+    const { client, setResponse } = createMockClient();
+    const row = sampleDbOperationRow({ signed_body: { signed: 'body-not-secret' } });
+    delete row.vault_id;
+    setResponse({ data: [row], error: null });
+
+    const result = await getVaultChangesSince(client, 'v1', 0, 100);
+
+    expect(result.kind).toBe('malformedResponse');
+    if (result.kind === 'malformedResponse') {
+      expect(result.reason).toContain('vault_id');
+      expect(result.reason).not.toContain('body-not-secret');
+      expect(result.reason).not.toContain('signed_body');
+      expect(result.reason).not.toContain('cipher');
+    }
   });
 });
 

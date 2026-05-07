@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { VaultProvider, useVault } from "../VaultContext";
 import type { ReactNode } from "react";
+import type { VaultIntegrityVerificationResult } from "@/services/vaultIntegrityService";
 
 // ============ Mock Setup ============
 
@@ -1173,6 +1174,48 @@ describe("VaultContext", () => {
       });
 
       expect(result.current.integrityMode).toBe("revalidation_failed");
+      expect(result.current.quarantinedItems).toEqual([]);
+    });
+
+    it("does not let a legacy manifest snapshot conflict block an OpLog-verified unlock", async () => {
+      mockDeriveRawKey.mockResolvedValue(new Uint8Array(32));
+      mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
+      mockVerifyKey.mockResolvedValue(true);
+      mockAttemptKdfUpgrade.mockResolvedValue({ upgraded: false });
+      mockFinalizeVaultUnlockIntegrity.mockImplementationOnce(async (input: {
+        callbacks: { applyIntegrityResultState: (result: VaultIntegrityVerificationResult) => void };
+      }) => {
+        input.callbacks.applyIntegrityResultState({
+          ...createHealthyIntegrityResult(),
+          valid: false,
+          mode: "integrity_unknown",
+          nonTamperReason: "manifest_snapshot_conflict",
+        });
+        return { error: null };
+      });
+      mockEvaluateVaultMigrationGate.mockResolvedValueOnce({
+        allowNormalUnlock: true,
+        status: "verified",
+        vaultId: "vault-123",
+        reason: null,
+      });
+
+      const { result } = renderHook(() => useVault(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      let unlockResult: { error: Error | null } | undefined;
+      await act(async () => {
+        unlockResult = await result.current.unlock("CorrectPassword!");
+      });
+
+      expect(unlockResult?.error).toBeNull();
+      expect(result.current.isLocked).toBe(false);
+      expect(result.current.vaultMigrationStatus).toBe("verified");
+      expect(result.current.integrityMode).toBe("healthy");
+      expect(result.current.lastIntegrityResult).toBeNull();
       expect(result.current.quarantinedItems).toEqual([]);
     });
 

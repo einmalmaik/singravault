@@ -146,6 +146,19 @@ function isMigrationCheckpoint(value: unknown): value is MigrationCheckpoint {
   if (!Array.isArray(obj.committedOpIds)) {
     return false;
   }
+  if ('signingDeviceId' in obj && obj.signingDeviceId !== undefined && typeof obj.signingDeviceId !== 'string') {
+    return false;
+  }
+  if (
+    'signingPublicKeyB64Url' in obj
+    && obj.signingPublicKeyB64Url !== undefined
+    && typeof obj.signingPublicKeyB64Url !== 'string'
+  ) {
+    return false;
+  }
+  if ('builtOperations' in obj && obj.builtOperations !== undefined && !Array.isArray(obj.builtOperations)) {
+    return false;
+  }
   if (typeof obj.updatedAt !== 'string') {
     return false;
   }

@@ -34,6 +34,8 @@ import {
 import {
   submitVaultOperation,
   bootstrapVaultTrust,
+  getVaultChangesSince,
+  getVaultRecordsByIds,
   type SupabaseRpcClient,
 } from './vaultOpLogRepository';
 import {
@@ -45,7 +47,6 @@ import {
 } from './recordHashes';
 import {
   canonicalizeVaultStructure,
-  decodeBase64Url,
 } from './canonicalJson';
 import {
   createTrustedSnapshot,
@@ -110,8 +111,6 @@ import {
 import {
   type VaultOperationRow,
   type VaultRecordRow,
-  type BootstrapVaultTrustResult,
-  type SubmitVaultOperationResult,
 } from './vaultOpLogRpcTypes';
 import {
   type SignedVaultOperationV1,
@@ -161,6 +160,7 @@ export interface MigrateVaultResult {
  */
 export async function migrateVault(input: MigrateVaultInput): Promise<MigrateVaultResult> {
   const checkpoint = loadMigrationCheckpoint(input.vaultId, input.checkpointStorage);
+  const migrationNow = checkpoint?.updatedAt ?? input.now ?? new Date().toISOString();
   const state: MigrationOrchestratorState = {
     vaultId: input.vaultId,
     userId: input.userId,
@@ -170,7 +170,9 @@ export async function migrateVault(input: MigrateVaultInput): Promise<MigrateVau
     vaultEncryptionKey: input.vaultEncryptionKey,
     rpcClient: input.rpcClient,
     checkpointStorage: input.checkpointStorage,
-    now: input.now ?? new Date().toISOString(),
+    now: migrationNow,
+    signingDeviceId: checkpoint?.signingDeviceId ?? input.deviceId,
+    signingPublicKeyB64Url: checkpoint?.signingPublicKeyB64Url ?? input.publicSigningKeyB64Url,
     // Runtime accumulators (not persisted; rebuilt on resume)
     validatedItems: [],
     validatedCategories: [],
@@ -178,7 +180,7 @@ export async function migrateVault(input: MigrateVaultInput): Promise<MigrateVau
     quarantinedCategories: [],
     preparedItems: [],
     preparedCategories: [],
-    builtOperations: [],
+    builtOperations: checkpoint?.builtOperations ? [...checkpoint.builtOperations] : [],
     // Loaded from checkpoint if resuming
     currentState: checkpoint?.state ?? 'notStarted',
     snapshotId: checkpoint?.snapshotId ?? null,
@@ -277,6 +279,8 @@ interface MigrationOrchestratorState {
   rpcClient: SupabaseRpcClient;
   checkpointStorage?: MigrationStorage;
   now: string;
+  signingDeviceId: string;
+  signingPublicKeyB64Url: string;
 
   currentState: MigrationState;
   snapshotId: string | null;
@@ -364,8 +368,8 @@ async function bootstrapDeviceTrust(state: MigrationOrchestratorState): Promise<
   const result = await bootstrapVaultTrust(
     state.rpcClient,
     state.vaultId,
-    state.deviceId,
-    state.publicSigningKeyB64Url,
+    state.signingDeviceId,
+    state.signingPublicKeyB64Url,
     '', // deviceNameEncrypted — minimal, no secret
     initialHead,
     initialOpId,
@@ -408,8 +412,8 @@ async function createPreMigrationSnapshot(state: MigrationOrchestratorState): Pr
   // Build a minimal local vault state with only the bootstrapped device.
   const trustedDevice: TrustedDeviceRecordV1 = {
     vaultId: state.vaultId,
-    deviceId: state.deviceId,
-    publicSigningKey: state.publicSigningKeyB64Url,
+    deviceId: state.signingDeviceId,
+    publicSigningKey: state.signingPublicKeyB64Url,
     deviceNameEncrypted: '',
     addedByDeviceId: null,
     addedAt: state.now,
@@ -423,7 +427,7 @@ async function createPreMigrationSnapshot(state: MigrationOrchestratorState): Pr
     recordsById: new Map(),
     quarantinedRecordsById: new Map(),
     conflictsByRecordId: new Map(),
-    trustedDevicesById: new Map([[state.deviceId, trustedDevice]]),
+    trustedDevicesById: new Map([[state.signingDeviceId, trustedDevice]]),
     lastVerifiedVaultHead: null,
   };
 
@@ -439,7 +443,7 @@ async function createPreMigrationSnapshot(state: MigrationOrchestratorState): Pr
   const snapshotInput: CreateTrustedSnapshotInput = {
     snapshotId,
     vaultId: state.vaultId,
-    createdByDeviceId: state.deviceId,
+    createdByDeviceId: state.signingDeviceId,
     deviceSigningKey: state.deviceSigningKey,
     vaultEncryptionKey: state.vaultEncryptionKey,
     trustEpoch: 0,
@@ -567,7 +571,13 @@ function prepareNewRecords(state: MigrationOrchestratorState): void {
 // ---------------------------------------------------------------------------
 
 async function buildInitialOperations(state: MigrationOrchestratorState): Promise<void> {
+  if (state.builtOperations.length > 0) {
+    state.currentState = 'initialOperationsPrepared';
+    return;
+  }
+
   const operations: BuiltMigrationOperation[] = [];
+  const committedRows = await loadCommittedRowsForLegacyCheckpoint(state);
   const initialVaultHead = state.initialVaultHead ?? await buildBootstrapVaultHead(state.vaultId);
   state.initialVaultHead = initialVaultHead;
 
@@ -577,7 +587,7 @@ async function buildInitialOperations(state: MigrationOrchestratorState): Promis
     vaultId: state.vaultId,
     manifestVersion: 1,
     createdAt: state.now,
-    createdByDeviceId: state.deviceId,
+    createdByDeviceId: state.signingDeviceId,
     currentKeyVersion: 1,
     cryptoPolicy: {
       recordEncryption: 'record-aead-v1',
@@ -592,39 +602,59 @@ async function buildInitialOperations(state: MigrationOrchestratorState): Promis
     },
   });
 
-  const manifestBuilt = await buildCreateRecordOperation({
-    opId: legacyToNewRecordId(`op-manifest-${state.vaultId}`),
-    intentId: legacyToNewRecordId(`intent-manifest-${state.vaultId}`),
-    rebasedFromOpId: null,
-    vaultId: state.vaultId,
-    recordId: manifestRecordId,
-    deviceId: state.deviceId,
-    deviceSigningKey: state.deviceSigningKey,
-    trustEpoch: 0,
-    baseVaultHead: initialVaultHead,
-    recordType: 'manifest',
-    vaultEncryptionKey: state.vaultEncryptionKey,
-    plaintext: manifestPlaintext,
-    keyVersion: 1,
-    createdAtClient: state.now,
-  });
+  const manifestOpId = legacyToNewRecordId(`op-manifest-${state.vaultId}`);
+  const committedManifest = committedRows.get(manifestOpId);
+  let previousVaultHead: string;
 
-  const manifestOpRow = toVaultOperationRow(manifestBuilt);
-  const manifestRecRow = toVaultRecordRow(manifestBuilt.sealedRecord, manifestOpRow, false);
-  operations.push({ opRow: manifestOpRow, recordRow: manifestRecRow });
+  if (committedManifest) {
+    operations.push(committedManifest);
+    previousVaultHead = committedManifest.opRow.resultingVaultHead;
+  } else {
+    const manifestBuilt = await buildCreateRecordOperation({
+      opId: manifestOpId,
+      intentId: legacyToNewRecordId(`intent-manifest-${state.vaultId}`),
+      rebasedFromOpId: null,
+      vaultId: state.vaultId,
+      recordId: manifestRecordId,
+      deviceId: state.signingDeviceId,
+      deviceSigningKey: state.deviceSigningKey,
+      trustEpoch: 0,
+      baseVaultHead: initialVaultHead,
+      recordType: 'manifest',
+      vaultEncryptionKey: state.vaultEncryptionKey,
+      plaintext: manifestPlaintext,
+      keyVersion: 1,
+      createdAtClient: state.now,
+    });
 
-  // Categories next
+    const manifestOpRow = toVaultOperationRow(manifestBuilt);
+    const manifestRecRow = toVaultRecordRow(manifestBuilt.sealedRecord, manifestOpRow, false);
+    operations.push({ opRow: manifestOpRow, recordRow: manifestRecRow });
+    previousVaultHead = manifestBuilt.resultingVaultHead;
+  }
+
+  // Categories next. Every operation must extend the head produced by the
+  // immediately preceding operation; otherwise the server correctly rejects
+  // the batch as stale_vault_head after the first category.
   for (const cat of state.preparedCategories) {
+    const categoryOpId = legacyToNewRecordId(`op-cat-${cat.legacyId}`);
+    const committedCategory = committedRows.get(categoryOpId);
+    if (committedCategory) {
+      operations.push(committedCategory);
+      previousVaultHead = committedCategory.opRow.resultingVaultHead;
+      continue;
+    }
+
     const built = await buildCreateRecordOperation({
-      opId: legacyToNewRecordId(`op-cat-${cat.legacyId}`),
+      opId: categoryOpId,
       intentId: legacyToNewRecordId(`intent-cat-${cat.legacyId}`),
       rebasedFromOpId: null,
       vaultId: state.vaultId,
       recordId: cat.newRecordId,
-      deviceId: state.deviceId,
+      deviceId: state.signingDeviceId,
       deviceSigningKey: state.deviceSigningKey,
       trustEpoch: 0,
-      baseVaultHead: manifestBuilt.resultingVaultHead,
+      baseVaultHead: previousVaultHead,
       recordType: 'category',
       vaultEncryptionKey: state.vaultEncryptionKey,
       plaintext: cat.plaintext,
@@ -635,20 +665,29 @@ async function buildInitialOperations(state: MigrationOrchestratorState): Promis
     const opRow = toVaultOperationRow(built);
     const recRow = toVaultRecordRow(built.sealedRecord, opRow, false);
     operations.push({ opRow, recordRow: recRow });
+    previousVaultHead = built.resultingVaultHead;
   }
 
   // Items last
   for (const item of state.preparedItems) {
+    const itemOpId = legacyToNewRecordId(`op-item-${item.legacyId}`);
+    const committedItem = committedRows.get(itemOpId);
+    if (committedItem) {
+      operations.push(committedItem);
+      previousVaultHead = committedItem.opRow.resultingVaultHead;
+      continue;
+    }
+
     const built = await buildCreateRecordOperation({
-      opId: legacyToNewRecordId(`op-item-${item.legacyId}`),
+      opId: itemOpId,
       intentId: legacyToNewRecordId(`intent-item-${item.legacyId}`),
       rebasedFromOpId: null,
       vaultId: state.vaultId,
       recordId: item.newRecordId,
-      deviceId: state.deviceId,
+      deviceId: state.signingDeviceId,
       deviceSigningKey: state.deviceSigningKey,
       trustEpoch: 0,
-      baseVaultHead: operations[operations.length - 1].opRow.resultingVaultHead,
+      baseVaultHead: previousVaultHead,
       recordType: 'item',
       vaultEncryptionKey: state.vaultEncryptionKey,
       plaintext: item.plaintext,
@@ -659,15 +698,104 @@ async function buildInitialOperations(state: MigrationOrchestratorState): Promis
     const opRow = toVaultOperationRow(built);
     const recRow = toVaultRecordRow(built.sealedRecord, opRow, false);
     operations.push({ opRow, recordRow: recRow });
+    previousVaultHead = built.resultingVaultHead;
   }
 
   state.builtOperations = operations;
   state.currentState = 'initialOperationsPrepared';
 }
 
+async function loadCommittedRowsForLegacyCheckpoint(
+  state: MigrationOrchestratorState,
+): Promise<Map<string, BuiltMigrationOperation>> {
+  if (state.committedOpIds.size === 0) {
+    return new Map();
+  }
+
+  const operationsById = await loadCommittedOperationsById(state);
+
+  const committedOperations = [...state.committedOpIds].map((opId) => operationsById.get(opId));
+  if (committedOperations.some((op) => op === undefined)) {
+    throw migrationError('commitFailed', 'could not reload all committed migration operations', true);
+  }
+
+  const recordIds = committedOperations.map((op) => op!.recordId);
+  const records = await getVaultRecordsByIds(state.rpcClient, state.vaultId, recordIds);
+  if (records.kind !== 'success') {
+    throw migrationError(
+      'commitFailed',
+      `could not reload committed migration records: ${describeReadFailure(records)}`,
+      true,
+    );
+  }
+
+  const recordsById = new Map(records.records.map((record) => [record.recordId, record]));
+  const committedRows = new Map<string, BuiltMigrationOperation>();
+
+  for (const operation of committedOperations) {
+    if (!operation) {
+      continue;
+    }
+    const record = recordsById.get(operation.recordId);
+    if (!record) {
+      throw migrationError('commitFailed', 'could not reload committed migration record', true);
+    }
+    committedRows.set(operation.opId, { opRow: operation, recordRow: record });
+  }
+
+  return committedRows;
+}
+
+async function loadCommittedOperationsById(
+  state: MigrationOrchestratorState,
+): Promise<Map<string, VaultOperationRow>> {
+  const targetOpIds = state.committedOpIds;
+  const operationsById = new Map<string, VaultOperationRow>();
+  let sinceSequence = 0;
+
+  for (let page = 0; page < 100 && operationsById.size < targetOpIds.size; page += 1) {
+    const changes = await getVaultChangesSince(state.rpcClient, state.vaultId, sinceSequence, 1000);
+    if (changes.kind !== 'success') {
+      throw migrationError(
+        'commitFailed',
+        `could not reload committed migration operations: ${describeReadFailure(changes)}`,
+        true,
+      );
+    }
+
+    if (changes.operations.length === 0) {
+      break;
+    }
+
+    for (const operation of changes.operations) {
+      sinceSequence = Math.max(sinceSequence, operation.sequenceNumber);
+      if (targetOpIds.has(operation.opId)) {
+        operationsById.set(operation.opId, operation);
+      }
+    }
+
+    if (changes.operations.length < 1000) {
+      break;
+    }
+  }
+
+  return operationsById;
+}
+
 // ---------------------------------------------------------------------------
 // Step 7 — Commit migration batch via repository
 // ---------------------------------------------------------------------------
+
+function describeReadFailure(
+  result:
+    | Awaited<ReturnType<typeof getVaultChangesSince>>
+    | Awaited<ReturnType<typeof getVaultRecordsByIds>>,
+): string {
+  if (result.kind === 'malformedResponse') {
+    return `malformedResponse: ${result.reason}`;
+  }
+  return result.kind;
+}
 
 async function commitMigrationBatch(state: MigrationOrchestratorState): Promise<void> {
   state.currentState = 'commitStarted';
@@ -725,53 +853,33 @@ async function verifyCommittedState(state: MigrationOrchestratorState): Promise<
   // For a minimal verification we verify each operation signature and
   // record context locally using the state machine helpers.
 
-  const trustedDevice: TrustedDeviceRecordV1 = {
-    vaultId: state.vaultId,
-    deviceId: state.deviceId,
-    publicSigningKey: state.publicSigningKeyB64Url,
-    deviceNameEncrypted: '',
-    addedByDeviceId: null,
-    addedAt: state.now,
-    trustEpoch: 0,
-    status: 'trusted',
-    revokedAt: null,
-    revokedByDeviceId: null,
-  };
-
+  const trustedDevicesById = buildMigrationVerificationTrust(state);
   const trustList = {
     vaultId: state.vaultId,
-    trustedDevicesById: new Map([[state.deviceId, trustedDevice]]),
+    trustedDevicesById,
   };
 
   let localVaultState: LocalVaultState = {
     recordsById: new Map(),
     quarantinedRecordsById: new Map(),
     conflictsByRecordId: new Map(),
-    trustedDevicesById: new Map([[state.deviceId, trustedDevice]]),
+    trustedDevicesById,
     lastVerifiedVaultHead: state.initialVaultHead ?? await buildBootstrapVaultHead(state.vaultId),
   };
-
-  const publicKey = await crypto.subtle.importKey(
-    'spki',
-    decodeBase64Url(state.publicSigningKeyB64Url) as unknown as ArrayBuffer,
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    false,
-    ['verify'],
-  );
 
   for (const built of state.builtOperations) {
     // Verify operation signature locally
     const opResult = await verifyOperation({
       operation: built.opRow,
       trust: trustList,
-      publicKey,
       localRecordState: null,
     });
 
     if (opResult.kind !== 'validTrustedOperation') {
+      const reason = opResult.kind === 'unknownAuthor' ? `:${opResult.reason}` : '';
       throw migrationError(
         'verificationFailed',
-        `operation verification failed for ${built.opRow.recordId}: ${opResult.kind}`,
+        `operation verification failed for ${built.opRow.recordId}: ${opResult.kind}${reason}`,
         false,
       );
     }
@@ -842,7 +950,6 @@ async function verifyCommittedState(state: MigrationOrchestratorState): Promise<
       operation: built.opRow,
       record: built.recordRow,
       trust: trustList,
-      publicKey,
       vaultEncryptionKey: state.vaultEncryptionKey,
     });
 
@@ -860,6 +967,34 @@ async function verifyCommittedState(state: MigrationOrchestratorState): Promise<
 // ---------------------------------------------------------------------------
 // Step 9 — Mark legacy migrated
 // ---------------------------------------------------------------------------
+
+function buildMigrationVerificationTrust(
+  state: MigrationOrchestratorState,
+): Map<string, TrustedDeviceRecordV1> {
+  const trustedDevicesById = new Map<string, TrustedDeviceRecordV1>();
+  const authorDeviceIds = new Set<string>([state.signingDeviceId]);
+
+  for (const built of state.builtOperations) {
+    authorDeviceIds.add(built.opRow.authorDeviceId);
+  }
+
+  for (const deviceId of authorDeviceIds) {
+    trustedDevicesById.set(deviceId, {
+      vaultId: state.vaultId,
+      deviceId,
+      publicSigningKey: state.signingPublicKeyB64Url,
+      deviceNameEncrypted: '',
+      addedByDeviceId: null,
+      addedAt: state.now,
+      trustEpoch: 0,
+      status: 'trusted',
+      revokedAt: null,
+      revokedByDeviceId: null,
+    });
+  }
+
+  return trustedDevicesById;
+}
 
 function markLegacyMigrated(state: MigrationOrchestratorState): void {
   // We do NOT delete legacy data.  We only mark the migration as
@@ -888,6 +1023,9 @@ async function writeCheckpoint(
       ...state.quarantinedCategories.map((q) => q.legacyId),
     ],
     committedOpIds: [...state.committedOpIds],
+    signingDeviceId: state.signingDeviceId,
+    signingPublicKeyB64Url: state.signingPublicKeyB64Url,
+    builtOperations: state.builtOperations,
     error,
     updatedAt: state.now,
   };

@@ -11,6 +11,15 @@ const rpcsMigration = readFileSync(
   'supabase/migrations/20260504130100_vault_op_log_phase2_rpcs.sql',
   'utf-8',
 );
+const bootstrapFkFixMigration = readFileSync(
+  'supabase/migrations/20260505193000_vault_op_log_bootstrap_fk_fix.sql',
+  'utf-8',
+);
+const changesSinceContractFixMigration = readFileSync(
+  'supabase/migrations/20260507165242_fix_vault_changes_since_vault_id_contract.sql',
+  'utf-8',
+);
+const effectiveReadRpcsMigration = `${rpcsMigration}\n${bootstrapFkFixMigration}\n${changesSinceContractFixMigration}`;
 const combined = `${tablesMigration}\n${rpcsMigration}`;
 
 describe('vault op-log phase 2 — table contract', () => {
@@ -219,10 +228,10 @@ describe('vault op-log phase 2 — RPC contract', () => {
 
 describe('vault op-log phase 2 — read RPC contracts', () => {
   it('exposes get_vault_head, get_vault_changes_since, get_vault_records_by_ids, bootstrap_vault_trust', () => {
-    expect(rpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.get_vault_head(p_vault_id UUID)');
-    expect(rpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.get_vault_changes_since(');
-    expect(rpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.get_vault_records_by_ids(');
-    expect(rpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.bootstrap_vault_trust(');
+    expect(effectiveReadRpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.get_vault_head(p_vault_id UUID)');
+    expect(effectiveReadRpcsMigration).toContain('CREATE FUNCTION public.get_vault_changes_since(');
+    expect(effectiveReadRpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.get_vault_records_by_ids(');
+    expect(effectiveReadRpcsMigration).toContain('CREATE OR REPLACE FUNCTION public.bootstrap_vault_trust(');
   });
 
   it('scopes get_vault_head to the caller', () => {
@@ -232,7 +241,7 @@ describe('vault op-log phase 2 — read RPC contracts', () => {
   });
 
   it('verifies vault ownership in both fetch RPCs', () => {
-    const ownershipMatches = rpcsMigration.match(
+    const ownershipMatches = effectiveReadRpcsMigration.match(
       /RAISE EXCEPTION 'Vault does not belong to caller'/gu,
     );
     expect(ownershipMatches).not.toBeNull();
@@ -240,24 +249,39 @@ describe('vault op-log phase 2 — read RPC contracts', () => {
   });
 
   it('caps pagination on get_vault_changes_since', () => {
-    expect(rpcsMigration).toContain('p_limit must be between 1 and 1000');
-    expect(rpcsMigration).toContain('ORDER BY o.sequence_number ASC');
+    expect(effectiveReadRpcsMigration).toContain('p_limit must be between 1 and 1000');
+    expect(effectiveReadRpcsMigration).toContain('ORDER BY o.sequence_number ASC');
+  });
+
+  it('returns vault_id from get_vault_changes_since for mapper-compatible migration recovery', () => {
+    expect(changesSinceContractFixMigration).toContain(
+      'DROP FUNCTION IF EXISTS public.get_vault_changes_since(UUID, BIGINT, INTEGER);',
+    );
+    expect(changesSinceContractFixMigration).toMatch(
+      /RETURNS TABLE\(\s+vault_id UUID,\s+op_id UUID,/u,
+    );
+    expect(changesSinceContractFixMigration).toContain(
+      'SELECT o.vault_id, o.op_id, o.op_hash, o.sequence_number,',
+    );
+    expect(changesSinceContractFixMigration).toMatch(
+      /SECURITY DEFINER\s+SET search_path = public/u,
+    );
   });
 
   it('caps the bulk record fetch and returns empty for null/empty input', () => {
-    expect(rpcsMigration).toContain("RAISE EXCEPTION 'Too many record ids in a single fetch'");
-    expect(rpcsMigration).toContain('array_length(p_record_ids, 1) > 500');
+    expect(effectiveReadRpcsMigration).toContain("RAISE EXCEPTION 'Too many record ids in a single fetch'");
+    expect(effectiveReadRpcsMigration).toContain('array_length(p_record_ids, 1) > 500');
   });
 
   it('grants execute only to authenticated for every read RPC', () => {
-    expect(rpcsMigration).toContain('GRANT EXECUTE ON FUNCTION public.get_vault_head(UUID) TO authenticated;');
-    expect(rpcsMigration).toContain(
+    expect(effectiveReadRpcsMigration).toContain('GRANT EXECUTE ON FUNCTION public.get_vault_head(UUID) TO authenticated;');
+    expect(effectiveReadRpcsMigration).toContain(
       'GRANT EXECUTE ON FUNCTION public.get_vault_changes_since(UUID, BIGINT, INTEGER) TO authenticated;',
     );
-    expect(rpcsMigration).toContain(
+    expect(effectiveReadRpcsMigration).toContain(
       'GRANT EXECUTE ON FUNCTION public.get_vault_records_by_ids(UUID, UUID[]) TO authenticated;',
     );
-    expect(rpcsMigration).toContain(
+    expect(effectiveReadRpcsMigration).toContain(
       'GRANT EXECUTE ON FUNCTION public.bootstrap_vault_trust(UUID, UUID, TEXT, TEXT, TEXT, UUID) TO authenticated;',
     );
   });
@@ -269,29 +293,29 @@ describe('vault op-log phase 2 — read RPC contracts', () => {
   });
 
   it('bootstrap_vault_trust rejects unauthenticated callers', () => {
-    expect(rpcsMigration).toContain("RAISE EXCEPTION 'Not authenticated'");
+    expect(effectiveReadRpcsMigration).toContain("RAISE EXCEPTION 'Not authenticated'");
   });
 
   it('bootstrap_vault_trust verifies vault ownership', () => {
-    expect(rpcsMigration).toContain("RAISE EXCEPTION 'Vault does not belong to caller'");
+    expect(effectiveReadRpcsMigration).toContain("RAISE EXCEPTION 'Vault does not belong to caller'");
   });
 
   it('bootstrap_vault_trust only runs when no trust list exists', () => {
-    expect(rpcsMigration).toContain('SELECT COUNT(*) INTO _existing_trust_count');
-    expect(rpcsMigration).toContain('FROM public.vault_device_trust_records');
-    expect(rpcsMigration).toContain("'reason', 'trust_list_already_exists'");
+    expect(effectiveReadRpcsMigration).toContain('SELECT COUNT(*) INTO _existing_trust_count');
+    expect(effectiveReadRpcsMigration).toContain('FROM public.vault_device_trust_records');
+    expect(effectiveReadRpcsMigration).toContain("'reason', 'trust_list_already_exists'");
   });
 
   it('bootstrap_vault_trust only runs when no head exists', () => {
-    expect(rpcsMigration).toContain('SELECT * INTO _existing_head');
-    expect(rpcsMigration).toContain('FROM public.vault_op_log_heads');
-    expect(rpcsMigration).toContain("'reason', 'head_already_exists'");
+    expect(effectiveReadRpcsMigration).toContain('SELECT * INTO _existing_head');
+    expect(effectiveReadRpcsMigration).toContain('FROM public.vault_op_log_heads');
+    expect(effectiveReadRpcsMigration).toContain("'reason', 'head_already_exists'");
   });
 
   it('bootstrap_vault_trust inserts the first trusted device and initial head', () => {
-    expect(rpcsMigration).toContain('INSERT INTO public.vault_device_trust_records');
-    expect(rpcsMigration).toContain('INSERT INTO public.vault_op_log_heads');
-    expect(rpcsMigration).toContain("'bootstrapped', true");
+    expect(effectiveReadRpcsMigration).toContain('INSERT INTO public.vault_device_trust_records');
+    expect(effectiveReadRpcsMigration).toContain('INSERT INTO public.vault_op_log_heads');
+    expect(effectiveReadRpcsMigration).toContain("'bootstrapped', true");
   });
 });
 
@@ -348,10 +372,10 @@ describe('vault op-log phase 2 — combined invariants', () => {
   });
 
   it('includes intent_id and rebased_from_op_id in get_vault_changes_since output', () => {
-    expect(rpcsMigration).toContain('intent_id UUID');
-    expect(rpcsMigration).toContain('rebased_from_op_id UUID');
-    expect(rpcsMigration).toContain('o.intent_id');
-    expect(rpcsMigration).toContain('o.rebased_from_op_id');
+    expect(effectiveReadRpcsMigration).toContain('intent_id UUID');
+    expect(effectiveReadRpcsMigration).toContain('rebased_from_op_id UUID');
+    expect(effectiveReadRpcsMigration).toContain('o.intent_id');
+    expect(effectiveReadRpcsMigration).toContain('o.rebased_from_op_id');
   });
 
   it('CAS checks previous_ciphertext_hash against vault_records.ciphertext_hash', () => {

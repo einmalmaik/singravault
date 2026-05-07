@@ -51,6 +51,18 @@ import { useVaultOpLogUiState } from './useVaultOpLogUiState';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
 import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 
+function clearLegacyIntegrityStateAfterOpLogGate(
+  state: ReturnType<typeof useVaultProviderState>,
+): void {
+  state.setIntegrityVerified(true);
+  state.baseIntegrityResultRef.current = null;
+  state.setLastIntegrityResult(null);
+  state.setIntegrityMode('healthy');
+  state.setQuarantinedItems([]);
+  state.runtimeUnreadableItemsRef.current = [];
+  state.setIntegrityBlockedReason(null);
+}
+
 export function useVaultProviderActions(): VaultContextType {
   const { user, authReady } = useAuth();
   const lastUserIdRef = useRef<string | null>(null);
@@ -292,9 +304,9 @@ export function useVaultProviderActions(): VaultContextType {
       existingContext?.vaultEncryptionKey?.fill(0);
       return null;
     });
+    clearLegacyIntegrityStateAfterOpLogGate(state);
     state.setIsLocked(false);
     state.setIsDuressMode(false);
-    state.setIntegrityBlockedReason(null);
     state.setLastActivity(Date.now());
     markVaultSessionActive(sessionStorage);
     state.setPendingSessionRestore(false);

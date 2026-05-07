@@ -71,6 +71,7 @@ const mockVaultContext = {
   reportUnreadableItems: (...args: unknown[]) => mockReportUnreadableItems(...args),
   isDuressMode: false,
   vaultDataVersion: 0,
+  vaultMigrationStatus: null as null | 'notNeeded' | 'required' | 'preflightFailed' | 'ready' | 'running' | 'committed' | 'verified' | 'failed',
   quarantineResolutionById: {} as Record<string, {
     canRestore: boolean;
     canDelete: boolean;
@@ -209,6 +210,7 @@ describe.sequential('VaultItemList', () => {
     snapshotState.source = 'remote';
     mockVaultContext.lastIntegrityResult = null;
     mockVaultContext.vaultDataVersion = 0;
+    mockVaultContext.vaultMigrationStatus = null;
     mockVaultContext.quarantineResolutionById = {};
     mockVaultContext.opLogRestoreRecord.mockResolvedValue({ error: null });
     mockVaultContext.opLogDeleteUntrustedRecord.mockResolvedValue({ error: null });
@@ -321,6 +323,20 @@ describe.sequential('VaultItemList', () => {
     });
     expect(mockDecryptItem).not.toHaveBeenCalled();
     expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).not.toHaveBeenCalled();
+  });
+
+  it('does not run the legacy manifest verifier after OpLog migration is verified', async () => {
+    snapshotState.items = [itemOk];
+    mockVaultContext.vaultMigrationStatus = 'verified';
+
+    renderList();
+
+    await waitFor(() => {
+      expect(screen.getByText('Visible Item')).toBeInTheDocument();
+    });
+
+    expect(mockVerifyIntegrity).not.toHaveBeenCalled();
+    expect(mockRefreshIntegrityBaseline).not.toHaveBeenCalled();
   });
 
   it('does not decrypt an item from the freshly returned quarantine result', async () => {

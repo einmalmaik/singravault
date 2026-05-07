@@ -85,7 +85,9 @@ export function VaultSidebar({
         lastIntegrityResult,
         verifyIntegrity,
         vaultDataVersion,
+        vaultMigrationStatus,
     } = useVault();
+    const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
     const { user } = useAuth();
     const userId = user?.id ?? null;
     const [collapsed, setCollapsed] = useState(false);
@@ -131,12 +133,14 @@ export function VaultSidebar({
 
         try {
             const { snapshot, source } = await loadVaultSnapshot(userId);
-            const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
-            if (integrityResult?.mode === 'blocked') {
-                if (fetchRequestIdRef.current === requestId) {
-                    setCategories([]);
+            if (!useOpLogVerifiedRuntime) {
+                const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
+                if (integrityResult?.mode === 'blocked') {
+                    if (fetchRequestIdRef.current === requestId) {
+                        setCategories([]);
+                    }
+                    return;
                 }
-                return;
             }
             const counts: Record<string, number> = {};
 
@@ -270,6 +274,7 @@ export function VaultSidebar({
         }
     }, [
         isDuressMode,
+        useOpLogVerifiedRuntime,
         userId,
     ]);
 

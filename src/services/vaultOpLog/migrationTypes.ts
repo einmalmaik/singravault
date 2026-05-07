@@ -249,6 +249,23 @@ export interface MigrationCheckpoint {
   readonly legacyToNewRecordIdMap: Record<string, string>;
   readonly quarantinedLegacyIds: readonly string[];
   readonly committedOpIds: readonly string[];
+  /**
+   * Non-secret local signing identity used to author the migration batch.
+   * Stored so interrupted migrations can resume with the same trust root
+   * instead of treating already committed local operations as unknown-author.
+   */
+  readonly signingDeviceId?: string;
+  readonly signingPublicKeyB64Url?: string;
+  /**
+   * Sealed operation batch prepared for commit. This intentionally contains
+   * only ciphertext, nonces, hashes and signatures, never plaintext or keys.
+   * Persisting it is required for crash-safe retry because record sealing uses
+   * fresh nonces and therefore cannot be rebuilt byte-for-byte.
+   */
+  readonly builtOperations?: readonly {
+    readonly opRow: import('./vaultOpLogRpcTypes').VaultOperationRow;
+    readonly recordRow: import('./vaultOpLogRpcTypes').VaultRecordRow;
+  }[];
   readonly error: MigrationError | null;
   readonly updatedAt: string;
 }
