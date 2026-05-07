@@ -106,6 +106,7 @@ export function buildVaultContextValue(
 
     // Phase 9 — OpLog UI state
     opLogUiView: opLogUiState.uiView,
+    opLogLocalVaultState: opLogUiState.localVaultState,
     opLogUiLoading: opLogUiState.isLoading,
     opLogUiError: opLogUiState.lastError,
     opLogUiRefresh: opLogUiState.refresh,

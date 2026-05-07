@@ -50,6 +50,7 @@ import {
 import { migrateLegacyVaultItemMetadata } from '@/services/legacyVaultMetadataMigrationService';
 import { isPremiumActive } from '@/extensions/registry';
 import { buildReturnState } from '@/services/returnNavigationState';
+import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 
 interface Category {
     id: string;
@@ -67,6 +68,56 @@ interface VaultSidebarProps {
 }
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
+
+function parseVerifiedRecordPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
+    if (
+        (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+        || !record.plaintext
+    ) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(new TextDecoder().decode(record.plaintext)) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return null;
+        }
+
+        return parsed as Record<string, unknown>;
+    } catch {
+        return null;
+    }
+}
+
+function getVerifiedItemCategoryId(record: LocalVerifiedRecord): string | null {
+    if (record.record.recordType !== 'item') {
+        return null;
+    }
+
+    const plaintext = parseVerifiedRecordPlaintext(record);
+    const categoryRecordId = plaintext?.categoryRecordId;
+    return typeof categoryRecordId === 'string' ? categoryRecordId : null;
+}
+
+function mapVerifiedCategoryRecord(record: LocalVerifiedRecord, count: number): Category | null {
+    if (record.record.recordType !== 'category') {
+        return null;
+    }
+
+    const plaintext = parseVerifiedRecordPlaintext(record);
+    if (!plaintext) {
+        return null;
+    }
+
+    const name = plaintext.name;
+    return {
+        id: record.record.recordId,
+        name: typeof name === 'string' ? name : '',
+        icon: typeof plaintext.icon === 'string' ? plaintext.icon : null,
+        color: typeof plaintext.color === 'string' ? plaintext.color : null,
+        count,
+    };
+}
 
 export function VaultSidebar({
     selectedCategory,
@@ -86,6 +137,7 @@ export function VaultSidebar({
         verifyIntegrity,
         vaultDataVersion,
         vaultMigrationStatus,
+        opLogLocalVaultState,
     } = useVault();
     const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
     const { user } = useAuth();
@@ -132,15 +184,39 @@ export function VaultSidebar({
         fetchingCategoriesRef.current = true;
 
         try {
-            const { snapshot, source } = await loadVaultSnapshot(userId);
-            if (!useOpLogVerifiedRuntime) {
-                const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
-                if (integrityResult?.mode === 'blocked') {
+            if (useOpLogVerifiedRuntime) {
+                if (!opLogLocalVaultState) {
                     if (fetchRequestIdRef.current === requestId) {
                         setCategories([]);
                     }
                     return;
                 }
+
+                const counts: Record<string, number> = {};
+                for (const record of opLogLocalVaultState.recordsById.values()) {
+                    const categoryId = getVerifiedItemCategoryId(record);
+                    if (categoryId) {
+                        counts[categoryId] = (counts[categoryId] || 0) + 1;
+                    }
+                }
+
+                const resolvedCategories = Array.from(opLogLocalVaultState.recordsById.values())
+                    .map((record) => mapVerifiedCategoryRecord(record, counts[record.record.recordId] || 0))
+                    .filter((category): category is Category => category !== null);
+
+                if (fetchRequestIdRef.current === requestId) {
+                    setCategories(resolvedCategories);
+                }
+                return;
+            }
+
+            const { snapshot, source } = await loadVaultSnapshot(userId);
+            const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
+            if (integrityResult?.mode === 'blocked') {
+                if (fetchRequestIdRef.current === requestId) {
+                    setCategories([]);
+                }
+                return;
             }
             const counts: Record<string, number> = {};
 
@@ -274,6 +350,7 @@ export function VaultSidebar({
         }
     }, [
         isDuressMode,
+        opLogLocalVaultState,
         useOpLogVerifiedRuntime,
         userId,
     ]);

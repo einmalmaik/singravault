@@ -2,6 +2,17 @@
 
 Stand: 2026-05-07
 
+## Update 2026-05-08 - OpLog Device Identity nach Verified-Unlock
+
+- Ursache fuer `OpLog-Device-Identitaet fehlt`: Der OpLog-CRUD-Kontext las die lokale Device-Metadaten-Identity nur aus `localStorage`. Nach Migration/verified konnte diese nicht-sensitive Metadata fehlen, obwohl der non-extractable Device-Signing-Key noch in IndexedDB und der zugehoerige Trusted-Device-Record in Supabase vorhanden waren.
+- Reparatur: Der Runtime-Pfad erzeugt keine Dummy-Identity. Er rekonstruiert die Identity nur dann, wenn ein lokaler non-extractable Signing-Key fuer denselben User/Vault existiert und per Sign/Verify-Challenge gegen den Public Key eines `trusted` Cloud-Trust-Records passt.
+- Wenn kein lokaler Signing-Key oder kein passender `trusted` Trust-Record vorhanden ist, bleibt OpLog-CRUD fail-closed blockiert. Es werden keine Secrets, Private Keys, Vault Keys, Plaintexts, Ciphertexts oder Signed Bodies geloggt.
+- Betroffen und korrigiert: OpLog-CRUD-Kontext und OpLog-UI-State-Refresh. Dadurch koennen Item-, Kategorie- und TOTP/Authenticator-Record-Aenderungen dieselbe verifizierte Device-Identity verwenden.
+- Verifiziert: gezielte Unit-Tests fuer Identity-Recovery positiv/negativ/revoked und bestehender Device-Store-Test.
+- Folgefix: Nach `vaultMigrationStatus === "verified"` rendert `VaultItemList` Eintraege aus dem lokal verifizierten OpLog-State, nicht mehr aus dem Legacy-Snapshot. Dadurch bleiben verified-only Egress und State-Machine-Verifikation die Quelle der UI, waehrend alte Manifest-/Snapshot-Pruefungen im normalen Listenpfad inaktiv bleiben.
+- Folgefix: OpLog-CRUD signiert neue Operationen mit dem `trust_epoch` des passenden `trusted` Device-Trust-Records. Ein hartkodierter Epoch-Wert wuerde ansonsten nach erfolgreichem Submit beim Reload als `unknownAuthor`/`device_trust_epoch_mismatch` quarantined werden. Die Commit-Verifikation meldet quarantined-after-reload jetzt mit bereinigter Ursache statt generisch `submitted_record_missing_after_reload`.
+- Folgefix: Der Item-Dialog liest und bearbeitet Eintraege nach `verified` aus dem verifizierten OpLog-State statt aus dem Legacy-Snapshot. OpLog-Quarantaene-Records zeigen keine Restore/Delete-Aktionen mehr, solange kein verifizierter Tombstone-/Record-Kontext fuer eine signierte Operation vorhanden ist.
+
 ## Update 2026-05-07 - UI-CRUD/Quarantaene-Actions
 
 - Item-CRUD ist produktiv an den OpLog-CRUD-Service angebunden: `VaultItemDialog` ruft `opLogCreateItem`, `opLogUpdateItem` und `opLogDeleteItem`.
@@ -52,6 +63,10 @@ Umgesetzt und verifiziert sind der zentrale OpLog-CRUD-Service auf Service-Ebene
 - Alte UI-Actions `restoreQuarantinedItem`, `deleteQuarantinedItem`, `acceptMissingQuarantinedItem` sind aus Context/Komponenten entfernt.
 - `VaultQuarantineActions` nutzt nur noch `opLogRestoreRecord`/`opLogDeleteUntrustedRecord`; beide blockieren ohne Base-/Snapshot-Kontext typisiert.
 - Export-Flows in `DataSettings` und `AccountSettings` blockieren fail-closed, wenn keine verifizierte OpLog-Allowlist verfügbar ist.
+- UI-CRUD nach `verified` liest Item-Dialog, Item-Liste, Kategorie-Dialog und Kategorie-Sidebar aus `opLogLocalVaultState.recordsById`; Legacy-Snapshot-Decrypt bleibt auf nicht migrierte Legacy-Zustände begrenzt.
+- Kategorie-Delete im UI bietet keine automatische Item-Löschung mehr an und bleibt bei referenzierenden Items blockiert.
+- Folgefix: OpLog-CRUD signiert neue Operationen mit dem `trust_epoch` des passenden `trusted` Device-Trust-Records. Ein hartkodierter Epoch-Wert würde ansonsten nach erfolgreichem Submit beim Reload als `unknownAuthor`/`device_trust_epoch_mismatch` quarantined werden. Die Commit-Verifikation meldet quarantined-after-reload jetzt mit bereinigter Ursache statt generisch `submitted_record_missing_after_reload`.
+- Folgefix Delete/Tombstone: Eine gültig signierte Delete-Operation wird als Löschbeweis behandelt, auch wenn der Server eine stale/mismatched `vault_records`-Zeile zurückliefert. Der stale Record wird dabei nicht entschlüsselt und nicht angezeigt; ungültige Signaturen oder unbekannte Autoren bleiben Quarantäne.
 
 ## Verifizierte Tests
 
@@ -84,6 +99,12 @@ Umgesetzt und verifiziert sind der zentrale OpLog-CRUD-Service auf Service-Ebene
   - `VaultContext.test.tsx`
   - `security-hardening-contracts.test.ts`
 - Zusätzlicher Export-Egress-Contract: `security-hardening-contracts.test.ts` mit 21 Tests bestanden.
+- Folgeprüfung Device-Identity/UI-CRUD:
+  - `npx tsc --noEmit` - bestanden.
+  - `npx vitest run src/components/vault/__tests__/VaultItemList.test.tsx src/components/vault/__tests__/VaultItemDialog.test.tsx src/services/vaultOpLog/__tests__/vaultOpLogDeviceIdentityRecovery.test.ts src/services/vaultOpLog/__tests__/vaultOpLogCrudService.test.ts src/contexts/__tests__/VaultContext.test.tsx --reporter=dot` - 5 Dateien, 114 Tests bestanden.
+- Folgeprüfung Delete/Tombstone:
+  - `npx tsc --noEmit` - bestanden.
+  - `npx vitest run src/services/vaultOpLog/__tests__/vaultStateMachine.test.ts --reporter=dot` - 1 Datei, 16 Tests bestanden.
 
 ## Nicht bestanden / Nicht verifiziert
 
@@ -103,7 +124,7 @@ Umgesetzt und verifiziert sind der zentrale OpLog-CRUD-Service auf Service-Ebene
   - Server-Ciphertext-Manipulation führt zu Quarantäne ohne Decrypt.
   - Server-Delete ohne Delete-Operation führt zu Missing-Without-Delete und Recovery-Option nur aus verifiziertem Snapshot.
 - Tauri mit persistiertem nicht-extrahierbarem `CryptoKey`-Handle testen.
-- UI-CRUD erst freigeben, wenn Create/Update/Delete die Base-Metadaten aus verified OpLog-State beziehen und UI-Erfolg erst nach Reload/Verify angezeigt wird.
+- UI-CRUD manuell prüfen: Item erstellen, bearbeiten, Kategorie erstellen, Kategorie zuweisen, Item löschen; keine neue `unknownAuthor`-/`device_trust_epoch_mismatch`-Quarantäne und keine alte Manifest-/Snapshot-Meldung.
 
 ## Restrisiken
 
@@ -111,7 +132,7 @@ Umgesetzt und verifiziert sind der zentrale OpLog-CRUD-Service auf Service-Ebene
 - Persistenz nicht-extrahierbarer `CryptoKey`-Handles ist nicht in allen Ziel-Web-/Tauri-Laufzeiten bewiesen.
 - Vollständige Serverlöschung bleibt ein Verfügbarkeitsproblem und braucht verifizierte Snapshot-/Recovery-Prozesse.
 - Alte V2-/Integrity-Brücken sind noch im Unlock-/Verify-Pfad erreichbar; sie treffen keine alten Write-Entscheidungen, sind aber nicht der finale Phase-12-Zielzustand.
-- UI-CRUD und Import bleiben blockiert; produktive Schreibbarkeit ist deshalb noch nicht releasefähig.
+- Cloud-E2E mit isoliertem Testvault ist nach dem Device-Trust-Folgefix noch nicht durchgeführt; produktive Freigabe braucht diesen Runtime-Nachweis.
 
 ## Rollback-Risiken
 

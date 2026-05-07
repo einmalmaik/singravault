@@ -314,6 +314,12 @@ async function verifyCommittedOperation(
 
   const verifiedRecord = verification.localVaultState.recordsById.get(operation.recordId);
   if (!verifiedRecord) {
+    const quarantinedRecord = verification.localVaultState.quarantinedRecordsById.get(operation.recordId);
+    if (quarantinedRecord) {
+      throw new OperationVerificationAfterCommitError(
+        `submitted_record_quarantined_after_reload:${quarantinedRecord.reason}`,
+      );
+    }
     throw new OperationVerificationAfterCommitError('submitted_record_missing_after_reload');
   }
 

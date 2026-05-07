@@ -388,10 +388,13 @@ describe("security hardening contracts", () => {
     expect(itemDialog).toContain("opLogCreateItem");
     expect(itemDialog).toContain("opLogUpdateItem");
     expect(itemDialog).toContain("opLogDeleteItem");
+    expect(itemDialog).toContain("shouldVerifyLegacyDialogCategorySnapshot(vaultMigrationStatus)");
     expect(itemDialog).not.toContain("from('vault_items')");
     expect(categoryDialog).toContain("opLogCreateCategory");
     expect(categoryDialog).toContain("opLogUpdateCategory");
     expect(categoryDialog).toContain("opLogDeleteCategory");
+    expect(categoryDialog).toContain("vaultMigrationStatus === 'verified'");
+    expect(categoryDialog).toContain("parseVerifiedOpLogItemCategoryId");
     expect(categoryDialog).not.toContain("from('categories')");
     expect(offlineService).toContain("neutralizeVaultItemServerMetadata(mutation.payload)");
     expect(recoveryService).not.toContain("restoreQuarantinedItemFromTrustedSnapshot");
@@ -400,6 +403,18 @@ describe("security hardening contracts", () => {
     expect(legacyMigrationService).toContain("migrateLegacyVaultItemMetadata");
     expect(legacyMigrationService).toContain("blockLegacyVaultRuntimeWrite");
     expect(blocker).toContain("LegacyVaultRuntimeWriteBlockedError");
+  });
+
+  it("keeps legacy manifest recovery UI inactive after OpLog verification", () => {
+    const vaultPage = readFileSync("src/pages/VaultPage.tsx", "utf-8");
+    const vaultSidebar = readFileSync("src/components/vault/VaultSidebar.tsx", "utf-8");
+
+    expect(vaultPage).toContain("const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified'");
+    expect(vaultPage).toContain("const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime");
+    expect(vaultPage).toContain("if (!useOpLogVerifiedRuntime && (integrityMode === 'blocked' || integrityMode === 'safe'))");
+    expect(vaultPage).toContain("if (shouldShowLegacyIntegrityRecovery)");
+    expect(vaultSidebar).toContain("if (useOpLogVerifiedRuntime)");
+    expect(vaultSidebar).toContain("mapVerifiedCategoryRecord");
   });
 
   it("requires a verified OpLog allowlist before export decrypts legacy vault rows", () => {

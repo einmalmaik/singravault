@@ -501,6 +501,42 @@ describe('applyTrustedDelete', () => {
     expect(result.vaultMode).toBe('normal');
   });
 
+  it('treats a valid signed delete as deleted when the server returns a stale active record row', async () => {
+    const created = await buildCreateOperationAndRecord();
+    const deleted = await buildDeleteOperationAndRecord(created);
+    const publicKey = await importDevicePublicKey(created.keyPair.publicKeyB64Url);
+    const trust = buildTrust(created.opRow.authorDeviceId, created.keyPair.publicKeyB64Url);
+
+    const stateAfterCreate = await applyRemoteOperation({
+      state: emptyState(),
+      operation: created.opRow,
+      record: created.recRow,
+      trust,
+      publicKey,
+      vaultEncryptionKey: created.vaultEncryptionKey,
+    });
+    expect(stateAfterCreate.recordState).toBe('verified');
+
+    const staleActiveRecord = {
+      ...created.recRow,
+      lastOpId: deleted.opRow.opId,
+      lastOpHash: deleted.opRow.opHash,
+      isTombstone: false,
+    };
+
+    const result = await applyTrustedDelete({
+      state: stateAfterCreate.nextState,
+      operation: deleted.opRow,
+      record: staleActiveRecord,
+      trust,
+      publicKey,
+    });
+
+    expect(result.recordState).toBe('deletedByTrustedDevice');
+    expect(result.vaultMode).toBe('normal');
+    expect(result.nextState.quarantinedRecordsById.has(staleActiveRecord.recordId)).toBe(false);
+  });
+
   it('does not accept a delete with an invalid signature', async () => {
     const created = await buildCreateOperationAndRecord();
     const deleted = await buildDeleteOperationAndRecord(created);

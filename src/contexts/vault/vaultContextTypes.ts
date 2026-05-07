@@ -10,6 +10,7 @@ import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecove
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
 import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
+import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
 import type {
     CategoryPlaintext,
     ItemPlaintext,
@@ -84,6 +85,7 @@ export interface VaultContextType {
 
     // Phase 9 — OpLog UI state (behind feature flag)
     opLogUiView: VaultOpLogUiView | null;
+    opLogLocalVaultState: LocalVaultState | null;
     opLogUiLoading: boolean;
     opLogUiError: string | null;
     opLogUiRefresh: () => Promise<void>;

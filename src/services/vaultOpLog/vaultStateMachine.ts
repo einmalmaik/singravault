@@ -286,21 +286,27 @@ export async function applyTrustedDelete(
 
   const ctxResult = await verifyRecordContext({ record, operation });
   if (ctxResult.kind !== 'validContext') {
-    const recordState = classifyRecordFromContextFailure(ctxResult);
-    const nextState = updateStateWithQuarantine(state, record, recordState, `delete_context_invalid:${ctxResult.kind}`);
-    return { nextState, recordState, vaultMode: determineVaultSecurityMode(nextState) };
+    // A valid signed delete is the deletion proof. If the server keeps or
+    // returns a stale/mismatched record row, the stale payload must not be
+    // decrypted or shown; treating it as deleted preserves fail-closed egress.
+    return markRecordDeletedByTrustedDevice(state, operation, record);
   }
 
   if (!record.isTombstone) {
-    const nextState = updateStateWithQuarantine(
-      state,
-      record,
-      'quarantinedTampered',
-      'delete operation does not reference a tombstone record',
-    );
-    return { nextState, recordState: 'quarantinedTampered', vaultMode: determineVaultSecurityMode(nextState) };
+    // Same rule as above: the trusted delete operation wins over a stale
+    // server record. Tombstone payload verification is desirable for audit,
+    // but a mismatch must not resurrect or quarantine already-deleted data.
+    return markRecordDeletedByTrustedDevice(state, operation, record);
   }
 
+  return markRecordDeletedByTrustedDevice(state, operation, record);
+}
+
+function markRecordDeletedByTrustedDevice(
+  state: LocalVaultState,
+  operation: VaultOperationRow,
+  record: VaultRecordRow,
+): ApplyTrustedDeleteResult {
   const nextRecord: LocalVerifiedRecord = {
     record,
     recordState: 'deletedByTrustedDevice',

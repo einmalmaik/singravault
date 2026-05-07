@@ -43,6 +43,7 @@ import {
     loadVaultSnapshot,
 } from '@/services/offlineVaultService';
 import type { CategoryPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
+import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 
 // Preset colors
 const PRESET_COLORS = [
@@ -77,6 +78,28 @@ interface CategoryItemMatch {
     decryptedData: VaultItemData | null;
 }
 
+function parseVerifiedOpLogItemCategoryId(record: LocalVerifiedRecord): string | null {
+    if (
+        (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+        || record.record.recordType !== 'item'
+        || !record.plaintext
+    ) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(new TextDecoder().decode(record.plaintext)) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return null;
+        }
+
+        const categoryRecordId = (parsed as Record<string, unknown>).categoryRecordId;
+        return typeof categoryRecordId === 'string' ? categoryRecordId : null;
+    } catch {
+        return null;
+    }
+}
+
 export function CategoryDialog({ open, onOpenChange, category, onSave }: CategoryDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
@@ -86,6 +109,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         opLogCreateCategory,
         opLogUpdateCategory,
         opLogDeleteCategory,
+        opLogLocalVaultState,
+        vaultMigrationStatus,
     } = useVault();
 
     const [name, setName] = useState('');
@@ -150,8 +175,23 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         }
     };
 
-    const loadItemsInCategory = useCallback(async (): Promise<CategoryItemMatch[]> => {
-        if (!category || !user) return [];
+    const loadItemCountInCategory = useCallback(async (): Promise<number> => {
+        if (!category || !user) return 0;
+
+        if (vaultMigrationStatus === 'verified') {
+            if (!opLogLocalVaultState) {
+                return 0;
+            }
+
+            let count = 0;
+            for (const record of opLogLocalVaultState.recordsById.values()) {
+                if (parseVerifiedOpLogItemCategoryId(record) === category.id) {
+                    count += 1;
+                }
+            }
+
+            return count;
+        }
 
         const { snapshot } = await loadVaultSnapshot(user.id);
         const items = snapshot.vaultId
@@ -177,8 +217,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             }
         }
 
-        return matches;
-    }, [category, decryptItem, user]);
+        return matches.length;
+    }, [category, decryptItem, opLogLocalVaultState, user, vaultMigrationStatus]);
 
     useEffect(() => {
         if (!showDeleteConfirm || !category || !user) {
@@ -191,10 +231,10 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         setDeleteImpactLoading(true);
         setDeleteImpactCount(null);
 
-        void loadItemsInCategory()
-            .then((items) => {
+        void loadItemCountInCategory()
+            .then((count) => {
                 if (!cancelled) {
-                    setDeleteImpactCount(items.length);
+                    setDeleteImpactCount(count);
                 }
             })
             .catch((err) => {
@@ -212,7 +252,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         return () => {
             cancelled = true;
         };
-    }, [category, loadItemsInCategory, showDeleteConfirm, user]);
+    }, [category, loadItemCountInCategory, showDeleteConfirm, user]);
 
     const handleDelete = async (_mode: CategoryDeleteMode) => {
         if (!category || !user) return;
@@ -371,9 +411,9 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                             {deleteImpactLoading
                                 ? t('common.loading')
                                 : categoryHasItems
-                                    ? t('categories.deleteWithItemsDesc', {
+                                    ? t('categories.deleteBlockedHasItemsDesc', {
                                         count: categoryDeleteItemCount,
-                                        defaultValue: 'Diese Kategorie enthält {{count}} Einträge. Du kannst nur die Kategorie löschen oder die Einträge mitlöschen.',
+                                        defaultValue: 'Diese Kategorie enthält {{count}} Einträge. Entferne oder verschiebe die Einträge, bevor du die Kategorie löschst.',
                                     })
                                     : t('categories.deleteConfirmDesc')}
                         </AlertDialogDescription>
@@ -382,29 +422,16 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         <AlertDialogCancel className="mt-0 h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug">
                             {t('common.cancel')}
                         </AlertDialogCancel>
-                        {categoryHasItems && (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => void handleDelete('unlink-items')}
-                                disabled={loading || deleteImpactLoading}
-                                className="h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug"
-                            >
-                                {t('categories.deleteCategoryOnly', {
-                                    defaultValue: 'Nur Kategorie löschen',
-                                })}
-                            </Button>
-                        )}
                         <Button
                             type="button"
                             variant="destructive"
                             onClick={() => void handleDelete(categoryHasItems ? 'delete-items' : 'unlink-items')}
-                            disabled={loading || deleteImpactLoading}
+                            disabled={loading || deleteImpactLoading || categoryHasItems}
                             className="h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug"
                         >
                             {categoryHasItems
-                                ? t('categories.deleteCategoryAndItems', {
-                                    defaultValue: 'Kategorie und Einträge löschen',
+                                ? t('categories.deleteBlockedHasItems', {
+                                    defaultValue: 'Kategorie enthält Einträge',
                                 })
                                 : t('common.delete')}
                         </Button>

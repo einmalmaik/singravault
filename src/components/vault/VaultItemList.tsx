@@ -41,6 +41,7 @@ import {
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
 import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
 import { getVerifiedRecordIdsForEgress } from '@/services/vaultOpLog';
+import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 import { VaultItemCard } from './VaultItemCard';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
@@ -123,12 +124,80 @@ function canDecryptFromIntegrityResult(
   }
 }
 
-function buildOpLogVerifiedListGate(): VaultItemListIntegrityGate {
+function parseOpLogItemPlaintext(record: LocalVerifiedRecord): VaultItemData | null {
+  if (
+    (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+    || record.record.recordType !== 'item'
+    || !record.plaintext
+  ) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(record.plaintext)) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const value = parsed as Record<string, unknown>;
+    const title = typeof value.title === 'string' ? value.title : '';
+    const itemType = isVaultItemType(value.itemType) ? value.itemType : 'password';
+
+    return {
+      title,
+      websiteUrl: typeof value.websiteUrl === 'string' ? value.websiteUrl : undefined,
+      username: typeof value.username === 'string' ? value.username : undefined,
+      password: typeof value.password === 'string' ? value.password : undefined,
+      notes: typeof value.notes === 'string' ? value.notes : undefined,
+      itemType,
+      categoryId: typeof value.categoryRecordId === 'string' ? value.categoryRecordId : null,
+      isFavorite: typeof value.isFavorite === 'boolean' ? value.isFavorite : false,
+      totpSecret: typeof value.totpSecret === 'string' ? value.totpSecret : undefined,
+      totpIssuer: typeof value.totpIssuer === 'string' ? value.totpIssuer : undefined,
+      totpLabel: typeof value.totpLabel === 'string' ? value.totpLabel : undefined,
+      totpAlgorithm: isTotpAlgorithm(value.totpAlgorithm) ? value.totpAlgorithm : undefined,
+      totpDigits: value.totpDigits === 6 || value.totpDigits === 8 ? value.totpDigits : undefined,
+      totpPeriod: typeof value.totpPeriod === 'number' ? value.totpPeriod : undefined,
+      customFields: isStringRecord(value.customFields) ? value.customFields : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mapOpLogRecordToVaultItem(record: LocalVerifiedRecord): VaultItem | null {
+  const decryptedData = parseOpLogItemPlaintext(record);
+  if (!decryptedData) {
+    return null;
+  }
+
   return {
-    mode: 'healthy',
-    quarantinedItems: [],
-    isFirstCheck: false,
+    id: record.record.recordId,
+    vault_id: record.record.vaultId,
+    title: decryptedData.title ?? '',
+    website_url: decryptedData.websiteUrl ?? null,
+    icon_url: null,
+    item_type: decryptedData.itemType ?? 'password',
+    is_favorite: decryptedData.isFavorite ?? false,
+    category_id: decryptedData.categoryId ?? null,
+    created_at: record.record.createdAt,
+    updated_at: record.record.updatedAt,
+    decryptedData,
   };
+}
+
+function isVaultItemType(value: unknown): value is VaultItem['item_type'] {
+  return value === 'password' || value === 'note' || value === 'totp' || value === 'card';
+}
+
+function isTotpAlgorithm(value: unknown): value is NonNullable<VaultItemData['totpAlgorithm']> {
+  return value === 'SHA1' || value === 'SHA256' || value === 'SHA512';
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return !!value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.values(value).every((entry) => typeof entry === 'string');
 }
 
 function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
@@ -180,6 +249,7 @@ export function VaultItemList({
     verifyIntegrity,
     vaultDataVersion,
     vaultMigrationStatus,
+    opLogLocalVaultState,
     opLogUiView,
   } = useVault();
   const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
@@ -311,10 +381,23 @@ export function VaultItemList({
         setDecrypting(true);
       }
       try {
+        if (useOpLogVerifiedRuntime) {
+          const opLogItems = opLogLocalVaultState
+            ? Array.from(opLogLocalVaultState.recordsById.values())
+              .map(mapOpLogRecordToVaultItem)
+              .filter((item): item is VaultItem => item !== null)
+              .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+            : [];
+
+          reportUnreadableItemsRef.current([]);
+          setItems(opLogItems);
+          hasRenderedVaultContentRef.current = opLogItems.length > 0;
+          setLastCloudSyncAt(new Date());
+          return;
+        }
+
         const { snapshot, source } = await loadVaultSnapshot(userId);
-        const integrityResult: VaultItemListIntegrityGate | null = useOpLogVerifiedRuntime
-          ? buildOpLogVerifiedListGate()
-          : await verifyIntegrityRef.current(snapshot, { source });
+        const integrityResult: VaultItemListIntegrityGate | null = await verifyIntegrityRef.current(snapshot, { source });
         const allowsAnyDecrypt = integrityResult?.mode === 'healthy' || integrityResult?.mode === 'quarantine';
         if (!allowsAnyDecrypt) {
           setItems([]);
@@ -534,6 +617,7 @@ export function VaultItemList({
     cloudSyncTick,
     isDuressMode,
     revalidateRemoteIntegrity,
+    opLogLocalVaultState,
     useOpLogVerifiedRuntime,
     userId,
     vaultDataVersion,

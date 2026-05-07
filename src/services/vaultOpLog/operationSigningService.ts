@@ -246,6 +246,29 @@ export async function verifyOperationSignature(
   }
 }
 
+export async function doesDeviceSigningKeyMatchPublicKey(
+  privateKey: CryptoKey,
+  publicKeyB64Url: string,
+): Promise<boolean> {
+  const publicKey = await importDevicePublicKey(publicKeyB64Url);
+  const challenge = canonicalizeVaultStructure({
+    app: 'singra-vault',
+    purpose: 'oplog-device-signing-key-possession-check-v1',
+  });
+  const signatureBuffer = await crypto.subtle.sign(
+    SIGNING_PARAMS,
+    privateKey,
+    challenge as unknown as ArrayBuffer,
+  );
+
+  return crypto.subtle.verify(
+    SIGNING_PARAMS,
+    publicKey,
+    signatureBuffer,
+    challenge as unknown as ArrayBuffer,
+  );
+}
+
 function isIsoInstant(value: string): boolean {
   // Accept ISO-8601 UTC instants with or without fractional seconds.
   // Example: 2026-05-02T10:30:00.000Z

@@ -18,7 +18,7 @@ import {
   type VaultOpLogCrudServiceDependencies,
   type VerifiedRecordBase,
 } from '@/services/vaultOpLog/vaultOpLogCrudService';
-import { loadVaultOpLogDeviceIdentity } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
+import { loadVerifiedVaultOpLogDeviceContext } from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
 import { loadVaultOpLogDeviceSigningKey } from '@/services/vaultOpLog/vaultOpLogDeviceSigningKeyStore';
 import { loadVaultOpLogUiState } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type { VaultOpLogTrustReadClient } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
@@ -153,9 +153,14 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
       throw new VaultOpLogUiActionBlockedError('Vault-ID konnte nicht verifiziert geladen werden.');
     }
 
-    const identity = loadVaultOpLogDeviceIdentity();
+    const deviceContext = await loadVerifiedVaultOpLogDeviceContext({
+      userId: user.id,
+      vaultId,
+      trustClient: supabase,
+    });
+    const identity = deviceContext?.identity ?? null;
     if (!identity) {
-      throw new VaultOpLogUiActionBlockedError('OpLog-Device-Identität fehlt.');
+      throw new VaultOpLogUiActionBlockedError('OpLog-Device-Identität fehlt oder ist auf diesem Gerät nicht verfügbar.');
     }
 
     const deviceSigningKey = await loadVaultOpLogDeviceSigningKey({
@@ -174,7 +179,7 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
       deviceSigningKey,
       publicSigningKeyB64Url: identity.publicSigningKeyB64Url,
       vaultEncryptionKey: state.vaultEncryptionKey,
-      trustEpoch: 0,
+      trustEpoch: deviceContext.trustEpoch,
       keyVersion: 1,
       rpcClient: supabase as unknown as SupabaseRpcClient,
       trustClient: supabase as unknown as VaultOpLogTrustReadClient,

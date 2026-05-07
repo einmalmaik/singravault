@@ -89,6 +89,8 @@ import {
     ENCRYPTED_CATEGORY_PREFIX,
 } from '@/services/vaultMetadataPolicy';
 import type { ItemPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
+import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 
 interface Category {
     id: string;
@@ -141,6 +143,7 @@ const EMPTY_ITEM_FORM_VALUES: ItemFormData = {
     totpPeriod: DEFAULT_TOTP_PERIOD,
     isFavorite: false,
 };
+const OPLOG_TEXT_DECODER = new TextDecoder();
 
 interface VaultItemDialogProps {
     open: boolean;
@@ -185,6 +188,12 @@ function resolveInitialItemType(
     canUseTotp: boolean,
 ): 'password' | 'note' | 'totp' {
     return initialType === 'totp' && (!hasPremiumAuthenticator || !canUseTotp) ? 'password' : initialType;
+}
+
+function shouldVerifyLegacyDialogCategorySnapshot(
+    vaultMigrationStatus: VaultMigrationRolloutStatus | null,
+): boolean {
+    return vaultMigrationStatus !== 'verified';
 }
 
 function clearVaultItemDialogDraftStorage(): void {
@@ -265,6 +274,32 @@ function buildOpLogItemPlaintext(itemData: VaultItemData): ItemPlaintext {
     };
 }
 
+function parseVerifiedOpLogPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
+    if (
+        (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+        || !record.plaintext
+    ) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(OPLOG_TEXT_DECODER.decode(record.plaintext)) as unknown;
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function getOptionalString(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined;
+}
+
+function getOptionalBoolean(value: unknown): boolean | undefined {
+    return typeof value === 'boolean' ? value : undefined;
+}
+
 export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialType = 'password' }: VaultItemDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
@@ -275,7 +310,9 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         opLogCreateItem,
         opLogUpdateItem,
         opLogDeleteItem,
+        opLogLocalVaultState,
         verifyIntegrity,
+        vaultMigrationStatus,
     } = useVault();
     const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
     const hasPremiumAuthenticator = isPremiumActive();
@@ -320,11 +357,36 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const fetchCategories = useCallback(async () => {
         if (!user || !open) return;
         try {
-            const { snapshot, source } = await loadVaultSnapshot(user.id);
-            const integrityResult = await verifyIntegrity(snapshot, { source });
-            if (integrityResult?.mode === 'blocked') {
-                setCategories([]);
+            if (vaultMigrationStatus === 'verified') {
+                const opLogCategories = opLogLocalVaultState
+                    ? Array.from(opLogLocalVaultState.recordsById.values()).flatMap((record) => {
+                        if (record.record.recordType !== 'category') {
+                            return [];
+                        }
+                        const plaintext = parseVerifiedOpLogPlaintext(record);
+                        const name = getOptionalString(plaintext?.name);
+                        if (!name) {
+                            return [];
+                        }
+                        return [{
+                            id: record.record.recordId,
+                            name,
+                            icon: getOptionalString(plaintext?.icon) ?? null,
+                            color: getOptionalString(plaintext?.color) ?? null,
+                        }];
+                    })
+                    : [];
+                setCategories(opLogCategories);
                 return;
+            }
+
+            const { snapshot, source } = await loadVaultSnapshot(user.id);
+            if (shouldVerifyLegacyDialogCategorySnapshot(vaultMigrationStatus)) {
+                const integrityResult = await verifyIntegrity(snapshot, { source });
+                if (integrityResult?.mode === 'blocked') {
+                    setCategories([]);
+                    return;
+                }
             }
 
             const resolvedCategories = await Promise.all(
@@ -374,7 +436,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             console.error('Failed to load categories:', err);
             setCategories([]);
         }
-    }, [user, open, decryptData, verifyIntegrity]);
+    }, [user, open, decryptData, opLogLocalVaultState, verifyIntegrity, vaultMigrationStatus]);
 
     // Fetch categories
     useEffect(() => {
@@ -388,6 +450,47 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
             setLoading(true);
             try {
+                if (vaultMigrationStatus === 'verified') {
+                    const record = opLogLocalVaultState?.recordsById.get(normalizedItemId) ?? null;
+                    if (!record || record.record.recordType !== 'item') {
+                        throw new Error('Item not found');
+                    }
+
+                    const plaintext = parseVerifiedOpLogPlaintext(record);
+                    if (!plaintext) {
+                        throw new Error('Item not verified');
+                    }
+
+                    const candidateType = getOptionalString(plaintext.itemType) ?? 'password';
+                    const resolvedType: 'password' | 'note' | 'totp' =
+                        candidateType === 'note'
+                            ? 'note'
+                            : candidateType === 'totp' && hasPremiumAuthenticator
+                                ? 'totp'
+                                : 'password';
+
+                    form.reset({
+                        title: getOptionalString(plaintext.title) ?? '',
+                        url: getOptionalString(plaintext.websiteUrl) ?? '',
+                        username: getOptionalString(plaintext.username) ?? '',
+                        password: getOptionalString(plaintext.password) ?? '',
+                        notes: getOptionalString(plaintext.notes) ?? '',
+                        totpSecret: normalizeTOTPSecretInput(getOptionalString(plaintext.totpSecret) ?? ''),
+                        totpIssuer: getOptionalString(plaintext.totpIssuer) ?? '',
+                        totpLabel: getOptionalString(plaintext.totpLabel) ?? '',
+                        totpAlgorithm: plaintext.totpAlgorithm === 'SHA256' || plaintext.totpAlgorithm === 'SHA512'
+                            ? plaintext.totpAlgorithm
+                            : DEFAULT_TOTP_ALGORITHM,
+                        totpDigits: plaintext.totpDigits === 8 ? 8 : DEFAULT_TOTP_DIGITS,
+                        totpPeriod: typeof plaintext.totpPeriod === 'number' ? plaintext.totpPeriod : DEFAULT_TOTP_PERIOD,
+                        isFavorite: getOptionalBoolean(plaintext.isFavorite) ?? false,
+                    });
+
+                    setItemType(resolvedType);
+                    setSelectedCategoryId(getOptionalString(plaintext.categoryRecordId) ?? null);
+                    return;
+                }
+
                 const { snapshot } = await loadVaultSnapshot(user.id);
                 const item = snapshot.items.find((entry) => entry.id === normalizedItemId);
                 if (!item) {
@@ -440,7 +543,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         }
 
         loadItem();
-    }, [normalizedItemId, open, user, decryptItem, form, hasPremiumAuthenticator, toast, t]);
+    }, [normalizedItemId, open, user, vaultMigrationStatus, opLogLocalVaultState, decryptItem, form, hasPremiumAuthenticator, toast, t]);
 
     // Reset create forms every time the dialog opens so sensitive stale values
     // from the previous entry cannot be reused by React state or browser autofill.

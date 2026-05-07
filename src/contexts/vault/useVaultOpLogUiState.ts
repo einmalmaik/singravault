@@ -1,18 +1,11 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 /**
- * `useVaultOpLogUiState` — Phase 9 UI state hook.
+ * `useVaultOpLogUiState` - Phase 9 UI state hook.
  *
  * Manages the vault operation-log-based UI view (security modes,
  * quarantine, conflicts) behind the `VITE_VAULT_OP_LOG_PHASE_9_UI_ENABLED`
  * feature flag.
- *
- * When the flag is off this hook returns `null` for everything and
- * performs no RPC calls.
- *
- * When the flag is on but required credentials (device identity,
- * vault encryption key) are missing, it returns `null` and exposes no
- * verified OpLog egress state.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,19 +15,24 @@ import {
 } from '@/services/vaultOpLog/vaultOpLogFeatureFlags';
 import {
   loadVaultOpLogUiState,
+  type VaultOpLogTrustReadClient,
 } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
-import type { VaultOpLogTrustReadClient } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type {
   VaultOpLogUiView,
 } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
 import {
   loadVaultOpLogDeviceIdentity,
 } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
+import {
+  recoverVaultOpLogDeviceIdentity,
+} from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
+import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
 import type { VaultProviderState } from './useVaultProviderState';
 
 export interface VaultOpLogUiState {
   readonly uiView: VaultOpLogUiView | null;
+  readonly localVaultState: LocalVaultState | null;
   readonly isLoading: boolean;
   readonly lastError: string | null;
   readonly refresh: () => Promise<void>;
@@ -46,14 +44,20 @@ export function useVaultOpLogUiState(
 ): VaultOpLogUiState {
   const isEnabled = isVaultOpLogPhase9UIEnabled();
   const [uiView, setUiView] = useState<VaultOpLogUiView | null>(null);
+  const [localVaultState, setLocalVaultState] = useState<LocalVaultState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const isRunningRef = useRef(false);
 
+  const clearState = useCallback(() => {
+    setUiView(null);
+    setLocalVaultState(null);
+    setLastError(null);
+  }, []);
+
   const refresh = useCallback(async (): Promise<void> => {
     if (!isEnabled) {
-      setUiView(null);
-      setLastError(null);
+      clearState();
       return;
     }
 
@@ -61,12 +65,9 @@ export function useVaultOpLogUiState(
       return;
     }
 
-    const deviceIdentity = loadVaultOpLogDeviceIdentity();
     const vaultEncryptionKey = vaultProviderState.vaultEncryptionKey;
-
-    if (!deviceIdentity || !vaultEncryptionKey || !userId) {
-      setUiView(null);
-      setLastError(null);
+    if (!vaultEncryptionKey || !userId) {
+      clearState();
       return;
     }
 
@@ -79,7 +80,19 @@ export function useVaultOpLogUiState(
         ?? await loadDefaultVaultId(userId);
       if (!vaultId) {
         setUiView(null);
+        setLocalVaultState(null);
         setLastError('vault_id_load_failed');
+        return;
+      }
+
+      const deviceIdentity = loadVaultOpLogDeviceIdentity()
+        ?? await recoverVaultOpLogDeviceIdentity({
+          userId,
+          vaultId,
+          trustClient: supabase,
+        });
+      if (!deviceIdentity) {
+        clearState();
         return;
       }
 
@@ -95,17 +108,26 @@ export function useVaultOpLogUiState(
       if (result.error) {
         setLastError(result.error);
         setUiView(null);
+        setLocalVaultState(null);
       } else {
         setUiView(result.uiView);
+        setLocalVaultState(result.localVaultState);
       }
     } catch (err) {
       setLastError(err instanceof Error ? err.message : 'unknown_ui_state_error');
       setUiView(null);
+      setLocalVaultState(null);
     } finally {
       setIsLoading(false);
       isRunningRef.current = false;
     }
-  }, [isEnabled, vaultProviderState.vaultEncryptionKey, vaultProviderState.vaultMigrationKeyContext?.vaultId, userId]);
+  }, [
+    clearState,
+    isEnabled,
+    vaultProviderState.vaultEncryptionKey,
+    vaultProviderState.vaultMigrationKeyContext?.vaultId,
+    userId,
+  ]);
 
   useEffect(() => {
     if (!isEnabled) {
@@ -115,13 +137,20 @@ export function useVaultOpLogUiState(
     if (!vaultProviderState.isLocked && vaultProviderState.vaultEncryptionKey && userId) {
       void refresh();
     } else {
-      setUiView(null);
-      setLastError(null);
+      clearState();
     }
-  }, [isEnabled, vaultProviderState.isLocked, vaultProviderState.vaultEncryptionKey, userId, refresh]);
+  }, [
+    clearState,
+    isEnabled,
+    vaultProviderState.isLocked,
+    vaultProviderState.vaultEncryptionKey,
+    userId,
+    refresh,
+  ]);
 
   return {
     uiView,
+    localVaultState,
     isLoading,
     lastError,
     refresh,

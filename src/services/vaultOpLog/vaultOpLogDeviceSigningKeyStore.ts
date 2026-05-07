@@ -19,6 +19,10 @@ export interface VaultOpLogDeviceSigningKeyRef {
   readonly deviceId: string;
 }
 
+export interface StoredVaultOpLogDeviceSigningKeyRef extends VaultOpLogDeviceSigningKeyRef {
+  readonly updatedAt: string;
+}
+
 export class VaultOpLogDeviceSigningKeyStoreError extends Error {
   constructor(message: string) {
     super(message);
@@ -69,6 +73,29 @@ export async function loadVaultOpLogDeviceSigningKey(
   }
 }
 
+export async function listVaultOpLogDeviceSigningKeyRefs(
+  input: Pick<VaultOpLogDeviceSigningKeyRef, 'userId' | 'vaultId'>,
+): Promise<StoredVaultOpLogDeviceSigningKeyRef[]> {
+  const db = await openDb();
+  try {
+    const rows = await idbRequest<unknown[]>(
+      transactionStore(db, 'readonly').getAll(),
+    );
+    return rows
+      .filter(isStoredSigningKeyRow)
+      .filter((row) => row.userId === input.userId && row.vaultId === input.vaultId)
+      .map((row) => ({
+        userId: row.userId,
+        vaultId: row.vaultId,
+        deviceId: row.deviceId,
+        updatedAt: row.updatedAt,
+      }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  } finally {
+    db.close();
+  }
+}
+
 function assertNonExtractableSigningKey(key: CryptoKey): void {
   if (key.type !== 'private' || key.extractable !== false || !key.usages.includes('sign')) {
     throw new VaultOpLogDeviceSigningKeyStoreError('device signing key must be a non-extractable private signing key');
@@ -113,4 +140,21 @@ function isStoredSigningKey(value: unknown): value is { readonly privateKey: Cry
     && value !== null
     && 'privateKey' in value
     && (value as { privateKey?: unknown }).privateKey instanceof CryptoKey;
+}
+
+function isStoredSigningKeyRow(value: unknown): value is {
+  readonly userId: string;
+  readonly vaultId: string;
+  readonly deviceId: string;
+  readonly privateKey: CryptoKey;
+  readonly updatedAt: string;
+} {
+  if (!isStoredSigningKey(value)) {
+    return false;
+  }
+  const row = value as Record<string, unknown>;
+  return typeof row.userId === 'string'
+    && typeof row.vaultId === 'string'
+    && typeof row.deviceId === 'string'
+    && typeof row.updatedAt === 'string';
 }

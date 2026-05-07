@@ -73,6 +73,8 @@ class MockIDBDatabase {
       })
     );
   }
+
+  close(): void { }
 }
 
 class MockIDBObjectStore {
@@ -80,6 +82,10 @@ class MockIDBObjectStore {
 
   get(key: string): MockIDBRequest {
     return new MockIDBRequest(this.data.get(key));
+  }
+
+  getAll(): MockIDBRequest {
+    return new MockIDBRequest(Array.from(this.data.values()));
   }
 
   put(value: unknown, key?: string): MockIDBRequest {

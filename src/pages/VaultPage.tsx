@@ -113,8 +113,6 @@ export default function VaultPage() {
         opLogUiLoading,
         opLogUiError,
         opLogUiRefresh,
-        opLogRestoreRecord,
-        opLogDeleteUntrustedRecord,
         opLogResolveConflict,
     } = useVault();
 
@@ -135,6 +133,9 @@ export default function VaultPage() {
     const { showAdminButton } = useAdminPanelAccess({
         enabled: isPremiumActive() && !isOfflineSession && !isLocked && !isSetupRequired,
     });
+    const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
+    const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime
+        && NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode);
 
     useEffect(() => {
         const goOnline = () => setIsOnline(true);
@@ -221,7 +222,7 @@ export default function VaultPage() {
         return <MasterPasswordSetup />;
     }
 
-    if (integrityMode === 'blocked' || integrityMode === 'safe') {
+    if (!useOpLogVerifiedRuntime && (integrityMode === 'blocked' || integrityMode === 'safe')) {
         return <VaultIntegrityRecovery />;
     }
 
@@ -238,7 +239,7 @@ export default function VaultPage() {
         return <VaultUnlock />;
     }
 
-    if (NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode)) {
+    if (shouldShowLegacyIntegrityRecovery) {
         const handleIntegrityRecheck = async () => {
             setIsRecheckingIntegrity(true);
             try {
@@ -465,7 +466,9 @@ export default function VaultPage() {
                 <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0 space-y-4">
                     {opLogUiView && (
                         <>
-                            <VaultOpLogSecurityModeBanner mode={opLogUiView.vaultSecurityMode} />
+                            {opLogUiView.vaultSecurityMode !== 'normal' && (
+                                <VaultOpLogSecurityModeBanner mode={opLogUiView.vaultSecurityMode} />
+                            )}
                             {opLogUiLoading && (
                                 <p className="text-xs text-muted-foreground animate-pulse">
                                     {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
@@ -478,12 +481,6 @@ export default function VaultPage() {
                             )}
                             <VaultOpLogQuarantinePanel
                                 items={opLogUiView.quarantinedItems}
-                                onRestore={(recordId) => {
-                                    void runOpLogRecordAction(opLogRestoreRecord, recordId);
-                                }}
-                                onDelete={(recordId) => {
-                                    void runOpLogRecordAction(opLogDeleteUntrustedRecord, recordId);
-                                }}
                             />
                             <VaultOpLogConflictPanel
                                 items={opLogUiView.conflictedItems}
