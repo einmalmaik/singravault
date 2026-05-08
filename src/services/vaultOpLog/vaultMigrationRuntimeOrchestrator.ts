@@ -14,7 +14,10 @@ import type { VaultItemData } from '@/services/cryptoService';
 import { generateDeviceSigningKeyPair } from './operationSigningService';
 import { migrateVault, type MigrateVaultResult } from './migrationService';
 import type { LegacyCategoryRow, LegacyVaultItemRow } from './migrationTypes';
-import { loadMigrationCheckpoint } from './legacyMigrationStateStore';
+import {
+  loadMigrationCheckpoint,
+  saveMigrationCompletionMarker,
+} from './legacyMigrationStateStore';
 import { saveVaultOpLogDeviceIdentity, loadVaultOpLogDeviceIdentity } from './vaultOpLogDeviceStore';
 import {
   loadVaultOpLogDeviceSigningKey,
@@ -22,7 +25,7 @@ import {
 } from './vaultOpLogDeviceSigningKeyStore';
 import { loadVaultOpLogUiState } from './vaultOpLogUiOrchestrator';
 import type { VaultOpLogTrustReadClient } from './vaultOpLogUiOrchestrator';
-import type { SupabaseRpcClient } from './vaultOpLogRepository';
+import { getVaultHead, type SupabaseRpcClient } from './vaultOpLogRepository';
 
 export interface MigrationKeyContext {
   readonly activeKey: CryptoKey;
@@ -60,6 +63,27 @@ export async function runControlledMigration(
   const rpcClient = input.rpcClient ?? supabase;
 
   try {
+    const checkpoint = loadMigrationCheckpoint(input.vaultId);
+    if (!checkpoint) {
+      const existingRemoteMigration = await resolveExistingRemoteMigration(input, rpcClient, client);
+      if (existingRemoteMigration.kind === 'verified') {
+        saveMigrationCompletionMarker({
+          version: 1,
+          vaultId: input.vaultId,
+          state: 'verified',
+          completedAt: new Date().toISOString(),
+        });
+        return { success: true, migrationResult: null, error: null };
+      }
+      if (existingRemoteMigration.kind === 'blocked') {
+        return {
+          success: false,
+          migrationResult: null,
+          error: new Error(existingRemoteMigration.reason),
+        };
+      }
+    }
+
     const [legacyItems, legacyCategories, device] = await Promise.all([
       loadLegacyItems(client, input.userId, input.vaultId),
       loadLegacyCategories(client, input.userId),
@@ -123,6 +147,44 @@ export async function runControlledMigration(
       error: error instanceof Error ? error : new Error('Tresor-Migration fehlgeschlagen.'),
     };
   }
+}
+
+type ExistingRemoteMigrationResult =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'verified' }
+  | { readonly kind: 'blocked'; readonly reason: string };
+
+async function resolveExistingRemoteMigration(
+  input: RunControlledMigrationInput,
+  rpcClient: SupabaseRpcClient,
+  client: Pick<typeof supabase, 'from'>,
+): Promise<ExistingRemoteMigrationResult> {
+  const head = await getVaultHead(rpcClient, input.vaultId);
+  if (head.kind !== 'success') {
+    return { kind: 'none' };
+  }
+
+  const verifiedState = await loadVaultOpLogUiState({
+    rpcClient,
+    trustClient: client as unknown as VaultOpLogTrustReadClient,
+    vaultId: input.vaultId,
+    vaultEncryptionKey: input.migrationKeyContext.vaultEncryptionKey,
+  });
+
+  const hasVerifiedManifest = Array.from(verifiedState.localVaultState?.recordsById.values() ?? []).some((record) => (
+    record.recordState === 'verified' && record.record.recordType === 'manifest'
+  ));
+
+  if (hasVerifiedManifest) {
+    return { kind: 'verified' };
+  }
+
+  return {
+    kind: 'blocked',
+    reason: verifiedState.error
+      ? `Remote-OpLog existiert bereits, konnte aber nicht verifiziert werden: ${verifiedState.error}`
+      : 'Remote-OpLog existiert bereits ohne verifizierten Migrations-Manifest-Record.',
+  };
 }
 
 async function getOrCreateDeviceSigningContext(

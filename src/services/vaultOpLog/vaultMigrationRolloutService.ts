@@ -111,30 +111,10 @@ export async function evaluateVaultMigrationGate(
         );
       }
 
-      // Without vault key: check if a verified manifest exists in the OpLog via RPC
-      // This is a non-sensitive check (no decryption needed)
-      const { data: manifestExists, error: manifestError } = await rpcClient.rpc('op_log_manifest_exists', {
-        p_vault_id: legacySignals.vaultId,
-      });
-
-      if (manifestError) {
-        return block(
-          'preflightFailed',
-          legacySignals.vaultId,
-          `op-log manifest check failed: ${manifestError.message}`,
-        );
-      }
-
-      if (manifestExists) {
-        // Manifest exists but we can't verify it without vault key; allow normal unlock
-        // The unlock flow will verify the OpLog properly
-        return allow('verified', legacySignals.vaultId);
-      }
-
       return block(
-        'required',
+        'preflightFailed',
         legacySignals.vaultId,
-        'legacy rows and op-log head both exist; unlock vault to verify migration',
+        'legacy rows and op-log head both exist; vault key is required to verify remote migration',
       );
     }
 
