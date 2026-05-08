@@ -60,6 +60,7 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: supabaseMock }));
 describe('deviceKeyDeactivationService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    deviceKeyServiceMocks.deleteDeviceKey.mockResolvedValue(undefined);
     deviceKeyServiceMocks.hasDeviceKey.mockResolvedValue(true);
     deviceKeyServiceMocks.getDeviceKey.mockResolvedValue(new Uint8Array(32).fill(9));
     nativeBridgeMocks.isNativeDeviceKeyBridgeRuntime.mockReturnValue(true);
