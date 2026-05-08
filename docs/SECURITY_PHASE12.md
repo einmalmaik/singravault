@@ -2,6 +2,17 @@
 
 Stand: 2026-05-07
 
+## Update 2026-05-08 - Shared Collections / Families
+
+- Architekturentscheidung: Shared Collections werden nicht in den persoenlichen `vaultOpLog` gefaltet. Sie haben einen eigenen `collectionOpLog`, weil Family-Plan-Entitlement keine kryptografische Trust-Beziehung ist.
+- Neu angelegt: forward-only Migration `20260508142024_collection_op_log.sql` mit `collection_records`, `collection_operations`, `collection_op_log_heads`, `collection_op_log_members` und RPCs `submit_collection_operation`, `get_collection_head`, `get_collection_changes_since`, `get_collection_records_by_ids`, `get_collection_author_trust_material`.
+- Sicherheitsmodell: direkte Client-INSERT/UPDATE/DELETE auf die neuen Collection-OpLog-Tabellen sind entzogen; Mutationen laufen nur ueber `submit_collection_operation`. RPCs verwenden `SECURITY DEFINER`, festen `search_path = public`, Auth-/Mitgliedschaftschecks, CAS ueber `base_collection_head`, Record-CAS ueber Version und `previous_ciphertext_hash`, sowie idempotente `op_id`/`op_hash`-Behandlung.
+- Client-Service: `src/services/collectionOpLog/` implementiert Operation Builder, Repository, AEAD-Record-Sealing mit vorhandenen WebCrypto-/Canonical-JSON-/Hash-Mustern, State-Machine-Verifikation und CRUD-Orchestrierung. Es wurde keine neue Kryptografie-Dependency eingefuehrt.
+- Verified-only Egress: Collection-Records werden erst entschluesselt, nachdem Autorgeraet, Trust-Epoch, Signatur, Op-Hash, Head-Chain, AAD-Hash und Ciphertext-Hash lokal verifiziert wurden. Unknown-author, revoked-device, Row-/Signed-Body-Mismatch und Ciphertext-Manipulation bleiben ohne Decrypt in Quarantaene/fail-closed.
+- Premium-Entitlement: Family-Mitglieder erhalten effektiven Families-Zugriff, wenn sie aktives `family_members`-Mitglied eines Owners mit aktiver/trialing Families-Subscription sind. Diese Berechtigung autorisiert keine Collection-Crypto und ersetzt keine Collection-Mitgliedschaft.
+- Noch nicht releasefaehig: Die Premium-UI/`collectionService.ts` enthaelt weiterhin Legacy-Shared-Collection-Schreibpfade auf `shared_collections`, `shared_collection_members`, `shared_collection_items` und `collection_keys`. Diese Pfade duerfen vor Release nicht als produktiver Shared-Collection-Write-Pfad aktiv bleiben; sie muessen auf den neuen Collection-OpLog-Service verdrahtet oder fail-closed als Legacy-Migrationsquelle isoliert werden.
+- Nicht verifiziert: lokale/Cloud-Supabase-Ausfuehrung der neuen Migration, Web/Tauri-E2E fuer Owner/Member/Rekey, Legacy-Shared-Collection-Migration und Premium-Runtime. Grund: noch keine vollstaendige UI-Fassade mit Collection-Key-, Device-Signing- und Member-Trust-Kontext.
+
 ## Update 2026-05-08 - OpLog Device Identity nach Verified-Unlock
 
 - Ursache fuer `OpLog-Device-Identitaet fehlt`: Der OpLog-CRUD-Kontext las die lokale Device-Metadaten-Identity nur aus `localStorage`. Nach Migration/verified konnte diese nicht-sensitive Metadata fehlen, obwohl der non-extractable Device-Signing-Key noch in IndexedDB und der zugehoerige Trusted-Device-Record in Supabase vorhanden waren.

@@ -389,10 +389,19 @@ export function VaultItemList({
               .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
             : [];
 
-          reportUnreadableItemsRef.current([]);
+reportUnreadableItemsRef.current([]);
           setItems(opLogItems);
-          hasRenderedVaultContentRef.current = opLogItems.length > 0;
+          hasRenderedVaultContentRef.current = true;
           setLastCloudSyncAt(new Date());
+          fetchItemsRef.current = false;
+          setLoading(false);
+          setDecrypting(false);
+
+          if (pendingFetchItemsRef.current) {
+            pendingFetchItemsRef.current = false;
+            void fetchItems();
+          }
+
           return;
         }
 

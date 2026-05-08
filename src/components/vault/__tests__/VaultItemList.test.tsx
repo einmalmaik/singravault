@@ -408,6 +408,33 @@ describe.sequential('VaultItemList', () => {
     expect(mockRefreshIntegrityBaseline).not.toHaveBeenCalled();
   });
 
+  it('keeps an empty verified OpLog vault on the empty state during background refresh', async () => {
+    snapshotState.online = true;
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    mockVaultContext.opLogLocalVaultState = makeOpLogState([]);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: [],
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    await screen.findByText('vault.empty.title');
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(await screen.findByText('vault.empty.title')).toBeInTheDocument();
+    expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+    expect(loadVaultSnapshot).not.toHaveBeenCalled();
+    expect(mockVerifyIntegrity).not.toHaveBeenCalled();
+  });
+
   it('does not decrypt an item from the freshly returned quarantine result', async () => {
     mockVaultContext.lastIntegrityResult = {
       mode: 'healthy',

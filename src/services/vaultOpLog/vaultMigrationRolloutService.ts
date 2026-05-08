@@ -16,6 +16,10 @@ import {
 } from './legacyMigrationStateStore';
 import type { MigrationState } from './migrationTypes';
 import { getVaultHead, type SupabaseRpcClient } from './vaultOpLogRepository';
+import {
+  loadVaultOpLogUiState,
+  type VaultOpLogTrustReadClient,
+} from './vaultOpLogUiOrchestrator';
 
 export type VaultMigrationRolloutStatus =
   | 'notNeeded'
@@ -34,6 +38,13 @@ export interface VaultMigrationGateResult {
   readonly reason: string | null;
 }
 
+export type RemoteOpLogMigrationVerifier = (input: {
+  readonly rpcClient: SupabaseRpcClient;
+  readonly trustClient: VaultOpLogTrustReadClient;
+  readonly vaultId: string;
+  readonly vaultEncryptionKey: Uint8Array;
+}) => Promise<{ readonly verified: boolean; readonly error: string | null }>;
+
 interface VaultMigrationRolloutClient {
   readonly from: typeof supabase.from;
 }
@@ -42,7 +53,10 @@ export interface EvaluateVaultMigrationGateInput {
   readonly userId: string;
   readonly client?: VaultMigrationRolloutClient;
   readonly rpcClient?: SupabaseRpcClient;
+  readonly trustClient?: VaultOpLogTrustReadClient;
   readonly checkpointStorage?: MigrationStorage;
+  readonly vaultEncryptionKey?: Uint8Array;
+  readonly remoteOpLogVerifier?: RemoteOpLogMigrationVerifier;
 }
 
 export async function evaluateVaultMigrationGate(
@@ -76,7 +90,52 @@ export async function evaluateVaultMigrationGate(
     }
 
     if (legacySignals.hasLegacyRows && hasOpLogHead) {
-      return block('preflightFailed', legacySignals.vaultId, 'legacy rows and op-log head both exist without migration checkpoint');
+      // If we have a vault key, verify the remote OpLog properly
+      if (input.vaultEncryptionKey) {
+        const verifier = input.remoteOpLogVerifier ?? verifyRemoteOpLogMigration;
+        const verified = await verifier({
+          rpcClient,
+          trustClient: input.trustClient ?? (client as unknown as VaultOpLogTrustReadClient),
+          vaultId: legacySignals.vaultId,
+          vaultEncryptionKey: input.vaultEncryptionKey,
+        });
+
+        if (verified.verified) {
+          return allow('verified', legacySignals.vaultId);
+        }
+
+        return block(
+          'preflightFailed',
+          legacySignals.vaultId,
+          verified.error ?? 'legacy rows and op-log head both exist but remote op-log verification failed',
+        );
+      }
+
+      // Without vault key: check if a verified manifest exists in the OpLog via RPC
+      // This is a non-sensitive check (no decryption needed)
+      const { data: manifestExists, error: manifestError } = await rpcClient.rpc('op_log_manifest_exists', {
+        p_vault_id: legacySignals.vaultId,
+      });
+
+      if (manifestError) {
+        return block(
+          'preflightFailed',
+          legacySignals.vaultId,
+          `op-log manifest check failed: ${manifestError.message}`,
+        );
+      }
+
+      if (manifestExists) {
+        // Manifest exists but we can't verify it without vault key; allow normal unlock
+        // The unlock flow will verify the OpLog properly
+        return allow('verified', legacySignals.vaultId);
+      }
+
+      return block(
+        'required',
+        legacySignals.vaultId,
+        'legacy rows and op-log head both exist; unlock vault to verify migration',
+      );
     }
 
     if (legacySignals.hasLegacyRows) {
@@ -87,6 +146,35 @@ export async function evaluateVaultMigrationGate(
   } catch {
     return block('preflightFailed', null, 'migration preflight could not be evaluated');
   }
+}
+
+async function verifyRemoteOpLogMigration(input: {
+  readonly rpcClient: SupabaseRpcClient;
+  readonly trustClient: VaultOpLogTrustReadClient;
+  readonly vaultId: string;
+  readonly vaultEncryptionKey: Uint8Array;
+}): Promise<{ readonly verified: boolean; readonly error: string | null }> {
+  const result = await loadVaultOpLogUiState({
+    rpcClient: input.rpcClient,
+    trustClient: input.trustClient,
+    vaultId: input.vaultId,
+    vaultEncryptionKey: input.vaultEncryptionKey,
+  });
+
+  if (result.error || !result.localVaultState) {
+    return { verified: false, error: result.error ?? 'remote_op_log_state_missing' };
+  }
+
+  // A completed migration always creates a verified manifest record. A head
+  // without that record can be a trust bootstrap or partial commit, not a
+  // migrated vault, so it must not unlock the legacy rows by itself.
+  const hasVerifiedManifest = Array.from(result.localVaultState.recordsById.values()).some((record) => (
+    record.recordState === 'verified' && record.record.recordType === 'manifest'
+  ));
+
+  return hasVerifiedManifest
+    ? { verified: true, error: null }
+    : { verified: false, error: 'remote_op_log_manifest_missing' };
 }
 
 function gateFromCheckpoint(

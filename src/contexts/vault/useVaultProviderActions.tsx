@@ -45,6 +45,7 @@ import { useVaultCryptoActions } from './useVaultCryptoActions';
 import { useVaultIntegrityActions } from './useVaultIntegrityActions';
 import { useVaultMigrationActions } from './useVaultMigrationActions';
 import { useVaultOpLogCrudActions } from './useVaultOpLogCrudActions';
+import { useCollectionOpLogActions } from './useCollectionOpLogActions';
 import { useVaultProviderState } from './useVaultProviderState';
 import { useVaultLifecycleEffects } from './useVaultLifecycleEffects';
 import { useVaultOpLogUiState } from './useVaultOpLogUiState';
@@ -277,7 +278,10 @@ export function useVaultProviderActions(): VaultContextType {
       return integrityResult;
     }
 
-    const migrationGate = await evaluateVaultMigrationGate({ userId: user.id });
+    const migrationGate = await evaluateVaultMigrationGate({
+      userId: user.id,
+      vaultEncryptionKey,
+    });
     state.setVaultMigrationStatus(migrationGate.status);
     state.setVaultMigrationError(null);
     if (!migrationGate.allowNormalUnlock) {
@@ -287,7 +291,11 @@ export function useVaultProviderActions(): VaultContextType {
       state.setPendingSessionRestore(false);
       state.setIntegrityMode('migration_required');
       state.setIntegrityBlockedReason(null);
-      state.setVaultMigrationCanStart(Boolean(migrationGate.vaultId && vaultEncryptionKey));
+      state.setVaultMigrationCanStart(Boolean(
+        migrationGate.status !== 'preflightFailed'
+        && migrationGate.vaultId
+        && vaultEncryptionKey,
+      ));
       state.setVaultMigrationKeyContext({
         activeKey,
         vaultEncryptionKey: vaultEncryptionKey ? new Uint8Array(vaultEncryptionKey) : null,
@@ -649,6 +657,7 @@ export function useVaultProviderActions(): VaultContextType {
     decryptTrustedRecoverySnapshotItem,
     opLogUiRefresh: opLogUiState.refresh,
   });
+  const collectionOpLogActions = useCollectionOpLogActions(state, user);
 
   return buildVaultContextValue(state, {
     setupMasterPassword,
@@ -679,5 +688,6 @@ export function useVaultProviderActions(): VaultContextType {
     startVaultMigration,
     retryVaultMigration,
     ...opLogActions,
+    ...collectionOpLogActions,
   }, opLogUiState);
 }

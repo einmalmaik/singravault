@@ -91,17 +91,13 @@ export function useVaultOpLogUiState(
           vaultId,
           trustClient: supabase,
         });
-      if (!deviceIdentity) {
-        clearState();
-        return;
-      }
 
       const result = await loadVaultOpLogUiState({
         rpcClient: supabase as unknown as SupabaseRpcClient,
         trustClient: supabase as unknown as VaultOpLogTrustReadClient,
         vaultId,
-        deviceId: deviceIdentity.deviceId,
-        publicSigningKeyB64Url: deviceIdentity.publicSigningKeyB64Url,
+        deviceId: deviceIdentity?.deviceId,
+        publicSigningKeyB64Url: deviceIdentity?.publicSigningKeyB64Url,
         vaultEncryptionKey,
       });
 

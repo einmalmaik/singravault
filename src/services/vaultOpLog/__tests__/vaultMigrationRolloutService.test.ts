@@ -1,13 +1,14 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import {
   evaluateVaultMigrationGate,
 } from '../vaultMigrationRolloutService';
 import {
+  loadMigrationCompletionMarker,
   saveMigrationCheckpoint,
   saveMigrationCompletionMarker,
   type MigrationStorage,
@@ -171,6 +172,64 @@ describe('evaluateVaultMigrationGate', () => {
     expect(result).toMatchObject({
       allowNormalUnlock: true,
       status: 'verified',
+    });
+  });
+
+  it('allows cross-platform unlock when legacy rows remain but remote OpLog verifies', async () => {
+    const storage = makeStorage();
+    const vaultEncryptionKey = new Uint8Array(32).fill(3);
+    const remoteOpLogVerifier = vi.fn(async () => ({ verified: true, error: null }));
+
+    const result = await evaluateVaultMigrationGate({
+      userId: 'user-1',
+      client: makeClient({ vaultId: 'vault-1', itemCount: 1, categoryCount: 1 }),
+      rpcClient: makeRpc(true),
+      checkpointStorage: storage,
+      vaultEncryptionKey,
+      remoteOpLogVerifier,
+    });
+
+    expect(result).toMatchObject({
+      allowNormalUnlock: true,
+      status: 'verified',
+      vaultId: 'vault-1',
+      reason: null,
+    });
+    expect(remoteOpLogVerifier).toHaveBeenCalledWith(expect.objectContaining({
+      vaultId: 'vault-1',
+      vaultEncryptionKey,
+    }));
+    expect(loadMigrationCompletionMarker('vault-1', storage)).toBeNull();
+  });
+
+  it('does not allow legacy rows plus remote OpLog head by head existence alone', async () => {
+    const result = await evaluateVaultMigrationGate({
+      userId: 'user-1',
+      client: makeClient({ vaultId: 'vault-1', itemCount: 1 }),
+      rpcClient: makeRpc(true),
+    });
+
+    expect(result).toMatchObject({
+      allowNormalUnlock: false,
+      status: 'preflightFailed',
+      vaultId: 'vault-1',
+    });
+  });
+
+  it('blocks cross-platform unlock when remote OpLog verification fails', async () => {
+    const result = await evaluateVaultMigrationGate({
+      userId: 'user-1',
+      client: makeClient({ vaultId: 'vault-1', itemCount: 1 }),
+      rpcClient: makeRpc(true),
+      vaultEncryptionKey: new Uint8Array(32).fill(4),
+      remoteOpLogVerifier: vi.fn(async () => ({ verified: false, error: 'vault_head_mismatch' })),
+    });
+
+    expect(result).toMatchObject({
+      allowNormalUnlock: false,
+      status: 'preflightFailed',
+      vaultId: 'vault-1',
+      reason: 'vault_head_mismatch',
     });
   });
 });

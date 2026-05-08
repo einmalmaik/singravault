@@ -17,6 +17,10 @@ import type {
     OpLogCategoryDeleteMode,
 } from '@/services/vaultOpLog/vaultOpLogCrudService';
 import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+import type {
+    CreateSharedCollectionInput,
+    SharedCollectionSummary,
+} from './useCollectionOpLogActions';
 
 export type VaultSnapshotSource = 'remote' | 'cache' | 'empty';
 
@@ -99,4 +103,9 @@ export interface VaultContextType {
     opLogRestoreRecord: (recordId: string) => Promise<{ error: Error | null }>;
     opLogDeleteUntrustedRecord: (recordId: string) => Promise<{ error: Error | null }>;
     opLogResolveConflict: (recordId: string) => Promise<{ error: Error | null }>;
+
+    // Shared Collections — Core-owned signed Collection OpLog facade for Premium.
+    listSharedCollections: () => Promise<{ error: Error | null; collections: SharedCollectionSummary[] }>;
+    createSharedCollection: (input: CreateSharedCollectionInput) => Promise<{ error: Error | null; collectionId: string | null }>;
+    deleteSharedCollection: (collectionId: string) => Promise<{ error: Error | null }>;
 }

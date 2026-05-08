@@ -822,13 +822,13 @@ describe("VaultContext", () => {
     });
 
     it.each([
-      "required",
-      "ready",
-      "running",
-      "committed",
-      "failed",
-      "preflightFailed",
-    ] as const)("keeps the normal vault locked when migration status is %s", async (status) => {
+      ["required", true],
+      ["ready", true],
+      ["running", true],
+      ["committed", true],
+      ["failed", true],
+      ["preflightFailed", false],
+    ] as const)("keeps the normal vault locked when migration status is %s", async (status, canStartMigration) => {
       mockDeriveRawKey.mockResolvedValue(new Uint8Array(32).fill(7));
       mockImportMasterKey.mockResolvedValue({ type: "secret", extractable: false } as CryptoKey);
       mockVerifyKey.mockResolvedValue(true);
@@ -856,7 +856,7 @@ describe("VaultContext", () => {
       expect(result.current.integrityMode).toBe("migration_required");
       expect(result.current.vaultMigrationStatus).toBe(status);
       expect(result.current.vaultMigrationError).toBeNull();
-      expect(result.current.vaultMigrationCanStart).toBe(true);
+      expect(result.current.vaultMigrationCanStart).toBe(canStartMigration);
       expect(mockRunControlledMigration).not.toHaveBeenCalled();
     });
 
@@ -1114,7 +1114,10 @@ describe("VaultContext", () => {
       expect(result.current.integrityMode).toBe("healthy");
       expect(mockFetchRemoteOfflineSnapshot).not.toHaveBeenCalledWith(devUserId, { persist: false });
       expect(mockLoadVaultSnapshot).not.toHaveBeenCalledWith(devUserId);
-      expect(mockEvaluateVaultMigrationGate).toHaveBeenCalledWith({ userId: devUserId });
+      expect(mockEvaluateVaultMigrationGate).toHaveBeenCalledWith(expect.objectContaining({
+        userId: devUserId,
+        vaultEncryptionKey: expect.any(Uint8Array),
+      }));
       expect(mockSupabase.from).toHaveBeenCalledWith("profiles");
     });
 

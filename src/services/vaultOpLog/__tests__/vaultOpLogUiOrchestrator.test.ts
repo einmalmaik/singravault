@@ -236,6 +236,34 @@ describe('vaultOpLogUiOrchestrator', () => {
     expect(result.localVaultState?.trustedDevicesById.has('device-2')).toBe(true);
   });
 
+  it('loads read-only state from remote trust without a local device identity', async () => {
+    const client = createMockRpcClient([[]]);
+    const trustClient = createTrustClient([
+      {
+        vault_id: 'vault-1',
+        device_id: 'device-1',
+        public_signing_key: 'pub-local',
+        device_name_encrypted: '',
+        added_by_device_id: null,
+        added_at: '2025-01-01T00:00:00Z',
+        trust_epoch: 0,
+        status: 'trusted',
+        revoked_at: null,
+        revoked_by_device_id: null,
+      },
+    ]);
+
+    const result = await loadVaultOpLogUiState({
+      rpcClient: client,
+      trustClient,
+      vaultId: 'vault-1',
+      vaultEncryptionKey: new Uint8Array(32),
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.localVaultState?.trustedDevicesById.has('device-1')).toBe(true);
+  });
+
   it('paginates through multiple pages of operations', async () => {
     // Simulate 2 pages: 1 full page (500 ops) + 1 partial page (3 ops)
     const operations = await makeCreateOps(503);

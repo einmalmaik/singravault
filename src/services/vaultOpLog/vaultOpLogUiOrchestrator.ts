@@ -60,8 +60,8 @@ export interface VaultOpLogUiOrchestratorInput {
   readonly rpcClient: SupabaseRpcClient;
   readonly trustClient?: VaultOpLogTrustReadClient;
   readonly vaultId: string;
-  readonly deviceId: string;
-  readonly publicSigningKeyB64Url: string;
+  readonly deviceId?: string;
+  readonly publicSigningKeyB64Url?: string;
   readonly vaultEncryptionKey: Uint8Array;
 }
 
@@ -393,9 +393,17 @@ async function loadTrustList(
   input: VaultOpLogUiOrchestratorInput,
 ): Promise<TrustLoadResult> {
   if (!input.trustClient) {
+    if (!input.deviceId || !input.publicSigningKeyB64Url) {
+      return { kind: 'error' };
+    }
+
     return {
       kind: 'success',
-      trust: buildLocalDeviceOnlyTrust(input),
+      trust: buildLocalDeviceOnlyTrust({
+        vaultId: input.vaultId,
+        deviceId: input.deviceId,
+        publicSigningKeyB64Url: input.publicSigningKeyB64Url,
+      }),
     };
   }
 
