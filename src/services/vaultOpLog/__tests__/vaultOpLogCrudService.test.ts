@@ -9,6 +9,8 @@ import {
   createCategory,
   createItem,
   deleteCategory,
+  deleteCategoryAndReferencedItems,
+  deleteCategoryAndUnlinkItems,
   deleteItem,
   resolveConflict,
   restoreRecord,
@@ -21,7 +23,9 @@ import {
 } from '../vaultOpLogCrudService';
 import { generateDeviceSigningKeyPair } from '../operationSigningService';
 import { InMemoryQueuePersistence } from '../vaultOpLogQueuePersistence';
+import { loadVaultOpLogUiState } from '../vaultOpLogUiOrchestrator';
 import type { SupabaseRpcClient } from '../vaultOpLogRepository';
+import type { LocalVaultState, LocalVerifiedRecord } from '../vaultStateMachine';
 
 const VAULT_ID = 'vault-crud-1';
 const USER_ID = 'user-crud-1';
@@ -255,6 +259,27 @@ function baseFromFake(rpc: FakeRpcClient, recordId: string): VerifiedRecordBase 
   };
 }
 
+async function loadLocalState(serviceDeps: VaultOpLogCrudServiceDependencies): Promise<LocalVaultState> {
+  const loaded = await loadVaultOpLogUiState({
+    rpcClient: serviceDeps.rpcClient,
+    vaultId: serviceDeps.vaultId,
+    deviceId: serviceDeps.deviceId,
+    publicSigningKeyB64Url: serviceDeps.publicSigningKeyB64Url,
+    vaultEncryptionKey: serviceDeps.vaultEncryptionKey,
+  });
+  if (loaded.error || !loaded.localVaultState) {
+    throw new Error(loaded.error ?? 'missing local vault state');
+  }
+  return loaded.localVaultState;
+}
+
+function parsePlaintext(record: LocalVerifiedRecord | undefined): Record<string, unknown> {
+  if (!record?.plaintext) {
+    throw new Error('missing verified plaintext');
+  }
+  return JSON.parse(new TextDecoder().decode(record.plaintext)) as Record<string, unknown>;
+}
+
 describe('vaultOpLogCrudService', () => {
   it('creates an item through submit_vault_operation, queue, reload and verification', async () => {
     const rpc = new FakeRpcClient();
@@ -302,6 +327,71 @@ describe('vaultOpLogCrudService', () => {
       deleteCategory(serviceDeps, created.recordId, baseFromFake(rpc, created.recordId), ['item-1']),
     ).rejects.toBeInstanceOf(CategoryStillReferencedError);
     expect(rpc.operations).toHaveLength(1);
+  });
+
+  it('deletes a category only by unlinking verified items through signed OpLog updates first', async () => {
+    const rpc = new FakeRpcClient();
+    const serviceDeps = await deps(rpc);
+    const category = await createCategory(serviceDeps, { baseVaultHead: INITIAL_HEAD }, categoryPlaintext());
+    const item = await createItem(
+      serviceDeps,
+      { baseVaultHead: rpc.head },
+      itemPlaintext({ categoryRecordId: category.recordId }),
+    );
+
+    await deleteCategoryAndUnlinkItems(serviceDeps, category.recordId);
+
+    const state = await loadLocalState(serviceDeps);
+    expect(parsePlaintext(state.recordsById.get(item.recordId)).categoryRecordId).toBeNull();
+    expect(state.recordsById.get(category.recordId)?.recordState).toBe('deletedByTrustedDevice');
+    expect(rpc.operations.map((operation) => `${operation.record_type}:${operation.op_type}`)).toEqual([
+      'category:create',
+      'item:create',
+      'item:update',
+      'category:delete',
+    ]);
+  });
+
+  it('deletes a category and referenced items as signed tombstone operations', async () => {
+    const rpc = new FakeRpcClient();
+    const serviceDeps = await deps(rpc);
+    const category = await createCategory(serviceDeps, { baseVaultHead: INITIAL_HEAD }, categoryPlaintext());
+    const item = await createItem(
+      serviceDeps,
+      { baseVaultHead: rpc.head },
+      itemPlaintext({ categoryRecordId: category.recordId }),
+    );
+
+    await deleteCategoryAndReferencedItems(serviceDeps, category.recordId);
+
+    const state = await loadLocalState(serviceDeps);
+    expect(state.recordsById.get(item.recordId)?.recordState).toBe('deletedByTrustedDevice');
+    expect(state.recordsById.get(category.recordId)?.recordState).toBe('deletedByTrustedDevice');
+    expect(rpc.operations.map((operation) => `${operation.record_type}:${operation.op_type}`)).toEqual([
+      'category:create',
+      'item:create',
+      'item:delete',
+      'category:delete',
+    ]);
+  });
+
+  it('fails closed when category-delete sequencing lacks verified base metadata', async () => {
+    const rpc = new FakeRpcClient();
+    const serviceDeps = await deps(rpc);
+    const category = await createCategory(serviceDeps, { baseVaultHead: INITIAL_HEAD }, categoryPlaintext());
+    await createItem(
+      serviceDeps,
+      { baseVaultHead: rpc.head },
+      itemPlaintext({ categoryRecordId: category.recordId }),
+    );
+    const stateWithoutHead = {
+      ...await loadLocalState(serviceDeps),
+      lastVerifiedVaultHead: null,
+    };
+
+    await expect(
+      deleteCategoryAndUnlinkItems(serviceDeps, category.recordId, stateWithoutHead),
+    ).rejects.toBeInstanceOf(MissingVerifiedBaseMetadataError);
   });
 
   it('updates a category through a signed update operation', async () => {

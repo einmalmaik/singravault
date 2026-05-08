@@ -14,6 +14,7 @@ import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
 import type {
     CategoryPlaintext,
     ItemPlaintext,
+    OpLogCategoryDeleteMode,
 } from '@/services/vaultOpLog/vaultOpLogCrudService';
 import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 
@@ -94,7 +95,7 @@ export interface VaultContextType {
     opLogDeleteItem: (recordId: string) => Promise<{ error: Error | null }>;
     opLogCreateCategory: (plaintext: CategoryPlaintext) => Promise<{ error: Error | null; recordId: string | null }>;
     opLogUpdateCategory: (recordId: string, plaintext: CategoryPlaintext) => Promise<{ error: Error | null }>;
-    opLogDeleteCategory: (recordId: string) => Promise<{ error: Error | null }>;
+    opLogDeleteCategory: (recordId: string, mode?: OpLogCategoryDeleteMode) => Promise<{ error: Error | null }>;
     opLogRestoreRecord: (recordId: string) => Promise<{ error: Error | null }>;
     opLogDeleteUntrustedRecord: (recordId: string) => Promise<{ error: Error | null }>;
     opLogResolveConflict: (recordId: string) => Promise<{ error: Error | null }>;

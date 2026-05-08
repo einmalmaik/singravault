@@ -185,6 +185,34 @@ describe('deviceKeyDeactivationService', () => {
     expect(deviceKeyServiceMocks.deleteDeviceKey).not.toHaveBeenCalled();
   });
 
+  it('does not report success when local Device Key deletion fails after the server commit', async () => {
+    const { deactivateDeviceKeyProtection } = await import('../deviceKeyDeactivationService');
+    deviceKeyServiceMocks.deleteDeviceKey.mockRejectedValue(new Error('local storage unavailable'));
+
+    const result = await deactivateDeviceKeyProtection({
+      userId: 'user-1',
+      masterPassword: 'correct-password',
+      salt: 'salt',
+      kdfVersion: 2,
+      encryptedUserKey: 'device-protected-user-key',
+      currentDeviceKey: null,
+      twoFactorCode: '123456',
+      confirmationWord: 'DISABLE DEVICE KEY',
+    });
+
+    expect(supabaseMock.functions.invoke).toHaveBeenCalledWith('auth-2fa', {
+      body: expect.objectContaining({
+        action: 'complete-device-key-deactivation',
+      }),
+    });
+    expect(result.error).toMatchObject({
+      name: 'DeviceKeyDeactivationError',
+      code: 'LOCAL_DEVICE_KEY_DELETE_FAILED',
+    });
+    expect(result.state).toBeUndefined();
+    expect(result.error?.message).not.toContain('device-protected-user-key');
+  });
+
   it('uses the browser Device Key bytes instead of exporting native key material', async () => {
     const { deactivateDeviceKeyProtection } = await import('../deviceKeyDeactivationService');
     nativeBridgeMocks.isNativeDeviceKeyBridgeRuntime.mockReturnValue(false);

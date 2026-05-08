@@ -160,6 +160,7 @@ describe('DeviceKeySettings', () => {
         'DISABLE DEVICE KEY',
       );
     });
+    expect(mockRefreshDeviceKeyState).toHaveBeenCalled();
   });
 
   it('does not offer export when the global Device Key policy is disabled even if a stale local key exists', () => {

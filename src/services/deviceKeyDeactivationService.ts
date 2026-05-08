@@ -33,7 +33,8 @@ export class DeviceKeyDeactivationError extends Error {
       | 'TWO_FACTOR_FAILED'
       | 'SECURITY_WORD_FAILED'
       | 'USER_KEY_REWRAP_FAILED'
-      | 'PROFILE_PERSIST_FAILED',
+      | 'PROFILE_PERSIST_FAILED'
+      | 'LOCAL_DEVICE_KEY_DELETE_FAILED',
     message: string,
   ) {
     super(message);
@@ -116,7 +117,14 @@ export async function deactivateDeviceKeyProtection(
       VAULT_PROTECTION_MODE_MASTER_ONLY,
     );
 
-    await deleteDeviceKey(input.userId);
+    try {
+      await deleteDeviceKey(input.userId);
+    } catch {
+      throw new DeviceKeyDeactivationError(
+        'LOCAL_DEVICE_KEY_DELETE_FAILED',
+        'Device Key protection was disabled remotely, but the local Device Key could not be removed automatically.',
+      );
+    }
 
     return {
       error: null,

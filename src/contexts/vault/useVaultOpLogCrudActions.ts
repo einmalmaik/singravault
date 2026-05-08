@@ -7,7 +7,10 @@ import {
   createCategory,
   createItem,
   deleteCategory,
+  deleteCategoryAndReferencedItems,
+  deleteCategoryAndUnlinkItems,
   deleteItem,
+  getReferencedVerifiedItemIdsForCategory,
   getVerifiedRecordBase,
   resolveConflict,
   restoreRecord,
@@ -15,6 +18,7 @@ import {
   updateItem,
   type CategoryPlaintext,
   type ItemPlaintext,
+  type OpLogCategoryDeleteMode,
   type VaultOpLogCrudServiceDependencies,
   type VerifiedRecordBase,
 } from '@/services/vaultOpLog/vaultOpLogCrudService';
@@ -47,7 +51,6 @@ class VaultOpLogUiActionBlockedError extends Error {
   }
 }
 
-const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
 function itemPlaintextFromVaultItemData(data: VaultItemData): ItemPlaintext {
@@ -82,38 +85,6 @@ function encodeResolvedPlaintext(record: LocalVerifiedRecord): Uint8Array {
     throw new VaultOpLogUiActionBlockedError('Kein verifizierter Plaintext für die Konfliktlösung verfügbar.');
   }
   return new Uint8Array(record.plaintext);
-}
-
-function parseVerifiedPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
-  if (!record.plaintext) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(textDecoder.decode(record.plaintext)) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function referencedItemIdsForCategory(state: LocalVaultState, categoryRecordId: string): string[] {
-  const referenced: string[] = [];
-  for (const [recordId, record] of state.recordsById.entries()) {
-    if (
-      record.record.recordType !== 'item'
-      || (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
-      || record.record.isTombstone
-    ) {
-      continue;
-    }
-    const plaintext = parseVerifiedPlaintext(record);
-    if (plaintext?.categoryRecordId === categoryRecordId || plaintext?.categoryId === categoryRecordId) {
-      referenced.push(recordId);
-    }
-  }
-  return referenced;
 }
 
 function recordBase(state: LocalVaultState, recordId: string): VerifiedRecordBase {
@@ -267,13 +238,25 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
     await updateCategory(deps, recordId, recordBase(localVaultState, recordId), plaintext);
   }), [loadRuntimeContext, wrap]);
 
-  const opLogDeleteCategory = useCallback((recordId: string) => wrap(async () => {
+  const opLogDeleteCategory = useCallback((
+    recordId: string,
+    mode: OpLogCategoryDeleteMode = 'blockIfReferenced',
+  ) => wrap(async () => {
     const { deps, localVaultState } = await loadRuntimeContext();
+    if (mode === 'unlinkItems') {
+      await deleteCategoryAndUnlinkItems(deps, recordId, localVaultState);
+      return;
+    }
+    if (mode === 'deleteItems') {
+      await deleteCategoryAndReferencedItems(deps, recordId, localVaultState);
+      return;
+    }
+
     await deleteCategory(
       deps,
       recordId,
       recordBase(localVaultState, recordId),
-      referencedItemIdsForCategory(localVaultState, recordId),
+      getReferencedVerifiedItemIdsForCategory(localVaultState, recordId),
     );
   }), [loadRuntimeContext, wrap]);
 
@@ -318,7 +301,7 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
         deps,
         recordId,
         recordBase(localVaultState, recordId),
-        referencedItemIdsForCategory(localVaultState, recordId),
+        getReferencedVerifiedItemIdsForCategory(localVaultState, recordId),
       );
     } else {
       await deleteItem(deps, recordId, recordBase(localVaultState, recordId));

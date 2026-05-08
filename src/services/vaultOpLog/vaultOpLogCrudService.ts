@@ -32,7 +32,7 @@ import {
   loadVaultOpLogUiState,
   type VaultOpLogTrustReadClient,
 } from './vaultOpLogUiOrchestrator';
-import type { LocalVerifiedRecord } from './vaultStateMachine';
+import type { LocalVaultState, LocalVerifiedRecord } from './vaultStateMachine';
 import type { RecordType } from './types';
 import type { VaultOperationRow } from './vaultOpLogRpcTypes';
 
@@ -58,6 +58,12 @@ export class MissingVerifiedBaseMetadataError extends VaultOpLogCrudServiceError
 export class CategoryStillReferencedError extends VaultOpLogCrudServiceError {
   constructor(recordId: string, count: number) {
     super(`Kategorie ${recordId} wird noch von ${count} Eintrag(en) referenziert.`);
+  }
+}
+
+export class VerifiedItemPlaintextUnavailableError extends VaultOpLogCrudServiceError {
+  constructor(recordId: string) {
+    super(`Verifizierter Item-Plaintext fuer ${recordId} ist nicht verfuegbar oder ungueltig.`);
   }
 }
 
@@ -146,7 +152,10 @@ export interface CategoryPlaintext {
   readonly sortOrder?: number | null;
 }
 
+export type OpLogCategoryDeleteMode = 'blockIfReferenced' | 'unlinkItems' | 'deleteItems';
+
 type ExpectedVerificationState = 'active' | 'deleted';
+const textDecoder = new TextDecoder();
 
 function encodePlaintext(payload: Record<string, unknown>): Uint8Array {
   const cleaned: Record<string, unknown> = {};
@@ -187,6 +196,154 @@ function encodeCategoryPlaintext(data: CategoryPlaintext): Uint8Array {
     parentCategoryRecordId: data.parentCategoryRecordId ?? null,
     sortOrder: data.sortOrder,
   });
+}
+
+function isActiveVerifiedRecord(record: LocalVerifiedRecord): boolean {
+  return (record.recordState === 'verified' || record.recordState === 'restoredFromSnapshot')
+    && !record.record.isTombstone;
+}
+
+function parseVerifiedPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
+  if (!record.plaintext || record.plaintext.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(textDecoder.decode(record.plaintext)) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function readOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readOptionalNumber(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readItemType(value: unknown): ItemPlaintext['itemType'] | null {
+  return value === 'password' || value === 'note' || value === 'totp' || value === 'card'
+    ? value
+    : null;
+}
+
+function readTotpAlgorithm(value: unknown): ItemPlaintext['totpAlgorithm'] | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === 'SHA1' || value === 'SHA256' || value === 'SHA512') {
+    return value;
+  }
+  return undefined;
+}
+
+function readTotpDigits(value: unknown): ItemPlaintext['totpDigits'] | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === 6 || value === 8) {
+    return value;
+  }
+  return undefined;
+}
+
+function readCustomFields(value: unknown): Record<string, string> | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  const parsed: Record<string, string> = {};
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (typeof fieldValue !== 'string') {
+      return undefined;
+    }
+    parsed[key] = fieldValue;
+  }
+  return parsed;
+}
+
+function hasPlaintextField(plaintext: Record<string, unknown> | null, field: string): boolean {
+  return Boolean(plaintext && Object.prototype.hasOwnProperty.call(plaintext, field));
+}
+
+function optionalFieldInvalid(
+  plaintext: Record<string, unknown> | null,
+  field: string,
+  parsedValue: unknown,
+): boolean {
+  return hasPlaintextField(plaintext, field) && parsedValue === undefined;
+}
+
+function itemPlaintextFromVerifiedRecord(recordId: string, record: LocalVerifiedRecord): ItemPlaintext {
+  if (record.record.recordType !== 'item' || !isActiveVerifiedRecord(record)) {
+    throw new VerifiedItemPlaintextUnavailableError(recordId);
+  }
+
+  const plaintext = parseVerifiedPlaintext(record);
+  const title = plaintext?.title;
+  const itemType = readItemType(plaintext?.itemType);
+  const sortOrder = readOptionalNumber(plaintext?.sortOrder);
+  const totpAlgorithm = readTotpAlgorithm(plaintext?.totpAlgorithm);
+  const totpDigits = readTotpDigits(plaintext?.totpDigits);
+  const totpPeriod = readOptionalNumber(plaintext?.totpPeriod);
+  const customFields = readCustomFields(plaintext?.customFields);
+
+  if (
+    typeof title !== 'string'
+    || !itemType
+    || optionalFieldInvalid(plaintext, 'sortOrder', sortOrder)
+    || optionalFieldInvalid(plaintext, 'totpAlgorithm', totpAlgorithm)
+    || optionalFieldInvalid(plaintext, 'totpDigits', totpDigits)
+    || optionalFieldInvalid(plaintext, 'totpPeriod', totpPeriod)
+    || optionalFieldInvalid(plaintext, 'customFields', customFields)
+  ) {
+    throw new VerifiedItemPlaintextUnavailableError(recordId);
+  }
+
+  return {
+    title,
+    websiteUrl: readNullableString(plaintext?.websiteUrl),
+    username: readNullableString(plaintext?.username),
+    password: readNullableString(plaintext?.password),
+    notes: readNullableString(plaintext?.notes),
+    itemType,
+    categoryRecordId: readNullableString(plaintext?.categoryRecordId ?? plaintext?.categoryId),
+    isFavorite: readOptionalBoolean(plaintext?.isFavorite),
+    sortOrder,
+    totpSecret: readNullableString(plaintext?.totpSecret),
+    totpIssuer: readNullableString(plaintext?.totpIssuer),
+    totpLabel: readNullableString(plaintext?.totpLabel),
+    totpAlgorithm,
+    totpDigits,
+    totpPeriod,
+    customFields,
+  };
+}
+
+export function getReferencedVerifiedItemIdsForCategory(
+  state: LocalVaultState,
+  categoryRecordId: string,
+): string[] {
+  const referenced: string[] = [];
+  for (const [recordId, record] of state.recordsById.entries()) {
+    if (record.record.recordType !== 'item' || !isActiveVerifiedRecord(record)) {
+      continue;
+    }
+
+    const plaintext = parseVerifiedPlaintext(record);
+    const referencedCategoryId = plaintext?.categoryRecordId ?? plaintext?.categoryId;
+    if (referencedCategoryId === categoryRecordId) {
+      referenced.push(recordId);
+    }
+  }
+  return referenced;
 }
 
 export function requireVerifiedVaultBase(base: VerifiedVaultBase | null): VerifiedVaultBase {
@@ -297,24 +454,10 @@ async function verifyCommittedOperation(
   operation: VaultOperationRow,
   expectedState: ExpectedVerificationState,
 ): Promise<void> {
-  const verification = await loadVaultOpLogUiState({
-    rpcClient: deps.rpcClient,
-    trustClient: deps.trustClient,
-    vaultId: deps.vaultId,
-    deviceId: deps.deviceId,
-    publicSigningKeyB64Url: deps.publicSigningKeyB64Url,
-    vaultEncryptionKey: deps.vaultEncryptionKey,
-  });
-
-  if (verification.error || !verification.localVaultState) {
-    throw new OperationVerificationAfterCommitError(
-      verification.error ?? 'state_machine_reload_failed',
-    );
-  }
-
-  const verifiedRecord = verification.localVaultState.recordsById.get(operation.recordId);
+  const localVaultState = await loadVerifiedVaultState(deps);
+  const verifiedRecord = localVaultState.recordsById.get(operation.recordId);
   if (!verifiedRecord) {
-    const quarantinedRecord = verification.localVaultState.quarantinedRecordsById.get(operation.recordId);
+    const quarantinedRecord = localVaultState.quarantinedRecordsById.get(operation.recordId);
     if (quarantinedRecord) {
       throw new OperationVerificationAfterCommitError(
         `submitted_record_quarantined_after_reload:${quarantinedRecord.reason}`,
@@ -333,6 +476,27 @@ async function verifyCommittedOperation(
   if (verifiedRecord.recordState !== 'verified' && verifiedRecord.recordState !== 'restoredFromSnapshot') {
     throw new OperationVerificationAfterCommitError(`record_not_verified_after_reload:${verifiedRecord.recordState}`);
   }
+}
+
+async function loadVerifiedVaultState(
+  deps: VaultOpLogCrudServiceDependencies,
+): Promise<LocalVaultState> {
+  const verification = await loadVaultOpLogUiState({
+    rpcClient: deps.rpcClient,
+    trustClient: deps.trustClient,
+    vaultId: deps.vaultId,
+    deviceId: deps.deviceId,
+    publicSigningKeyB64Url: deps.publicSigningKeyB64Url,
+    vaultEncryptionKey: deps.vaultEncryptionKey,
+  });
+
+  if (verification.error || !verification.localVaultState) {
+    throw new OperationVerificationAfterCommitError(
+      verification.error ?? 'state_machine_reload_failed',
+    );
+  }
+
+  return verification.localVaultState;
 }
 
 export async function createItem(
@@ -500,6 +664,70 @@ export async function deleteCategory(
   });
 
   return submitAndVerify(deps, built, 'deleted');
+}
+
+export async function deleteCategoryAndUnlinkItems(
+  deps: VaultOpLogCrudServiceDependencies,
+  categoryRecordId: string,
+  initialState?: LocalVaultState,
+): Promise<SubmissionPipelineResult> {
+  let currentState = initialState ?? await loadVerifiedVaultState(deps);
+  const itemRecordIds = getReferencedVerifiedItemIdsForCategory(currentState, categoryRecordId);
+
+  for (const itemRecordId of itemRecordIds) {
+    const record = currentState.recordsById.get(itemRecordId) ?? null;
+    if (!record) {
+      throw new MissingVerifiedBaseMetadataError();
+    }
+
+    const plaintext = itemPlaintextFromVerifiedRecord(itemRecordId, record);
+    await updateItem(
+      deps,
+      itemRecordId,
+      getVerifiedRecordBase(record, currentState.lastVerifiedVaultHead),
+      { ...plaintext, categoryRecordId: null },
+    );
+    currentState = await loadVerifiedVaultState(deps);
+  }
+
+  return deleteCategory(
+    deps,
+    categoryRecordId,
+    getVerifiedRecordBase(
+      currentState.recordsById.get(categoryRecordId) ?? null,
+      currentState.lastVerifiedVaultHead,
+    ),
+    getReferencedVerifiedItemIdsForCategory(currentState, categoryRecordId),
+  );
+}
+
+export async function deleteCategoryAndReferencedItems(
+  deps: VaultOpLogCrudServiceDependencies,
+  categoryRecordId: string,
+  initialState?: LocalVaultState,
+): Promise<SubmissionPipelineResult> {
+  let currentState = initialState ?? await loadVerifiedVaultState(deps);
+  const itemRecordIds = getReferencedVerifiedItemIdsForCategory(currentState, categoryRecordId);
+
+  for (const itemRecordId of itemRecordIds) {
+    const record = currentState.recordsById.get(itemRecordId) ?? null;
+    await deleteItem(
+      deps,
+      itemRecordId,
+      getVerifiedRecordBase(record, currentState.lastVerifiedVaultHead),
+    );
+    currentState = await loadVerifiedVaultState(deps);
+  }
+
+  return deleteCategory(
+    deps,
+    categoryRecordId,
+    getVerifiedRecordBase(
+      currentState.recordsById.get(categoryRecordId) ?? null,
+      currentState.lastVerifiedVaultHead,
+    ),
+    getReferencedVerifiedItemIdsForCategory(currentState, categoryRecordId),
+  );
 }
 
 export async function restoreRecord(

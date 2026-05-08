@@ -254,12 +254,15 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         };
     }, [category, loadItemCountInCategory, showDeleteConfirm, user]);
 
-    const handleDelete = async (_mode: CategoryDeleteMode) => {
+    const handleDelete = async (mode: CategoryDeleteMode) => {
         if (!category || !user) return;
 
         setLoading(true);
         try {
-            const result = await opLogDeleteCategory(category.id);
+            const result = await opLogDeleteCategory(
+                category.id,
+                mode === 'delete-items' ? 'deleteItems' : 'unlinkItems',
+            );
             if (result.error) {
                 throw result.error;
             }
@@ -411,9 +414,9 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                             {deleteImpactLoading
                                 ? t('common.loading')
                                 : categoryHasItems
-                                    ? t('categories.deleteBlockedHasItemsDesc', {
+                                    ? t('categories.deleteWithItemsOptionsDesc', {
                                         count: categoryDeleteItemCount,
-                                        defaultValue: 'Diese Kategorie enthält {{count}} Einträge. Entferne oder verschiebe die Einträge, bevor du die Kategorie löschst.',
+                                        defaultValue: 'Diese Kategorie enthaelt {{count}} Eintrag/Eintraege. Waehle, ob die Eintraege behalten oder ebenfalls geloescht werden.',
                                     })
                                     : t('categories.deleteConfirmDesc')}
                         </AlertDialogDescription>
@@ -422,16 +425,29 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         <AlertDialogCancel className="mt-0 h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug">
                             {t('common.cancel')}
                         </AlertDialogCancel>
+                        {categoryHasItems && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => void handleDelete('unlink-items')}
+                                disabled={loading || deleteImpactLoading}
+                                className="h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug"
+                            >
+                                {t('categories.deleteCategoryOnly', {
+                                    defaultValue: 'Nur Kategorie loeschen',
+                                })}
+                            </Button>
+                        )}
                         <Button
                             type="button"
                             variant="destructive"
                             onClick={() => void handleDelete(categoryHasItems ? 'delete-items' : 'unlink-items')}
-                            disabled={loading || deleteImpactLoading || categoryHasItems}
+                            disabled={loading || deleteImpactLoading}
                             className="h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug"
                         >
                             {categoryHasItems
-                                ? t('categories.deleteBlockedHasItems', {
-                                    defaultValue: 'Kategorie enthält Einträge',
+                                ? t('categories.deleteCategoryAndItems', {
+                                    defaultValue: 'Kategorie und Eintraege loeschen',
                                 })
                                 : t('common.delete')}
                         </Button>
