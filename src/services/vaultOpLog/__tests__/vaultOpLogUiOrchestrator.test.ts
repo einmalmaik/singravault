@@ -14,6 +14,7 @@ import type { VaultOpLogTrustReadClient } from '../vaultOpLogUiOrchestrator';
 
 let importKeySpy: ReturnType<typeof vi.spyOn>;
 let verifySpy: ReturnType<typeof vi.spyOn>;
+const VALID_TEST_PUBLIC_KEY = 'MEkwEwYHKoZIzj0CAQYIKoZIzj0DAQEDMgAEsPH3N7n90R0D1TdX';
 
 beforeEach(() => {
   importKeySpy = vi.spyOn(globalThis.crypto.subtle, 'importKey').mockResolvedValue({
@@ -166,6 +167,75 @@ async function makeOp(
   };
 }
 
+async function makeDeviceTrustOp(input: {
+  seq: number;
+  opId: string;
+  baseVaultHead: string | null;
+  authorDeviceId: string;
+  opType: 'add_device' | 'revoke_device';
+  targetDeviceId: string;
+  targetPublicSigningKey?: string | null;
+}): Promise<VaultOperationRow> {
+  const signedBody: VaultOperationSignedBodyV1 = {
+    signatureSchema: DEVICE_SIGNATURE_SCHEMA_V1,
+    opId: input.opId,
+    intentId: `intent-${input.opId}`,
+    rebasedFromOpId: null,
+    vaultId: 'vault-1',
+    authorDeviceId: input.authorDeviceId,
+    opType: input.opType,
+    recordId: input.targetDeviceId,
+    recordType: 'device',
+    baseRecordVersion: null,
+    previousCiphertextHash: null,
+    newRecordHash: null,
+    baseVaultHead: input.baseVaultHead,
+    payloadCiphertextHash: null,
+    payloadAadHash: null,
+    createdAtClient: '2025-01-01T00:00:00Z',
+    trustEpoch: 0,
+    targetPublicSigningKey: input.opType === 'add_device'
+      ? input.targetPublicSigningKey ?? 'pub-remote'
+      : null,
+    targetDeviceKeyFingerprint: null,
+  };
+  const opHash = await computeOpHash(signedBody);
+  const resultingVaultHead = await computeVaultHead({
+    previousVaultHead: input.baseVaultHead,
+    opHash,
+    recordId: input.targetDeviceId,
+    recordType: 'device',
+    newRecordHash: null,
+    opType: input.opType,
+  });
+
+  return {
+    opId: input.opId,
+    opHash,
+    vaultId: 'vault-1',
+    authorDeviceId: input.authorDeviceId,
+    opType: input.opType,
+    recordId: input.targetDeviceId,
+    recordType: 'device',
+    baseRecordVersion: null,
+    previousCiphertextHash: null,
+    newRecordHash: null,
+    baseVaultHead: input.baseVaultHead,
+    resultingVaultHead,
+    intentId: signedBody.intentId,
+    rebasedFromOpId: null,
+    payloadCiphertextHash: null,
+    payloadAadHash: null,
+    signedBody,
+    signature: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    signatureSchema: 'v1',
+    trustEpoch: 0,
+    createdAtClient: '2025-01-01T00:00:00Z',
+    receivedAtServer: '2025-01-01T00:00:00Z',
+    sequenceNumber: input.seq,
+  };
+}
+
 async function makeCreateOps(count: number): Promise<VaultOperationRow[]> {
   const operations: VaultOperationRow[] = [];
   let head: string | null = null;
@@ -264,6 +334,65 @@ describe('vaultOpLogUiOrchestrator', () => {
 
     expect(result.error).toBeNull();
     expect(result.localVaultState?.trustedDevicesById.has('device-1')).toBe(true);
+  });
+
+  it('verifies historical operations from a device that was revoked later', async () => {
+    const createOp = await makeOp(1, 'op-create-1', 'rec-1', null);
+    const addDeviceOp = await makeDeviceTrustOp({
+      seq: 2,
+      opId: 'op-add-device-2',
+      baseVaultHead: createOp.resultingVaultHead,
+      authorDeviceId: 'device-1',
+      opType: 'add_device',
+      targetDeviceId: 'device-2',
+      targetPublicSigningKey: VALID_TEST_PUBLIC_KEY,
+    });
+    const revokeDeviceOp = await makeDeviceTrustOp({
+      seq: 3,
+      opId: 'op-revoke-device-1',
+      baseVaultHead: addDeviceOp.resultingVaultHead,
+      authorDeviceId: 'device-2',
+      opType: 'revoke_device',
+      targetDeviceId: 'device-1',
+    });
+    const client = createMockRpcClient([[createOp, addDeviceOp, revokeDeviceOp]]);
+    const trustClient = createTrustClient([
+      {
+        vault_id: 'vault-1',
+        device_id: 'device-1',
+        public_signing_key: VALID_TEST_PUBLIC_KEY,
+        device_name_encrypted: '',
+        added_by_device_id: 'device-1',
+        added_at: '2025-01-01T00:00:00Z',
+        trust_epoch: 1,
+        status: 'revoked',
+        revoked_at: '2025-01-01T00:00:00Z',
+        revoked_by_device_id: 'device-2',
+      },
+      {
+        vault_id: 'vault-1',
+        device_id: 'device-2',
+        public_signing_key: VALID_TEST_PUBLIC_KEY,
+        device_name_encrypted: '',
+        added_by_device_id: 'device-1',
+        added_at: '2025-01-01T00:00:00Z',
+        trust_epoch: 0,
+        status: 'trusted',
+        revoked_at: null,
+        revoked_by_device_id: null,
+      },
+    ]);
+
+    const result = await loadVaultOpLogUiState({
+      rpcClient: client,
+      trustClient,
+      vaultId: 'vault-1',
+      vaultEncryptionKey: new Uint8Array(32),
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.localVaultState?.trustedDevicesById.get('device-1')?.status).toBe('revoked');
+    expect(result.localVaultState?.trustedDevicesById.get('device-2')?.status).toBe('trusted');
   });
 
   it('does not load vault records when UI state requires local device trust and the local identity is missing', async () => {

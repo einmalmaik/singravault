@@ -42,14 +42,15 @@ import {
   buildVaultOpLogUiView,
   type VaultOpLogUiView,
 } from './vaultOpLogUiAdapter';
-import type {
+import {
+  applyDeviceTrustOperation,
   TrustListInput,
 } from './deviceTrustService';
 import type {
   VaultOperationRow,
   VaultRecordRow,
 } from './vaultOpLogRpcTypes';
-import type { TrustedDeviceRecordV1 } from './types';
+import type { SignedVaultOperationV1, TrustedDeviceRecordV1 } from './types';
 import type { SupabaseRpcClient } from './vaultOpLogRepository';
 
 // ---------------------------------------------------------------------------
@@ -337,9 +338,13 @@ async function verifyOperationChain(input: {
   const { operations, trust, expectedHead } = input;
   let verifiedHead = operations[0]?.baseVaultHead ?? null;
   const latestOperationByRecordId = new Map<string, VaultOperationRow>();
+  let historicalTrust: TrustListInput = {
+    vaultId: trust.vaultId,
+    trustedDevicesById: buildBootstrapTrustList(trust.trustedDevicesById),
+  };
 
   for (const operation of operations) {
-    const operationResult = await verifyOperation({ operation, trust });
+    const operationResult = await verifyOperation({ operation, trust: historicalTrust });
     if (operationResult.kind !== 'validTrustedOperation') {
       return {
         kind: 'error',
@@ -370,7 +375,23 @@ async function verifyOperationChain(input: {
     }
 
     verifiedHead = operation.resultingVaultHead;
-    if (!isDeviceTrustOperation(operation)) {
+    if (isDeviceTrustOperation(operation)) {
+      try {
+        historicalTrust = {
+          vaultId: historicalTrust.vaultId,
+          trustedDevicesById: applyDeviceTrustOperation(
+            historicalTrust.trustedDevicesById,
+            operationResult.signedOperation,
+            buildDeviceTrustPayloadFromSignedOperation(operationResult.signedOperation),
+          ),
+        };
+      } catch {
+        return {
+          kind: 'error',
+          error: 'device_trust_operation_invalid',
+        };
+      }
+    } else {
       latestOperationByRecordId.set(operation.recordId, operation);
     }
   }
@@ -387,6 +408,64 @@ async function verifyOperationChain(input: {
     latestOperationByRecordId,
     verifiedHead,
   };
+}
+
+function buildBootstrapTrustList(
+  devices: ReadonlyMap<string, TrustedDeviceRecordV1>,
+): Map<string, TrustedDeviceRecordV1> {
+  const bootstrapDevices = new Map<string, TrustedDeviceRecordV1>();
+  for (const device of devices.values()) {
+    if (device.addedByDeviceId !== null && device.addedByDeviceId !== device.deviceId) {
+      continue;
+    }
+
+    bootstrapDevices.set(device.deviceId, {
+      ...device,
+      status: 'trusted',
+      revokedAt: null,
+      revokedByDeviceId: null,
+      trustEpoch: device.status === 'revoked'
+        ? Math.max(0, device.trustEpoch - 1)
+        : device.trustEpoch,
+    });
+  }
+  return bootstrapDevices;
+}
+
+function buildDeviceTrustPayloadFromSignedOperation(
+  operation: SignedVaultOperationV1,
+): Parameters<typeof applyDeviceTrustOperation>[2] {
+  if (operation.body.opType === 'add_device') {
+    const targetPublicSigningKey = operation.body.targetPublicSigningKey ?? null;
+    if (!targetPublicSigningKey) {
+      throw new Error('add_device_missing_target_key');
+    }
+    return {
+      kind: 'add',
+      device: {
+        vaultId: operation.body.vaultId,
+        deviceId: operation.body.recordId,
+        publicSigningKey: targetPublicSigningKey,
+        deviceNameEncrypted: '',
+        addedByDeviceId: operation.body.authorDeviceId,
+        addedAt: operation.body.createdAtClient,
+        trustEpoch: 0,
+        status: 'trusted',
+        revokedAt: null,
+        revokedByDeviceId: null,
+      },
+    };
+  }
+
+  if (operation.body.opType === 'revoke_device') {
+    return {
+      kind: 'revoke',
+      deviceId: operation.body.recordId,
+      revokedAt: operation.body.createdAtClient,
+    };
+  }
+
+  throw new Error('not_device_trust_operation');
 }
 
 function isDeviceTrustOperation(operation: VaultOperationRow): boolean {

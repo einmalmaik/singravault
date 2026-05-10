@@ -38,7 +38,7 @@ function formatDate(value: string | null): string {
 
 export function TrustedDevicesSettings() {
   const { toast } = useToast();
-  const { opLogLocalVaultState, opLogRevokeDevice, opLogUiRefresh, vaultMigrationStatus } = useVault();
+  const { opLogLocalVaultState, opLogRevokeDevice, opLogUiRefresh } = useVault();
   const [busyDeviceId, setBusyDeviceId] = useState<string | null>(null);
   const [devicePendingRemoval, setDevicePendingRemoval] = useState<TrustedDeviceRecordV1 | null>(null);
   const localDeviceId = loadVaultOpLogDeviceIdentity()?.deviceId ?? null;
@@ -54,7 +54,7 @@ export function TrustedDevicesSettings() {
   }, [opLogLocalVaultState]);
 
   const trustedDeviceCount = devices.filter((device) => device.status === 'trusted').length;
-  const canManageDevices = vaultMigrationStatus === 'verified' && Boolean(opLogLocalVaultState);
+  const canManageDevices = Boolean(opLogLocalVaultState);
 
   const handleRevoke = async (device: TrustedDeviceRecordV1) => {
     setBusyDeviceId(device.deviceId);
@@ -94,7 +94,7 @@ export function TrustedDevicesSettings() {
       <CardContent className="space-y-4">
         {!canManageDevices ? (
           <p className="text-sm text-muted-foreground">
-            Die Geräteverwaltung ist verfügbar, sobald dieser Tresor auf den verifizierten Operation-Log migriert wurde.
+            Die Geräteverwaltung ist verfügbar, sobald der verifizierte Gerätestatus geladen wurde.
           </p>
         ) : devices.length === 0 ? (
           <p className="text-sm text-muted-foreground">
