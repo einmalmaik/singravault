@@ -95,6 +95,7 @@ type OperationChainVerificationResult =
   | {
       readonly kind: 'success';
       readonly latestOperationByRecordId: ReadonlyMap<string, VaultOperationRow>;
+      readonly trustByOperationId: ReadonlyMap<string, TrustListInput>;
       readonly verifiedHead: string | null;
     }
   | {
@@ -280,7 +281,7 @@ export async function loadVaultOpLogUiState(
               state: localState,
               operation,
               record,
-              trust,
+              trust: chainResult.trustByOperationId.get(operation.opId) ?? trust,
               verifiedBaseRecordState,
               vaultHeadTransitionVerified: true,
             })
@@ -288,7 +289,7 @@ export async function loadVaultOpLogUiState(
               state: localState,
               operation,
               record,
-              trust,
+              trust: chainResult.trustByOperationId.get(operation.opId) ?? trust,
               vaultEncryptionKey: input.vaultEncryptionKey,
               verifiedBaseRecordState,
               vaultHeadTransitionVerified: true,
@@ -338,12 +339,14 @@ async function verifyOperationChain(input: {
   const { operations, trust, expectedHead } = input;
   let verifiedHead = operations[0]?.baseVaultHead ?? null;
   const latestOperationByRecordId = new Map<string, VaultOperationRow>();
+  const trustByOperationId = new Map<string, TrustListInput>();
   let historicalTrust: TrustListInput = {
     vaultId: trust.vaultId,
     trustedDevicesById: buildBootstrapTrustList(trust.trustedDevicesById),
   };
 
   for (const operation of operations) {
+    trustByOperationId.set(operation.opId, cloneTrustList(historicalTrust));
     const operationResult = await verifyOperation({ operation, trust: historicalTrust });
     if (operationResult.kind !== 'validTrustedOperation') {
       return {
@@ -406,7 +409,15 @@ async function verifyOperationChain(input: {
   return {
     kind: 'success',
     latestOperationByRecordId,
+    trustByOperationId,
     verifiedHead,
+  };
+}
+
+function cloneTrustList(trust: TrustListInput): TrustListInput {
+  return {
+    vaultId: trust.vaultId,
+    trustedDevicesById: new Map(trust.trustedDevicesById),
   };
 }
 
