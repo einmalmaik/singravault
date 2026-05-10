@@ -49,6 +49,7 @@ export interface VaultProviderActionBindings {
   opLogResolveConflict?: (recordId: string) => Promise<{ error: Error | null }>;
   opLogApproveDeviceRequest?: VaultContextType['opLogApproveDeviceRequest'];
   opLogRejectDeviceRequest?: VaultContextType['opLogRejectDeviceRequest'];
+  opLogRevokeDevice?: VaultContextType['opLogRevokeDevice'];
   listSharedCollections?: VaultContextType['listSharedCollections'];
   createSharedCollection?: VaultContextType['createSharedCollection'];
   deleteSharedCollection?: VaultContextType['deleteSharedCollection'];
@@ -127,6 +128,7 @@ export function buildVaultContextValue(
     opLogResolveConflict: actions.opLogResolveConflict ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     opLogApproveDeviceRequest: actions.opLogApproveDeviceRequest ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     opLogRejectDeviceRequest: actions.opLogRejectDeviceRequest ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
+    opLogRevokeDevice: actions.opLogRevokeDevice ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     listSharedCollections: actions.listSharedCollections ?? (() => Promise.resolve({ error: new Error('Not implemented'), collections: [] })),
     createSharedCollection: actions.createSharedCollection ?? (() => Promise.resolve({ error: new Error('Not implemented'), collectionId: null })),
     deleteSharedCollection: actions.deleteSharedCollection ?? (() => Promise.resolve({ error: new Error('Not implemented') })),

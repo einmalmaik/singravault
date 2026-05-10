@@ -34,8 +34,11 @@ async function signedOperationForDevice(deviceId: string, overrides: {
   createdAtClient?: string;
   opId?: string;
   opType?: 'create' | 'update' | 'add_device' | 'revoke_device';
+  recordId?: string;
+  targetPublicSigningKey?: string;
 } = {}) {
   const keyPair = await generateDeviceSigningKeyPair();
+  const isDeviceTrustOperation = overrides.opType === 'add_device' || overrides.opType === 'revoke_device';
   const body = buildOperationSignedBody({
     opId: overrides.opId ?? 'op-1',
     intentId: 'intent-1',
@@ -43,16 +46,20 @@ async function signedOperationForDevice(deviceId: string, overrides: {
     vaultId: overrides.vaultId ?? 'v1',
     authorDeviceId: deviceId,
     opType: overrides.opType ?? 'create',
-    recordId: 'rec-1',
-    recordType: 'item',
+    recordId: overrides.recordId ?? (isDeviceTrustOperation ? 'new-device' : 'rec-1'),
+    recordType: isDeviceTrustOperation ? 'device' : 'item',
     baseRecordVersion: null,
     previousCiphertextHash: null,
-    newRecordHash: 'new-hash',
+    newRecordHash: isDeviceTrustOperation ? null : 'new-hash',
     baseVaultHead: null,
-    payloadCiphertextHash: 'ct-hash',
-    payloadAadHash: 'aad-hash',
+    payloadCiphertextHash: isDeviceTrustOperation ? null : 'ct-hash',
+    payloadAadHash: isDeviceTrustOperation ? null : 'aad-hash',
     createdAtClient: overrides.createdAtClient ?? '2026-05-01T10:00:00.000Z',
     trustEpoch: overrides.trustEpoch ?? 0,
+    targetPublicSigningKey: overrides.opType === 'add_device'
+      ? overrides.targetPublicSigningKey ?? 'pub-key-b64url'
+      : null,
+    targetDeviceKeyFingerprint: null,
   });
   return signOperation(body, keyPair.privateKey);
 }
@@ -158,7 +165,10 @@ describe('applyDeviceTrustOperation', () => {
   });
 
   it('rejects add_device if device is for another vault', async () => {
-    const op = await signedOperationForDevice('authoriser', { opType: 'add_device' });
+    const op = await signedOperationForDevice('authoriser', {
+      opType: 'add_device',
+      recordId: 'device-1',
+    });
     expect(() =>
       applyDeviceTrustOperation(new Map(), op, {
         kind: 'add',
@@ -167,8 +177,31 @@ describe('applyDeviceTrustOperation', () => {
     ).toThrow(VaultSignatureError);
   });
 
+  it('rejects add_device if the payload device differs from the signed target', async () => {
+    const op = await signedOperationForDevice('authoriser', { opType: 'add_device' });
+    expect(() =>
+      applyDeviceTrustOperation(new Map(), op, {
+        kind: 'add',
+        device: buildTrustedDevice({ deviceId: 'different-device' }),
+      }),
+    ).toThrow(VaultSignatureError);
+  });
+
+  it('rejects add_device if the payload public key differs from the signed target key', async () => {
+    const op = await signedOperationForDevice('authoriser', { opType: 'add_device' });
+    expect(() =>
+      applyDeviceTrustOperation(new Map(), op, {
+        kind: 'add',
+        device: buildTrustedDevice({ deviceId: 'new-device', publicSigningKey: 'tampered-key' }),
+      }),
+    ).toThrow(VaultSignatureError);
+  });
+
   it('revokes an existing device and increments the trust epoch', async () => {
-    const op = await signedOperationForDevice('authoriser', { opType: 'revoke_device' });
+    const op = await signedOperationForDevice('authoriser', {
+      opType: 'revoke_device',
+      recordId: 'victim',
+    });
     const existing = buildTrustedDevice({ deviceId: 'victim', trustEpoch: 2 });
     const trust = new Map([['victim', existing]]);
     const next = applyDeviceTrustOperation(trust, op, {
@@ -184,11 +217,29 @@ describe('applyDeviceTrustOperation', () => {
   });
 
   it('rejects revoke_device for an unknown device', async () => {
-    const op = await signedOperationForDevice('authoriser', { opType: 'revoke_device' });
+    const op = await signedOperationForDevice('authoriser', {
+      opType: 'revoke_device',
+      recordId: 'nobody',
+    });
     expect(() =>
       applyDeviceTrustOperation(new Map(), op, {
         kind: 'revoke',
         deviceId: 'nobody',
+        revokedAt: '2026-05-02T10:00:00.000Z',
+      }),
+    ).toThrow(VaultSignatureError);
+  });
+
+  it('rejects revoke_device if the payload device differs from the signed target', async () => {
+    const op = await signedOperationForDevice('authoriser', {
+      opType: 'revoke_device',
+      recordId: 'victim',
+    });
+    const trust = new Map([['other-device', buildTrustedDevice({ deviceId: 'other-device' })]]);
+    expect(() =>
+      applyDeviceTrustOperation(trust, op, {
+        kind: 'revoke',
+        deviceId: 'other-device',
         revokedAt: '2026-05-02T10:00:00.000Z',
       }),
     ).toThrow(VaultSignatureError);

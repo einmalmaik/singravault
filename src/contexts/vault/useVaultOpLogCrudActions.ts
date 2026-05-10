@@ -26,6 +26,8 @@ import { approvePendingDeviceRequest, rejectPendingDeviceRequest, submitVaultOpe
 import {
   buildAddDeviceOperation,
   buildAddDeviceTrustPayload,
+  buildRevokeDeviceOperation,
+  buildRevokeDeviceTrustPayload,
   toVaultOperationRowFromSigned,
 } from '@/services/vaultOpLog/vaultOpLogOperationBuilder';
 import { loadVerifiedVaultOpLogDeviceContext } from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
@@ -101,9 +103,12 @@ function recordBase(state: LocalVaultState, recordId: string): VerifiedRecordBas
   );
 }
 
-function describeAddDeviceSubmitFailure(result: Exclude<SubmitVaultOperationResult, { readonly kind: 'applied' }>): string {
+function describeDeviceTrustSubmitFailure(
+  result: Exclude<SubmitVaultOperationResult, { readonly kind: 'applied' }>,
+  operationLabel: string,
+): string {
   if (result.kind === 'rpcError') {
-    return `RPC-Fehler beim Speichern der Add-Device-Operation: ${result.message}`;
+    return `RPC-Fehler beim Speichern der ${operationLabel}: ${result.message}`;
   }
   if (result.kind === 'rebaseNeeded') {
     return 'Vault-Stand ist veraltet. Bitte erneut synchronisieren und die Anfrage noch einmal bestätigen.';
@@ -112,15 +117,15 @@ function describeAddDeviceSubmitFailure(result: Exclude<SubmitVaultOperationResu
     return 'Operation-ID wurde mit anderem Inhalt wiederverwendet.';
   }
   if (result.kind === 'unauthorized') {
-    return 'Keine gültige Sitzung für die Add-Device-Operation.';
+    return `Keine gültige Sitzung für die ${operationLabel}.`;
   }
   if (result.kind === 'vaultOwnershipError') {
-    return 'Vault-Zugriff konnte für diese Add-Device-Operation nicht bestätigt werden.';
+    return `Vault-Zugriff konnte für diese ${operationLabel} nicht bestätigt werden.`;
   }
   if (result.kind === 'malformedResponse') {
-    return `Unerwartete RPC-Antwort beim Speichern der Add-Device-Operation: ${result.reason}`;
+    return `Unerwartete RPC-Antwort beim Speichern der ${operationLabel}: ${result.reason}`;
   }
-  return `Add-Device-Operation wurde nicht gespeichert: ${result.kind}`;
+  return `${operationLabel} wurde nicht gespeichert: ${result.kind}`;
 }
 
 async function loadDefaultVaultId(userId: string): Promise<string | null> {
@@ -387,7 +392,7 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
       );
 
       if (submitResult.kind !== 'applied') {
-        throw new Error(describeAddDeviceSubmitFailure(submitResult));
+        throw new Error(describeDeviceTrustSubmitFailure(submitResult, 'Add-Device-Operation'));
       }
 
       await afterVerifiedCommit();
@@ -412,6 +417,52 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
     }
   }, [loadRuntimeContext]);
 
+  const opLogRevokeDevice = useCallback(async (targetDeviceId: string): Promise<{ error: Error | null }> => {
+    try {
+      const { deps, localVaultState } = await loadRuntimeContext();
+      if (targetDeviceId === deps.deviceId) {
+        throw new VaultOpLogUiActionBlockedError('Dieses Gerät kann sich nicht selbst entfernen.');
+      }
+
+      const trustedDevices = Array.from(localVaultState.trustedDevicesById.values())
+        .filter((device) => device.status === 'trusted');
+      if (trustedDevices.length <= 1) {
+        throw new VaultOpLogUiActionBlockedError('Das letzte vertrauenswürdige Gerät kann erst entfernt werden, wenn ein Recovery-Flow existiert.');
+      }
+      if (!trustedDevices.some((device) => device.deviceId === targetDeviceId)) {
+        throw new VaultOpLogUiActionBlockedError('Dieses Gerät ist nicht als vertrauenswürdig registriert.');
+      }
+
+      const builtOp = await buildRevokeDeviceOperation({
+        opId: crypto.randomUUID(),
+        intentId: crypto.randomUUID(),
+        rebasedFromOpId: null,
+        vaultId: deps.vaultId,
+        deviceId: deps.deviceId,
+        deviceSigningKey: deps.deviceSigningKey,
+        targetDeviceId,
+        baseVaultHead: localVaultState.lastVerifiedVaultHead,
+        trustEpoch: deps.trustEpoch,
+      });
+
+      const submitResult = await submitVaultOperation(
+        deps.rpcClient,
+        toVaultOperationRowFromSigned(builtOp.signedOperation, builtOp.resultingVaultHead),
+        null,
+        buildRevokeDeviceTrustPayload(builtOp),
+      );
+
+      if (submitResult.kind !== 'applied') {
+        throw new Error(describeDeviceTrustSubmitFailure(submitResult, 'Revoke-Device-Operation'));
+      }
+
+      await afterVerifiedCommit();
+      return { error: null };
+    } catch (error) {
+      return { error: error instanceof Error ? error : new Error('Gerät konnte nicht entfernt werden.') };
+    }
+  }, [afterVerifiedCommit, loadRuntimeContext]);
+
   return {
     opLogCreateItem,
     opLogUpdateItem,
@@ -424,5 +475,6 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
     opLogResolveConflict,
     opLogApproveDeviceRequest,
     opLogRejectDeviceRequest,
+    opLogRevokeDevice,
   };
 }

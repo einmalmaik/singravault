@@ -89,9 +89,18 @@ export function applyDeviceTrustOperation(
   payload: DeviceTrustOperationPayload,
 ): Map<string, TrustedDeviceRecordV1> {
   const next = new Map(list);
+  if (op.body.recordType !== 'device') {
+    throw new VaultSignatureError('signed_body_invalid', 'device trust operation must target a device record');
+  }
   if (op.body.opType === 'add_device') {
     if (payload.kind !== 'add') {
       throw new VaultSignatureError('signed_body_invalid', 'payload does not match add_device op');
+    }
+    if (payload.device.deviceId !== op.body.recordId) {
+      throw new VaultSignatureError('signed_body_invalid', 'added device does not match signed target device');
+    }
+    if (payload.device.publicSigningKey !== op.body.targetPublicSigningKey) {
+      throw new VaultSignatureError('signed_body_invalid', 'added device key does not match signed target key');
     }
     if (next.has(payload.device.deviceId)) {
       throw new VaultSignatureError('signed_body_invalid', 'device already present in trust list');
@@ -105,6 +114,9 @@ export function applyDeviceTrustOperation(
   if (op.body.opType === 'revoke_device') {
     if (payload.kind !== 'revoke') {
       throw new VaultSignatureError('signed_body_invalid', 'payload does not match revoke_device op');
+    }
+    if (payload.deviceId !== op.body.recordId) {
+      throw new VaultSignatureError('signed_body_invalid', 'revoked device does not match signed target device');
     }
     const existing = next.get(payload.deviceId);
     if (!existing) {

@@ -144,6 +144,19 @@ export interface AddDeviceBuilderInput {
   readonly targetDevicePlatform?: string;
 }
 
+export interface RevokeDeviceBuilderInput {
+  readonly opId: string;
+  readonly intentId: string;
+  readonly rebasedFromOpId: string | null;
+  readonly vaultId: string;
+  readonly deviceId: string;
+  readonly deviceSigningKey: CryptoKey;
+  readonly trustEpoch: number;
+  readonly baseVaultHead: string | null;
+  readonly targetDeviceId: string;
+  readonly createdAtClient?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Public builder functions
 // ---------------------------------------------------------------------------
@@ -484,6 +497,55 @@ export async function buildAddDeviceOperation(
 
 export type BuiltAddDeviceOperation = Awaited<ReturnType<typeof buildAddDeviceOperation>>;
 
+export async function buildRevokeDeviceOperation(
+  input: RevokeDeviceBuilderInput,
+): Promise<{
+  readonly signedOperation: SignedVaultOperationV1;
+  readonly resultingVaultHead: string;
+  readonly targetDeviceId: string;
+  readonly revokedAt: string;
+}> {
+  const createdAtClient = input.createdAtClient ?? new Date().toISOString();
+
+  const body = buildOperationSignedBody({
+    opId: input.opId,
+    intentId: input.intentId,
+    rebasedFromOpId: input.rebasedFromOpId,
+    vaultId: input.vaultId,
+    authorDeviceId: input.deviceId,
+    opType: 'revoke_device',
+    recordId: input.targetDeviceId,
+    recordType: 'device',
+    baseRecordVersion: null,
+    previousCiphertextHash: null,
+    newRecordHash: null,
+    baseVaultHead: input.baseVaultHead,
+    payloadCiphertextHash: null,
+    payloadAadHash: null,
+    createdAtClient,
+    trustEpoch: input.trustEpoch,
+  });
+
+  const signed = await signOperation(body, input.deviceSigningKey);
+  const resultingVaultHead = await computeVaultHead({
+    previousVaultHead: input.baseVaultHead,
+    opHash: signed.opHash,
+    recordId: input.targetDeviceId,
+    recordType: 'device',
+    newRecordHash: null,
+    opType: 'revoke_device',
+  });
+
+  return {
+    signedOperation: signed,
+    resultingVaultHead,
+    targetDeviceId: input.targetDeviceId,
+    revokedAt: createdAtClient,
+  };
+}
+
+export type BuiltRevokeDeviceOperation = Awaited<ReturnType<typeof buildRevokeDeviceOperation>>;
+
 
 // --------------------------------------------------------------------------
 // Compute public key fingerprint (used by add_device)
@@ -576,6 +638,20 @@ export function buildAddDeviceTrustPayload(
       added_at: body.createdAtClient,
       trust_epoch: 0,
     },
+  };
+}
+
+export function buildRevokeDeviceTrustPayload(
+  built: BuiltRevokeDeviceOperation,
+): {
+  readonly kind: 'revoke';
+  readonly device_id: string;
+  readonly revoked_at: string;
+} {
+  return {
+    kind: 'revoke',
+    device_id: built.targetDeviceId,
+    revoked_at: built.revokedAt,
   };
 }
 

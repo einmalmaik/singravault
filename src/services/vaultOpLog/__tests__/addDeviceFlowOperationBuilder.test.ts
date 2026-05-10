@@ -16,6 +16,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAddDeviceOperation,
+  buildRevokeDeviceOperation,
+  buildRevokeDeviceTrustPayload,
 } from '../vaultOpLogOperationBuilder';
 import {
   generateDeviceSigningKeyPair,
@@ -197,6 +199,56 @@ describe('buildAddDeviceOperation', () => {
     });
 
     expect(built.signedOperation.body.signatureSchema).toBe(DEVICE_SIGNATURE_SCHEMA_V1);
+  });
+});
+
+describe('buildRevokeDeviceOperation', () => {
+  it('produces a signed revoke_device operation for a target device', async () => {
+    const { privateKey, publicKey } = await signingFixture();
+
+    const built = await buildRevokeDeviceOperation({
+      opId: 'op-revoke-dev-1',
+      intentId: 'intent-revoke-1',
+      rebasedFromOpId: null,
+      vaultId: VAULT_ID,
+      deviceId: 'trusted-device-1',
+      deviceSigningKey: privateKey,
+      trustEpoch: 1,
+      baseVaultHead: 'head-before-revoke',
+      targetDeviceId: 'device-to-remove',
+      createdAtClient: '2026-05-10T12:00:00.000Z',
+    });
+
+    const body = built.signedOperation.body;
+    expect(body.opType).toBe('revoke_device');
+    expect(body.recordId).toBe('device-to-remove');
+    expect(body.recordType).toBe('device');
+    expect(body.baseRecordVersion).toBeNull();
+    expect(body.previousCiphertextHash).toBeNull();
+    expect(body.targetPublicSigningKey).toBeNull();
+    expect(await verifyOperationSignature(built.signedOperation, publicKey)).toBe(true);
+  });
+
+  it('builds the server trust payload for revoke_device', async () => {
+    const { privateKey } = await signingFixture();
+    const built = await buildRevokeDeviceOperation({
+      opId: 'op-revoke-dev-1',
+      intentId: 'intent-revoke-1',
+      rebasedFromOpId: null,
+      vaultId: VAULT_ID,
+      deviceId: 'trusted-device-1',
+      deviceSigningKey: privateKey,
+      trustEpoch: 1,
+      baseVaultHead: null,
+      targetDeviceId: 'device-to-remove',
+      createdAtClient: '2026-05-10T12:00:00.000Z',
+    });
+
+    expect(buildRevokeDeviceTrustPayload(built)).toEqual({
+      kind: 'revoke',
+      device_id: 'device-to-remove',
+      revoked_at: '2026-05-10T12:00:00.000Z',
+    });
   });
 });
 

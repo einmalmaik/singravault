@@ -106,6 +106,7 @@ export interface VaultContextType {
     opLogResolveConflict: (recordId: string) => Promise<{ error: Error | null }>;
     opLogApproveDeviceRequest: (requestId: string) => Promise<{ error: Error | null }>;
     opLogRejectDeviceRequest: (requestId: string) => Promise<{ error: Error | null }>;
+    opLogRevokeDevice: (deviceId: string) => Promise<{ error: Error | null }>;
 
     // Shared Collections — Core-owned signed Collection OpLog facade for Premium.
     listSharedCollections: () => Promise<{ error: Error | null; collections: SharedCollectionSummary[] }>;
