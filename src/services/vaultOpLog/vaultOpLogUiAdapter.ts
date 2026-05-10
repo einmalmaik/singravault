@@ -62,6 +62,7 @@ export interface VaultOpLogUiView {
   readonly conflictedItems: readonly VaultOpLogConflictUi[];
   readonly deletedItemIds: readonly string[];
   readonly restoredItemIds: readonly string[];
+  readonly trustedDeviceIds: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,11 @@ export function buildVaultOpLogUiView(localVaultState: LocalVaultState): VaultOp
   const conflictedItems: VaultOpLogConflictUi[] = [];
   const deletedItemIds: string[] = [];
   const restoredItemIds: string[] = [];
+  const trustedDeviceIds: string[] = [];
+
+  for (const deviceId of localVaultState.trustedDevicesById.keys()) {
+    trustedDeviceIds.push(deviceId);
+  }
 
   for (const [recordId, localRecord] of localVaultState.recordsById.entries()) {
     const { recordState } = localRecord;
@@ -212,6 +218,7 @@ export function buildVaultOpLogUiView(localVaultState: LocalVaultState): VaultOp
     conflictedItems: Object.freeze(conflictedItems),
     deletedItemIds: Object.freeze(deletedItemIds),
     restoredItemIds: Object.freeze(restoredItemIds),
+    trustedDeviceIds: Object.freeze(trustedDeviceIds),
   };
 }
 

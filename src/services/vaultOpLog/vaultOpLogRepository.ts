@@ -48,7 +48,13 @@ import type {
   GetVaultRecordsByIdsResult,
   SubmitVaultOperationResult,
   VaultOperationRow,
+  ApprovePendingDeviceRequestResult,
+  CreatePendingDeviceRequestResult,
+  DbPendingDeviceRequestRow,
+  GetPendingDeviceRequestsResult,
+  RejectPendingDeviceRequestResult,
 } from './vaultOpLogRpcTypes';
+import type { PendingDeviceRequestRow } from './addDeviceFlowTypes';
 
 // ---------------------------------------------------------------------------
 // Minimal Supabase client interface (kept small so tests can mock easily)
@@ -383,9 +389,280 @@ export async function bootstrapVaultTrust(
     return { kind: 'headAlreadyExists', currentHead };
   }
 
+  return { kind: 'malformedResponse', reason: `unrecognized reason: ${String(reason)}` };
+}
+
+// ---------------------------------------------------------------------------
+// Add-Device-Flow: Pending Device Request Repository
+// ---------------------------------------------------------------------------
+
+/**
+ * Build request for create_pending_device_request RPC.
+ */
+function buildCreatePendingDeviceRequestRequest(input: {
+  readonly vaultId: string;
+  readonly requestedDeviceId: string;
+  readonly requestedDeviceName: string;
+  readonly requestedPublicSigningKey: string;
+  readonly requestedDevicePlatform: string | null;
+  readonly pairingNonce: string;
+}): Record<string, unknown> {
   return {
-    kind: 'malformedResponse',
-    reason: `unrecognized bootstrap reason: ${String(reason)}`,
+    p_vault_id: input.vaultId,
+    p_requested_device_id: input.requestedDeviceId,
+    p_requested_device_name: input.requestedDeviceName,
+    p_requested_public_signing_key: input.requestedPublicSigningKey,
+    p_requested_device_platform: input.requestedDevicePlatform,
+    p_pairing_nonce: input.pairingNonce,
   };
+}
+
+/**
+ * Map raw DB row to domain PendingDeviceRequestRow.
+ */
+function mapDbPendingDeviceRequestRow(raw: DbPendingDeviceRequestRow): PendingDeviceRequestRow {
+  return {
+    requestId: raw.request_id,
+    requestedDeviceId: raw.requested_device_id,
+    requestedDeviceName: raw.requested_device_name,
+    requestedPublicSigningKey: raw.requested_public_signing_key,
+    requestedDevicePlatform: (raw.requested_device_platform ?? 'unknown') as PendingDeviceRequestRow['requestedDevicePlatform'],
+    pairingNonce: raw.pairing_nonce,
+    challengeCreatedAt: raw.challenge_created_at,
+    challengeExpiresAt: raw.challenge_expires_at,
+    status: raw.status as PendingDeviceRequestRow['status'],
+    createdAt: raw.created_at,
+  };
+}
+
+/**
+ * Create a pending device request from the browser.
+ *
+ * SECURITY: This does NOT make the device trusted. It only stores
+ * a temporary pairing request. Trust is established only after
+ * a cryptographically verified signed add_device operation.
+ */
+export async function createPendingDeviceRequest(
+  client: SupabaseRpcClient,
+  input: {
+    readonly vaultId: string;
+    readonly requestedDeviceId: string;
+    readonly requestedDeviceName: string;
+    readonly requestedPublicSigningKey: string;
+    readonly requestedDevicePlatform: string | null;
+    readonly pairingNonce: string;
+  },
+): Promise<CreatePendingDeviceRequestResult> {
+  const request = buildCreatePendingDeviceRequestRequest(input);
+
+  const { data, error } = await client.rpc<Record<string, unknown>>(
+    'create_pending_device_request',
+    request as unknown as Record<string, unknown>,
+  );
+
+  if (error) {
+    const msg = error.message;
+    if (msg.includes('Not authenticated')) {
+      return { kind: 'unauthorized' };
+    }
+    if (msg.includes('Vault does not belong to caller')) {
+      return { kind: 'vaultOwnershipError' };
+    }
+    return { kind: 'rpcError', code: error.code, message: msg };
+  }
+
+  if (data === null || !isPlainObject(data)) {
+    return { kind: 'malformedResponse', reason: 'create_pending_device_request returned null or non-object' };
+  }
+
+  const created = data.created;
+  if (typeof created !== 'boolean') {
+    return { kind: 'malformedResponse', reason: 'missing or non-boolean created field' };
+  }
+
+  if (created === true) {
+    const requestId = expectString(data, 'request_id', 'created true');
+    const expiresAt = expectString(data, 'expires_at', 'created true');
+    return { kind: 'created', requestId, expiresAt };
+  }
+
+  const reason = expectNullableString(data, 'reason');
+  if (reason === 'device_already_trusted') {
+    return { kind: 'alreadyTrusted', reason: 'device_already_trusted' };
+  }
+
+  return { kind: 'malformedResponse', reason: `unrecognized reason: ${String(reason)}` };
+}
+
+/**
+ * Get pending device requests for a vault.
+ *
+ * SECURITY: Only returns requests owned by the authenticated user.
+ * Expired requests are filtered out server-side.
+ */
+export async function getPendingDeviceRequests(
+  client: SupabaseRpcClient,
+  vaultId: string,
+): Promise<GetPendingDeviceRequestsResult> {
+  const request = { p_vault_id: vaultId };
+
+  const { data, error } = await client.rpc<DbPendingDeviceRequestRow[]>(
+    'get_pending_device_requests',
+    request as unknown as Record<string, unknown>,
+  );
+
+  if (error) {
+    const msg = error.message;
+    if (msg.includes('Not authenticated')) {
+      return { kind: 'unauthorized' };
+    }
+    if (msg.includes('Vault does not belong to caller')) {
+      return { kind: 'vaultOwnershipError' };
+    }
+    return { kind: 'rpcError', code: error.code, message: msg };
+  }
+
+  if (!Array.isArray(data)) {
+    return { kind: 'malformedResponse', reason: 'get_pending_device_requests returned non-array' };
+  }
+
+  const requests: PendingDeviceRequestRow[] = [];
+  for (let index = 0; index < data.length; index += 1) {
+    try {
+      requests.push(mapDbPendingDeviceRequestRow(data[index]));
+    } catch (e) {
+      const reason = e instanceof VaultOpLogMapperError ? e.message : 'unknown mapper error';
+      return { kind: 'malformedResponse', reason: `row ${index}: ${reason}` };
+    }
+  }
+
+  return { kind: 'success', requests };
+}
+
+/**
+ * Approve a pending device request.
+ *
+ * SECURITY: This does NOT create trust by itself. It only marks the
+ * request as approved and returns the device data. The caller MUST:
+ * 1. Build a canonical add_device operation with the returned device data
+ * 2. Sign it with the existing trusted device's private signing key
+ * 3. Submit the signed operation via submitVaultOperation()
+ *
+ * Trust is only established after the signed operation is verified.
+ */
+export async function approvePendingDeviceRequest(
+  client: SupabaseRpcClient,
+  requestId: string,
+  approverDeviceId: string,
+): Promise<ApprovePendingDeviceRequestResult> {
+  const request = {
+    p_request_id: requestId,
+    p_approver_device_id: approverDeviceId,
+  };
+
+  const { data, error } = await client.rpc<Record<string, unknown>>(
+    'approve_pending_device_request',
+    request as unknown as Record<string, unknown>,
+  );
+
+  if (error) {
+    const msg = error.message;
+    if (msg.includes('Not authenticated')) {
+      return { kind: 'unauthorized' };
+    }
+    if (msg.includes('Vault does not belong to caller')) {
+      return { kind: 'vaultOwnershipError' };
+    }
+    return { kind: 'rpcError', code: error.code, message: msg };
+  }
+
+  if (data === null || !isPlainObject(data)) {
+    return { kind: 'malformedResponse', reason: 'approve_pending_device_request returned null or non-object' };
+  }
+
+  const approved = data.approved;
+  if (typeof approved !== 'boolean') {
+    return { kind: 'malformedResponse', reason: 'missing or non-boolean approved field' };
+  }
+
+  if (approved === true) {
+    return {
+      kind: 'approved',
+      requestId: expectString(data, 'request_id', 'approved true'),
+      requestedDeviceId: expectString(data, 'requested_device_id', 'approved true'),
+      requestedPublicSigningKey: expectString(data, 'requested_public_signing_key', 'approved true'),
+      requestedDeviceName: expectString(data, 'requested_device_name', 'approved true'),
+      vaultId: expectString(data, 'vault_id','approved true'),
+    };
+  }
+
+  const reason = expectNullableString(data, 'reason');
+  if (reason === 'request_not_found') {
+    return { kind: 'requestNotFound' };
+  }
+  if (reason === 'request_expired') {
+    return { kind: 'requestExpired' };
+  }
+  if (reason === 'approver_not_trusted') {
+    return { kind: 'approverNotTrusted' };
+  }
+
+  return { kind: 'malformedResponse', reason: `unrecognized reason: ${String(reason)}` };
+}
+
+/**
+ * Reject a pending device request.
+ *
+ * SECURITY: This simply marks the request as rejected.
+ * No trust is created.
+ */
+export async function rejectPendingDeviceRequest(
+  client: SupabaseRpcClient,
+  requestId: string,
+  rejecterDeviceId: string,
+): Promise<RejectPendingDeviceRequestResult> {
+  const request = {
+    p_request_id: requestId,
+    p_rejecter_device_id: rejecterDeviceId,
+  };
+
+  const { data, error } = await client.rpc<Record<string, unknown>>(
+    'reject_pending_device_request',
+    request as unknown as Record<string, unknown>,
+  );
+
+  if (error) {
+    const msg = error.message;
+    if (msg.includes('Not authenticated')) {
+      return { kind: 'unauthorized' };
+    }
+    if (msg.includes('Vault does not belong to caller')) {
+      return { kind: 'vaultOwnershipError' };
+    }
+    return { kind: 'rpcError', code: error.code, message: msg };
+  }
+
+  if (data === null || !isPlainObject(data)) {
+    return { kind: 'malformedResponse', reason: 'reject_pending_device_request returned null or non-object' };
+  }
+
+  const rejected = data.rejected;
+  if (typeof rejected !== 'boolean') {
+    return { kind: 'malformedResponse', reason: 'missing or non-boolean rejected field' };
+  }
+
+  if (rejected === true) {
+    return {
+      kind: 'rejected',
+      requestId: expectString(data, 'request_id', 'rejected true'),
+    };
+  }
+
+  const reason = expectNullableString(data, 'reason');
+  if (reason === 'request_not_found') {
+    return { kind: 'requestNotFound' };
+  }
+
+  return { kind: 'malformedResponse', reason: `unrecognized reason: ${String(reason)}` };
 }
 

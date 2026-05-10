@@ -28,6 +28,8 @@
 
 import {
   canonicalizeVaultStructure,
+  decodeBase64Url,
+  encodeBase64Url,
 } from './canonicalJson';
 import {
   deriveRecordKey,
@@ -120,6 +122,26 @@ export interface RestoreRecordBuilderInput extends BaseOperationBuilderInput {
   readonly keyVersion: number;
   readonly baseRecordVersion: number;
   readonly previousCiphertextHash: string;
+}
+
+export interface AddDeviceBuilderInput {
+  readonly opId: string;
+  readonly intentId: string;
+  readonly rebasedFromOpId: string | null;
+  readonly vaultId: string;
+  readonly deviceId: string;
+  readonly deviceSigningKey: CryptoKey;
+  readonly trustEpoch: number;
+  readonly baseVaultHead: string | null;
+  readonly createdAtClient?: string;
+  /** The device ID that will be added (target device's unique ID) */
+  readonly targetDeviceId: string;
+  /** The public signing key of the target device (SPKI, base64url) */
+  readonly targetPublicSigningKey: string;
+  /** Human-readable name for the target device */
+  readonly targetDeviceName: string;
+  /** Platform identifier for the target device (optional) */
+  readonly targetDevicePlatform?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -362,9 +384,114 @@ export async function buildRestoreRecordOperation(
   return { signedOperation: signed, sealedRecord: sealed, resultingVaultHead };
 }
 
+/**
+ * Build an `add_device` operation.
+ *
+ * This operation is signed by an **existing** trusted device and
+ * authorises the addition of a new device to the vault's trust list.
+ * The signing device's private key is used to bind the operation to
+ * its identity.
+ *
+ * The target device is identified by:
+ * - `targetDeviceId` – stable unique identifier (UUID, fingerprint, etc.)
+ * - `targetPublicSigningKey` – SPKI, base64url-encoded public key
+ *
+ * The `add_device` operation does **not** carry a sealed record
+ * (unlike create/update/delete) because it is a trust metadata
+ * operation. The recordId is set to `targetDeviceId` and the
+ * recordType to `'device'` to keep the structure consistent with
+ * the signed body schema.
+ *
+ * The server will verify:
+ * 1. The operation is a valid `SignedVaultOperationV1`.
+ * 2. The author is an **existing** trusted device for the vault.
+ * 3. The signature is valid against the author's public key.
+ * 4. The target device ID and public key match the corresponding
+ *    pending device request (if applicable).
+ *
+ * **Security note**: A valid `add_device` operation alone does NOT
+ * create trust. Trust is only established after the operation is
+ * committed via `submit_vault_operation` and the client-side
+ * `deviceTrustService.classifyOperationAuthor` confirms the author
+ * is trusted.
+ */
+export async function buildAddDeviceOperation(
+  input: AddDeviceBuilderInput,
+): Promise<{
+  readonly signedOperation: SignedVaultOperationV1;
+  readonly resultingVaultHead: string;
+  readonly targetDeviceId: string;
+  readonly targetPublicSigningKey: string;
+}> {
+  const createdAtClient = input.createdAtClient ?? new Date().toISOString();
+
+  // Compute fingerprint of target public key for quick verification
+  const targetDeviceKeyFingerprint = await computePublicKeyFingerprint(input.targetPublicSigningKey);
+
+  // For add_device, we use targetDeviceId as the recordId and 'device' as recordType
+  // to maintain consistency with the signed body schema.
+  // baseRecordVersion and previousCiphertextHash are null because add_device
+  // does not follow the record versioning scheme.
+  //
+  // SECURITY: targetPublicSigningKey and targetDeviceKeyFingerprint are CRITICAL
+  // and MUST be included in the signed body to prevent MITM attacks.
+  const body = buildOperationSignedBody({
+    opId: input.opId,
+    intentId: input.intentId,
+    rebasedFromOpId: input.rebasedFromOpId,
+    vaultId: input.vaultId,
+    authorDeviceId: input.deviceId,
+    opType: 'add_device',
+    recordId: input.targetDeviceId,
+    recordType: 'device',
+    baseRecordVersion: null,
+    previousCiphertextHash: null,
+    newRecordHash: null,
+    baseVaultHead: input.baseVaultHead,
+    payloadCiphertextHash: null,
+    payloadAadHash: null,
+    createdAtClient,
+    trustEpoch: input.trustEpoch,
+    // SECURITY CRITICAL: These fields are now part of the signed body
+    targetPublicSigningKey: input.targetPublicSigningKey,
+    targetDeviceKeyFingerprint,
+  });
+
+  const signed = await signOperation(body, input.deviceSigningKey);
+
+  // For add_device, we compute the vault head normally since it is
+  // still part of the vault operation chain.
+  const resultingVaultHead = await computeVaultHead({
+    previousVaultHead: input.baseVaultHead,
+    opHash: signed.opHash,
+    recordId: input.targetDeviceId,
+    recordType: 'device',
+    newRecordHash: null,
+    opType: 'add_device',
+  });
+
+  return {
+    signedOperation: signed,
+    resultingVaultHead,
+    targetDeviceId: input.targetDeviceId,
+    targetPublicSigningKey: input.targetPublicSigningKey,
+  };
+}
+
+
+// --------------------------------------------------------------------------
+// Compute public key fingerprint (used by add_device)
+// --------------------------------------------------------------------------
+
+async function computePublicKeyFingerprint(publicKeyB64Url: string): Promise<string> {
+  const keyBytes = decodeBase64Url(publicKeyB64Url);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', keyBytes as unknown as ArrayBuffer);
+  return encodeBase64Url(new Uint8Array(hashBuffer));
+}
+
 // ---------------------------------------------------------------------------
 // Conversion helpers: BuiltVaultOperation -> domain rows
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------
 
 /**
  * Convert a built operation to a `VaultOperationRow` suitable for
@@ -480,3 +607,4 @@ async function sealPayload(args: {
     recordKey.fill(0);
   }
 }
+

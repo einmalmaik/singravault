@@ -127,6 +127,17 @@ export interface BuildOperationBodyInput {
   readonly payloadAadHash: string | null;
   readonly createdAtClient: string;
   readonly trustEpoch: number;
+  /**
+   * For `add_device` operations: the SPKI public key (base64url) of the
+   * device being added. CRITICAL: This must be signed to prevent MITM.
+   * Must be `null` for all other operation types.
+   */
+  readonly targetPublicSigningKey?: string | null;
+  /**
+   * For `add_device` operations: SHA-256 fingerprint of the target key.
+   * Must be `null` for all other operation types.
+   */
+  readonly targetDeviceKeyFingerprint?: string | null;
 }
 
 /**
@@ -160,6 +171,33 @@ export function buildOperationSignedBody(input: BuildOperationBodyInput): VaultO
   if (input.rebasedFromOpId !== null && input.rebasedFromOpId === input.opId) {
     throw new VaultSignatureError('signed_body_invalid', 'rebasedFromOpId must differ from opId');
   }
+
+  // SECURITY: For add_device operations, targetPublicSigningKey MUST be present and signed.
+  // An absent or null public key for add_device is a security vulnerability.
+  if (input.opType === 'add_device') {
+    if (input.targetPublicSigningKey === undefined || input.targetPublicSigningKey === null) {
+      throw new VaultSignatureError(
+        'signed_body_invalid',
+        'add_device operation requires targetPublicSigningKey to be signed',
+      );
+    }
+    // targetDeviceKeyFingerprint is optional but recommended
+  } else {
+    // For non-add_device operations, these must be null
+    if (input.targetPublicSigningKey !== undefined && input.targetPublicSigningKey !== null) {
+      throw new VaultSignatureError(
+        'signed_body_invalid',
+        'targetPublicSigningKey is only valid for add_device operations',
+      );
+    }
+    if (input.targetDeviceKeyFingerprint !== undefined && input.targetDeviceKeyFingerprint !== null) {
+      throw new VaultSignatureError(
+        'signed_body_invalid',
+        'targetDeviceKeyFingerprint is only valid for add_device operations',
+      );
+    }
+  }
+
   return {
     signatureSchema: DEVICE_SIGNATURE_SCHEMA_V1,
     opId: input.opId,
@@ -178,6 +216,8 @@ export function buildOperationSignedBody(input: BuildOperationBodyInput): VaultO
     payloadAadHash: input.payloadAadHash,
     createdAtClient: input.createdAtClient,
     trustEpoch: input.trustEpoch,
+    targetPublicSigningKey: input.targetPublicSigningKey ?? null,
+    targetDeviceKeyFingerprint: input.targetDeviceKeyFingerprint ?? null,
   };
 }
 

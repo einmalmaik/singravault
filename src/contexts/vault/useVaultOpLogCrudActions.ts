@@ -22,6 +22,8 @@ import {
   type VaultOpLogCrudServiceDependencies,
   type VerifiedRecordBase,
 } from '@/services/vaultOpLog/vaultOpLogCrudService';
+import { approvePendingDeviceRequest, rejectPendingDeviceRequest, submitVaultOperation } from '@/services/vaultOpLog/vaultOpLogRepository';
+import { buildAddDeviceOperation } from '@/services/vaultOpLog/vaultOpLogOperationBuilder';
 import { loadVerifiedVaultOpLogDeviceContext } from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
 import { loadVaultOpLogDeviceSigningKey } from '@/services/vaultOpLog/vaultOpLogDeviceSigningKeyStore';
 import { loadVaultOpLogUiState } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
@@ -326,6 +328,67 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
     await afterVerifiedCommit();
   }), [afterVerifiedCommit, input, loadRuntimeContext]);
 
+  const opLogApproveDeviceRequest = useCallback(async (requestId: string): Promise<{ error: Error | null }> => {
+    try {
+      const { deps, localVaultState } = await loadRuntimeContext();
+      
+      const approveResult = await approvePendingDeviceRequest(deps.rpcClient, {
+        vaultId: deps.vaultId,
+        requestId,
+      });
+
+      if (approveResult.kind !== 'approved') {
+        throw new Error(`Konnte Anfrage nicht genehmigen: ${approveResult.kind}`);
+      }
+
+      const builtOp = await buildAddDeviceOperation({
+        opId: crypto.randomUUID(),
+        intentId: crypto.randomUUID(),
+        rebasedFromOpId: localVaultState.lastVerifiedVaultHead,
+        vaultId: deps.vaultId,
+        deviceId: deps.deviceId,
+        deviceSigningKey: deps.deviceSigningKey,
+        targetDeviceId: approveResult.requestedDeviceId,
+        targetPublicSigningKey: approveResult.requestedPublicKey,
+        baseVaultHead: localVaultState.lastVerifiedVaultHead,
+        trustEpoch: deps.trustEpoch,
+      });
+
+      const submitResult = await submitVaultOperation(deps.rpcClient, {
+        operationParams: builtOp.signedOperation,
+        expectedPreviousHead: builtOp.signedOperation.rebasedFromOpId,
+        resultingVaultHead: builtOp.resultingVaultHead,
+      });
+
+      if (submitResult.kind !== 'success') {
+        throw new Error(`Fehler beim Speichern der Operation: ${submitResult.kind}`);
+      }
+
+      await afterVerifiedCommit();
+      return { error: null };
+    } catch (error) {
+      return { error: error instanceof Error ? error : new Error('Geräte-Genehmigung fehlgeschlagen.') };
+    }
+  }, [afterVerifiedCommit, loadRuntimeContext]);
+
+  const opLogRejectDeviceRequest = useCallback(async (requestId: string): Promise<{ error: Error | null }> => {
+    try {
+      const { deps } = await loadRuntimeContext();
+      const rejectResult = await rejectPendingDeviceRequest(deps.rpcClient, {
+        vaultId: deps.vaultId,
+        requestId,
+      });
+
+      if (rejectResult.kind !== 'rejected') {
+        throw new Error(`Konnte Anfrage nicht ablehnen: ${rejectResult.kind}`);
+      }
+
+      return { error: null };
+    } catch (error) {
+      return { error: error instanceof Error ? error : new Error('Geräte-Ablehnung fehlgeschlagen.') };
+    }
+  }, [loadRuntimeContext]);
+
   return {
     opLogCreateItem,
     opLogUpdateItem,
@@ -336,5 +399,7 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
     opLogRestoreRecord,
     opLogDeleteUntrustedRecord,
     opLogResolveConflict,
+    opLogApproveDeviceRequest,
+    opLogRejectDeviceRequest,
   };
 }

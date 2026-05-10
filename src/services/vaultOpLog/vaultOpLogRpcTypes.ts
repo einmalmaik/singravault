@@ -250,3 +250,111 @@ export type BootstrapVaultTrustResult =
   | { readonly kind: 'vaultOwnershipError' }
   | { readonly kind: 'rpcError'; readonly code: string; readonly message: string }
   | { readonly kind: 'malformedResponse'; readonly reason: string };
+
+// ---------------------------------------------------------------------------
+// Add-Device-Flow RPC Types
+// ---------------------------------------------------------------------------
+
+/**
+ * Anfrage für create_pending_device_request
+ */
+export interface RpcCreatePendingDeviceRequestRequest {
+  readonly p_vault_id: string;
+  readonly p_requested_device_id: string;
+  readonly p_requested_device_name: string;
+  readonly p_requested_public_signing_key: string;
+  readonly p_requested_device_platform: string | null;
+  readonly p_pairing_nonce: string;
+}
+
+/**
+ * Ergebnis von create_pending_device_request
+ */
+export interface RpcCreatePendingDeviceRequestResult {
+  readonly created: boolean;
+  readonly request_id: string | null;
+  readonly expires_at: string | null;
+  readonly reason?: string;
+}
+
+/**
+ * Anfrage für get_pending_device_requests
+ */
+export interface RpcGetPendingDeviceRequestsRequest {
+  readonly p_vault_id: string;
+}
+
+/**
+ * Row von get_pending_device_requests
+ */
+export interface DbPendingDeviceRequestRow {
+  readonly request_id: string;
+  readonly requested_device_id: string;
+  readonly requested_device_name: string;
+  readonly requested_public_signing_key: string;
+  readonly requested_device_platform: string | null;
+  readonly pairing_nonce: string;
+  readonly challenge_created_at: string;
+  readonly challenge_expires_at: string;
+  readonly status: string;
+  readonly created_at: string;
+}
+
+/**
+ * Ergebnis von approve_pending_device_request
+ */
+export interface RpcApprovePendingDeviceRequestResult {
+  readonly approved: boolean;
+  readonly request_id?: string;
+  readonly requested_device_id?: string;
+  readonly requested_public_signing_key?: string;
+  readonly requested_device_name?: string;
+  readonly vault_id?: string;
+  readonly reason?: string;
+}
+
+/**
+ * Ergebnis von reject_pending_device_request
+ */
+export interface RpcRejectPendingDeviceRequestResult {
+  readonly rejected: boolean;
+  readonly request_id?: string;
+  readonly reason?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Result unions für Add-Device-Flow
+// ---------------------------------------------------------------------------
+
+export type CreatePendingDeviceRequestResult =
+  | { readonly kind: 'created'; readonly requestId: string; readonly expiresAt: string }
+  | { readonly kind: 'alreadyTrusted'; readonly reason: 'device_already_trusted' }
+  | { readonly kind: 'unauthorized' }
+  | { readonly kind: 'vaultOwnershipError' }
+  | { readonly kind: 'rpcError'; readonly code: string; readonly message: string }
+  | { readonly kind: 'malformedResponse'; readonly reason: string };
+
+export type GetPendingDeviceRequestsResult =
+  | { readonly kind: 'success'; readonly requests: readonly import('./addDeviceFlowTypes').PendingDeviceRequestRow[] }
+  | { readonly kind: 'unauthorized' }
+  | { readonly kind: 'vaultOwnershipError' }
+  | { readonly kind: 'rpcError'; readonly code: string; readonly message: string }
+  | { readonly kind: 'malformedResponse'; readonly reason: string };
+
+export type ApprovePendingDeviceRequestResult =
+  | { readonly kind: 'approved'; readonly requestId: string; readonly requestedDeviceId: string; readonly requestedPublicSigningKey: string; readonly requestedDeviceName: string; readonly vaultId: string }
+  | { readonly kind: 'requestNotFound' }
+  | { readonly kind: 'requestExpired' }
+  | { readonly kind: 'approverNotTrusted' }
+  | { readonly kind: 'unauthorized' }
+  | { readonly kind: 'vaultOwnershipError' }
+  | { readonly kind: 'rpcError'; readonly code: string; readonly message: string }
+  | { readonly kind: 'malformedResponse'; readonly reason: string };
+
+export type RejectPendingDeviceRequestResult =
+  | { readonly kind: 'rejected'; readonly requestId: string }
+  | { readonly kind: 'requestNotFound' }
+  | { readonly kind: 'unauthorized' }
+  | { readonly kind: 'vaultOwnershipError' }
+  | { readonly kind: 'rpcError'; readonly code: string; readonly message: string }
+  | { readonly kind: 'malformedResponse'; readonly reason: string };

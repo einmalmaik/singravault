@@ -26,6 +26,7 @@ export const RECORD_TYPES = [
   'attachment_chunk',
   'manifest',
   'tombstone',
+  'device',
 ] as const;
 export type RecordType = (typeof RECORD_TYPES)[number];
 
@@ -116,6 +117,22 @@ export interface VaultOperationSignedBodyV1 {
   readonly payloadAadHash: string | null;
   readonly createdAtClient: string;
   readonly trustEpoch: number;
+  /**
+   * For `add_device` operations: the SPKI public key (base64url) of the
+   * device being added. This field is CRITICAL and MUST be signed
+   * to prevent man-in-the-middle attacks where an attacker or
+   * compromised server substitutes a different public key.
+   *
+   * Security Invariant: Without a signed public key, the operation
+   * could authorize a device whose private key the attacker controls.
+   */
+  readonly targetPublicSigningKey: string | null;
+  /**
+   * For `add_device` operations: SHA-256 fingerprint of the target
+   * public signing key. Provides a quick verification mechanism
+   * independent of the full key transmission.
+   */
+  readonly targetDeviceKeyFingerprint: string | null;
 }
 
 /**

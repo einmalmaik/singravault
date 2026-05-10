@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 Maunting Studios
+// Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Page - Main Dashboard
@@ -34,19 +34,21 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
 import { MasterPasswordSetup } from '@/components/vault/MasterPasswordSetup';
 import { VaultUnlock } from '@/components/vault/VaultUnlock';
-import { VaultSidebar } from '@/components/vault/VaultSidebar';
-import { VaultItemList } from '@/components/vault/VaultItemList';
-import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
-import { VaultIntegrityRecovery } from '@/components/vault/VaultIntegrityRecovery';
-import { VaultMigrationRequiredPanel } from '@/components/vault/VaultMigrationRequiredPanel';
 import { VaultOpLogSecurityModeBanner } from '@/components/vault/VaultOpLogSecurityModeBanner';
 import { VaultOpLogQuarantinePanel } from '@/components/vault/VaultOpLogQuarantinePanel';
 import { VaultOpLogConflictPanel } from '@/components/vault/VaultOpLogConflictPanel';
+import { VaultAddDeviceBanner } from '@/components/vault/VaultAddDeviceBanner';
+import { VaultPendingDevicesPanel } from '@/components/vault/VaultPendingDevicesPanel';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { isPremiumActive } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
+import { VaultSidebar } from '@/components/vault/VaultSidebar';
+import { VaultItemList } from '@/components/vault/VaultItemList';
+import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
+import { VaultIntegrityRecovery } from '@/components/vault/VaultIntegrityRecovery';
+import { VaultMigrationRequiredPanel } from '@/components/vault/VaultMigrationRequiredPanel';
 import { getAdminEntryPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState } from '@/services/returnNavigationState';
 import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
@@ -469,6 +471,8 @@ export default function VaultPage() {
                             {opLogUiView.vaultSecurityMode !== 'normal' && (
                                 <VaultOpLogSecurityModeBanner mode={opLogUiView.vaultSecurityMode} />
                             )}
+                            <VaultAddDeviceBanner />
+                            <VaultPendingDevicesPanel />
                             {opLogUiLoading && (
                                 <p className="text-xs text-muted-foreground animate-pulse">
                                     {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
