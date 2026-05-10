@@ -250,6 +250,7 @@ export function VaultItemList({
     vaultDataVersion,
     vaultMigrationStatus,
     opLogLocalVaultState,
+    opLogUiRefresh,
     opLogUiView,
   } = useVault();
   const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
@@ -277,6 +278,7 @@ export function VaultItemList({
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
   const revalidationRequestIdRef = useRef(0);
   const revalidatingRef = useRef(false);
+  const opLogCloudSyncRef = useRef(false);
   const fetchItemsRef = useRef(false);
   const pendingFetchItemsRef = useRef(false);
   const hasRenderedVaultContentRef = useRef(false);
@@ -365,6 +367,28 @@ export function VaultItemList({
   }, [useOpLogVerifiedRuntime, userId]);
 
   useEffect(() => {
+    if (!useOpLogVerifiedRuntime || !userId || cloudSyncTick === 0 || !isAppOnline()) {
+      return;
+    }
+
+    if (opLogCloudSyncRef.current) {
+      return;
+    }
+
+    opLogCloudSyncRef.current = true;
+    setBackgroundSyncing(true);
+
+    void opLogUiRefresh()
+      .then(() => {
+        setLastCloudSyncAt(new Date());
+      })
+      .finally(() => {
+        opLogCloudSyncRef.current = false;
+        setBackgroundSyncing(false);
+      });
+  }, [cloudSyncTick, opLogUiRefresh, useOpLogVerifiedRuntime, userId]);
+
+  useEffect(() => {
     async function fetchItems() {
       if (!userId) return;
       if (fetchItemsRef.current) {
@@ -374,7 +398,7 @@ export function VaultItemList({
 
       const isBackgroundSync = hasRenderedVaultContentRef.current;
       fetchItemsRef.current = true;
-      if (isBackgroundSync) {
+      if (isBackgroundSync && !useOpLogVerifiedRuntime) {
         setBackgroundSyncing(true);
       } else {
         setLoading(true);

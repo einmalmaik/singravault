@@ -87,6 +87,7 @@ const mockVaultContext = {
     deletedItemIds: string[];
     restoredItemIds: string[];
   },
+  opLogUiRefresh: vi.fn(),
   quarantineResolutionById: {} as Record<string, {
     canRestore: boolean;
     canDelete: boolean;
@@ -264,6 +265,8 @@ describe.sequential('VaultItemList', () => {
     mockVaultContext.vaultMigrationStatus = null;
     mockVaultContext.opLogLocalVaultState = null;
     mockVaultContext.opLogUiView = null;
+    mockVaultContext.opLogUiRefresh.mockResolvedValue(undefined);
+    mockVaultContext.opLogUiRefresh.mockClear();
     mockVaultContext.quarantineResolutionById = {};
     mockVaultContext.opLogRestoreRecord.mockResolvedValue({ error: null });
     mockVaultContext.opLogDeleteUntrustedRecord.mockResolvedValue({ error: null });
@@ -430,7 +433,57 @@ describe.sequential('VaultItemList', () => {
     });
 
     expect(await screen.findByText('vault.empty.title')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockVaultContext.opLogUiRefresh).toHaveBeenCalledTimes(1);
+    });
     expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+    expect(loadVaultSnapshot).not.toHaveBeenCalled();
+    expect(mockVerifyIntegrity).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the verified OpLog state on cloud sync ticks and clears the syncing indicator', async () => {
+    snapshotState.online = true;
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    mockVaultContext.opLogLocalVaultState = makeOpLogState([
+      makeVerifiedOpLogItem('oplog-item-1', {
+        title: 'Visible OpLog Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+      }),
+    ]);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: [{ recordId: 'oplog-item-1', recordType: 'item', recordVersion: 1 }],
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    await screen.findByText('Visible OpLog Item');
+
+    let resolveRefresh: () => void = () => {};
+    mockVaultContext.opLogUiRefresh.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(await screen.findByText('Synchronisiere mit Cloud...')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockVaultContext.opLogUiRefresh).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => {
+      resolveRefresh();
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Synchronisiere mit Cloud...')).not.toBeInTheDocument();
+    });
     expect(loadVaultSnapshot).not.toHaveBeenCalled();
     expect(mockVerifyIntegrity).not.toHaveBeenCalled();
   });
