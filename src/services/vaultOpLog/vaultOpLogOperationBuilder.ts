@@ -43,6 +43,7 @@ import {
   computeVaultHead,
 } from './recordHashes';
 import {
+  DEVICE_SIGNATURE_SCHEMA_V2,
   isRecordType,
   type RecordType,
   type SealedRecordV1,
@@ -154,6 +155,34 @@ export interface RevokeDeviceBuilderInput {
   readonly trustEpoch: number;
   readonly baseVaultHead: string | null;
   readonly targetDeviceId: string;
+  readonly createdAtClient?: string;
+}
+
+export interface RotateRecoveryCodesBuilderInput {
+  readonly opId: string;
+  readonly intentId: string;
+  readonly rebasedFromOpId: string | null;
+  readonly vaultId: string;
+  readonly deviceId: string;
+  readonly deviceSigningKey: CryptoKey;
+  readonly trustEpoch: number;
+  readonly baseVaultHead: string | null;
+  readonly recoveryCodeSetId: string;
+  readonly recoveryCodeCommitments: readonly string[];
+  readonly createdAtClient?: string;
+}
+
+export interface RecoverDeviceBuilderInput {
+  readonly opId: string;
+  readonly intentId: string;
+  readonly rebasedFromOpId: string | null;
+  readonly vaultId: string;
+  readonly deviceId: string;
+  readonly deviceSigningKey: CryptoKey;
+  readonly baseVaultHead: string | null;
+  readonly targetPublicSigningKey: string;
+  readonly recoveryCodeSetId: string;
+  readonly recoveryCodeCommitment: string;
   readonly createdAtClient?: string;
 }
 
@@ -546,12 +575,121 @@ export async function buildRevokeDeviceOperation(
 
 export type BuiltRevokeDeviceOperation = Awaited<ReturnType<typeof buildRevokeDeviceOperation>>;
 
+export async function buildRecoveryCodesRotateOperation(
+  input: RotateRecoveryCodesBuilderInput,
+): Promise<{
+  readonly signedOperation: SignedVaultOperationV1;
+  readonly resultingVaultHead: string;
+  readonly recoveryCodeSetId: string;
+  readonly recoveryCodeCommitments: readonly string[];
+}> {
+  const createdAtClient = input.createdAtClient ?? new Date().toISOString();
+  const body = buildOperationSignedBody({
+    signatureSchema: DEVICE_SIGNATURE_SCHEMA_V2,
+    opId: input.opId,
+    intentId: input.intentId,
+    rebasedFromOpId: input.rebasedFromOpId,
+    vaultId: input.vaultId,
+    authorDeviceId: input.deviceId,
+    opType: 'recovery_codes_rotate',
+    recordId: input.recoveryCodeSetId,
+    recordType: 'manifest',
+    baseRecordVersion: null,
+    previousCiphertextHash: null,
+    newRecordHash: null,
+    baseVaultHead: input.baseVaultHead,
+    payloadCiphertextHash: null,
+    payloadAadHash: null,
+    createdAtClient,
+    trustEpoch: input.trustEpoch,
+    recoveryCodeSetId: input.recoveryCodeSetId,
+    recoveryCodeCommitments: input.recoveryCodeCommitments,
+  });
+
+  const signed = await signOperation(body, input.deviceSigningKey);
+  const resultingVaultHead = await computeVaultHead({
+    previousVaultHead: input.baseVaultHead,
+    opHash: signed.opHash,
+    recordId: input.recoveryCodeSetId,
+    recordType: 'manifest',
+    newRecordHash: null,
+    opType: 'recovery_codes_rotate',
+  });
+
+  return {
+    signedOperation: signed,
+    resultingVaultHead,
+    recoveryCodeSetId: input.recoveryCodeSetId,
+    recoveryCodeCommitments: [...input.recoveryCodeCommitments],
+  };
+}
+
+export type BuiltRecoveryCodesRotateOperation = Awaited<ReturnType<typeof buildRecoveryCodesRotateOperation>>;
+
+export async function buildRecoverDeviceOperation(
+  input: RecoverDeviceBuilderInput,
+): Promise<{
+  readonly signedOperation: SignedVaultOperationV1;
+  readonly resultingVaultHead: string;
+  readonly targetDeviceId: string;
+  readonly targetPublicSigningKey: string;
+  readonly recoveryCodeSetId: string;
+  readonly recoveryCodeCommitment: string;
+}> {
+  const createdAtClient = input.createdAtClient ?? new Date().toISOString();
+  const targetDeviceKeyFingerprint = await computePublicKeyFingerprint(input.targetPublicSigningKey);
+  const body = buildOperationSignedBody({
+    signatureSchema: DEVICE_SIGNATURE_SCHEMA_V2,
+    opId: input.opId,
+    intentId: input.intentId,
+    rebasedFromOpId: input.rebasedFromOpId,
+    vaultId: input.vaultId,
+    authorDeviceId: input.deviceId,
+    opType: 'recover_device',
+    recordId: input.deviceId,
+    recordType: 'device',
+    baseRecordVersion: null,
+    previousCiphertextHash: null,
+    newRecordHash: null,
+    baseVaultHead: input.baseVaultHead,
+    payloadCiphertextHash: null,
+    payloadAadHash: null,
+    createdAtClient,
+    trustEpoch: 0,
+    targetPublicSigningKey: input.targetPublicSigningKey,
+    targetDeviceKeyFingerprint,
+    recoveryCodeSetId: input.recoveryCodeSetId,
+    recoveryCodeCommitment: input.recoveryCodeCommitment,
+  });
+
+  const signed = await signOperation(body, input.deviceSigningKey);
+  const resultingVaultHead = await computeVaultHead({
+    previousVaultHead: input.baseVaultHead,
+    opHash: signed.opHash,
+    recordId: input.deviceId,
+    recordType: 'device',
+    newRecordHash: null,
+    opType: 'recover_device',
+  });
+
+  return {
+    signedOperation: signed,
+    resultingVaultHead,
+    targetDeviceId: input.deviceId,
+    targetPublicSigningKey: input.targetPublicSigningKey,
+    recoveryCodeSetId: input.recoveryCodeSetId,
+    recoveryCodeCommitment: input.recoveryCodeCommitment,
+  };
+}
+
+export type BuiltRecoverDeviceOperation = Awaited<ReturnType<typeof buildRecoverDeviceOperation>>;
+
 
 // --------------------------------------------------------------------------
 // Compute public key fingerprint (used by add_device)
 // --------------------------------------------------------------------------
 
-async function computePublicKeyFingerprint(publicKeyB64Url: string): Promise<string> {
+export async function computePublicKeyFingerprint(publicKeyB64Url: string): Promise<string> {
   const keyBytes = decodeBase64Url(publicKeyB64Url);
   const hashBuffer = await crypto.subtle.digest('SHA-256', keyBytes as unknown as ArrayBuffer);
   return encodeBase64Url(new Uint8Array(hashBuffer));
@@ -652,6 +790,37 @@ export function buildRevokeDeviceTrustPayload(
     kind: 'revoke',
     device_id: built.targetDeviceId,
     revoked_at: built.revokedAt,
+  };
+}
+
+export function buildRecoverDeviceTrustPayload(
+  built: BuiltRecoverDeviceOperation,
+): {
+  readonly kind: 'recover';
+  readonly device: {
+    readonly device_id: string;
+    readonly public_signing_key: string;
+    readonly device_name_encrypted: string;
+    readonly added_by_device_id: null;
+    readonly added_at: string;
+    readonly trust_epoch: number;
+  };
+  readonly recovery_code_set_id: string;
+  readonly recovery_code_commitment: string;
+} {
+  const body = built.signedOperation.body;
+  return {
+    kind: 'recover',
+    device: {
+      device_id: built.targetDeviceId,
+      public_signing_key: built.targetPublicSigningKey,
+      device_name_encrypted: '',
+      added_by_device_id: null,
+      added_at: body.createdAtClient,
+      trust_epoch: 0,
+    },
+    recovery_code_set_id: built.recoveryCodeSetId,
+    recovery_code_commitment: built.recoveryCodeCommitment,
   };
 }
 

@@ -76,7 +76,7 @@ export function classifyOperationAuthor(
 }
 
 /**
- * Apply an `add_device` or `revoke_device` operation to an existing
+ * Apply a device-trust operation to an existing
  * trust list, producing a new list. The caller is responsible for
  * having already verified the signed operation with
  * `verifyOperationSignature` and the author with
@@ -92,15 +92,23 @@ export function applyDeviceTrustOperation(
   if (op.body.recordType !== 'device') {
     throw new VaultSignatureError('signed_body_invalid', 'device trust operation must target a device record');
   }
-  if (op.body.opType === 'add_device') {
-    if (payload.kind !== 'add') {
-      throw new VaultSignatureError('signed_body_invalid', 'payload does not match add_device op');
+  if (op.body.opType === 'add_device' || op.body.opType === 'recover_device') {
+    if (payload.kind !== 'add' && payload.kind !== 'recover') {
+      throw new VaultSignatureError('signed_body_invalid', 'payload does not match device-add op');
     }
     if (payload.device.deviceId !== op.body.recordId) {
       throw new VaultSignatureError('signed_body_invalid', 'added device does not match signed target device');
     }
     if (payload.device.publicSigningKey !== op.body.targetPublicSigningKey) {
       throw new VaultSignatureError('signed_body_invalid', 'added device key does not match signed target key');
+    }
+    if (op.body.opType === 'recover_device') {
+      if (!op.body.recoveryCodeSetId || !op.body.recoveryCodeCommitment) {
+        throw new VaultSignatureError('signed_body_invalid', 'recover_device is missing recovery commitment data');
+      }
+      if (payload.kind !== 'recover') {
+        throw new VaultSignatureError('signed_body_invalid', 'payload does not match recover_device op');
+      }
     }
     if (next.has(payload.device.deviceId)) {
       throw new VaultSignatureError('signed_body_invalid', 'device already present in trust list');
@@ -136,6 +144,7 @@ export function applyDeviceTrustOperation(
 
 export type DeviceTrustOperationPayload =
   | { readonly kind: 'add'; readonly device: TrustedDeviceRecordV1 }
+  | { readonly kind: 'recover'; readonly device: TrustedDeviceRecordV1 }
   | { readonly kind: 'revoke'; readonly deviceId: string; readonly revokedAt: string };
 
 /**

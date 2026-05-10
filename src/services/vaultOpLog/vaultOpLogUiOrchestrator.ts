@@ -46,6 +46,11 @@ import {
   applyDeviceTrustOperation,
   TrustListInput,
 } from './deviceTrustService';
+import {
+  applyRecoveryCodeRotationOperation,
+  markRecoveryCodeCommitmentUsed,
+  type RecoveryCodeSetState,
+} from './recoveryCodeTrustService';
 import type {
   VaultOperationRow,
   VaultRecordRow,
@@ -96,6 +101,7 @@ type OperationChainVerificationResult =
       readonly kind: 'success';
       readonly latestOperationByRecordId: ReadonlyMap<string, VaultOperationRow>;
       readonly trustByOperationId: ReadonlyMap<string, TrustListInput>;
+      readonly verifiedTrust: TrustListInput;
       readonly verifiedHead: string | null;
     }
   | {
@@ -182,11 +188,31 @@ export async function loadVaultOpLogUiState(
       };
     }
 
-    // Step 3: Load records referenced by those operations
+    const chainResult = deduplicatedOps.length === 0
+      ? {
+          kind: 'success' as const,
+          latestOperationByRecordId: new Map<string, VaultOperationRow>(),
+          trustByOperationId: new Map<string, TrustListInput>(),
+          verifiedTrust: trust,
+          verifiedHead: headResult.head.currentHead,
+        }
+      : await verifyOperationChain({
+          operations: deduplicatedOps,
+          trust,
+          expectedHead: headResult.head.currentHead,
+        });
+    if (chainResult.kind !== 'success') {
+      return {
+        uiView: null,
+        localVaultState: null,
+        error: chainResult.error,
+      };
+    }
+
+    // Step 3: Load records referenced by verified record operations
     const recordIds = [
       ...new Set(
-        deduplicatedOps
-          .filter((op) => !isDeviceTrustOperation(op))
+        Array.from(chainResult.latestOperationByRecordId.values())
           .map((op) => op.recordId),
       ),
     ];
@@ -194,8 +220,8 @@ export async function loadVaultOpLogUiState(
     if (recordIds.length === 0) {
       // No operations → empty vault. Build UI view from empty state.
       const emptyState = buildEmptyLocalVaultState({
-        trust,
-        lastVerifiedVaultHead: headResult.head.currentHead,
+        trust: chainResult.verifiedTrust,
+        lastVerifiedVaultHead: chainResult.verifiedHead,
       });
       return {
         uiView: buildVaultOpLogUiView(emptyState),
@@ -222,24 +248,11 @@ export async function loadVaultOpLogUiState(
       recordsById.set(record.recordId, record);
     }
 
-    const chainResult = await verifyOperationChain({
-      operations: deduplicatedOps,
-      trust,
-      expectedHead: headResult.head.currentHead,
-    });
-    if (chainResult.kind !== 'success') {
-      return {
-        uiView: null,
-        localVaultState: null,
-        error: chainResult.error,
-      };
-    }
-
     let localState: LocalVaultState = {
       recordsById: new Map(),
       quarantinedRecordsById: new Map(),
       conflictsByRecordId: new Map(),
-      trustedDevicesById: trust.trustedDevicesById,
+      trustedDevicesById: chainResult.verifiedTrust.trustedDevicesById,
       lastVerifiedVaultHead: chainResult.verifiedHead,
     };
 
@@ -344,10 +357,18 @@ async function verifyOperationChain(input: {
     vaultId: trust.vaultId,
     trustedDevicesById: buildBootstrapTrustList(trust.trustedDevicesById),
   };
+  let historicalRecoveryCodeSets = new Map<string, RecoveryCodeSetState>();
 
   for (const operation of operations) {
     trustByOperationId.set(operation.opId, cloneTrustList(historicalTrust));
-    const operationResult = await verifyOperation({ operation, trust: historicalTrust });
+    const operationResult = await verifyOperation({
+      operation,
+      trust: historicalTrust,
+      recoveryTrust: {
+        vaultId: trust.vaultId,
+        recoveryCodeSetsById: historicalRecoveryCodeSets,
+      },
+    });
     if (operationResult.kind !== 'validTrustedOperation') {
       return {
         kind: 'error',
@@ -378,7 +399,19 @@ async function verifyOperationChain(input: {
     }
 
     verifiedHead = operation.resultingVaultHead;
-    if (isDeviceTrustOperation(operation)) {
+    if (isRecoveryCodeRotationOperation(operation)) {
+      try {
+        historicalRecoveryCodeSets = applyRecoveryCodeRotationOperation(
+          historicalRecoveryCodeSets,
+          operationResult.signedOperation,
+        );
+      } catch {
+        return {
+          kind: 'error',
+          error: 'recovery_code_rotation_invalid',
+        };
+      }
+    } else if (isDeviceTrustOperation(operation)) {
       try {
         historicalTrust = {
           vaultId: historicalTrust.vaultId,
@@ -388,6 +421,12 @@ async function verifyOperationChain(input: {
             buildDeviceTrustPayloadFromSignedOperation(operationResult.signedOperation),
           ),
         };
+        if (operation.opType === 'recover_device') {
+          historicalRecoveryCodeSets = markRecoveryCodeCommitmentUsed(
+            historicalRecoveryCodeSets,
+            operationResult.signedOperation,
+          );
+        }
       } catch {
         return {
           kind: 'error',
@@ -410,6 +449,7 @@ async function verifyOperationChain(input: {
     kind: 'success',
     latestOperationByRecordId,
     trustByOperationId,
+    verifiedTrust: historicalTrust,
     verifiedHead,
   };
 }
@@ -468,6 +508,28 @@ function buildDeviceTrustPayloadFromSignedOperation(
     };
   }
 
+  if (operation.body.opType === 'recover_device') {
+    const targetPublicSigningKey = operation.body.targetPublicSigningKey ?? null;
+    if (!targetPublicSigningKey) {
+      throw new Error('recover_device_missing_target_key');
+    }
+    return {
+      kind: 'recover',
+      device: {
+        vaultId: operation.body.vaultId,
+        deviceId: operation.body.recordId,
+        publicSigningKey: targetPublicSigningKey,
+        deviceNameEncrypted: '',
+        addedByDeviceId: null,
+        addedAt: operation.body.createdAtClient,
+        trustEpoch: 0,
+        status: 'trusted',
+        revokedAt: null,
+        revokedByDeviceId: null,
+      },
+    };
+  }
+
   if (operation.body.opType === 'revoke_device') {
     return {
       kind: 'revoke',
@@ -480,7 +542,13 @@ function buildDeviceTrustPayloadFromSignedOperation(
 }
 
 function isDeviceTrustOperation(operation: VaultOperationRow): boolean {
-  return operation.opType === 'add_device' || operation.opType === 'revoke_device';
+  return operation.opType === 'add_device'
+    || operation.opType === 'revoke_device'
+    || operation.opType === 'recover_device';
+}
+
+function isRecoveryCodeRotationOperation(operation: VaultOperationRow): boolean {
+  return operation.opType === 'recovery_codes_rotate';
 }
 
 function isLocalDeviceTrusted(

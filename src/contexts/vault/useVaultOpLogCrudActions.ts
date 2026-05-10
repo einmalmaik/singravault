@@ -33,6 +33,7 @@ import {
 import { loadVerifiedVaultOpLogDeviceContext } from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
 import { loadVaultOpLogDeviceSigningKey } from '@/services/vaultOpLog/vaultOpLogDeviceSigningKeyStore';
 import { loadVaultOpLogUiState } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
+import { getVaultRecoveryCodeStatus } from '@/services/vaultOpLog/vaultRecoveryCodeService';
 import type { VaultOpLogTrustReadClient } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
 import type { SubmitVaultOperationResult } from '@/services/vaultOpLog/vaultOpLogRpcTypes';
@@ -420,14 +421,13 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
   const opLogRevokeDevice = useCallback(async (targetDeviceId: string): Promise<{ error: Error | null }> => {
     try {
       const { deps, localVaultState } = await loadRuntimeContext();
-      if (targetDeviceId === deps.deviceId) {
-        throw new VaultOpLogUiActionBlockedError('Dieses Gerät kann sich nicht selbst entfernen.');
-      }
-
       const trustedDevices = Array.from(localVaultState.trustedDevicesById.values())
         .filter((device) => device.status === 'trusted');
       if (trustedDevices.length <= 1) {
-        throw new VaultOpLogUiActionBlockedError('Das letzte vertrauenswürdige Gerät kann erst entfernt werden, wenn ein Recovery-Flow existiert.');
+        const recoveryStatus = await getVaultRecoveryCodeStatus(deps.vaultId);
+        if (!recoveryStatus.hasActiveSet || recoveryStatus.remainingCodes < 1) {
+          throw new VaultOpLogUiActionBlockedError('Das letzte vertrauenswürdige Gerät kann erst entfernt werden, wenn mindestens ein aktiver Recovery-Code verfügbar ist.');
+        }
       }
       if (!trustedDevices.some((device) => device.deviceId === targetDeviceId)) {
         throw new VaultOpLogUiActionBlockedError('Dieses Gerät ist nicht als vertrauenswürdig registriert.');

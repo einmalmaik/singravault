@@ -23,8 +23,10 @@ import {
   computeOpHash,
 } from './recordHashes';
 import {
+  DEVICE_SIGNATURE_SCHEMA_V2,
   DEVICE_SIGNATURE_SCHEMA_V1,
   VaultSignatureError,
+  type DeviceSignatureSchema,
   isOperationType,
   isRecordType,
   type OperationType,
@@ -92,6 +94,7 @@ export async function importDevicePublicKey(publicKeyB64Url: string): Promise<Cr
  * is pinned.
  */
 export interface BuildOperationBodyInput {
+  readonly signatureSchema?: DeviceSignatureSchema;
   readonly opId: string;
   /**
    * Stable logical-intent identifier. A retry after a `stale_vault_head`
@@ -138,6 +141,9 @@ export interface BuildOperationBodyInput {
    * Must be `null` for all other operation types.
    */
   readonly targetDeviceKeyFingerprint?: string | null;
+  readonly recoveryCodeSetId?: string | null;
+  readonly recoveryCodeCommitments?: readonly string[] | null;
+  readonly recoveryCodeCommitment?: string | null;
 }
 
 /**
@@ -146,6 +152,8 @@ export interface BuildOperationBodyInput {
  * the state machine's job in a later phase.
  */
 export function buildOperationSignedBody(input: BuildOperationBodyInput): VaultOperationSignedBodyV1 {
+  const signatureSchema = input.signatureSchema
+    ?? (isRecoveryOperationType(input.opType) ? DEVICE_SIGNATURE_SCHEMA_V2 : DEVICE_SIGNATURE_SCHEMA_V1);
   if (!isOperationType(input.opType)) {
     throw new VaultSignatureError('signed_body_invalid', `unknown opType: ${String(input.opType)}`);
   }
@@ -172,13 +180,23 @@ export function buildOperationSignedBody(input: BuildOperationBodyInput): VaultO
     throw new VaultSignatureError('signed_body_invalid', 'rebasedFromOpId must differ from opId');
   }
 
-  // SECURITY: For add_device operations, targetPublicSigningKey MUST be present and signed.
-  // An absent or null public key for add_device is a security vulnerability.
-  if (input.opType === 'add_device') {
+  if (signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V1 && signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V2) {
+    throw new VaultSignatureError('signed_body_invalid', 'unknown signatureSchema');
+  }
+  if (signatureSchema === DEVICE_SIGNATURE_SCHEMA_V1 && isRecoveryOperationType(input.opType)) {
+    throw new VaultSignatureError('signed_body_invalid', 'recovery operations require device-signature-v2');
+  }
+  if (signatureSchema === DEVICE_SIGNATURE_SCHEMA_V1 && hasRecoveryFields(input)) {
+    throw new VaultSignatureError('signed_body_invalid', 'recovery fields require device-signature-v2');
+  }
+
+  // SECURITY: For add_device/recover_device operations, targetPublicSigningKey MUST be signed.
+  // An absent or null public key is a security vulnerability.
+  if (input.opType === 'add_device' || input.opType === 'recover_device') {
     if (input.targetPublicSigningKey === undefined || input.targetPublicSigningKey === null) {
       throw new VaultSignatureError(
         'signed_body_invalid',
-        'add_device operation requires targetPublicSigningKey to be signed',
+        `${input.opType} operation requires targetPublicSigningKey to be signed`,
       );
     }
     // targetDeviceKeyFingerprint is optional but recommended
@@ -187,19 +205,46 @@ export function buildOperationSignedBody(input: BuildOperationBodyInput): VaultO
     if (input.targetPublicSigningKey !== undefined && input.targetPublicSigningKey !== null) {
       throw new VaultSignatureError(
         'signed_body_invalid',
-        'targetPublicSigningKey is only valid for add_device operations',
+        'targetPublicSigningKey is only valid for add_device or recover_device operations',
       );
     }
     if (input.targetDeviceKeyFingerprint !== undefined && input.targetDeviceKeyFingerprint !== null) {
       throw new VaultSignatureError(
         'signed_body_invalid',
-        'targetDeviceKeyFingerprint is only valid for add_device operations',
+        'targetDeviceKeyFingerprint is only valid for add_device or recover_device operations',
       );
     }
   }
 
-  return {
-    signatureSchema: DEVICE_SIGNATURE_SCHEMA_V1,
+  if (input.opType === 'recovery_codes_rotate') {
+    if (!input.recoveryCodeSetId) {
+      throw new VaultSignatureError('signed_body_invalid', 'recovery_codes_rotate requires recoveryCodeSetId');
+    }
+    if (!Array.isArray(input.recoveryCodeCommitments) || input.recoveryCodeCommitments.length === 0) {
+      throw new VaultSignatureError('signed_body_invalid', 'recovery_codes_rotate requires commitments');
+    }
+    if (input.recoveryCodeCommitments.length > 5) {
+      throw new VaultSignatureError('signed_body_invalid', 'recovery_codes_rotate supports at most five commitments');
+    }
+    if (input.recoveryCodeCommitments.some((commitment) => typeof commitment !== 'string' || commitment.length === 0)) {
+      throw new VaultSignatureError('signed_body_invalid', 'recovery code commitments must be non-empty strings');
+    }
+    if (input.recoveryCodeCommitment !== undefined && input.recoveryCodeCommitment !== null) {
+      throw new VaultSignatureError('signed_body_invalid', 'single recovery commitment is only valid for recover_device');
+    }
+  } else if (input.opType === 'recover_device') {
+    if (!input.recoveryCodeSetId || !input.recoveryCodeCommitment) {
+      throw new VaultSignatureError('signed_body_invalid', 'recover_device requires recovery code set and commitment');
+    }
+    if (input.recoveryCodeCommitments !== undefined && input.recoveryCodeCommitments !== null) {
+      throw new VaultSignatureError('signed_body_invalid', 'commitment list is only valid for recovery_codes_rotate');
+    }
+  } else if (hasRecoveryFields(input)) {
+    throw new VaultSignatureError('signed_body_invalid', 'recovery fields are only valid for recovery operations');
+  }
+
+  const baseBody: VaultOperationSignedBodyV1 = {
+    signatureSchema,
     opId: input.opId,
     intentId: input.intentId,
     rebasedFromOpId: input.rebasedFromOpId,
@@ -219,6 +264,17 @@ export function buildOperationSignedBody(input: BuildOperationBodyInput): VaultO
     targetPublicSigningKey: input.targetPublicSigningKey ?? null,
     targetDeviceKeyFingerprint: input.targetDeviceKeyFingerprint ?? null,
   };
+
+  if (signatureSchema === DEVICE_SIGNATURE_SCHEMA_V2) {
+    return {
+      ...baseBody,
+      recoveryCodeSetId: input.recoveryCodeSetId ?? null,
+      recoveryCodeCommitments: input.recoveryCodeCommitments ?? null,
+      recoveryCodeCommitment: input.recoveryCodeCommitment ?? null,
+    };
+  }
+
+  return baseBody;
 }
 
 /**
@@ -257,7 +313,10 @@ export async function verifyOperationSignature(
   signed: SignedVaultOperationV1,
   publicKey: CryptoKey,
 ): Promise<boolean> {
-  if (signed.body.signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V1) {
+  if (
+    signed.body.signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V1
+    && signed.body.signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V2
+  ) {
     throw new VaultSignatureError('signed_body_invalid', 'unknown signatureSchema');
   }
   const recomputedOpHash = await computeOpHash(signed.body);
@@ -313,4 +372,14 @@ function isIsoInstant(value: string): boolean {
   // Accept ISO-8601 UTC instants with or without fractional seconds.
   // Example: 2026-05-02T10:30:00.000Z
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/u.test(value);
+}
+
+function isRecoveryOperationType(opType: OperationType): boolean {
+  return opType === 'recovery_codes_rotate' || opType === 'recover_device';
+}
+
+function hasRecoveryFields(input: BuildOperationBodyInput): boolean {
+  return (input.recoveryCodeSetId !== undefined && input.recoveryCodeSetId !== null)
+    || (input.recoveryCodeCommitments !== undefined && input.recoveryCodeCommitments !== null)
+    || (input.recoveryCodeCommitment !== undefined && input.recoveryCodeCommitment !== null);
 }

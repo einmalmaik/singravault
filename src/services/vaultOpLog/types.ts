@@ -13,7 +13,11 @@
 export const RECORD_AAD_SCHEMA_V1 = 'record-aad-v1' as const;
 export const RECORD_ENCRYPTION_SCHEMA_V1 = 'record-aead-v1' as const;
 export const DEVICE_SIGNATURE_SCHEMA_V1 = 'device-signature-v1' as const;
+export const DEVICE_SIGNATURE_SCHEMA_V2 = 'device-signature-v2' as const;
 export const APP_NAMESPACE = 'singra-vault' as const;
+export type DeviceSignatureSchema =
+  | typeof DEVICE_SIGNATURE_SCHEMA_V1
+  | typeof DEVICE_SIGNATURE_SCHEMA_V2;
 
 /**
  * The fixed set of record types that may ever appear in a vault
@@ -47,6 +51,8 @@ export const OPERATION_TYPES = [
   'rekey',
   'add_device',
   'revoke_device',
+  'recovery_codes_rotate',
+  'recover_device',
 ] as const;
 export type OperationType = (typeof OPERATION_TYPES)[number];
 
@@ -91,7 +97,7 @@ export interface BuildRecordAadInput {
  * present and set to `null`.
  */
 export interface VaultOperationSignedBodyV1 {
-  readonly signatureSchema: typeof DEVICE_SIGNATURE_SCHEMA_V1;
+  readonly signatureSchema: DeviceSignatureSchema;
   readonly opId: string;
   readonly intentId: string;
   readonly rebasedFromOpId: string | null;
@@ -133,6 +139,25 @@ export interface VaultOperationSignedBodyV1 {
    * independent of the full key transmission.
    */
   readonly targetDeviceKeyFingerprint?: string | null;
+  /**
+   * For `recovery_codes_rotate` and `recover_device`: opaque UUID of
+   * the server-generated recovery-code set. The set id is signed so
+   * a server cannot replay a valid code commitment into another set.
+   */
+  readonly recoveryCodeSetId?: string | null;
+  /**
+   * For `recovery_codes_rotate`: public commitments for the new
+   * recovery codes. These are not plaintext codes and are safe to
+   * replicate through the operation log, where clients can verify
+   * later `recover_device` operations.
+   */
+  readonly recoveryCodeCommitments?: readonly string[] | null;
+  /**
+   * For `recover_device`: the commitment matching the consumed
+   * single-use recovery code. The plaintext code never enters the
+   * operation log.
+   */
+  readonly recoveryCodeCommitment?: string | null;
 }
 
 /**

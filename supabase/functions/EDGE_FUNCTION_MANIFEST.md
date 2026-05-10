@@ -19,6 +19,7 @@ Functions, die im Open-Core `supabase/config.toml` gelistet werden dürfen:
 | `webauthn` | Passkey/WebAuthn-Operationen |
 | `rate-limit` | Rate-Limiting |
 | `account-delete` | Authentifizierte und gedrosselte Account-Löschung |
+| `vault-recovery-codes` | Servergenerierte Einmalcodes für Vault-Device-Trust-Recovery |
 
 Private Admin-, Support-, Billing-, Family- und Release-Functions werden nicht
 aus diesem Repository deployt und dürfen nicht als `verify_jwt=false` Core-Stubs

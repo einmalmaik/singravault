@@ -21,9 +21,14 @@ import {
   verifyOperationSignature,
 } from './operationSigningService';
 import {
+  canRecoverDeviceFromCodeSet,
+  type RecoveryCodeTrustInput,
+} from './recoveryCodeTrustService';
+import {
   computeOpHash,
 } from './recordHashes';
 import {
+  DEVICE_SIGNATURE_SCHEMA_V2,
   DEVICE_SIGNATURE_SCHEMA_V1,
   isOperationType,
   isRecordType,
@@ -40,6 +45,7 @@ import type {
 export interface VerifyOperationInput {
   readonly operation: VaultOperationRow;
   readonly trust: TrustListInput;
+  readonly recoveryTrust?: RecoveryCodeTrustInput;
   readonly publicKey?: CryptoKey;
   /**
    * Optional local record state for causal checks. If omitted,
@@ -88,6 +94,44 @@ export async function verifyOperation(
   }
   if (recomputedOpHash !== operation.opHash) {
     return { kind: 'opHashMismatch' };
+  }
+
+  if (body.opType === 'recover_device') {
+    const opTypeCheck = validateOperationTypeConstraints(body);
+    if (opTypeCheck !== null) {
+      return opTypeCheck;
+    }
+    const signedRecoverOp: SignedVaultOperationV1 = {
+      body,
+      signature: operation.signature,
+      opHash: operation.opHash,
+    };
+    if (
+      !input.recoveryTrust
+      || !canRecoverDeviceFromCodeSet(signedRecoverOp, input.recoveryTrust)
+    ) {
+      return { kind: 'unknownAuthor', reason: 'recovery_code_set_not_trusted' };
+    }
+
+    let signatureValid: boolean;
+    try {
+      const publicKey = input.publicKey ?? await importDevicePublicKey(body.targetPublicSigningKey ?? '');
+      signatureValid = await verifyOperationSignature(signedRecoverOp, publicKey);
+    } catch {
+      return { kind: 'invalidSignature' };
+    }
+    if (!signatureValid) {
+      return { kind: 'invalidSignature' };
+    }
+
+    if (localRecordState !== undefined) {
+      const causal = checkCausalConsistency(body, localRecordState);
+      if (causal !== null) {
+        return causal;
+      }
+    }
+
+    return { kind: 'validTrustedOperation', signedOperation: signedRecoverOp };
   }
 
   // Step 3: author trust classification. This must happen before signature
@@ -150,7 +194,7 @@ function extractSignedBody(raw: unknown): VaultOperationSignedBodyV1 | null {
   const obj = raw as Record<string, unknown>;
 
   const signatureSchema = expectString(obj, 'signatureSchema');
-  if (signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V1) {
+  if (signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V1 && signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V2) {
     return null;
   }
 
@@ -224,6 +268,29 @@ function extractSignedBody(raw: unknown): VaultOperationSignedBodyV1 | null {
     }
     body.targetDeviceKeyFingerprint = targetDeviceKeyFingerprint;
   }
+  if (signatureSchema === DEVICE_SIGNATURE_SCHEMA_V2) {
+    if (Object.prototype.hasOwnProperty.call(obj, 'recoveryCodeSetId')) {
+      const recoveryCodeSetId = expectStringOrNull(obj, 'recoveryCodeSetId');
+      if (recoveryCodeSetId === null && obj.recoveryCodeSetId !== null) {
+        return null;
+      }
+      body.recoveryCodeSetId = recoveryCodeSetId;
+    }
+    if (Object.prototype.hasOwnProperty.call(obj, 'recoveryCodeCommitments')) {
+      const recoveryCodeCommitments = expectStringArrayOrNull(obj, 'recoveryCodeCommitments');
+      if (recoveryCodeCommitments === null && obj.recoveryCodeCommitments !== null) {
+        return null;
+      }
+      body.recoveryCodeCommitments = recoveryCodeCommitments;
+    }
+    if (Object.prototype.hasOwnProperty.call(obj, 'recoveryCodeCommitment')) {
+      const recoveryCodeCommitment = expectStringOrNull(obj, 'recoveryCodeCommitment');
+      if (recoveryCodeCommitment === null && obj.recoveryCodeCommitment !== null) {
+        return null;
+      }
+      body.recoveryCodeCommitment = recoveryCodeCommitment;
+    }
+  }
 
   return body;
 }
@@ -289,6 +356,59 @@ function validateOperationTypeConstraints(
       }
       break;
     }
+    case 'recovery_codes_rotate': {
+      if (body.signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V2 || body.recordType !== 'manifest') {
+        return { kind: 'unsupportedOperationType' };
+      }
+      if (
+        body.baseRecordVersion !== null
+        || body.previousCiphertextHash !== null
+        || body.newRecordHash !== null
+        || body.payloadCiphertextHash !== null
+        || body.payloadAadHash !== null
+        || (body.targetPublicSigningKey ?? null) !== null
+        || (body.targetDeviceKeyFingerprint ?? null) !== null
+        || (body.recoveryCodeCommitment ?? null) !== null
+      ) {
+        return { kind: 'unsupportedOperationType' };
+      }
+      const commitments = body.recoveryCodeCommitments ?? null;
+      if (
+        !body.recoveryCodeSetId
+        || body.recordId !== body.recoveryCodeSetId
+        || !Array.isArray(commitments)
+        || commitments.length === 0
+        || commitments.length > 5
+        || new Set(commitments).size !== commitments.length
+      ) {
+        return { kind: 'payloadHashMismatch' };
+      }
+      break;
+    }
+    case 'recover_device': {
+      if (body.signatureSchema !== DEVICE_SIGNATURE_SCHEMA_V2 || body.recordType !== 'device') {
+        return { kind: 'unsupportedOperationType' };
+      }
+      if (
+        body.baseRecordVersion !== null
+        || body.previousCiphertextHash !== null
+        || body.newRecordHash !== null
+        || body.payloadCiphertextHash !== null
+        || body.payloadAadHash !== null
+        || (body.recoveryCodeCommitments ?? null) !== null
+      ) {
+        return { kind: 'unsupportedOperationType' };
+      }
+      if (
+        (body.targetPublicSigningKey ?? null) === null
+        || !body.recoveryCodeSetId
+        || !body.recoveryCodeCommitment
+        || body.recordId !== body.authorDeviceId
+      ) {
+        return { kind: 'payloadHashMismatch' };
+      }
+      break;
+    }
     default: {
       return { kind: 'unsupportedOperationType' };
     }
@@ -322,7 +442,8 @@ function checkCausalConsistency(
     return null;
   }
 
-  // move, rekey, add_device, revoke_device: no local record causal check.
+  // move, rekey, add_device, revoke_device and recovery control ops:
+  // no local record causal check.
   return null;
 }
 
@@ -355,6 +476,17 @@ function expectNumberOrNull(obj: Record<string, unknown>, key: string): number |
     return null;
   }
   if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function expectStringArrayOrNull(obj: Record<string, unknown>, key: string): readonly string[] | null {
+  const value = obj[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
     return null;
   }
   return value;

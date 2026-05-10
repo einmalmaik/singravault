@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Laptop, Loader2, ShieldCheck, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,10 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
 import { loadVaultOpLogDeviceIdentity } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
+import {
+  getVaultRecoveryCodeStatus,
+  type VaultRecoveryCodeStatus,
+} from '@/services/vaultOpLog/vaultRecoveryCodeService';
 import type { TrustedDeviceRecordV1 } from '@/services/vaultOpLog/types';
 
 function formatDeviceLabel(device: TrustedDeviceRecordV1): string {
@@ -38,9 +42,10 @@ function formatDate(value: string | null): string {
 
 export function TrustedDevicesSettings() {
   const { toast } = useToast();
-  const { opLogLocalVaultState, opLogRevokeDevice, opLogUiRefresh } = useVault();
+  const { opLogVaultId, opLogLocalVaultState, opLogRevokeDevice, opLogUiRefresh } = useVault();
   const [busyDeviceId, setBusyDeviceId] = useState<string | null>(null);
   const [devicePendingRemoval, setDevicePendingRemoval] = useState<TrustedDeviceRecordV1 | null>(null);
+  const [recoveryStatus, setRecoveryStatus] = useState<VaultRecoveryCodeStatus | null>(null);
   const localDeviceId = loadVaultOpLogDeviceIdentity()?.deviceId ?? null;
 
   const devices = useMemo(() => {
@@ -55,6 +60,31 @@ export function TrustedDevicesSettings() {
 
   const trustedDeviceCount = devices.filter((device) => device.status === 'trusted').length;
   const canManageDevices = Boolean(opLogLocalVaultState);
+  const hasRecoveryFallback = Boolean(recoveryStatus?.hasActiveSet && recoveryStatus.remainingCodes > 0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRecoveryStatus() {
+      if (!opLogVaultId) {
+        setRecoveryStatus(null);
+        return;
+      }
+      try {
+        const nextStatus = await getVaultRecoveryCodeStatus(opLogVaultId);
+        if (!cancelled) {
+          setRecoveryStatus(nextStatus);
+        }
+      } catch {
+        if (!cancelled) {
+          setRecoveryStatus(null);
+        }
+      }
+    }
+    void loadRecoveryStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [opLogVaultId]);
 
   const handleRevoke = async (device: TrustedDeviceRecordV1) => {
     setBusyDeviceId(device.deviceId);
@@ -103,9 +133,9 @@ export function TrustedDevicesSettings() {
         ) : (
           <div className="space-y-3">
             {devices.map((device) => {
-              const isCurrentDevice = device.deviceId === localDeviceId;
               const isTrusted = device.status === 'trusted';
-              const canRevoke = isTrusted && !isCurrentDevice && trustedDeviceCount > 1;
+              const isCurrentDevice = device.deviceId === localDeviceId;
+              const canRevoke = isTrusted && (trustedDeviceCount > 1 || hasRecoveryFallback);
               return (
                 <div key={device.deviceId} className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-start gap-3">
