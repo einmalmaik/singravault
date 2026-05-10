@@ -152,7 +152,8 @@ CREATE TABLE IF NOT EXISTS public.vault_operations (
             'attachment_metadata',
             'attachment_chunk',
             'manifest',
-            'tombstone'
+            'tombstone',
+            'device'
         )
     ),
     CONSTRAINT vault_operations_base_record_version_check CHECK (

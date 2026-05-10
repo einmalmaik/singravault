@@ -1,18 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ShieldAlert, Key, Loader2, CheckCircle2 } from 'lucide-react';
+import { ShieldAlert, Key, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   loadBrowserDeviceIdentity,
   createBrowserDeviceIdentity,
-  hasBrowserDeviceIdentity,
   generateBrowserDeviceName,
   generatePairingNonce,
   getCurrentPlatform,
+  getBrowserDeviceTrustStatus,
 } from '@/services/vaultOpLog/addDeviceFlowService';
 import { createPendingDeviceRequest } from '@/services/vaultOpLog/vaultOpLogRepository';
+import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -20,26 +21,17 @@ export function VaultAddDeviceBanner() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { user } = useAuth();
-  const { opLogUiView, vaultMigrationKeyContext } = useVault();
+  const { opLogUiView, opLogVaultId, opLogUiRefresh } = useVault();
 
-  const [isTrusted, setIsTrusted] = useState<boolean>(true);
+  const [locallyMarkedTrusted, setLocallyMarkedTrusted] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    if (!opLogUiView || !user) return;
+  const trustStatus = opLogUiView
+    ? getBrowserDeviceTrustStatus(opLogUiView.trustedDeviceIds)
+    : { trusted: true as const, deviceId: '' };
 
-    const identity = loadBrowserDeviceIdentity();
-    if (!identity) {
-      setIsTrusted(false);
-      return;
-    }
-
-    const trusted = opLogUiView.trustedDeviceIds.includes(identity.deviceId);
-    setIsTrusted(trusted);
-  }, [opLogUiView, user]);
-
-  if (isTrusted || !user || !vaultMigrationKeyContext?.vaultId) {
+  if (locallyMarkedTrusted || trustStatus.trusted || !user || !opLogVaultId) {
     return null;
   }
 
@@ -50,23 +42,23 @@ export function VaultAddDeviceBanner() {
       if (!identity) {
         const generated = await createBrowserDeviceIdentity(
           user.id,
-          vaultMigrationKeyContext.vaultId,
+          opLogVaultId,
         );
         identity = generated.identity;
       }
 
       const nonce = generatePairingNonce();
-      
+
       const result = await createPendingDeviceRequest(
-        supabase as any,
+        supabase as unknown as SupabaseRpcClient,
         {
-          vaultId: vaultMigrationKeyContext.vaultId,
+          vaultId: opLogVaultId,
           requestedDeviceId: identity.deviceId,
           requestedDeviceName: generateBrowserDeviceName(),
           requestedPublicSigningKey: identity.publicSigningKeyB64Url,
           requestedDevicePlatform: getCurrentPlatform(),
           pairingNonce: nonce,
-        }
+        },
       );
 
       if (result.kind === 'created') {
@@ -76,12 +68,12 @@ export function VaultAddDeviceBanner() {
           description: t('vault.addDevice.requestSentDesc', { defaultValue: 'Bitte bestätige dieses Gerät auf einem bereits vertrauenswürdigen Gerät.' }),
         });
       } else if (result.kind === 'alreadyTrusted') {
-        setIsTrusted(true);
+        setLocallyMarkedTrusted(true);
+        await opLogUiRefresh();
       } else {
         throw new Error(result.kind);
       }
-    } catch (e) {
-      console.error(e);
+    } catch {
       toast({
         variant: 'destructive',
         title: t('common.error'),
@@ -103,7 +95,7 @@ export function VaultAddDeviceBanner() {
           <p className="text-sm text-amber-700/80 dark:text-amber-400/80">
             {isPending
               ? t('vault.addDevice.pendingDesc', { defaultValue: 'Anfrage ausstehend. Bitte auf einem bestehenden Gerät bestätigen.' })
-              : t('vault.addDevice.untrustedDesc', { defaultValue: 'Du kannst den Vault lesen, aber keine Änderungen speichern. Kopple dieses Gerät, um Schreibrechte zu erhalten.' })}
+              : t('vault.addDevice.untrustedDesc', { defaultValue: 'Dieses Gerät ist angemeldet, aber noch nicht für diesen Tresor bestätigt. Bestätige es auf einem bereits vertrauenswürdigen Gerät, bevor Inhalte angezeigt oder Änderungen erlaubt werden.' })}
           </p>
         </div>
       </div>

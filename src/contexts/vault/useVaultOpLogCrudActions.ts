@@ -23,12 +23,17 @@ import {
   type VerifiedRecordBase,
 } from '@/services/vaultOpLog/vaultOpLogCrudService';
 import { approvePendingDeviceRequest, rejectPendingDeviceRequest, submitVaultOperation } from '@/services/vaultOpLog/vaultOpLogRepository';
-import { buildAddDeviceOperation } from '@/services/vaultOpLog/vaultOpLogOperationBuilder';
+import {
+  buildAddDeviceOperation,
+  buildAddDeviceTrustPayload,
+  toVaultOperationRowFromSigned,
+} from '@/services/vaultOpLog/vaultOpLogOperationBuilder';
 import { loadVerifiedVaultOpLogDeviceContext } from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
 import { loadVaultOpLogDeviceSigningKey } from '@/services/vaultOpLog/vaultOpLogDeviceSigningKeyStore';
 import { loadVaultOpLogUiState } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type { VaultOpLogTrustReadClient } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
+import type { SubmitVaultOperationResult } from '@/services/vaultOpLog/vaultOpLogRpcTypes';
 import type { LocalVaultState, LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 import type { RecordType } from '@/services/vaultOpLog/types';
 import type { VaultContextType } from './vaultContextTypes';
@@ -94,6 +99,28 @@ function recordBase(state: LocalVaultState, recordId: string): VerifiedRecordBas
     state.recordsById.get(recordId) ?? null,
     state.lastVerifiedVaultHead,
   );
+}
+
+function describeAddDeviceSubmitFailure(result: Exclude<SubmitVaultOperationResult, { readonly kind: 'applied' }>): string {
+  if (result.kind === 'rpcError') {
+    return `RPC-Fehler beim Speichern der Add-Device-Operation: ${result.message}`;
+  }
+  if (result.kind === 'rebaseNeeded') {
+    return 'Vault-Stand ist veraltet. Bitte erneut synchronisieren und die Anfrage noch einmal bestätigen.';
+  }
+  if (result.kind === 'duplicateOpIdDifferentHash') {
+    return 'Operation-ID wurde mit anderem Inhalt wiederverwendet.';
+  }
+  if (result.kind === 'unauthorized') {
+    return 'Keine gültige Sitzung für die Add-Device-Operation.';
+  }
+  if (result.kind === 'vaultOwnershipError') {
+    return 'Vault-Zugriff konnte für diese Add-Device-Operation nicht bestätigt werden.';
+  }
+  if (result.kind === 'malformedResponse') {
+    return `Unerwartete RPC-Antwort beim Speichern der Add-Device-Operation: ${result.reason}`;
+  }
+  return `Add-Device-Operation wurde nicht gespeichert: ${result.kind}`;
 }
 
 async function loadDefaultVaultId(userId: string): Promise<string | null> {
@@ -332,10 +359,7 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
     try {
       const { deps, localVaultState } = await loadRuntimeContext();
       
-      const approveResult = await approvePendingDeviceRequest(deps.rpcClient, {
-        vaultId: deps.vaultId,
-        requestId,
-      });
+      const approveResult = await approvePendingDeviceRequest(deps.rpcClient, requestId, deps.deviceId);
 
       if (approveResult.kind !== 'approved') {
         throw new Error(`Konnte Anfrage nicht genehmigen: ${approveResult.kind}`);
@@ -344,24 +368,26 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
       const builtOp = await buildAddDeviceOperation({
         opId: crypto.randomUUID(),
         intentId: crypto.randomUUID(),
-        rebasedFromOpId: localVaultState.lastVerifiedVaultHead,
+        rebasedFromOpId: null,
         vaultId: deps.vaultId,
         deviceId: deps.deviceId,
         deviceSigningKey: deps.deviceSigningKey,
         targetDeviceId: approveResult.requestedDeviceId,
-        targetPublicSigningKey: approveResult.requestedPublicKey,
+        targetPublicSigningKey: approveResult.requestedPublicSigningKey,
+        targetDeviceName: approveResult.requestedDeviceName,
         baseVaultHead: localVaultState.lastVerifiedVaultHead,
         trustEpoch: deps.trustEpoch,
       });
 
-      const submitResult = await submitVaultOperation(deps.rpcClient, {
-        operationParams: builtOp.signedOperation,
-        expectedPreviousHead: builtOp.signedOperation.rebasedFromOpId,
-        resultingVaultHead: builtOp.resultingVaultHead,
-      });
+      const submitResult = await submitVaultOperation(
+        deps.rpcClient,
+        toVaultOperationRowFromSigned(builtOp.signedOperation, builtOp.resultingVaultHead),
+        null,
+        buildAddDeviceTrustPayload(builtOp, deps.deviceId),
+      );
 
-      if (submitResult.kind !== 'success') {
-        throw new Error(`Fehler beim Speichern der Operation: ${submitResult.kind}`);
+      if (submitResult.kind !== 'applied') {
+        throw new Error(describeAddDeviceSubmitFailure(submitResult));
       }
 
       await afterVerifiedCommit();
@@ -374,10 +400,7 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
   const opLogRejectDeviceRequest = useCallback(async (requestId: string): Promise<{ error: Error | null }> => {
     try {
       const { deps } = await loadRuntimeContext();
-      const rejectResult = await rejectPendingDeviceRequest(deps.rpcClient, {
-        vaultId: deps.vaultId,
-        requestId,
-      });
+      const rejectResult = await rejectPendingDeviceRequest(deps.rpcClient, requestId, deps.deviceId);
 
       if (rejectResult.kind !== 'rejected') {
         throw new Error(`Konnte Anfrage nicht ablehnen: ${rejectResult.kind}`);

@@ -126,6 +126,8 @@ async function makeOp(
     payloadAadHash: `aad-hash-${opId}`,
     createdAtClient: '2025-01-01T00:00:00Z',
     trustEpoch: 0,
+    targetPublicSigningKey: null,
+    targetDeviceKeyFingerprint: null,
   };
   const opHash = await computeOpHash(signedBody);
   const resultingVaultHead = await computeVaultHead({
@@ -262,6 +264,39 @@ describe('vaultOpLogUiOrchestrator', () => {
 
     expect(result.error).toBeNull();
     expect(result.localVaultState?.trustedDevicesById.has('device-1')).toBe(true);
+  });
+
+  it('does not load vault records when UI state requires local device trust and the local identity is missing', async () => {
+    const operations = await makeCreateOps(1);
+    const client = createMockRpcClient([operations]);
+    const trustClient = createTrustClient([
+      {
+        vault_id: 'vault-1',
+        device_id: 'device-1',
+        public_signing_key: 'pub-local',
+        device_name_encrypted: '',
+        added_by_device_id: null,
+        added_at: '2025-01-01T00:00:00Z',
+        trust_epoch: 0,
+        status: 'trusted',
+        revoked_at: null,
+        revoked_by_device_id: null,
+      },
+    ]);
+
+    const result = await loadVaultOpLogUiState({
+      rpcClient: client,
+      trustClient,
+      vaultId: 'vault-1',
+      vaultEncryptionKey: new Uint8Array(32),
+      requireLocalDeviceTrust: true,
+    });
+
+    const rpcCalls = (client.rpc as ReturnType<typeof vi.fn>).mock.calls;
+    expect(rpcCalls.some((call) => call[0] === 'get_vault_records_by_ids')).toBe(false);
+    expect(result.error).toBeNull();
+    expect(result.localVaultState?.recordsById.size).toBe(0);
+    expect(result.uiView?.trustedDeviceIds).toEqual(['device-1']);
   });
 
   it('paginates through multiple pages of operations', async () => {

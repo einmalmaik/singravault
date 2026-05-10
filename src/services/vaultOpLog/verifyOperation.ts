@@ -170,7 +170,6 @@ function extractSignedBody(raw: unknown): VaultOperationSignedBodyV1 | null {
   const payloadAadHash = expectStringOrNull(obj, 'payloadAadHash');
   const createdAtClient = expectString(obj, 'createdAtClient');
   const trustEpoch = expectSafeInteger(obj, 'trustEpoch');
-
   if (
     opId === null ||
     intentId === null ||
@@ -192,7 +191,7 @@ function extractSignedBody(raw: unknown): VaultOperationSignedBodyV1 | null {
     return null;
   }
 
-  return {
+  const body: VaultOperationSignedBodyV1 = {
     signatureSchema,
     opId,
     intentId,
@@ -211,6 +210,22 @@ function extractSignedBody(raw: unknown): VaultOperationSignedBodyV1 | null {
     createdAtClient,
     trustEpoch,
   };
+  if (Object.prototype.hasOwnProperty.call(obj, 'targetPublicSigningKey')) {
+    const targetPublicSigningKey = expectStringOrNull(obj, 'targetPublicSigningKey');
+    if (targetPublicSigningKey === null && obj.targetPublicSigningKey !== null) {
+      return null;
+    }
+    body.targetPublicSigningKey = targetPublicSigningKey;
+  }
+  if (Object.prototype.hasOwnProperty.call(obj, 'targetDeviceKeyFingerprint')) {
+    const targetDeviceKeyFingerprint = expectStringOrNull(obj, 'targetDeviceKeyFingerprint');
+    if (targetDeviceKeyFingerprint === null && obj.targetDeviceKeyFingerprint !== null) {
+      return null;
+    }
+    body.targetDeviceKeyFingerprint = targetDeviceKeyFingerprint;
+  }
+
+  return body;
 }
 
 function validateOperationTypeConstraints(
@@ -247,11 +262,31 @@ function validateOperationTypeConstraints(
     }
     case 'move':
     case 'rekey':
-    case 'add_device':
     case 'revoke_device': {
       // These are currently allowed through syntactic validation.
       // Semantic validation for device-trust ops lives in
       // `deviceTrustService.applyDeviceTrustOperation`.
+      if ((body.targetPublicSigningKey ?? null) !== null || (body.targetDeviceKeyFingerprint ?? null) !== null) {
+        return { kind: 'unsupportedOperationType' };
+      }
+      break;
+    }
+    case 'add_device': {
+      if (body.recordType !== 'device') {
+        return { kind: 'unsupportedOperationType' };
+      }
+      if (
+        body.baseRecordVersion !== null
+        || body.previousCiphertextHash !== null
+        || body.newRecordHash !== null
+        || body.payloadCiphertextHash !== null
+        || body.payloadAadHash !== null
+      ) {
+        return { kind: 'unsupportedOperationType' };
+      }
+      if ((body.targetPublicSigningKey ?? null) === null) {
+        return { kind: 'payloadHashMismatch' };
+      }
       break;
     }
     default: {

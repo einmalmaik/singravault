@@ -542,8 +542,9 @@ export async function getPendingDeviceRequests(
 /**
  * Approve a pending device request.
  *
- * SECURITY: This does NOT create trust by itself. It only marks the
- * request as approved and returns the device data. The caller MUST:
+ * SECURITY: This does NOT create trust by itself. It validates that a
+ * trusted device may approve this request and returns the device data.
+ * The caller MUST:
  * 1. Build a canonical add_device operation with the returned device data
  * 2. Sign it with the existing trusted device's private signing key
  * 3. Submit the signed operation via submitVaultOperation()
@@ -665,4 +666,3 @@ export async function rejectPendingDeviceRequest(
 
   return { kind: 'malformedResponse', reason: `unrecognized reason: ${String(reason)}` };
 }
-

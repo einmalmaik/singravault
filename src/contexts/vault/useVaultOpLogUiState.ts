@@ -31,6 +31,7 @@ import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
 import type { VaultProviderState } from './useVaultProviderState';
 
 export interface VaultOpLogUiState {
+  readonly vaultId: string | null;
   readonly uiView: VaultOpLogUiView | null;
   readonly localVaultState: LocalVaultState | null;
   readonly isLoading: boolean;
@@ -43,6 +44,7 @@ export function useVaultOpLogUiState(
   userId: string | null,
 ): VaultOpLogUiState {
   const isEnabled = isVaultOpLogPhase9UIEnabled();
+  const [vaultId, setVaultId] = useState<string | null>(null);
   const [uiView, setUiView] = useState<VaultOpLogUiView | null>(null);
   const [localVaultState, setLocalVaultState] = useState<LocalVaultState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -50,6 +52,7 @@ export function useVaultOpLogUiState(
   const isRunningRef = useRef(false);
 
   const clearState = useCallback(() => {
+    setVaultId(null);
     setUiView(null);
     setLocalVaultState(null);
     setLastError(null);
@@ -79,11 +82,13 @@ export function useVaultOpLogUiState(
       const vaultId = vaultProviderState.vaultMigrationKeyContext?.vaultId
         ?? await loadDefaultVaultId(userId);
       if (!vaultId) {
+        setVaultId(null);
         setUiView(null);
         setLocalVaultState(null);
         setLastError('vault_id_load_failed');
         return;
       }
+      setVaultId(vaultId);
 
       const deviceIdentity = loadVaultOpLogDeviceIdentity()
         ?? await recoverVaultOpLogDeviceIdentity({
@@ -99,6 +104,7 @@ export function useVaultOpLogUiState(
         deviceId: deviceIdentity?.deviceId,
         publicSigningKeyB64Url: deviceIdentity?.publicSigningKeyB64Url,
         vaultEncryptionKey,
+        requireLocalDeviceTrust: true,
       });
 
       if (result.error) {
@@ -145,6 +151,7 @@ export function useVaultOpLogUiState(
   ]);
 
   return {
+    vaultId,
     uiView,
     localVaultState,
     isLoading,

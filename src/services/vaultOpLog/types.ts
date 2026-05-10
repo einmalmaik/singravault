@@ -126,13 +126,13 @@ export interface VaultOperationSignedBodyV1 {
    * Security Invariant: Without a signed public key, the operation
    * could authorize a device whose private key the attacker controls.
    */
-  readonly targetPublicSigningKey: string | null;
+  readonly targetPublicSigningKey?: string | null;
   /**
    * For `add_device` operations: SHA-256 fingerprint of the target
    * public signing key. Provides a quick verification mechanism
    * independent of the full key transmission.
    */
-  readonly targetDeviceKeyFingerprint: string | null;
+  readonly targetDeviceKeyFingerprint?: string | null;
 }
 
 /**

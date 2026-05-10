@@ -89,6 +89,7 @@ export interface VaultContextType {
     resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
 
     // Phase 9 — OpLog UI state (behind feature flag)
+    opLogVaultId: string | null;
     opLogUiView: VaultOpLogUiView | null;
     opLogLocalVaultState: LocalVaultState | null;
     opLogUiLoading: boolean;

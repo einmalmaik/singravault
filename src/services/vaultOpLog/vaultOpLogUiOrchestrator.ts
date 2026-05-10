@@ -63,6 +63,7 @@ export interface VaultOpLogUiOrchestratorInput {
   readonly deviceId?: string;
   readonly publicSigningKeyB64Url?: string;
   readonly vaultEncryptionKey: Uint8Array;
+  readonly requireLocalDeviceTrust?: boolean;
 }
 
 export interface VaultOpLogUiOrchestratorResult {
@@ -167,18 +168,33 @@ export async function loadVaultOpLogUiState(
     }
     const trust = trustResult.trust;
 
+    if (input.requireLocalDeviceTrust && !isLocalDeviceTrusted(input, trust)) {
+      const untrustedState = buildEmptyLocalVaultState({
+        trust,
+        lastVerifiedVaultHead: headResult.head.currentHead,
+      });
+      return {
+        uiView: buildVaultOpLogUiView(untrustedState),
+        localVaultState: untrustedState,
+        error: null,
+      };
+    }
+
     // Step 3: Load records referenced by those operations
-    const recordIds = [...new Set(deduplicatedOps.map((op) => op.recordId))];
+    const recordIds = [
+      ...new Set(
+        deduplicatedOps
+          .filter((op) => !isDeviceTrustOperation(op))
+          .map((op) => op.recordId),
+      ),
+    ];
 
     if (recordIds.length === 0) {
       // No operations → empty vault. Build UI view from empty state.
-      const emptyState: LocalVaultState = {
-        recordsById: new Map(),
-        quarantinedRecordsById: new Map(),
-        conflictsByRecordId: new Map(),
-        trustedDevicesById: trust.trustedDevicesById,
+      const emptyState = buildEmptyLocalVaultState({
+        trust,
         lastVerifiedVaultHead: headResult.head.currentHead,
-      };
+      });
       return {
         uiView: buildVaultOpLogUiView(emptyState),
         localVaultState: emptyState,
@@ -354,7 +370,9 @@ async function verifyOperationChain(input: {
     }
 
     verifiedHead = operation.resultingVaultHead;
-    latestOperationByRecordId.set(operation.recordId, operation);
+    if (!isDeviceTrustOperation(operation)) {
+      latestOperationByRecordId.set(operation.recordId, operation);
+    }
   }
 
   if (verifiedHead !== expectedHead) {
@@ -368,6 +386,36 @@ async function verifyOperationChain(input: {
     kind: 'success',
     latestOperationByRecordId,
     verifiedHead,
+  };
+}
+
+function isDeviceTrustOperation(operation: VaultOperationRow): boolean {
+  return operation.opType === 'add_device' || operation.opType === 'revoke_device';
+}
+
+function isLocalDeviceTrusted(
+  input: Pick<VaultOpLogUiOrchestratorInput, 'deviceId' | 'publicSigningKeyB64Url'>,
+  trust: TrustListInput,
+): boolean {
+  if (!input.deviceId || !input.publicSigningKeyB64Url) {
+    return false;
+  }
+
+  const trustedDevice = trust.trustedDevicesById.get(input.deviceId);
+  return trustedDevice?.status === 'trusted'
+    && trustedDevice.publicSigningKey === input.publicSigningKeyB64Url;
+}
+
+function buildEmptyLocalVaultState(input: {
+  readonly trust: TrustListInput;
+  readonly lastVerifiedVaultHead: string | null;
+}): LocalVaultState {
+  return {
+    recordsById: new Map(),
+    quarantinedRecordsById: new Map(),
+    conflictsByRecordId: new Map(),
+    trustedDevicesById: input.trust.trustedDevicesById,
+    lastVerifiedVaultHead: input.lastVerifiedVaultHead,
   };
 }
 

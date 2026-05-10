@@ -52,6 +52,7 @@ import { VaultMigrationRequiredPanel } from '@/components/vault/VaultMigrationRe
 import { getAdminEntryPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState } from '@/services/returnNavigationState';
 import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
+import { getBrowserDeviceTrustStatus } from '@/services/vaultOpLog/addDeviceFlowService';
 import type { VaultIntegrityMode, VaultIntegrityNonTamperReason } from '@/services/vaultIntegrityService';
 
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
@@ -138,6 +139,12 @@ export default function VaultPage() {
     const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
     const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime
         && NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode);
+    const localDeviceTrustStatus = opLogUiView
+        ? getBrowserDeviceTrustStatus(opLogUiView.trustedDeviceIds)
+        : null;
+    const shouldBlockVaultForUntrustedDevice = useOpLogVerifiedRuntime
+        && opLogUiView !== null
+        && localDeviceTrustStatus?.trusted === false;
 
     useEffect(() => {
         const goOnline = () => setIsOnline(true);
@@ -312,6 +319,16 @@ export default function VaultPage() {
                             {t('vault.integrity.retryCheck', { defaultValue: 'Erneut prüfen' })}
                         </Button>
                     </div>
+                </div>
+            </main>
+        );
+    }
+
+    if (shouldBlockVaultForUntrustedDevice) {
+        return (
+            <main className="min-h-screen bg-background px-4 py-10 lg:px-8">
+                <div className="mx-auto max-w-3xl">
+                    <VaultAddDeviceBanner />
                 </div>
             </main>
         );

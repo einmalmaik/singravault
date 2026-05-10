@@ -422,6 +422,8 @@ export async function buildAddDeviceOperation(
   readonly resultingVaultHead: string;
   readonly targetDeviceId: string;
   readonly targetPublicSigningKey: string;
+  readonly targetDeviceName: string;
+  readonly targetDevicePlatform: string | null;
 }> {
   const createdAtClient = input.createdAtClient ?? new Date().toISOString();
 
@@ -475,8 +477,12 @@ export async function buildAddDeviceOperation(
     resultingVaultHead,
     targetDeviceId: input.targetDeviceId,
     targetPublicSigningKey: input.targetPublicSigningKey,
+    targetDeviceName: input.targetDeviceName,
+    targetDevicePlatform: input.targetDevicePlatform ?? null,
   };
 }
+
+export type BuiltAddDeviceOperation = Awaited<ReturnType<typeof buildAddDeviceOperation>>;
 
 
 // --------------------------------------------------------------------------
@@ -504,10 +510,22 @@ export function toVaultOperationRow(
   built: BuiltVaultOperation,
   overrides?: Partial<VaultOperationRow>,
 ): VaultOperationRow {
-  const body = built.signedOperation.body;
+  return toVaultOperationRowFromSigned(
+    built.signedOperation,
+    built.resultingVaultHead,
+    overrides,
+  );
+}
+
+export function toVaultOperationRowFromSigned(
+  signedOperation: SignedVaultOperationV1,
+  resultingVaultHead: string,
+  overrides?: Partial<VaultOperationRow>,
+): VaultOperationRow {
+  const body = signedOperation.body;
   return {
     opId: body.opId,
-    opHash: built.signedOperation.opHash,
+    opHash: signedOperation.opHash,
     vaultId: body.vaultId,
     authorDeviceId: body.authorDeviceId,
     opType: body.opType,
@@ -517,19 +535,47 @@ export function toVaultOperationRow(
     previousCiphertextHash: body.previousCiphertextHash,
     newRecordHash: body.newRecordHash,
     baseVaultHead: body.baseVaultHead,
-    resultingVaultHead: built.resultingVaultHead,
+    resultingVaultHead,
     intentId: body.intentId,
     rebasedFromOpId: body.rebasedFromOpId,
     payloadCiphertextHash: body.payloadCiphertextHash,
     payloadAadHash: body.payloadAadHash,
     signedBody: body,
-    signature: built.signedOperation.signature,
+    signature: signedOperation.signature,
     signatureSchema: body.signatureSchema,
     trustEpoch: body.trustEpoch,
     createdAtClient: body.createdAtClient,
     receivedAtServer: '',
     sequenceNumber: 0,
     ...overrides,
+  };
+}
+
+export function buildAddDeviceTrustPayload(
+  built: BuiltAddDeviceOperation,
+  authorDeviceId: string,
+): {
+  readonly kind: 'add';
+  readonly device: {
+    readonly device_id: string;
+    readonly public_signing_key: string;
+    readonly device_name_encrypted: string;
+    readonly added_by_device_id: string;
+    readonly added_at: string;
+    readonly trust_epoch: number;
+  };
+} {
+  const body = built.signedOperation.body;
+  return {
+    kind: 'add',
+    device: {
+      device_id: built.targetDeviceId,
+      public_signing_key: built.targetPublicSigningKey,
+      device_name_encrypted: '',
+      added_by_device_id: authorDeviceId,
+      added_at: body.createdAtClient,
+      trust_epoch: 0,
+    },
   };
 }
 

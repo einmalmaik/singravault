@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ShieldCheck, Loader2, MonitorSmartphone, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { loadBrowserDeviceIdentity } from '@/services/vaultOpLog/addDeviceFlowService';
+import { getBrowserDeviceTrustStatus } from '@/services/vaultOpLog/addDeviceFlowService';
 import { getPendingDeviceRequests } from '@/services/vaultOpLog/vaultOpLogRepository';
+import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import type { PendingDeviceRequestRow } from '@/services/vaultOpLog/addDeviceFlowTypes';
@@ -14,43 +15,48 @@ export function VaultPendingDevicesPanel() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { user } = useAuth();
-  const { opLogUiView, vaultMigrationKeyContext, opLogApproveDeviceRequest, opLogRejectDeviceRequest } = useVault();
+  const { opLogUiView, opLogVaultId, opLogApproveDeviceRequest, opLogRejectDeviceRequest } = useVault();
 
-  const [isTrusted, setIsTrusted] = useState<boolean>(false);
   const [requests, setRequests] = useState<PendingDeviceRequestRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!opLogUiView || !user) return;
-    const identity = loadBrowserDeviceIdentity();
-    if (!identity) return;
-    setIsTrusted(opLogUiView.trustedDeviceIds.includes(identity.deviceId));
-  }, [opLogUiView, user]);
+  const trustStatus = opLogUiView
+    ? getBrowserDeviceTrustStatus(opLogUiView.trustedDeviceIds)
+    : { trusted: false as const, reason: 'not_in_trust_list' as const };
+  const isTrusted = trustStatus.trusted;
 
-  const loadRequests = async () => {
-    if (!vaultMigrationKeyContext?.vaultId) return;
+  const loadRequests = useCallback(async () => {
+    if (!opLogVaultId) return;
     setIsLoading(true);
     try {
-      const result = await getPendingDeviceRequests(supabase as any, {
-        vaultId: vaultMigrationKeyContext.vaultId,
-      });
+      const result = await getPendingDeviceRequests(
+        supabase as unknown as SupabaseRpcClient,
+        opLogVaultId,
+      );
       if (result.kind === 'success') {
         setRequests(result.requests);
       }
-    } catch (e) {
-      console.error('Failed to load pending device requests', e);
+    } catch {
+      setRequests([]);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [opLogVaultId]);
 
   useEffect(() => {
-    if (isTrusted && vaultMigrationKeyContext?.vaultId) {
-      void loadRequests();
-      // Polling could be added here
+    if (!isTrusted || !opLogVaultId || !user) {
+      setRequests([]);
+      return undefined;
     }
-  }, [isTrusted, vaultMigrationKeyContext?.vaultId]);
+
+    void loadRequests();
+    const intervalId = window.setInterval(() => {
+      void loadRequests();
+    }, 10_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [isTrusted, opLogVaultId, user, loadRequests]);
 
   if (!isTrusted || requests.length === 0) {
     return null;
@@ -116,14 +122,14 @@ export function VaultPendingDevicesPanel() {
           </div>
         ) : (
           requests.map((req) => (
-            <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-background rounded-md border">
+            <div key={req.requestId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-background rounded-md border">
               <div className="flex items-center gap-3">
                 <div className="bg-primary/10 p-2 rounded-full">
                   <MonitorSmartphone className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium">{req.requested_device_name}</p>
-                  <p className="text-xs text-muted-foreground">{new Date(req.created_at).toLocaleString()}</p>
+                  <p className="text-sm font-medium">{req.requestedDeviceName}</p>
+                  <p className="text-xs text-muted-foreground">{new Date(req.createdAt).toLocaleString()}</p>
                 </div>
               </div>
               <div className="flex gap-2 w-full sm:w-auto">
@@ -131,8 +137,8 @@ export function VaultPendingDevicesPanel() {
                   variant="outline" 
                   size="sm" 
                   className="w-full sm:w-auto"
-                  onClick={() => handleReject(req.id)}
-                  disabled={isActionLoading === req.id}
+                  onClick={() => handleReject(req.requestId)}
+                  disabled={isActionLoading === req.requestId}
                 >
                   <X className="h-4 w-4 mr-1" />
                   {t('common.reject', { defaultValue: 'Ablehnen' })}
@@ -140,10 +146,10 @@ export function VaultPendingDevicesPanel() {
                 <Button 
                   size="sm" 
                   className="w-full sm:w-auto"
-                  onClick={() => handleApprove(req.id)}
-                  disabled={isActionLoading === req.id}
+                  onClick={() => handleApprove(req.requestId)}
+                  disabled={isActionLoading === req.requestId}
                 >
-                  {isActionLoading === req.id ? (
+                  {isActionLoading === req.requestId ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-1" />
                   ) : (
                     <Check className="h-4 w-4 mr-1" />

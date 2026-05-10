@@ -139,6 +139,43 @@ describe('verifyOperation — positive path', () => {
 
     expect(result.kind).toBe('validTrustedOperation');
   });
+
+  it('keeps legacy create signed bodies byte-stable when add_device fields are absent', async () => {
+    const keyPair = await generateDeviceSigningKeyPair();
+    const legacyBody = buildOperationSignedBody(baseBodyInput());
+    delete legacyBody.targetPublicSigningKey;
+    delete legacyBody.targetDeviceKeyFingerprint;
+    const signed = await signOperation(legacyBody, keyPair.privateKey);
+    const row = toVaultOperationRow(signed);
+    const result = await verifyOperation({
+      operation: row,
+      trust: buildTrust('device-1'),
+      publicKey: keyPair.publicKey,
+    });
+
+    expect(result.kind).toBe('validTrustedOperation');
+  });
+
+  it('preserves signed add_device target key fields during verification', async () => {
+    const { signed, publicKey } = await buildSignedOperation({
+      opType: 'add_device',
+      recordId: 'new-device-1',
+      recordType: 'device',
+      newRecordHash: null,
+      payloadCiphertextHash: null,
+      payloadAadHash: null,
+      targetPublicSigningKey: 'target-public-key-b64url',
+      targetDeviceKeyFingerprint: 'target-key-fingerprint',
+    });
+    const row = toVaultOperationRow(signed);
+    const result = await verifyOperation({
+      operation: row,
+      trust: buildTrust('device-1'),
+      publicKey,
+    });
+
+    expect(result.kind).toBe('validTrustedOperation');
+  });
 });
 
 // ---------------------------------------------------------------------------

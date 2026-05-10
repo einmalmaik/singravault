@@ -65,11 +65,12 @@ BEGIN
     -- Challenge läuft nach 30 Minuten ab
     _challenge_expires_at := NOW() + INTERVAL '30 minutes';
     
-    -- Alte offene Anfrage löschen falls vorhanden
+    -- Alte Anfrage für dasselbe noch untrusted Gerät löschen.
+    -- Ein fehlgeschlagener add_device-Submit darf keine dauerhaft blockierende
+    -- approved/rejected-Zeile hinterlassen.
     DELETE FROM public.vault_pending_device_requests
     WHERE vault_id = p_vault_id 
-      AND requested_device_id = p_requested_device_id
-      AND status = 'pending';
+      AND requested_device_id = p_requested_device_id;
     
     -- Neue Anfrage erstellen
     INSERT INTO public.vault_pending_device_requests (
@@ -136,7 +137,7 @@ BEGIN
         RAISE EXCEPTION 'Vault does not belong to caller';
     END IF;
     
-    -- Nur offene und nicht abgelaufene Requests zurückgeben
+    -- Nur offene, nicht abgelaufene und noch nicht getrustete Requests zurückgeben
     RETURN QUERY
     SELECT 
         r.request_id,
@@ -153,7 +154,14 @@ BEGIN
     WHERE r.vault_id = p_vault_id
       AND r.user_id = _uid
       AND r.status = 'pending'
-      AND r.challenge_expires_at > NOW();
+      AND r.challenge_expires_at > NOW()
+      AND NOT EXISTS (
+          SELECT 1
+          FROM public.vault_device_trust_records d
+          WHERE d.vault_id = r.vault_id
+            AND d.device_id = r.requested_device_id
+            AND d.status = 'trusted'
+      );
 END;
 $$;
 
@@ -232,13 +240,10 @@ BEGIN
         );
     END IF;
     
-    -- Status aktualisieren
-    UPDATE public.vault_pending_device_requests
-    SET status = 'approved',
-        resolved_at = NOW(),
-        resolved_by_device_id = p_approver_device_id,
-        updated_at = NOW()
-    WHERE request_id = p_request_id;
+    -- WICHTIG: Hier wird der Pending Request absichtlich nicht als approved
+    -- markiert. Trust entsteht erst durch die nachfolgende, vom Trusted Device
+    -- signierte add_device-Operation via submit_vault_operation. Wenn dieser
+    -- Submit scheitert, muss der Request retrybar bleiben.
     
     RETURN jsonb_build_object(
         'approved', true,
@@ -255,7 +260,7 @@ REVOKE ALL ON FUNCTION public.approve_pending_device_request(UUID, UUID) FROM PU
 GRANT EXECUTE ON FUNCTION public.approve_pending_device_request(UUID, UUID) TO authenticated;
 
 COMMENT ON FUNCTION public.approve_pending_device_request IS
-    'Add-Device-Flow: Tauri bestätigt Pairing-Anfrage. Gibt Device-Info zurück für add_device-Operation. Client muss noch signieren!';
+    'Add-Device-Flow: Tauri liest eine bestaetigungsfaehige Pairing-Anfrage. Erzeugt keinen Trust und verbraucht den Request nicht; Client muss signieren und submit_vault_operation aufrufen.';
 
 -- -------------------------------------------------------------------------- 
 -- 4. reject_pending_device_request

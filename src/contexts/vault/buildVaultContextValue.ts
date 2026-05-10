@@ -47,6 +47,8 @@ export interface VaultProviderActionBindings {
   opLogRestoreRecord?: (recordId: string) => Promise<{ error: Error | null }>;
   opLogDeleteUntrustedRecord?: (recordId: string) => Promise<{ error: Error | null }>;
   opLogResolveConflict?: (recordId: string) => Promise<{ error: Error | null }>;
+  opLogApproveDeviceRequest?: VaultContextType['opLogApproveDeviceRequest'];
+  opLogRejectDeviceRequest?: VaultContextType['opLogRejectDeviceRequest'];
   listSharedCollections?: VaultContextType['listSharedCollections'];
   createSharedCollection?: VaultContextType['createSharedCollection'];
   deleteSharedCollection?: VaultContextType['deleteSharedCollection'];
@@ -108,6 +110,7 @@ export function buildVaultContextValue(
     resetVaultAfterIntegrityFailure: actions.resetVaultAfterIntegrityFailure,
 
     // Phase 9 — OpLog UI state
+    opLogVaultId: opLogUiState.vaultId,
     opLogUiView: opLogUiState.uiView,
     opLogLocalVaultState: opLogUiState.localVaultState,
     opLogUiLoading: opLogUiState.isLoading,
@@ -122,6 +125,8 @@ export function buildVaultContextValue(
     opLogRestoreRecord: actions.opLogRestoreRecord ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     opLogDeleteUntrustedRecord: actions.opLogDeleteUntrustedRecord ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     opLogResolveConflict: actions.opLogResolveConflict ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
+    opLogApproveDeviceRequest: actions.opLogApproveDeviceRequest ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
+    opLogRejectDeviceRequest: actions.opLogRejectDeviceRequest ?? (() => Promise.resolve({ error: new Error('Not implemented') })),
     listSharedCollections: actions.listSharedCollections ?? (() => Promise.resolve({ error: new Error('Not implemented'), collections: [] })),
     createSharedCollection: actions.createSharedCollection ?? (() => Promise.resolve({ error: new Error('Not implemented'), collectionId: null })),
     deleteSharedCollection: actions.deleteSharedCollection ?? (() => Promise.resolve({ error: new Error('Not implemented') })),

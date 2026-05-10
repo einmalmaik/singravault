@@ -160,6 +160,24 @@ export function hasBrowserDeviceIdentity(): boolean {
 }
 
 /**
+ * Zentrale UI-Policy: Ein lokales Gerät gilt für Vault-Aktionen nur
+ * dann als trusted, wenn seine lokale Identity in der verifizierten
+ * Device-Trust-Liste dieses Vaults vorkommt.
+ */
+export function getBrowserDeviceTrustStatus(
+  trustedDeviceIds: readonly string[],
+  identity: VaultOpLogDeviceIdentity | null = loadBrowserDeviceIdentity(),
+): BrowserDeviceTrustStatus {
+  if (!identity) {
+    return { trusted: false, reason: 'no_device_identity' };
+  }
+
+  return trustedDeviceIds.includes(identity.deviceId)
+    ? { trusted: true, deviceId: identity.deviceId }
+    : { trusted: false, reason: 'not_in_trust_list' };
+}
+
+/**
  * Browser Device Identity und Keys löschen (bei Logout)
  */
 export async function clearBrowserDeviceIdentity(
