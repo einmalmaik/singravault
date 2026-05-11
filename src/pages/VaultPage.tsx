@@ -145,6 +145,9 @@ export default function VaultPage() {
     const shouldBlockVaultForUntrustedDevice = useOpLogVerifiedRuntime
         && opLogUiView !== null
         && localDeviceTrustStatus?.trusted === false;
+    const shouldWaitForVerifiedDeviceTrust = useOpLogVerifiedRuntime
+        && !isLocked
+        && opLogUiView === null;
 
     useEffect(() => {
         const goOnline = () => setIsOnline(true);
@@ -319,6 +322,36 @@ export default function VaultPage() {
                             {t('vault.integrity.retryCheck', { defaultValue: 'Erneut prüfen' })}
                         </Button>
                     </div>
+                </div>
+            </main>
+        );
+    }
+
+    if (shouldWaitForVerifiedDeviceTrust) {
+        return (
+            <main className="min-h-screen bg-background px-4 py-10 lg:px-8">
+                <div className="mx-auto flex max-w-3xl flex-col items-center gap-4 rounded-lg border p-6 text-center">
+                    {opLogUiLoading && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
+                    <div className="space-y-2">
+                        <h1 className="text-lg font-semibold">
+                            {t('vault.oplog.verifyingDeviceTrust', {
+                                defaultValue: 'Gerätestatus wird verifiziert',
+                            })}
+                        </h1>
+                        <p className="text-sm text-muted-foreground">
+                            {opLogUiError
+                                ? opLogUiError
+                                : t('vault.oplog.verifyingDeviceTrustDescription', {
+                                    defaultValue: 'Der Tresor wird erst angezeigt, wenn dieses Gerät lokal als vertrauenswürdig verifiziert wurde.',
+                                })}
+                        </p>
+                    </div>
+                    {opLogUiError && (
+                        <Button variant="outline" onClick={() => { void opLogUiRefresh(); }}>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            {t('vault.integrity.retryCheck', { defaultValue: 'Erneut prüfen' })}
+                        </Button>
+                    )}
                 </div>
             </main>
         );

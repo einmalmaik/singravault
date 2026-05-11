@@ -48,7 +48,7 @@ export function TrustedDevicesSettings() {
   const [recoveryStatus, setRecoveryStatus] = useState<VaultRecoveryCodeStatus | null>(null);
   const localDeviceId = loadVaultOpLogDeviceIdentity()?.deviceId ?? null;
 
-  const devices = useMemo(() => {
+  const allDevices = useMemo(() => {
     const records = Array.from(opLogLocalVaultState?.trustedDevicesById.values() ?? []);
     return records.sort((left, right) => {
       if (left.status !== right.status) {
@@ -57,8 +57,18 @@ export function TrustedDevicesSettings() {
       return right.addedAt.localeCompare(left.addedAt);
     });
   }, [opLogLocalVaultState]);
+  const devices = useMemo(
+    () => allDevices.filter((device) => device.status === 'trusted'),
+    [allDevices],
+  );
+  const lastRemovedDevice = useMemo(
+    () => allDevices
+      .filter((device) => device.status === 'revoked')
+      .sort((left, right) => (right.revokedAt ?? '').localeCompare(left.revokedAt ?? ''))[0] ?? null,
+    [allDevices],
+  );
 
-  const trustedDeviceCount = devices.filter((device) => device.status === 'trusted').length;
+  const trustedDeviceCount = devices.length;
   const canManageDevices = Boolean(opLogLocalVaultState);
   const hasRecoveryFallback = Boolean(recoveryStatus?.hasActiveSet && recoveryStatus.remainingCodes > 0);
 
@@ -133,9 +143,8 @@ export function TrustedDevicesSettings() {
         ) : (
           <div className="space-y-3">
             {devices.map((device) => {
-              const isTrusted = device.status === 'trusted';
               const isCurrentDevice = device.deviceId === localDeviceId;
-              const canRevoke = isTrusted && (trustedDeviceCount > 1 || hasRecoveryFallback);
+              const canRevoke = trustedDeviceCount > 1 || hasRecoveryFallback;
               return (
                 <div key={device.deviceId} className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-start gap-3">
@@ -148,11 +157,6 @@ export function TrustedDevicesSettings() {
                         {isCurrentDevice && (
                           <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
                             Dieses Gerät
-                          </span>
-                        )}
-                        {!isTrusted && (
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                            Entfernt
                           </span>
                         )}
                       </div>
@@ -182,6 +186,11 @@ export function TrustedDevicesSettings() {
               );
             })}
           </div>
+        )}
+        {lastRemovedDevice?.revokedAt && (
+          <p className="text-xs text-muted-foreground">
+            Zuletzt entfernt: {formatDate(lastRemovedDevice.revokedAt)}
+          </p>
         )}
         <p className="text-xs text-muted-foreground">
           Aus Datenschutzgründen werden hier keine IP-Adressen gespeichert oder angezeigt.

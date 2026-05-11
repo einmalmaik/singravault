@@ -49,6 +49,7 @@ import { useCollectionOpLogActions } from './useCollectionOpLogActions';
 import { useVaultProviderState } from './useVaultProviderState';
 import { useVaultLifecycleEffects } from './useVaultLifecycleEffects';
 import { useVaultOpLogUiState } from './useVaultOpLogUiState';
+import { useVaultRevokedDeviceAutoLock } from './useVaultRevokedDeviceAutoLock';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
 import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 
@@ -646,6 +647,12 @@ export function useVaultProviderActions(): VaultContextType {
     decryptTrustedRecoverySnapshotItem,
   } = useVaultCryptoActions(state, user);
   const opLogUiState = useVaultOpLogUiState(state, user?.id ?? null);
+  useVaultRevokedDeviceAutoLock({
+    isLocked: state.isLocked,
+    localVaultState: opLogUiState.localVaultState,
+    lock,
+    vaultMigrationStatus: state.vaultMigrationStatus,
+  });
   const { startVaultMigration, retryVaultMigration } = useVaultMigrationActions({
     state,
     user,
@@ -658,7 +665,6 @@ export function useVaultProviderActions(): VaultContextType {
     opLogUiRefresh: opLogUiState.refresh,
   });
   const collectionOpLogActions = useCollectionOpLogActions(state, user);
-
   return buildVaultContextValue(state, {
     setupMasterPassword,
     unlock,

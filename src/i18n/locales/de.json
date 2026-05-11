@@ -620,6 +620,25 @@
     "offlineMode": "Offline-Modus aktiv: Änderungen werden lokal gespeichert.",
     "syncingOfflineChanges": "Synchronisiere Offline-Änderungen...",
     "syncedAfterOffline": "{{count}} Offline-Änderungen synchronisiert.",
+    "addDevice": {
+      "requestSent": "Ger\u00e4te-Anfrage gesendet",
+      "requestSentDesc": "Bitte best\u00e4tige dieses Ger\u00e4t auf einem bereits vertrauensw\u00fcrdigen Ger\u00e4t.",
+      "error": "Die Anfrage konnte nicht gesendet werden.",
+      "untrustedTitle": "Ger\u00e4t nicht vertrauensw\u00fcrdig",
+      "untrustedDesc": "Dieses Ger\u00e4t ist angemeldet, aber noch nicht f\u00fcr diesen Tresor best\u00e4tigt. Best\u00e4tige es auf einem bereits vertrauensw\u00fcrdigen Ger\u00e4t, bevor Inhalte angezeigt oder \u00c4nderungen erlaubt werden.",
+      "pendingDesc": "Anfrage ausstehend. Bitte auf einem bestehenden Ger\u00e4t best\u00e4tigen.",
+      "waiting": "Warte auf Best\u00e4tigung...",
+      "startPairing": "Ger\u00e4t koppeln",
+      "approved": "Ger\u00e4t wurde erfolgreich autorisiert.",
+      "rejected": "Anfrage wurde abgelehnt.",
+      "pendingRequestsTitle": "Neue Ger\u00e4teanfragen"
+    },
+    "oplog": {
+      "loading": "Sicherheitsstatus wird geladen...",
+      "actionCompleted": "OpLog-Aktion wurde verifiziert abgeschlossen.",
+      "verifyingDeviceTrust": "Ger\u00e4testatus wird verifiziert",
+      "verifyingDeviceTrustDescription": "Der Tresor wird erst angezeigt, wenn dieses Ger\u00e4t lokal als vertrauensw\u00fcrdig verifiziert wurde."
+    },
     "empty": {
       "title": "Dein Tresor ist leer",
       "description": "Füge deinen ersten Eintrag hinzu, um loszulegen.",

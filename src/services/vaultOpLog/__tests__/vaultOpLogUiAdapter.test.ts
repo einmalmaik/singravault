@@ -68,6 +68,45 @@ describe('vaultOpLogUiAdapter', () => {
       expect(view.restoredItemIds).toHaveLength(0);
     });
 
+    it('exposes only currently trusted device ids', () => {
+      const state: LocalVaultState = {
+        recordsById: new Map(),
+        quarantinedRecordsById: new Map(),
+        conflictsByRecordId: new Map(),
+        trustedDevicesById: new Map([
+          ['trusted-device', {
+            vaultId: 'vault-1',
+            deviceId: 'trusted-device',
+            publicSigningKey: 'trusted-key',
+            deviceNameEncrypted: '',
+            addedByDeviceId: null,
+            addedAt: '2026-05-11T10:00:00.000Z',
+            trustEpoch: 0,
+            status: 'trusted',
+            revokedAt: null,
+            revokedByDeviceId: null,
+          }],
+          ['revoked-device', {
+            vaultId: 'vault-1',
+            deviceId: 'revoked-device',
+            publicSigningKey: 'revoked-key',
+            deviceNameEncrypted: '',
+            addedByDeviceId: null,
+            addedAt: '2026-05-11T10:00:00.000Z',
+            trustEpoch: 1,
+            status: 'revoked',
+            revokedAt: '2026-05-11T11:00:00.000Z',
+            revokedByDeviceId: 'trusted-device',
+          }],
+        ]),
+        lastVerifiedVaultHead: null,
+      };
+
+      const view = buildVaultOpLogUiView(state);
+
+      expect(view.trustedDeviceIds).toEqual(['trusted-device']);
+    });
+
     it('places verified records in verifiedItems', () => {
       const state: LocalVaultState = {
         recordsById: new Map([

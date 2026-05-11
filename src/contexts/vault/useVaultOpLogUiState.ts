@@ -150,6 +150,75 @@ export function useVaultOpLogUiState(
     refresh,
   ]);
 
+  useEffect(() => {
+    if (
+      !isEnabled
+      || vaultProviderState.isLocked
+      || !vaultProviderState.vaultEncryptionKey
+      || !userId
+      || !vaultId
+    ) {
+      return;
+    }
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = (options?: { readonly clearBeforeRefresh?: boolean }) => {
+      if (options?.clearBeforeRefresh) {
+        setUiView(null);
+        setLocalVaultState(null);
+        setLastError(null);
+      }
+      if (debounceTimer) {
+        return;
+      }
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        void refresh();
+      }, 250);
+    };
+
+    const channel = supabase
+      .channel(`vault-oplog-live-${vaultId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'vault_operations',
+          filter: `vault_id=eq.${vaultId}`,
+        },
+        () => scheduleRefresh(),
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'vault_device_trust_records',
+          filter: `vault_id=eq.${vaultId}`,
+        },
+        () => scheduleRefresh({ clearBeforeRefresh: true }),
+      )
+      .subscribe();
+
+    const pollingTimer = window.setInterval(scheduleRefresh, 5000);
+
+    return () => {
+      if (debounceTimer) {
+        window.clearTimeout(debounceTimer);
+      }
+      window.clearInterval(pollingTimer);
+      void channel.unsubscribe();
+    };
+  }, [
+    isEnabled,
+    refresh,
+    userId,
+    vaultId,
+    vaultProviderState.isLocked,
+    vaultProviderState.vaultEncryptionKey,
+  ]);
+
   return {
     vaultId,
     uiView,

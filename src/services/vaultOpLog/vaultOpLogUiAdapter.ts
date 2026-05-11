@@ -127,8 +127,10 @@ export function buildVaultOpLogUiView(localVaultState: LocalVaultState): VaultOp
   const restoredItemIds: string[] = [];
   const trustedDeviceIds: string[] = [];
 
-  for (const deviceId of localVaultState.trustedDevicesById.keys()) {
-    trustedDeviceIds.push(deviceId);
+  for (const device of localVaultState.trustedDevicesById.values()) {
+    if (device.status === 'trusted') {
+      trustedDeviceIds.push(device.deviceId);
+    }
   }
 
   for (const [recordId, localRecord] of localVaultState.recordsById.entries()) {
@@ -221,4 +223,3 @@ export function buildVaultOpLogUiView(localVaultState: LocalVaultState): VaultOp
     trustedDeviceIds: Object.freeze(trustedDeviceIds),
   };
 }
-
