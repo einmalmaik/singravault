@@ -1,3 +1,43 @@
+/**
+ * @fileoverview Vault Recovery Codes Edge Function
+ *
+ * Diese Edge Function verwaltet Recovery-Codes für das Vault-Device-Trust-System.
+ * Recovery-Codes ermöglichen die Wiederherstellung des Vault-Zugriffs, wenn alle
+ * vertrauenswürdigen Geräte verloren gehen.
+ *
+ * ## Sicherheitskonzept
+ *
+ * Recovery-Codes sind ein kritischer Bestandteil der Zero-Knowledge-Architektur:
+ * - Server speichert nur Argon2id-Hashes der Codes (niemals Klartext)
+ * - Commitments ermöglichen kryptografische Bindung ohne Code-Offenlegung
+ * - Rate-Limiting schützt vor Brute-Force-Angriffen
+ * - Device-Trust-Operationen sind signiert und verifizierbar
+ *
+ * ## Verfügbare Aktionen
+ *
+ * | Aktion              | Beschreibung                                        |
+ * |---------------------|-----------------------------------------------------|
+ * | `status`            | Prüft ob aktive Recovery-Codes existieren           |
+ * | `prepare-code-set`  | Generiert neues Code-Set (5 Codes, noch inaktiv)    |
+ * | `activate-code-set` | Aktiviert Code-Set via signierter Vault-Operation   |
+ * | `redeem-code`       | Löst Code ein für Device-Trust-Recovery             |
+ *
+ * ## Authentifizierung
+ *
+ * Alle Endpoints erfordern einen gültigen Bearer-Token (JWT) im Authorization-Header.
+ * Die Funktion nutzt `verify_jwt = false` in config.toml, da die JWT-Validierung
+ * manuell über `supabaseAdmin.auth.getUser()` erfolgt (ermöglicht bessere Fehlerbehandlung).
+ *
+ * ## Deployment-Hinweise
+ *
+ * Bei 401-Fehlern beim Deployment prüfen:
+ * 1. `supabase login` - CLI-Authentifizierung aktiv?
+ * 2. `supabase link --project-ref lcrtadxlojaucwapgzmy` - Projekt verknüpft?
+ * 3. Benutzer hat Deploy-Rechte für das Projekt?
+ *
+ * @see EDGE_FUNCTION_MANIFEST.md für die Zuordnung Core vs. Premium Functions
+ */
+
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { argon2id } from "npm:hash-wasm";
@@ -9,17 +49,90 @@ import {
   resetAuthRateLimit,
 } from "../_shared/authRateLimit.ts";
 
+// ============================================================================
+// Konfiguration
+// ============================================================================
+
+/**
+ * Supabase-URL aus Umgebungsvariablen.
+ * Wird automatisch vom Supabase Edge Function Runtime gesetzt.
+ */
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+
+/**
+ * Service Role Key für Admin-Operationen.
+ * ACHTUNG: Dieser Key umgeht RLS - nur für vertrauenswürdige Server-Operationen verwenden!
+ */
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+/**
+ * Admin-Client für Datenbankoperationen mit vollen Rechten.
+ * Wird benötigt für:
+ * - Lesen/Schreiben von Recovery-Code-Sets
+ * - Verifizieren von Device-Trust-Records
+ * - Ausführen von RPC-Funktionen
+ */
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
+// ============================================================================
+// Recovery-Code Konstanten
+// ============================================================================
+
+/**
+ * Anzahl der Recovery-Codes pro Set.
+ * 5 Codes bieten gute Balance zwischen Sicherheit und Benutzerfreundlichkeit.
+ */
 const CODE_COUNT = 5;
+
+/**
+ * Länge des Code-Körpers (ohne Präfix und Trennzeichen).
+ * 26 Zeichen = ca. 130 Bit Entropie (log2(32^26)).
+ */
 const CODE_BODY_LENGTH = 26;
+
+/**
+ * Zeichensatz für Recovery-Codes.
+ * Ausgeschlossen: 0, O, 1, I, L (zur Vermeidung von Verwechslungen)
+ * Enthält: A-H, J-N, P-Z, 2-9 (32 eindeutige Zeichen)
+ */
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+/**
+ * Hash-Version für gespeicherte Code-Hashes.
+ * Format: "v3:<base64url-salt>:<hex-hash>"
+ */
 const HASH_VERSION = "argon2id-v3";
+
+/**
+ * ECDSA P-256 Algorithmus für Signaturverifikation.
+ * Verwendet für Device-Trust-Operationen.
+ */
 const SIGNING_ALGORITHM = { name: "ECDSA", namedCurve: "P-256" } as const;
+
+/**
+ * Signaturparameter: ECDSA mit SHA-256 für Operation-Signaturen.
+ */
 const SIGNING_PARAMS = { name: "ECDSA", hash: "SHA-256" } as const;
 
+// ============================================================================
+// Request Handler
+// ============================================================================
+
+/**
+ * Haupteinstiegspunkt der Edge Function.
+ *
+ * Verarbeitet eingehende HTTP-Requests und routet sie zur passenden Handler-Funktion.
+ * Alle Requests (außer OPTIONS) erfordern authentifizierte Benutzer.
+ *
+ * @example
+ * ```bash
+ * # Status abfragen
+ * curl -X POST https://project.supabase.co/functions/v1/vault-recovery-codes \
+ *   -H "Authorization: Bearer $TOKEN" \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"action": "status", "vaultId": "uuid"}'
+ * ```
+ */
 Deno.serve(async (req) => {
   const headers = new Headers({
     ...getCorsHeaders(req),
@@ -62,6 +175,23 @@ Deno.serve(async (req) => {
   }
 });
 
+// ============================================================================
+// Handler-Funktionen
+// ============================================================================
+
+/**
+ * Prüft den Status der Recovery-Codes für einen Vault.
+ *
+ * Gibt zurück:
+ * - `hasActiveSet`: Ob ein aktives Code-Set existiert
+ * - `activeSetId`: UUID des aktiven Sets (oder null)
+ * - `remainingCodes`: Anzahl noch nicht verwendeter Codes
+ *
+ * @param userId - Authentifizierter Benutzer
+ * @param body - Request-Body mit `vaultId`
+ * @param headers - Response-Headers (inkl. CORS)
+ * @returns JSON-Response mit Status-Informationen
+ */
 async function handleStatus(userId: string, body: Record<string, unknown>, headers: Headers): Promise<Response> {
   const vaultId = readString(body.vaultId);
   if (!vaultId || !await ownsVault(userId, vaultId)) {
@@ -97,6 +227,24 @@ async function handleStatus(userId: string, body: Record<string, unknown>, heade
   }, 200, headers);
 }
 
+/**
+ * Generiert ein neues Recovery-Code-Set (noch nicht aktiviert).
+ *
+ * Workflow:
+ * 1. Generiert 5 kryptografisch sichere Recovery-Codes
+ * 2. Berechnet Argon2id-Hashes für sichere Speicherung
+ * 3. Berechnet Commitments für kryptografische Bindung
+ * 4. Speichert Set mit Status "pending" (30 Min. gültig)
+ * 5. Gibt Klartext-Codes zurück (nur dieses eine Mal!)
+ *
+ * WICHTIG: Die Codes werden nur bei der Erstellung zurückgegeben.
+ * Der Server speichert nur Hashes - keine Wiederherstellung möglich!
+ *
+ * @param userId - Authentifizierter Benutzer
+ * @param body - Request-Body mit `vaultId`
+ * @param headers - Response-Headers
+ * @returns JSON mit `setId`, `codes` (Klartext), `commitments`, `createdAt`
+ */
 async function handlePrepareCodeSet(userId: string, body: Record<string, unknown>, headers: Headers): Promise<Response> {
   const vaultId = readString(body.vaultId);
   if (!vaultId || !await ownsVault(userId, vaultId)) {
@@ -155,6 +303,23 @@ async function handlePrepareCodeSet(userId: string, body: Record<string, unknown
   }, 200, headers);
 }
 
+/**
+ * Aktiviert ein zuvor vorbereitetes Recovery-Code-Set.
+ *
+ * Erfordert eine signierte Vault-Operation vom Typ "recovery_codes_rotate".
+ * Die Operation muss von einem vertrauenswürdigen Gerät signiert sein.
+ *
+ * Sicherheitsprüfungen:
+ * - Vault-Ownership-Validierung
+ * - Device-Trust-Verifikation (Signatur + Trust-Epoch)
+ * - Commitment-Matching (alle 5 Codes)
+ * - Idempotenz-Prüfung (Wiederholte Requests sind sicher)
+ *
+ * @param userId - Authentifizierter Benutzer
+ * @param body - Request-Body mit `vaultId`, `setId`, `operation`
+ * @param headers - Response-Headers
+ * @returns JSON mit `applied: true` und `currentHead` bei Erfolg
+ */
 async function handleActivateCodeSet(userId: string, body: Record<string, unknown>, headers: Headers): Promise<Response> {
   const vaultId = readString(body.vaultId);
   const setId = readString(body.setId);
@@ -207,6 +372,31 @@ async function handleActivateCodeSet(userId: string, body: Record<string, unknow
   return json({ applied: true, currentHead: data?.current_head ?? null }, 200, headers);
 }
 
+/**
+ * Löst einen Recovery-Code ein, um ein neues Gerät zu autorisieren.
+ *
+ * Dies ist der kritische Wiederherstellungspfad, wenn alle vertrauenswürdigen
+ * Geräte verloren gegangen sind. Ein gültiger Recovery-Code berechtigt zur
+ * Erstellung eines neuen Device-Trust-Records.
+ *
+ * Sicherheitsmechanismen:
+ * - Rate-Limiting: Schutz vor Brute-Force (pro User+Vault)
+ * - Code-Validierung: Argon2id-Hash-Verifikation
+ * - Commitment-Matching: Kryptografische Bindung
+ * - Operation-Signatur: Selbst-Signatur des neuen Geräts
+ * - Pending-Request-Validierung: Challenge muss noch gültig sein
+ *
+ * Nach erfolgreicher Einlösung:
+ * - Code wird als "verwendet" markiert (einmalig!)
+ * - Neues Gerät erhält Trust-Record mit Epoch 0
+ * - Rate-Limit wird zurückgesetzt
+ *
+ * @param req - Original-Request (für Rate-Limiting)
+ * @param userId - Authentifizierter Benutzer
+ * @param body - Request-Body mit `vaultId`, `requestId`, `recoveryCode`, `operation`
+ * @param headers - Response-Headers
+ * @returns JSON mit `applied: true` und `currentHead` bei Erfolg
+ */
 async function handleRedeemCode(
   req: Request,
   userId: string,
@@ -295,6 +485,24 @@ async function handleRedeemCode(
   return json({ applied: true, currentHead: data?.current_head ?? null }, 200, headers);
 }
 
+// ============================================================================
+// Verifikations-Funktionen
+// ============================================================================
+
+/**
+ * Verifiziert eine Recovery-Code-Rotations-Operation.
+ *
+ * Prüft:
+ * - Operation-Typ ist "recovery_codes_rotate"
+ * - Autor-Gerät ist vertrauenswürdig (Status + Trust-Epoch)
+ * - Signatur ist gültig (ECDSA P-256)
+ *
+ * @param userId - Benutzer-ID
+ * @param vaultId - Vault-ID
+ * @param setId - Recovery-Code-Set-ID
+ * @param op - RPC-Operation-Payload
+ * @returns true wenn Operation gültig
+ */
 async function verifyRecoveryRotationOperation(
   userId: string,
   vaultId: string,
@@ -325,6 +533,24 @@ async function verifyRecoveryRotationOperation(
   return verifySignedOperation(op, trust.public_signing_key);
 }
 
+/**
+ * Verifiziert eine Device-Recovery-Operation.
+ *
+ * Diese Funktion prüft, ob ein neues Gerät berechtigt ist, via Recovery-Code
+ * dem Vault beizutreten. Die Operation muss selbst-signiert sein.
+ *
+ * Prüfungen:
+ * - Operation-Typ ist "recover_device"
+ * - Pending-Request existiert und ist noch gültig
+ * - Public-Key in Operation = Public-Key in Request
+ * - Signatur ist gültig
+ *
+ * @param userId - Benutzer-ID
+ * @param vaultId - Vault-ID
+ * @param requestId - Pending-Device-Request-ID
+ * @param op - RPC-Operation-Payload
+ * @returns true wenn Operation gültig
+ */
 async function verifyRecoverDeviceOperation(
   userId: string,
   vaultId: string,
@@ -363,6 +589,19 @@ async function verifyRecoverDeviceOperation(
   return verifySignedOperation(op, publicKey);
 }
 
+/**
+ * Verifiziert die digitale Signatur einer Vault-Operation.
+ *
+ * Workflow:
+ * 1. Berechnet Op-Hash aus signedBody neu
+ * 2. Vergleicht mit übermitteltem op_hash
+ * 3. Importiert Public-Key (SPKI-Format, Base64URL)
+ * 4. Verifiziert ECDSA-Signatur über kanonisiertem signedBody
+ *
+ * @param op - Operation mit Signatur
+ * @param publicKeyB64Url - Public-Key in Base64URL-Kodierung
+ * @returns true wenn Signatur gültig
+ */
 async function verifySignedOperation(op: RpcOperationPayload, publicKeyB64Url: string): Promise<boolean> {
   const recomputedOpHash = await computeOpHash(op.signed_body);
   if (recomputedOpHash !== op.op_hash) {
@@ -383,6 +622,20 @@ async function verifySignedOperation(op: RpcOperationPayload, publicKeyB64Url: s
   );
 }
 
+// ============================================================================
+// Mapping-Funktionen
+// ============================================================================
+
+/**
+ * Konvertiert Client-Operation in RPC-Payload-Format.
+ *
+ * Transformiert camelCase (Client) zu snake_case (Datenbank/RPC).
+ * Validiert, dass signedBody existiert.
+ *
+ * @param operation - Operation im Client-Format
+ * @returns Operation im RPC-Format
+ * @throws Error wenn signedBody fehlt
+ */
 function mapOperationToRpcPayload(operation: Record<string, unknown>): RpcOperationPayload {
   const signedBody = operation.signedBody;
   if (!isPlainObject(signedBody)) {
@@ -413,6 +666,15 @@ function mapOperationToRpcPayload(operation: Record<string, unknown>): RpcOperat
   };
 }
 
+/**
+ * Erstellt das Trust-Payload für Device-Recovery.
+ *
+ * Dieses Payload wird vom RPC verwendet, um den neuen Device-Trust-Record
+ * zu erstellen. Enthält alle notwendigen Informationen für die Recovery.
+ *
+ * @param op - Die validierte Recovery-Operation
+ * @returns Trust-Payload für RPC
+ */
 function buildRecoverDeviceTrustPayload(op: RpcOperationPayload): Record<string, unknown> {
   return {
     kind: "recover",
@@ -429,6 +691,19 @@ function buildRecoverDeviceTrustPayload(op: RpcOperationPayload): Record<string,
   };
 }
 
+// ============================================================================
+// Validierungs-Funktionen
+// ============================================================================
+
+/**
+ * Prüft, ob ein Benutzer einen Vault besitzt.
+ *
+ * Einfache Ownership-Prüfung über die vaults-Tabelle.
+ *
+ * @param userId - Benutzer-ID
+ * @param vaultId - Vault-ID
+ * @returns true wenn Benutzer Vault-Owner ist
+ */
 async function ownsVault(userId: string, vaultId: string): Promise<boolean> {
   const { data } = await supabaseAdmin
     .from("vaults")
@@ -439,6 +714,22 @@ async function ownsVault(userId: string, vaultId: string): Promise<boolean> {
   return Boolean(data);
 }
 
+/**
+ * Sucht nach einer existierenden Recovery-Operation mit gleicher ID.
+ *
+ * Ermöglicht Idempotenz: Wiederholte Requests mit gleicher op_id sind sicher.
+ *
+ * Rückgabewerte:
+ * - `none`: Keine existierende Operation gefunden (neuer Request)
+ * - `conflict`: Operation existiert, aber mit anderen Parametern
+ * - `match`: Identische Operation bereits verarbeitet
+ *
+ * @param userId - Benutzer-ID
+ * @param vaultId - Vault-ID
+ * @param op - Operation zum Vergleich
+ * @param expectedOpType - Erwarteter Operations-Typ
+ * @returns Ergebnis der Idempotenz-Prüfung
+ */
 async function findExistingRecoveryOperation(
   userId: string,
   vaultId: string,
@@ -471,6 +762,22 @@ async function findExistingRecoveryOperation(
   return { kind: "match", currentHead: data.resulting_vault_head ?? null };
 }
 
+// ============================================================================
+// Authentifizierung
+// ============================================================================
+
+/**
+ * Extrahiert die User-ID aus dem Authorization-Header.
+ *
+ * Erwartet: "Bearer <jwt-token>"
+ * Nutzt supabaseAdmin.auth.getUser() für serverseitige JWT-Validierung.
+ *
+ * HINWEIS: verify_jwt = false in config.toml, da wir hier manuell validieren.
+ * Das ermöglicht bessere Fehlerbehandlung und einheitliche Responses.
+ *
+ * @param req - Eingehender Request
+ * @returns User-ID oder null wenn nicht authentifiziert
+ */
 async function getAuthenticatedUserId(req: Request): Promise<string | null> {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -484,12 +791,37 @@ async function getAuthenticatedUserId(req: Request): Promise<string | null> {
   return data.user.id;
 }
 
+// ============================================================================
+// Recovery-Code Generierung & Validierung
+// ============================================================================
+
+/**
+ * Generiert einen kryptografisch sicheren Recovery-Code.
+ *
+ * Format: SVR-XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX
+ * - Präfix "SVR" für SingraVault Recovery
+ * - 26 Zeichen aus 32-Zeichen-Alphabet
+ * - ca. 130 Bit Entropie
+ *
+ * @returns Formatierter Recovery-Code mit Trennzeichen
+ */
 function generateRecoveryCode(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(CODE_BODY_LENGTH));
   const body = Array.from(bytes, (byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join("");
   return `SVR-${body.slice(0, 5)}-${body.slice(5, 10)}-${body.slice(10, 15)}-${body.slice(15, 20)}-${body.slice(20)}`;
 }
 
+/**
+ * Normalisiert einen Recovery-Code für Vergleiche.
+ *
+ * - Konvertiert zu Großbuchstaben
+ * - Entfernt Leerzeichen und Bindestriche
+ * - Entfernt SVR-Präfix
+ * - Unicode-Normalisierung (NFKC)
+ *
+ * @param value - Code in beliebigem Format
+ * @returns 26-Zeichen normalisierter Code
+ */
 function normalizeRecoveryCode(value: string): string {
   const compact = value.normalize("NFKC").toUpperCase().replace(/[\s-]+/gu, "");
   return compact.startsWith("SVR") && compact.length === CODE_BODY_LENGTH + 3
@@ -497,10 +829,36 @@ function normalizeRecoveryCode(value: string): string {
     : compact;
 }
 
+/**
+ * Prüft, ob ein Wert ein gültig normalisierter Recovery-Code ist.
+ *
+ * Gültig: Genau 26 Zeichen aus dem erlaubten Alphabet (A-Z ohne I,L,O + 2-9)
+ *
+ * @param value - Zu prüfender Wert
+ * @returns true wenn gültiges Format
+ */
 function isNormalizedRecoveryCode(value: string): boolean {
   return /^[A-Z2-9]{26}$/u.test(value);
 }
 
+// ============================================================================
+// Kryptografische Funktionen
+// ============================================================================
+
+/**
+ * Berechnet einen sicheren Hash des Recovery-Codes mit Argon2id.
+ *
+ * Parameter (OWASP-konform für moderate Sicherheit):
+ * - parallelism: 1 (Edge-Function-kompatibel)
+ * - iterations: 2 (Zeit-Kosten)
+ * - memorySize: 16 MB (Speicher-Kosten)
+ * - hashLength: 32 Bytes (256 Bit)
+ *
+ * Ausgabeformat: "v3:<salt-base64url>:<hash-hex>"
+ *
+ * @param normalizedCode - Normalisierter Recovery-Code
+ * @returns Versionierter Hash-String
+ */
 async function hashRecoveryCode(normalizedCode: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await argon2id({
@@ -515,6 +873,16 @@ async function hashRecoveryCode(normalizedCode: string): Promise<string> {
   return `v3:${encodeBase64Url(salt)}:${hash}`;
 }
 
+/**
+ * Verifiziert einen Recovery-Code gegen den gespeicherten Hash.
+ *
+ * Nutzt konstante-Zeit-Vergleich (safeEqualText) zur Vermeidung
+ * von Timing-Angriffen.
+ *
+ * @param normalizedCode - Eingegebener Code (normalisiert)
+ * @param storedHash - Gespeicherter Hash aus Datenbank
+ * @returns true wenn Code korrekt
+ */
 async function verifyRecoveryCodeHash(normalizedCode: string, storedHash: string): Promise<boolean> {
   const [version, saltB64Url, hash] = storedHash.split(":");
   if (version !== "v3" || !saltB64Url || !hash) {
@@ -532,6 +900,17 @@ async function verifyRecoveryCodeHash(normalizedCode: string, storedHash: string
   return safeEqualText(computed, hash);
 }
 
+/**
+ * Berechnet ein kryptografisches Commitment für einen Recovery-Code.
+ *
+ * Das Commitment bindet den Code an einen spezifischen Vault und Set,
+ * ohne den Code selbst preiszugeben. Es ermöglicht:
+ * - Nachweis, dass ein bestimmter Code zu einem Set gehört
+ * - Verifikation ohne Hash-Vergleich
+ *
+ * @param input - Vault-ID, Set-ID und normalisierter Code
+ * @returns SHA-256 Hash als Base64URL
+ */
 async function computeRecoveryCodeCommitment(input: {
   vaultId: string;
   setId: string;
@@ -546,6 +925,15 @@ async function computeRecoveryCodeCommitment(input: {
   }));
 }
 
+/**
+ * Berechnet den Hash einer Operation für Signaturverifikation.
+ *
+ * Der op_hash ist die SHA-256 Prüfsumme des kanonisierten signedBody.
+ * Er wird in der Operation mitgeschickt und hier neu berechnet.
+ *
+ * @param signedBody - Der signierte Teil der Operation
+ * @returns SHA-256 Hash als Base64URL
+ */
 async function computeOpHash(signedBody: Record<string, unknown>): Promise<string> {
   return sha256Base64Url(canonicalizeVaultStructure({
     schema: "op-hash-v1",
@@ -553,17 +941,54 @@ async function computeOpHash(signedBody: Record<string, unknown>): Promise<strin
   }));
 }
 
+/**
+ * Berechnet SHA-256 Hash und gibt ihn als Base64URL zurück.
+ *
+ * @param bytes - Zu hashende Bytes
+ * @returns SHA-256 Digest als Base64URL
+ */
 async function sha256Base64Url(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return encodeBase64Url(new Uint8Array(digest));
 }
 
+// ============================================================================
+// Kanonisierung
+// ============================================================================
+
+/**
+ * Konvertiert einen JavaScript-Wert in kanonische Byte-Repräsentation.
+ *
+ * Die Kanonisierung gewährleistet deterministisches Hashing:
+ * - Objekt-Keys werden byte-lexikografisch sortiert
+ * - Strings werden NFC-normalisiert
+ * - Keine Whitespace-Variationen
+ *
+ * @param value - Zu kanonisierender Wert
+ * @returns UTF-8 kodierte Bytes
+ */
 function canonicalizeVaultStructure(value: unknown): Uint8Array {
   const parts: string[] = [];
   emitCanonical(value, parts, new WeakSet<object>());
   return new TextEncoder().encode(parts.join(""));
 }
 
+/**
+ * Rekursive Hilfsfunktion für Kanonisierung.
+ *
+ * Unterstützte Typen:
+ * - null
+ * - string (NFC-normalisiert, JSON-escaped)
+ * - number (endlich, Integer bevorzugt)
+ * - boolean
+ * - Array (rekursiv)
+ * - Plain Object (Keys sortiert, rekursiv)
+ *
+ * @param value - Zu verarbeitender Wert
+ * @param parts - Ausgabe-Array für Strings
+ * @param seen - WeakSet für Zyklus-Erkennung
+ * @throws Error bei zyklischen oder nicht unterstützten Werten
+ */
 function emitCanonical(value: unknown, parts: string[], seen: WeakSet<object>): void {
   if (value === null) {
     parts.push("null");
@@ -618,6 +1043,13 @@ function emitCanonical(value: unknown, parts: string[], seen: WeakSet<object>): 
   throw new Error("unsupported canonical value");
 }
 
+/**
+ * Byte-lexikografischer Vergleich für Objekt-Key-Sortierung.
+ *
+ * @param left - Erstes Byte-Array
+ * @param right - Zweites Byte-Array
+ * @returns Negativ wenn left < right, 0 wenn gleich, positiv wenn left > right
+ */
 function compareBytes(left: Uint8Array, right: Uint8Array): number {
   const min = Math.min(left.length, right.length);
   for (let index = 0; index < min; index += 1) {
@@ -626,6 +1058,16 @@ function compareBytes(left: Uint8Array, right: Uint8Array): number {
   return left.length - right.length;
 }
 
+// ============================================================================
+// Encoding-Hilfsfunktionen
+// ============================================================================
+
+/**
+ * Kodiert Bytes zu Base64URL (RFC 4648, URL-sicher, ohne Padding).
+ *
+ * @param bytes - Zu kodierende Bytes
+ * @returns Base64URL-String
+ */
 function encodeBase64Url(bytes: Uint8Array): string {
   let binary = "";
   bytes.forEach((byte) => {
@@ -634,11 +1076,34 @@ function encodeBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
 }
 
+/**
+ * Dekodiert Base64URL zu Bytes.
+ *
+ * Wandelt URL-sichere Zeichen zurück und ergänzt fehlendes Padding.
+ *
+ * @param value - Base64URL-String
+ * @returns Dekodierte Bytes
+ */
 function decodeBase64Url(value: string): Uint8Array {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
   return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }
 
+// ============================================================================
+// Sicherheits-Hilfsfunktionen
+// ============================================================================
+
+/**
+ * Konstante-Zeit String-Vergleich zur Vermeidung von Timing-Angriffen.
+ *
+ * WICHTIG: Diese Funktion muss für sicherheitskritische Vergleiche verwendet
+ * werden (Hash-Verifikation, Token-Vergleiche), da normaler === Vergleich
+ * unterschiedliche Ausführungszeiten je nach erstem unterschiedlichen Zeichen hat.
+ *
+ * @param left - Erster String
+ * @param right - Zweiter String
+ * @returns true wenn identisch
+ */
 function safeEqualText(left: string, right: string): boolean {
   if (left.length !== right.length) return false;
   let diff = 0;
@@ -648,24 +1113,70 @@ function safeEqualText(left: string, right: string): boolean {
   return diff === 0;
 }
 
+// ============================================================================
+// Utility-Funktionen
+// ============================================================================
+
+/**
+ * Liest einen String aus einem unbekannten Wert.
+ *
+ * @param value - Unbekannter Wert
+ * @returns String wenn vorhanden und nicht leer, sonst null
+ */
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/**
+ * Prüft, ob ein Wert ein Plain Object ist.
+ *
+ * Ein Plain Object hat Object.prototype oder null als Prototype
+ * (also keine Klassen-Instanzen, Arrays, etc.).
+ *
+ * @param value - Zu prüfender Wert
+ * @returns true wenn Plain Object
+ */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object") return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
 
+/**
+ * Erstellt eine JSON-Response mit korrekten Headers.
+ *
+ * @param payload - Response-Body (wird zu JSON serialisiert)
+ * @param status - HTTP-Status-Code
+ * @param headers - Response-Headers (CORS, etc.)
+ * @returns Response-Objekt
+ */
 function json(payload: Record<string, unknown>, status: number, headers: Headers): Response {
   return new Response(JSON.stringify(payload), { status, headers });
 }
 
+/**
+ * Klassifiziert Server-Fehler für Logging.
+ *
+ * Gibt Fehlermeldung zurück (für Logs), aber keine internen Details
+ * an den Client (siehe catch-Block im Request-Handler).
+ *
+ * @param error - Gefangener Fehler
+ * @returns Klassifizierte Fehlermeldung
+ */
 function classifyServerError(error: unknown): string {
   return error instanceof Error ? error.message : "unknown";
 }
 
+// ============================================================================
+// Typen
+// ============================================================================
+
+/**
+ * Payload-Format für Vault-Operationen beim RPC-Aufruf.
+ *
+ * Dieses Interface definiert die Struktur einer signierten Vault-Operation
+ * im snake_case Format (wie in der Datenbank gespeichert).
+ */
 interface RpcOperationPayload {
   op_id: string;
   op_hash: string;
