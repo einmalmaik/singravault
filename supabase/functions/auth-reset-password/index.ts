@@ -1,3 +1,55 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+
+/**
+ * @fileoverview OPAQUE Password Reset Edge Function
+ *
+ * Diese Edge Function implementiert das Zurücksetzen des OPAQUE-Passworts.
+ * Im Gegensatz zu klassischem Passwort-Reset wird hier das OPAQUE-Registration-Record
+ * ersetzt, nicht ein Passwort-Hash.
+ *
+ * ## Wichtiger Unterschied zu Master-Passwort
+ *
+ * Diese Funktion setzt das KONTO-Passwort zurück (OPAQUE), nicht das Vault-Master-Passwort.
+ * Das Master-Passwort ist clientseitig und kann vom Server nicht zurückgesetzt werden.
+ *
+ * ## Zwei-Phasen-Reset
+ *
+ * ### Phase 1: `opaque-reset-start`
+ * - Validiert Reset-Token aus auth-recovery
+ * - Prüft 2FA-Autorisierung (falls aktiviert)
+ * - Generiert neue OPAQUE Registration Response
+ * - Erstellt Reset-State mit 15 Min. TTL
+ *
+ * ### Phase 2: `opaque-reset-finish`
+ * - Konsumiert Reset-Token (markiert als verwendet)
+ * - Speichert neues OPAQUE Registration Record
+ * - Sendet Benachrichtigungs-E-Mail
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Aufgerufen via `invokeAuthedFunction('auth-reset-password', {...})` aus:
+ * - `src/services/accountPasswordResetService.ts`
+ * - Passwort-Reset-Flow in `src/pages/Auth.tsx`
+ *
+ * ## Sicherheitsmaßnahmen
+ *
+ * - Reset-Token: Kryptografisch sicher, nur Hash in DB
+ * - 2FA-Prüfung: Falls aktiviert, muss vor Reset verifiziert werden
+ * - Rate-Limiting: opaque_reset Action
+ * - Minimum-Response-Zeit: 300ms zur Timing-Attack-Prävention
+ *
+ * ## Datenbankstruktur
+ *
+ * Tabellen:
+ * - `password_reset_challenges`: Challenge mit Token-Hash, 2FA-Status
+ * - `opaque_password_reset_states`: Temporärer State für zwei-Phasen-Reset
+ * - `user_opaque_records`: Finales Registration Record
+ *
+ * @see src/services/accountPasswordResetService.ts - Frontend-Service
+ * @see auth-recovery/index.ts - E-Mail-Verifizierung vor Reset
+ */
+
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import * as opaque from "npm:@serenity-kit/opaque";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -16,14 +68,52 @@ import {
 } from "../_shared/opaqueAuth.ts";
 import { AUTH_ERROR_CODES, jsonError } from "../_shared/authErrors.ts";
 
+// ============================================================================
+// Konfiguration
+// ============================================================================
+
+/**
+ * Supabase-URL aus Umgebungsvariablen.
+ */
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+
+/**
+ * Service Role Key für Admin-Operationen.
+ */
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+/**
+ * Resend API Key für E-Mail-Benachrichtigungen.
+ * Optional - falls nicht gesetzt, werden keine Benachrichtigungen gesendet.
+ */
 const resendApiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+
+/**
+ * OPAQUE Server Setup - muss mit Registrierung übereinstimmen.
+ */
 const OPAQUE_SERVER_SETUP = Deno.env.get("OPAQUE_SERVER_SETUP")!;
+
+/**
+ * Admin-Client für Datenbankoperationen.
+ */
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
+/**
+ * OPAQUE-Bibliothek initialisieren.
+ */
 await opaque.ready;
 
+// ============================================================================
+// Request Handler
+// ============================================================================
+
+/**
+ * Haupteinstiegspunkt der Edge Function.
+ *
+ * Routet basierend auf `action`-Feld:
+ * - `opaque-reset-start`: Startet OPAQUE-Reset
+ * - `opaque-reset-finish`: Schließt OPAQUE-Reset ab
+ */
 Deno.serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
     const headers = new Headers({
@@ -58,6 +148,26 @@ Deno.serve(async (req) => {
     }
 });
 
+// ============================================================================
+// Handler-Funktionen
+// ============================================================================
+
+/**
+ * Startet den OPAQUE-Password-Reset (Phase 1).
+ *
+ * Workflow:
+ * 1. Validiert Reset-Token und Registration-Request
+ * 2. Findet aktive Reset-Challenge in DB
+ * 3. Prüft Rate-Limits
+ * 4. Verifiziert 2FA-Autorisierung (falls erforderlich)
+ * 5. Generiert neue OPAQUE Registration Response
+ * 6. Erstellt Reset-State (15 Min. gültig)
+ *
+ * @param req - Original-Request (für Rate-Limiting)
+ * @param body - Request-Body mit `resetToken`, `registrationRequest`
+ * @param headers - Response-Headers
+ * @returns JSON mit `resetRegistrationId`, `registrationResponse`, `expiresAt`
+ */
 async function handleOpaqueResetStart(
     req: Request,
     body: { resetToken?: unknown; registrationRequest?: unknown },
@@ -121,6 +231,27 @@ async function handleOpaqueResetStart(
     }), { status: 200, headers });
 }
 
+/**
+ * Schließt den OPAQUE-Password-Reset ab (Phase 2).
+ *
+ * Workflow:
+ * 1. Validiert alle Eingaben
+ * 2. Findet aktive Reset-Challenge
+ * 3. Prüft Rate-Limits und 2FA-Autorisierung
+ * 4. Ruft `finish_opaque_password_reset` RPC auf (atomar)
+ * 5. Setzt Rate-Limit zurück
+ * 6. Sendet Benachrichtigungs-E-Mail
+ *
+ * Der RPC führt atomar aus:
+ * - Challenge als verwendet markieren
+ * - Reset-State konsumieren
+ * - Neues Registration Record speichern
+ *
+ * @param req - Original-Request (für Rate-Limiting)
+ * @param body - Request-Body mit `resetToken`, `resetRegistrationId`, `registrationRecord`
+ * @param headers - Response-Headers
+ * @returns JSON mit `success: true` bei Erfolg
+ */
 async function handleOpaqueResetFinish(
     req: Request,
     body: { resetToken?: unknown; resetRegistrationId?: unknown; registrationRecord?: unknown },

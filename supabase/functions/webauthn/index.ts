@@ -1,21 +1,63 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+
 /**
- * @fileoverview WebAuthn Edge Function for Passkey Registration & Authentication 
+ * @fileoverview WebAuthn Edge Function for Passkey Registration & Authentication
  *
- * Handles all WebAuthn server-side operations:
- * - generate-registration-options: Creates a challenge for passkey registration
- * - verify-registration: Verifies the registration response from the browser
- * - generate-authentication-options: Creates a challenge for passkey authentication
- * - verify-authentication: Verifies the authentication response
- * - activate-prf: Verifies authentication and stores wrapped master key for PRF unlock
- * - upgrade-wrapped-key: Verifies authentication and rotates legacy wrapped key material
- * - list-credentials: Lists all registered passkeys for a user
- * - delete-credential: Removes a registered passkey
+ * Diese Edge Function implementiert alle serverseitigen WebAuthn-Operationen
+ * für Passkey-basierte Authentifizierung und PRF-basiertes Vault-Unlock.
+ *
+ * ## Verfügbare Aktionen
+ *
+ * ### Registrierung
+ * - `generate-registration-options`: Erstellt Challenge für Passkey-Registrierung
+ * - `verify-registration`: Verifiziert Registration Response und speichert Credential
+ *
+ * ### Authentifizierung
+ * - `generate-authentication-options`: Erstellt Challenge für Passkey-Login
+ * - `verify-authentication`: Verifiziert Authentication Response
+ *
+ * ### PRF (Pseudo-Random Function)
+ * - `activate-prf`: Speichert verschlüsselten Master-Key für PRF-Unlock
+ * - `upgrade-wrapped-key`: Rotiert Legacy-Wrapped-Key-Material
+ *
+ * ### Verwaltung
+ * - `list-credentials`: Listet alle registrierten Passkeys
+ * - `delete-credential`: Entfernt einen registrierten Passkey
+ *
+ * ## PRF-Unlock Konzept
+ *
+ * PRF ermöglicht Vault-Unlock ohne Master-Passwort-Eingabe:
+ * 1. Bei Aktivierung: Master-Key wird mit PRF-Output verschlüsselt gespeichert
+ * 2. Bei Unlock: PRF-Output entschlüsselt den gespeicherten Key
+ * 3. Sicherheit: PRF-Salt ist serverseitig generiert und pro Credential eindeutig
+ *
+ * ## Relying Party (RP) Konfiguration
+ *
+ * Unterstützt Web und Desktop (Tauri) gleichzeitig:
+ * - Web: singravault.mauntingstudios.de
+ * - Desktop: tauri://localhost (Tauri-spezifisch)
+ * - Dev: localhost:* für Entwicklung
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Aufgerufen via `invokeAuthedFunction('webauthn', {...})` aus:
+ * - `src/services/passkeyService.ts` - Alle Passkey-Operationen
+ * - `src/components/settings/PasskeySettings.tsx` - Passkey-Verwaltung
+ * - `src/components/vault/VaultUnlock.tsx` - PRF-Unlock
+ *
+ * ## Sicherheitsmaßnahmen
+ *
+ * - Alle Aktionen erfordern authentifizierten User
+ * - Challenge-Storage serverseitig mit 5 Min. TTL
+ * - PRF-Salt: 32 Bytes CSPRNG, serverseitig generiert
+ * - Rate-Limiting für alle kritischen Aktionen
+ * - Device-Key-Required-Policy wird bei PRF-Aktivierung geprüft
  *
  * Uses @simplewebauthn/server v13 via JSR for Deno compatibility.
  *
- * SECURITY: All operations require a valid Supabase JWT.
- * Challenge storage is server-side with 5-minute TTL.
- * PRF salt is generated server-side with CSPRNG.
+ * @see src/services/passkeyService.ts - Frontend Passkey-Service
+ * @see _shared/desktopOrigins.ts - Erlaubte Desktop-Origins
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";

@@ -1,3 +1,64 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+
+/**
+ * @fileoverview Auth Session Edge Function (BFF Pattern)
+ *
+ * Diese Edge Function implementiert das Backend-for-Frontend (BFF) Pattern
+ * für sichere Session-Verwaltung. Der Refresh-Token wird in einem HttpOnly
+ * Cookie gespeichert, nicht im Client-JavaScript-Speicher.
+ *
+ * ## Warum BFF statt Client-Storage?
+ *
+ * - **XSS-Schutz**: HttpOnly Cookies sind für JavaScript nicht lesbar
+ * - **CSRF-Schutz**: SameSite=None + Partitioned Cookie-Attribute
+ * - **Token-Rotation**: Server kontrolliert Refresh-Zyklus
+ *
+ * ## Unterstützte HTTP-Methoden
+ *
+ * ### GET - Session Hydration
+ * Liest Refresh-Token aus Cookie und gibt neue Session zurück.
+ * Wird beim App-Start aufgerufen, um existierende Sessions wiederherzustellen.
+ *
+ * ### POST mit `action: "oauth-sync"`
+ * Synchronisiert OAuth-Session (Google, GitHub) mit BFF-Cookie.
+ * Wird nach erfolgreichem OAuth-Callback aufgerufen.
+ *
+ * ### POST ohne action (Legacy)
+ * Blockiert Legacy-Passwort-Login. Alle App-owned Logins müssen OPAQUE nutzen.
+ *
+ * ### DELETE
+ * Löscht Session-Cookie (Logout).
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Aufgerufen via `invokeAuthedFunction('auth-session', {...})` aus:
+ * - `src/services/authSessionManager.ts` - `refreshCurrentSession()`
+ * - `src/contexts/AuthContext.tsx` - Session-Hydration beim Start
+ *
+ * ## Cookie-Konfiguration
+ *
+ * ```
+ * Name:     sb-bff-session
+ * Path:     /
+ * HttpOnly: true
+ * Secure:   true
+ * SameSite: None
+ * MaxAge:   14 Tage (konfigurierbar)
+ * Partitioned: true (Chrome CHIPS)
+ * ```
+ *
+ * ## Sicherheitsmaßnahmen
+ *
+ * - Legacy-Passwort-Login komplett blockiert
+ * - Rate-Limiting für Legacy-Versuche
+ * - Session-Mismatch-Erkennung bei OAuth-Sync
+ * - Minimum-Response-Zeit zur Timing-Attack-Prävention
+ *
+ * @see src/services/authSessionManager.ts - Frontend Session-Manager
+ * @see src/integrations/supabase/authStorage.ts - Client-seitige Storage-Abstraction
+ */
+
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { getCookies, setCookie } from "https://deno.land/std@0.168.0/http/cookie.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -10,13 +71,46 @@ import {
 } from "../_shared/authRateLimit.ts";
 import { normalizeOpaqueIdentifier } from "../_shared/opaqueAuth.ts";
 
+// ============================================================================
+// Konfiguration
+// ============================================================================
+
+/**
+ * Supabase-URL aus Umgebungsvariablen.
+ */
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+
+/**
+ * Service Role Key für Admin-Operationen.
+ */
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+/**
+ * Anonymer Schlüssel für Auth-Client.
+ */
 const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+/**
+ * Admin-Client für Rate-Limiting-Prüfungen.
+ */
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+/**
+ * Cookie-Name für BFF-Session.
+ * Präfix "sb-" für Supabase-Kompatibilität.
+ */
 const SESSION_COOKIE_NAME = "sb-bff-session";
+
+/**
+ * Cookie-Lebensdauer in Sekunden.
+ * Default: 14 Tage (1.209.600 Sekunden).
+ */
 const SESSION_COOKIE_MAX_AGE = Number(Deno.env.get("SESSION_COOKIE_MAX_AGE_SECONDS") ?? 60 * 60 * 24 * 14);
 
+/**
+ * Erstellt einen Supabase-Auth-Client für Session-Operationen.
+ * persistSession und autoRefreshToken deaktiviert, da BFF diese kontrolliert.
+ */
 function createSupabaseAuthClient() {
     return createClient(supabaseUrl, supabaseAnonKey, {
         auth: {
@@ -26,6 +120,20 @@ function createSupabaseAuthClient() {
     });
 }
 
+// ============================================================================
+// Request Handler
+// ============================================================================
+
+/**
+ * Haupteinstiegspunkt der Edge Function.
+ *
+ * Routing:
+ * - OPTIONS: CORS-Preflight
+ * - DELETE: Session löschen (Logout)
+ * - GET: Session aus Cookie hydratisieren
+ * - POST mit oauth-sync: OAuth-Session synchronisieren
+ * - POST sonst: Legacy-Passwort-Login (blockiert)
+ */
 Deno.serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
     const headers = new Headers({

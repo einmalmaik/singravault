@@ -1,15 +1,95 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 
+/**
+ * @fileoverview Rate Limiting Edge Function
+ *
+ * Diese Edge Function implementiert ein serverseitiges Rate-Limiting-System
+ * zum Schutz gegen Brute-Force-Angriffe auf sicherheitskritische Aktionen.
+ *
+ * ## Funktionsweise
+ *
+ * Das Rate-Limiting arbeitet auf zwei Ebenen:
+ * 1. **Benutzer-Identität**: Tracking nach authentifiziertem User-ID
+ * 2. **IP-Adresse**: Zusätzliches Tracking zur Verhinderung verteilter Angriffe
+ *
+ * ## Geschützte Aktionen
+ *
+ * | Aktion     | Max. Versuche | Zeitfenster | Sperrzeit |
+ * |------------|---------------|-------------|-----------|
+ * | `unlock`   | 5             | 15 Min      | 15 Min    |
+ * | `2fa`      | 3             | 5 Min       | 30 Min    |
+ * | `passkey`  | 5             | 10 Min      | 10 Min    |
+ * | `emergency`| 3             | 1 Stunde    | 24 Stunden|
+ *
+ * ## Sicherheitskonzept
+ *
+ * - **Fail-Closed**: Bei Fehlern wird der Zugriff verweigert (nicht erlaubt)
+ * - **Exponentielles Backoff**: Wiederholte Fehlversuche verdoppeln die Sperrzeit
+ * - **Client-Misstrauen**: Erfolgs-/Fehler-Meldungen vom Client werden ignoriert
+ * - **IP-Extraktion**: Nur aus vertrauenswürdigen Proxy-Headern (CF-Connecting-IP)
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Diese Function wird NICHT direkt vom Frontend aufgerufen. Stattdessen nutzen
+ * andere Edge Functions das `_shared/authRateLimit.ts` Modul, das intern auf
+ * die `rate_limit_attempts` Tabelle zugreift.
+ *
+ * Legacy-Aufrufe via `invokeAuthedFunction('rate-limit', {...})` existieren
+ * noch für Vault-Unlock und 2FA-Verifikation.
+ *
+ * ## Datenbankstruktur
+ *
+ * Tabelle: `rate_limit_attempts`
+ * - `identifier`: User-ID oder E-Mail
+ * - `action`: Aktionstyp (unlock, 2fa, passkey, emergency)
+ * - `ip_address`: Client-IP (aus Proxy-Headern)
+ * - `locked_until`: Zeitstempel bis wann gesperrt
+ * - `attempted_at`: Zeitstempel des Versuchs
+ *
+ * @see src/services/rateLimiterService.ts - Frontend-Wrapper
+ * @see _shared/authRateLimit.ts - Shared Rate-Limit-Logik für andere Edge Functions
+ */
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders } from "../_shared/cors.ts";
 
+// ============================================================================
+// Konfiguration
+// ============================================================================
+
+/**
+ * Supabase-URL aus Umgebungsvariablen.
+ * Wird automatisch vom Supabase Edge Function Runtime gesetzt.
+ */
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+
+/**
+ * Anonymer Schlüssel für Client-Authentifizierung.
+ * Wird verwendet, um den JWT des Benutzers zu validieren.
+ */
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+/**
+ * Service Role Key für Admin-Operationen.
+ * ACHTUNG: Umgeht RLS - nur für Datenbankschreib-/-leseoperationen verwenden!
+ */
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-// Rate limiting configuration - HARDENED
+// ============================================================================
+// Rate-Limit-Konfiguration
+// ============================================================================
+
+/**
+ * Konfiguration der Rate-Limits pro Aktionstyp.
+ *
+ * Sicherheitsüberlegungen:
+ * - `unlock`: Moderate Limits, da Master-Passwort bereits stark ist
+ * - `2fa`: Strenge Limits, da TOTP-Codes nur 6 Ziffern haben
+ * - `passkey`: Moderate Limits, WebAuthn hat eigene Sicherheit
+ * - `emergency`: Sehr streng, kritische Aktionen wie Account-Wiederherstellung
+ */
 const RATE_LIMITS = {
   unlock: {
     maxAttempts: 5,
@@ -33,6 +113,16 @@ const RATE_LIMITS = {
   },
 };
 
+// ============================================================================
+// Typen
+// ============================================================================
+
+/**
+ * Request-Payload für Rate-Limit-Prüfung.
+ *
+ * WICHTIG: `success` und `ipAddress` sind deprecated und werden ignoriert.
+ * Der Client kann nicht vertrauenswürdig melden, ob ein Versuch erfolgreich war.
+ */
 interface RateLimitRequest {
   userId?: string;
   email?: string;
@@ -41,12 +131,37 @@ interface RateLimitRequest {
   ipAddress?: string; // Deprecated and ignored (cannot be trusted from client)
 }
 
+/**
+ * Response-Payload für Rate-Limit-Status.
+ *
+ * - `allowed`: False wenn Benutzer gesperrt oder Limit erreicht
+ * - `attemptsRemaining`: Verbleibende Versuche im aktuellen Zeitfenster
+ * - `lockedUntil`: ISO-Timestamp bis wann gesperrt (nur wenn gesperrt)
+ */
 interface RateLimitResponse {
   allowed: boolean;
   attemptsRemaining: number;
   lockedUntil?: string;
 }
 
+// ============================================================================
+// Hilfsfunktionen
+// ============================================================================
+
+/**
+ * Extrahiert die vertrauenswürdige Client-IP aus Proxy-Headern.
+ *
+ * Priorität:
+ * 1. CF-Connecting-IP (Cloudflare, am vertrauenswürdigsten)
+ * 2. X-Forwarded-For (erster Eintrag, von Load Balancern)
+ * 3. 'unknown' als Fallback
+ *
+ * WICHTIG: Client-übermittelte IP-Adressen werden NIEMALS verwendet,
+ * da diese trivial gefälscht werden können.
+ *
+ * @param req - Eingehender Request
+ * @returns Vertrauenswürdige Client-IP oder 'unknown'
+ */
 function getTrustedClientIp(req: Request): string {
   const cfConnectingIp = req.headers.get('CF-Connecting-IP');
   if (cfConnectingIp && cfConnectingIp.trim().length > 0) {
@@ -64,6 +179,23 @@ function getTrustedClientIp(req: Request): string {
   return 'unknown';
 }
 
+// ============================================================================
+// Request Handler
+// ============================================================================
+
+/**
+ * Haupteinstiegspunkt der Edge Function.
+ *
+ * Verarbeitet Rate-Limit-Prüfungen für sicherheitskritische Aktionen.
+ * Jeder Request muss authentifiziert sein (Bearer Token).
+ *
+ * Workflow:
+ * 1. CORS-Preflight behandeln
+ * 2. JWT validieren und User-ID extrahieren
+ * 3. Rate-Limit-Status für User+IP prüfen
+ * 4. Fehlversuch protokollieren (jeder Aufruf gilt als Versuch)
+ * 5. Aktuellen Status zurückgeben
+ */
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
 

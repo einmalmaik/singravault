@@ -1,3 +1,73 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+
+/**
+ * @fileoverview Account Recovery Edge Function
+ *
+ * Diese Edge Function implementiert die E-Mail-basierte Account-Wiederherstellung.
+ * Sie ist der erste Schritt im Passwort-Reset-Flow und verifiziert die E-Mail-Adresse
+ * bevor der eigentliche OPAQUE-Reset in `auth-reset-password` erfolgt.
+ *
+ * ## Zwei Zwecke (Purposes)
+ *
+ * | Purpose  | Beschreibung                                      | Authentifizierung |
+ * |----------|---------------------------------------------------|-------------------|
+ * | `forgot` | Passwort vergessen (kein Login möglich)           | Keine             |
+ * | `change` | Passwort ändern (bereits eingeloggt)              | Bearer Token      |
+ *
+ * ## Drei-Phasen-Recovery
+ *
+ * ### Phase 1: E-Mail-Code anfordern (`request-email-code`)
+ * - Validiert E-Mail-Adresse
+ * - Rate-Limiting prüfen
+ * - Generiert 8-stelligen Code
+ * - Speichert Code-Hash mit HMAC-SHA256 + Pepper
+ * - Sendet Code via Resend API
+ *
+ * ### Phase 2: E-Mail-Code verifizieren (`verify-email-code`)
+ * - Prüft Code gegen Hash
+ * - Erstellt Reset-Challenge mit Token
+ * - Prüft ob 2FA erforderlich
+ * - Gibt `resetToken` und `nextState` zurück
+ *
+ * ### Phase 3: 2FA verifizieren (`verify-two-factor`)
+ * - Nur wenn 2FA aktiviert
+ * - Verifiziert TOTP oder Backup-Code
+ * - Autorisiert Reset-Challenge
+ *
+ * ## E-Mail-Code-Sicherheit
+ *
+ * Code-Hashing mit HMAC-SHA256:
+ * ```
+ * hash = HMAC-SHA256(pepper, purpose + "\0" + email + "\0" + code)
+ * stored = "hmac-sha256:v1:" + hex(hash)
+ * ```
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Aufgerufen via `invokeAuthedFunction('auth-recovery', {...})` aus:
+ * - `src/services/accountPasswordResetService.ts` - Alle Recovery-Aktionen
+ * - Passwort-Reset-Flow in `src/pages/Auth.tsx`
+ *
+ * ## Sicherheitsmaßnahmen
+ *
+ * - Rate-Limiting: recovery_request und recovery_verify Actions
+ * - Code-TTL: 10 Minuten
+ * - Reset-Token-TTL: 15 Minuten
+ * - Minimum-Response-Zeit: 500ms (Request), 300ms (Verify)
+ * - Code-Pepper: Umgebungsvariable AUTH_RECOVERY_CODE_PEPPER
+ * - Keine Unterscheidung ob E-Mail existiert (Privacy)
+ *
+ * ## Datenbankstruktur
+ *
+ * Tabellen:
+ * - `recovery_tokens`: E-Mail-Code-Hashes (10 Min. TTL)
+ * - `password_reset_challenges`: Reset-Token-Hashes (15 Min. TTL)
+ *
+ * @see src/services/accountPasswordResetService.ts - Frontend Recovery-Service
+ * @see auth-reset-password/index.ts - OPAQUE-Reset nach Recovery
+ */
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders } from "../_shared/cors.ts";
@@ -21,14 +91,27 @@ import {
 } from "../_shared/twoFactor.ts";
 import { AUTH_ERROR_CODES } from "../_shared/authErrors.ts";
 
+// ============================================================================
+// Typen
+// ============================================================================
+
+/**
+ * Recovery-Zweck: "forgot" oder "change"
+ */
 type ResetPurpose = "forgot" | "change";
 
+/**
+ * Authentifizierter Benutzer (für `change`-Purpose)
+ */
 interface AuthUser {
     id: string;
     email: string | null;
     app_metadata?: Record<string, unknown>;
 }
 
+/**
+ * Reset-Challenge aus Datenbank
+ */
 interface ResetChallenge {
     id: string;
     user_id: string;
@@ -39,15 +122,53 @@ interface ResetChallenge {
     authorized_at: string | null;
 }
 
+// ============================================================================
+// Konfiguration
+// ============================================================================
+
+/**
+ * Supabase-URL aus Umgebungsvariablen.
+ */
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+
+/**
+ * Service Role Key für Admin-Operationen.
+ */
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+/**
+ * Resend API Key für E-Mail-Versand.
+ */
 const resendApiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+
+/**
+ * Pepper für Code-Hashing. Erhöht Sicherheit bei DB-Kompromittierung.
+ */
 const recoveryCodePepper = Deno.env.get("AUTH_RECOVERY_CODE_PEPPER") ?? "";
+
+/**
+ * Admin-Client für Datenbankoperationen.
+ */
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
+/**
+ * E-Mail-Code-Gültigkeit: 10 Minuten.
+ */
 const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Reset-Token-Gültigkeit: 15 Minuten.
+ */
 const RESET_TOKEN_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Minimum-Response-Zeit für Request (Privacy).
+ */
 const REQUEST_MIN_RESPONSE_MS = 500;
+
+/**
+ * Minimum-Response-Zeit für Verify (Timing-Attack-Prävention).
+ */
 const VERIFY_MIN_RESPONSE_MS = 300;
 
 function generateCode(): string {
