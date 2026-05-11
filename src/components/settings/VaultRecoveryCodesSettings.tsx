@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Download, KeyRound, Loader2, RotateCw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -34,6 +35,7 @@ import type { VaultOpLogTrustReadClient } from '@/services/vaultOpLog/vaultOpLog
 
 export function VaultRecoveryCodesSettings() {
   const { user } = useAuth();
+  const { i18n } = useTranslation();
   const { toast } = useToast();
   const { opLogVaultId, opLogLocalVaultState, opLogUiRefresh } = useVault();
   const [status, setStatus] = useState<VaultRecoveryCodeStatus | null>(null);
@@ -84,6 +86,7 @@ export function VaultRecoveryCodesSettings() {
           setId: prepared.setId,
           codes: prepared.codes,
           createdAt: prepared.createdAt,
+          language: i18n.language,
         }),
       });
 

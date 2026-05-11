@@ -181,6 +181,7 @@ export interface TrustedDeviceRecordV1 {
   readonly publicSigningKey: string;
   readonly deviceNameEncrypted: string;
   readonly addedByDeviceId: string | null;
+  readonly addedOpId?: string | null;
   readonly addedAt: string;
   readonly trustEpoch: number;
   readonly status: 'trusted' | 'revoked';

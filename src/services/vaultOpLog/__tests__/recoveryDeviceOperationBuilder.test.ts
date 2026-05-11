@@ -8,6 +8,7 @@ import {
 import {
   applyRecoveryCodeRotationOperation,
 } from '../recoveryCodeTrustService';
+import { applyDeviceTrustOperation } from '../deviceTrustService';
 import { generateDeviceSigningKeyPair } from '../operationSigningService';
 import { verifyOperation } from '../verifyOperation';
 import { DEVICE_SIGNATURE_SCHEMA_V2, type TrustedDeviceRecordV1 } from '../types';
@@ -107,6 +108,62 @@ describe('vault device recovery operations', () => {
     });
 
     expect(result.kind).toBe('validTrustedOperation');
+  });
+
+  it('revives a revoked device id after a valid recover_device operation', async () => {
+    const recovered = await generateDeviceSigningKeyPair();
+    const revokedDevice: TrustedDeviceRecordV1 = {
+      vaultId: VAULT_ID,
+      deviceId: RECOVERED_DEVICE_ID,
+      publicSigningKey: recovered.publicKeyB64Url,
+      deviceNameEncrypted: '',
+      addedByDeviceId: TRUSTED_DEVICE_ID,
+      addedAt: '2026-05-11T10:00:00.000Z',
+      trustEpoch: 1,
+      status: 'revoked',
+      revokedAt: '2026-05-11T11:00:00.000Z',
+      revokedByDeviceId: TRUSTED_DEVICE_ID,
+    };
+    const recover = await buildRecoverDeviceOperation({
+      opId: crypto.randomUUID(),
+      intentId: crypto.randomUUID(),
+      rebasedFromOpId: null,
+      vaultId: VAULT_ID,
+      deviceId: RECOVERED_DEVICE_ID,
+      deviceSigningKey: recovered.privateKey,
+      baseVaultHead: 'previous-head',
+      targetPublicSigningKey: recovered.publicKeyB64Url,
+      recoveryCodeSetId: SET_ID,
+      recoveryCodeCommitment: 'commitment-a',
+    });
+
+    const next = applyDeviceTrustOperation(
+      new Map([[RECOVERED_DEVICE_ID, revokedDevice]]),
+      recover.signedOperation,
+      {
+        kind: 'recover',
+        device: {
+          vaultId: VAULT_ID,
+          deviceId: RECOVERED_DEVICE_ID,
+          publicSigningKey: recovered.publicKeyB64Url,
+          deviceNameEncrypted: '',
+          addedByDeviceId: null,
+          addedAt: recover.signedOperation.body.createdAtClient,
+          trustEpoch: 0,
+          status: 'trusted',
+          revokedAt: null,
+          revokedByDeviceId: null,
+        },
+      },
+    );
+
+    expect(next.get(RECOVERED_DEVICE_ID)).toMatchObject({
+      status: 'trusted',
+      publicSigningKey: recovered.publicKeyB64Url,
+      trustEpoch: 0,
+      revokedAt: null,
+      revokedByDeviceId: null,
+    });
   });
 
   it('rejects recover_device when the commitment is not in the active set', async () => {

@@ -17,6 +17,23 @@ import type { VaultOperationRow } from './vaultOpLogRpcTypes';
 const FUNCTION_NAME = 'vault-recovery-codes';
 const RECOVERY_CODE_BODY_LENGTH = 26;
 const RECOVERY_CODE_ALPHABET_PATTERN = /^[A-Z2-9]{26}$/u;
+const UTF8_BOM = '\uFEFF';
+const RECOVERY_CODE_DOWNLOAD_COPY = {
+  de: {
+    title: 'Singra Vault Recovery-Codes für Gerätezugriff',
+    intro: 'Diese Codes sind die letzte Wiederherstellungsmöglichkeit, wenn kein vertrauenswürdiges Gerät mehr verfügbar ist.',
+    singleUse: 'Jeder Code ist nur einmal nutzbar. Der Singra Support kann diese Codes nicht wiederherstellen.',
+    created: 'Erstellt',
+    keepSafe: 'Bewahre diese Datei offline und sicher auf. Wer Masterpasswort, Kontozugriff und einen dieser Codes besitzt, kann ein neues Gerät für diesen Tresor freischalten.',
+  },
+  en: {
+    title: 'Singra Vault recovery codes for device access',
+    intro: 'These codes are the last recovery option if no trusted device is available anymore.',
+    singleUse: 'Each code can be used only once. Singra Support cannot restore these codes.',
+    created: 'Created',
+    keepSafe: 'Keep this file offline and secure. Anyone with the master password, account access, and one of these codes can authorize a new device for this vault.',
+  },
+} as const;
 
 export interface VaultRecoveryCodeStatus {
   readonly hasActiveSet: boolean;
@@ -116,19 +133,25 @@ export function formatVaultRecoveryCodesDownload(input: {
   readonly setId: string;
   readonly codes: readonly string[];
   readonly createdAt: string;
+  readonly language?: string;
 }): string {
+  const copy = RECOVERY_CODE_DOWNLOAD_COPY[resolveRecoveryCodeDownloadLanguage(input.language)];
   return [
-    'Singra Vault Recovery-Codes fuer Geraetezugriff',
+    `${UTF8_BOM}${copy.title}`,
     '',
-    'Diese Codes sind die letzte Wiederherstellungsmoeglichkeit, wenn kein vertrauenswuerdiges Geraet mehr verfuegbar ist.',
-    'Jeder Code ist nur einmal nutzbar. Singra Support kann diese Codes nicht wiederherstellen.',
+    copy.intro,
+    copy.singleUse,
     '',
     `Vault-ID: ${input.vaultId}`,
     `Recovery-Set-ID: ${input.setId}`,
-    `Erstellt: ${input.createdAt}`,
+    `${copy.created}: ${input.createdAt}`,
     '',
     ...input.codes.map((code, index) => `${index + 1}. ${code}`),
     '',
-    'Bewahre diese Datei offline und sicher auf. Wer Masterpasswort, Kontozugriff und einen dieser Codes besitzt, kann ein neues Geraet fuer diesen Tresor freischalten.',
+    copy.keepSafe,
   ].join('\n');
+}
+
+function resolveRecoveryCodeDownloadLanguage(language: string | undefined): keyof typeof RECOVERY_CODE_DOWNLOAD_COPY {
+  return language?.toLowerCase().startsWith('de') ? 'de' : 'en';
 }

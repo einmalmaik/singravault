@@ -110,11 +110,19 @@ export function applyDeviceTrustOperation(
         throw new VaultSignatureError('signed_body_invalid', 'payload does not match recover_device op');
       }
     }
-    if (next.has(payload.device.deviceId)) {
-      throw new VaultSignatureError('signed_body_invalid', 'device already present in trust list');
-    }
     if (payload.device.vaultId !== op.body.vaultId) {
       throw new VaultSignatureError('signed_body_invalid', 'added device belongs to another vault');
+    }
+    const existingDevice = next.get(payload.device.deviceId);
+    if (existingDevice) {
+      if (op.body.opType !== 'recover_device' || existingDevice.status === 'trusted') {
+        throw new VaultSignatureError('signed_body_invalid', 'device already present in trust list');
+      }
+      // SECURITY: Recovery is the only path that may revive a revoked device id.
+      // The recovered public key is signed by that device and bound to a consumed
+      // recovery-code commitment, so future operations must verify against this key.
+      next.set(payload.device.deviceId, payload.device);
+      return next;
     }
     next.set(payload.device.deviceId, payload.device);
     return next;

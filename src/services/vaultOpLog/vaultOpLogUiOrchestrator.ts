@@ -466,7 +466,9 @@ function buildBootstrapTrustList(
 ): Map<string, TrustedDeviceRecordV1> {
   const bootstrapDevices = new Map<string, TrustedDeviceRecordV1>();
   for (const device of devices.values()) {
-    if (device.addedByDeviceId !== null && device.addedByDeviceId !== device.deviceId) {
+    const isBootstrapDevice = (device.addedOpId ?? null) === null
+      && (device.addedByDeviceId === null || device.addedByDeviceId === device.deviceId);
+    if (!isBootstrapDevice) {
       continue;
     }
 
@@ -616,7 +618,7 @@ async function loadTrustList(
   try {
     const { data, error } = await input.trustClient
       .from('vault_device_trust_records')
-      .select('vault_id,device_id,public_signing_key,device_name_encrypted,added_by_device_id,added_at,trust_epoch,status,revoked_at,revoked_by_device_id')
+      .select('vault_id,device_id,public_signing_key,device_name_encrypted,added_by_device_id,added_op_id,added_at,trust_epoch,status,revoked_at,revoked_by_device_id')
       .eq('vault_id', input.vaultId);
 
     if (error || !Array.isArray(data) || data.length === 0) {
@@ -695,6 +697,7 @@ function mapTrustRow(row: unknown, vaultId: string): TrustedDeviceRecordV1 | nul
     publicSigningKey,
     deviceNameEncrypted,
     addedByDeviceId: readNullableString(value, 'added_by_device_id'),
+    addedOpId: readNullableString(value, 'added_op_id'),
     addedAt,
     trustEpoch,
     status,

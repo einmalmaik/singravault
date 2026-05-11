@@ -321,6 +321,7 @@ DECLARE
     _current_head_row public.vault_op_log_heads%ROWTYPE;
     _next_sequence BIGINT;
     _existing_op public.vault_operations%ROWTYPE;
+    _existing_trust public.vault_device_trust_records%ROWTYPE;
     _code public.vault_recovery_codes%ROWTYPE;
     _request public.vault_pending_device_requests%ROWTYPE;
     _public_key TEXT;
@@ -401,10 +402,14 @@ BEGIN
        OR _public_key <> COALESCE(p_op->'signed_body'->>'targetPublicSigningKey', '') THEN
         RAISE EXCEPTION 'Recovered device key mismatch';
     END IF;
-    IF EXISTS (
-        SELECT 1 FROM public.vault_device_trust_records
-        WHERE vault_id = _vault_id AND device_id = _record_id
-    ) THEN
+    SELECT * INTO _existing_trust
+    FROM public.vault_device_trust_records
+    WHERE vault_id = _vault_id AND device_id = _record_id
+    FOR UPDATE;
+    IF _existing_trust.vault_id IS NOT NULL AND _existing_trust.user_id <> p_user_id THEN
+        RAISE EXCEPTION 'Device trust row belongs to another caller';
+    END IF;
+    IF _existing_trust.vault_id IS NOT NULL AND _existing_trust.status = 'trusted' THEN
         RAISE EXCEPTION 'Device already present in trust list';
     END IF;
 
@@ -445,23 +450,38 @@ BEGIN
         NULLIF(p_op->>'intent_id', '')::UUID, NULLIF(p_op->>'rebased_from_op_id', '')::UUID
     );
 
-    INSERT INTO public.vault_device_trust_records (
-        vault_id, device_id, user_id, public_signing_key,
-        device_name_encrypted, added_by_device_id, added_op_id,
-        added_at, trust_epoch, status
-    )
-    VALUES (
-        _vault_id,
-        _record_id,
-        p_user_id,
-        _public_key,
-        COALESCE(p_device_trust_payload->'device'->>'device_name_encrypted', ''),
-        NULL,
-        _op_id,
-        _created_at_client,
-        0,
-        'trusted'
-    );
+    IF _existing_trust.vault_id IS NOT NULL THEN
+        UPDATE public.vault_device_trust_records
+        SET public_signing_key = _public_key,
+            device_name_encrypted = COALESCE(p_device_trust_payload->'device'->>'device_name_encrypted', ''),
+            added_by_device_id = NULL,
+            added_op_id = _op_id,
+            added_at = _created_at_client,
+            trust_epoch = 0,
+            status = 'trusted',
+            revoked_at = NULL,
+            revoked_by_device_id = NULL,
+            revoked_op_id = NULL
+        WHERE vault_id = _vault_id AND device_id = _record_id AND user_id = p_user_id;
+    ELSE
+        INSERT INTO public.vault_device_trust_records (
+            vault_id, device_id, user_id, public_signing_key,
+            device_name_encrypted, added_by_device_id, added_op_id,
+            added_at, trust_epoch, status
+        )
+        VALUES (
+            _vault_id,
+            _record_id,
+            p_user_id,
+            _public_key,
+            COALESCE(p_device_trust_payload->'device'->>'device_name_encrypted', ''),
+            NULL,
+            _op_id,
+            _created_at_client,
+            0,
+            'trusted'
+        );
+    END IF;
 
     UPDATE public.vault_recovery_codes
     SET is_used = TRUE,
