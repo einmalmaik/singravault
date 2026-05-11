@@ -1,3 +1,64 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+
+/**
+ * @fileoverview Account Delete Edge Function
+ *
+ * Diese Edge Function implementiert die vollständige Kontolöschung.
+ * Sie ist ein kritischer und unwiderruflicher Vorgang, der alle Benutzerdaten
+ * einschließlich Vault-Daten, Anhänge und Auth-Records löscht.
+ *
+ * ## Lösch-Umfang
+ *
+ * Folgende Daten werden gelöscht:
+ * - Supabase Auth User (via `delete_my_account` RPC)
+ * - Alle Tabellen mit user_id Foreign Key (CASCADE)
+ * - Storage-Objekte im `vault-attachments` Bucket
+ *
+ * ## Sicherheitsanforderungen
+ *
+ * 1. **Authentifizierung**: Gültiger Bearer Token erforderlich
+ * 2. **2FA-Challenge**: Falls 2FA aktiviert, muss Challenge-ID übergeben werden
+ * 3. **Re-Authentifizierung**: Letzte Auth darf nicht zu lange her sein
+ * 4. **Rate-Limiting**: Max. 3 Versuche pro Stunde
+ *
+ * ## Lösch-Flow
+ *
+ * ```
+ * 1. Token validieren
+ * 2. Rate-Limit prüfen
+ * 3. 2FA-Challenge validieren (falls erforderlich)
+ * 4. delete_my_account RPC aufrufen (atomar)
+ * 5. Storage-Objekte löschen (best-effort)
+ * 6. Ergebnis zurückgeben
+ * ```
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Aufgerufen via `invokeAuthedFunction('account-delete', {...})` aus:
+ * - `src/components/settings/AccountSettings.tsx` - "Account löschen" Button
+ *
+ * ## Fehlerbehandlung
+ *
+ * | Fehlercode                    | Bedeutung                                    |
+ * |-------------------------------|---------------------------------------------|
+ * | `AUTH_REQUIRED`               | Kein oder ungültiger Token                   |
+ * | `REAUTH_REQUIRED`             | Session zu alt, erneuter Login nötig         |
+ * | `ACCOUNT_DELETE_2FA_REQUIRED` | 2FA-Challenge fehlt                          |
+ * | `ACCOUNT_DELETE_INCOMPLETE`   | Teilweise Löschung (DB ok, Storage fehlerhaft)|
+ * | `ACCOUNT_DELETE_FAILED`       | Löschung fehlgeschlagen                      |
+ *
+ * ## Storage-Cleanup
+ *
+ * Storage-Objekte werden nach dem Account-Löschen entfernt:
+ * - Paginierter Abruf aller Objekte unter `{userId}/`
+ * - Batch-Löschung (100 Objekte pro Batch)
+ * - Best-Effort: Fehler werden geloggt, aber nicht geworfen
+ *
+ * @see src/components/settings/AccountSettings.tsx - Frontend Account-Löschung
+ * @see supabase/migrations - delete_my_account RPC Definition
+ */
+
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCorsHeaders } from "../_shared/cors.ts";
@@ -8,9 +69,29 @@ import {
     resetAuthRateLimit,
 } from "../_shared/authRateLimit.ts";
 
+// ============================================================================
+// Konfiguration
+// ============================================================================
+
+/**
+ * Supabase-URL aus Umgebungsvariablen.
+ */
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+
+/**
+ * Service Role Key für Admin-Operationen.
+ */
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+/**
+ * Anonymer Schlüssel für User-scoped RPC-Aufrufe.
+ */
 const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+/**
+ * Admin-Client für Storage-Cleanup.
+ * persistSession deaktiviert, da Edge Function.
+ */
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
     auth: {
         persistSession: false,
@@ -18,10 +99,30 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
     },
 });
 
+/**
+ * Bucket-Name für Vault-Anhänge.
+ */
 const ATTACHMENTS_BUCKET = "vault-attachments";
+
+/**
+ * Seitengröße beim Auflisten von Storage-Objekten.
+ */
 const STORAGE_PAGE_SIZE = 100;
+
+/**
+ * Batch-Größe beim Löschen von Storage-Objekten.
+ */
 const REMOVE_BATCH_SIZE = 100;
 
+// ============================================================================
+// Request Handler
+// ============================================================================
+
+/**
+ * Haupteinstiegspunkt der Edge Function.
+ *
+ * Nur POST-Methode erlaubt. OPTIONS für CORS-Preflight.
+ */
 Deno.serve(async (req) => {
     const corsHeaders = getCorsHeaders(req, { allowedMethods: "POST, OPTIONS" });
     const headers = new Headers({
