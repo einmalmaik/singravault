@@ -77,3 +77,4 @@ src-tauri/*rettung*.txt
 /.minimax
 /docs/integration Konzept
 temp_fingerprint.txt
+/.tmp
