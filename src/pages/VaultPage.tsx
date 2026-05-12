@@ -523,11 +523,13 @@ export default function VaultPage() {
                             )}
                             <VaultAddDeviceBanner />
                             <VaultPendingDevicesPanel />
-                            {opLogUiLoading && (
-                                <p className="text-xs text-muted-foreground animate-pulse">
-                                    {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
-                                </p>
-                            )}
+                            <div className="min-h-5" aria-live="polite">
+                                {opLogUiLoading && (
+                                    <p className="text-xs text-muted-foreground animate-pulse">
+                                        {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
+                                    </p>
+                                )}
+                            </div>
                             {opLogUiError && (
                                 <p className="text-xs text-destructive">
                                     {opLogUiError}
