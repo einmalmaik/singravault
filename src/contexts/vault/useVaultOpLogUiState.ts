@@ -26,9 +26,19 @@ import {
 } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
 import {
   recoverVaultOpLogDeviceIdentity,
+  recoverVaultOpLogDeviceIdentityFromOfflineCache,
 } from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
+import {
+  loadVaultOpLogDeviceSigningKey,
+} from '@/services/vaultOpLog/vaultOpLogDeviceSigningKeyStore';
+import {
+  doesDeviceSigningKeyMatchPublicKey,
+} from '@/services/vaultOpLog/operationSigningService';
+import { syncPendingVaultOpLogOperations } from '@/services/vaultOpLog/vaultOpLogPendingSyncService';
+import { resolveVaultOpLogDefaultVaultId } from '@/services/vaultOpLog/vaultOpLogDefaultVaultResolver';
 import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
 import type { VaultProviderState } from './useVaultProviderState';
+import type { VaultOpLogDeviceIdentity } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
 
 export interface VaultOpLogUiState {
   readonly vaultId: string | null;
@@ -80,7 +90,7 @@ export function useVaultOpLogUiState(
 
     try {
       const vaultId = vaultProviderState.vaultMigrationKeyContext?.vaultId
-        ?? await loadDefaultVaultId(userId);
+        ?? await resolveVaultOpLogDefaultVaultId(userId);
       if (!vaultId) {
         setVaultId(null);
         setUiView(null);
@@ -90,16 +100,19 @@ export function useVaultOpLogUiState(
       }
       setVaultId(vaultId);
 
-      const deviceIdentity = loadVaultOpLogDeviceIdentity()
-        ?? await recoverVaultOpLogDeviceIdentity({
-          userId,
+      if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+        await syncPendingVaultOpLogOperations({
+          rpcClient: supabase as unknown as SupabaseRpcClient,
           vaultId,
-          trustClient: supabase,
-        });
+        }).catch(() => undefined);
+      }
+
+      const deviceIdentity = await loadVerifiedLocalDeviceIdentity(userId, vaultId);
 
       const result = await loadVaultOpLogUiState({
         rpcClient: supabase as unknown as SupabaseRpcClient,
         trustClient: supabase as unknown as VaultOpLogTrustReadClient,
+        userId,
         vaultId,
         deviceId: deviceIdentity?.deviceId,
         publicSigningKeyB64Url: deviceIdentity?.publicSigningKeyB64Url,
@@ -229,17 +242,42 @@ export function useVaultOpLogUiState(
   };
 }
 
-async function loadDefaultVaultId(userId: string): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('vaults')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('is_default', true)
-    .maybeSingle();
-
-  if (error || typeof data?.id !== 'string') {
+async function loadVerifiedLocalDeviceIdentity(
+  userId: string,
+  vaultId: string,
+): Promise<VaultOpLogDeviceIdentity | null> {
+  const storedIdentity = loadVaultOpLogDeviceIdentity();
+  const identity = storedIdentity
+    ?? (isRuntimeOffline()
+      ? await recoverVaultOpLogDeviceIdentityFromOfflineCache({
+          userId,
+          vaultId,
+        })
+      : await recoverVaultOpLogDeviceIdentity({
+          userId,
+          vaultId,
+          trustClient: supabase,
+        }));
+  if (!identity) {
     return null;
   }
 
-  return data.id;
+  const signingKey = await loadVaultOpLogDeviceSigningKey({
+    userId,
+    vaultId,
+    deviceId: identity.deviceId,
+  });
+  if (!signingKey) {
+    return null;
+  }
+
+  const keyMatchesIdentity = await doesDeviceSigningKeyMatchPublicKey(
+    signingKey,
+    identity.publicSigningKeyB64Url,
+  ).catch(() => false);
+  return keyMatchesIdentity ? identity : null;
+}
+
+function isRuntimeOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
 }

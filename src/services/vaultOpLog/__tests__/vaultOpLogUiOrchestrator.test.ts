@@ -8,6 +8,12 @@ import {
   DEVICE_SIGNATURE_SCHEMA_V1,
   type VaultOperationSignedBodyV1,
 } from '../types';
+import {
+  buildRecoverDeviceOperation,
+  buildRecoveryCodesRotateOperation,
+  toVaultOperationRowFromSigned,
+} from '../vaultOpLogOperationBuilder';
+import { generateDeviceSigningKeyPair } from '../operationSigningService';
 import type { SupabaseRpcClient } from '../vaultOpLogRepository';
 import type { VaultOperationRow, VaultRecordRow } from '../vaultOpLogRpcTypes';
 import type { VaultOpLogTrustReadClient } from '../vaultOpLogUiOrchestrator';
@@ -393,6 +399,92 @@ describe('vaultOpLogUiOrchestrator', () => {
     expect(result.error).toBeNull();
     expect(result.localVaultState?.trustedDevicesById.get('device-1')?.status).toBe('revoked');
     expect(result.localVaultState?.trustedDevicesById.get('device-2')?.status).toBe('trusted');
+  });
+
+  it('replays recovery device operations from final trust without treating the recovered device as bootstrap trust', async () => {
+    const trusted = await generateDeviceSigningKeyPair();
+    const recovered = await generateDeviceSigningKeyPair();
+    const rotate = await buildRecoveryCodesRotateOperation({
+      opId: crypto.randomUUID(),
+      intentId: crypto.randomUUID(),
+      rebasedFromOpId: null,
+      vaultId: 'vault-1',
+      deviceId: 'device-1',
+      deviceSigningKey: trusted.privateKey,
+      trustEpoch: 0,
+      baseVaultHead: null,
+      recoveryCodeSetId: '11111111-1111-4111-8111-111111111111',
+      recoveryCodeCommitments: ['commitment-a'],
+    });
+    const recover = await buildRecoverDeviceOperation({
+      opId: crypto.randomUUID(),
+      intentId: crypto.randomUUID(),
+      rebasedFromOpId: null,
+      vaultId: 'vault-1',
+      deviceId: 'device-recovered',
+      deviceSigningKey: recovered.privateKey,
+      baseVaultHead: rotate.resultingVaultHead,
+      targetPublicSigningKey: recovered.publicKeyB64Url,
+      recoveryCodeSetId: '11111111-1111-4111-8111-111111111111',
+      recoveryCodeCommitment: 'commitment-a',
+    });
+    const rotateRow = toVaultOperationRowFromSigned(rotate.signedOperation, rotate.resultingVaultHead, {
+      sequenceNumber: 1,
+      receivedAtServer: '2026-05-12T00:00:00.000Z',
+    });
+    const recoverRow = toVaultOperationRowFromSigned(recover.signedOperation, recover.resultingVaultHead, {
+      sequenceNumber: 2,
+      receivedAtServer: '2026-05-12T00:00:01.000Z',
+    });
+    const client = createMockRpcClient([[rotateRow, recoverRow]]);
+    const trustClient = createTrustClient([
+      {
+        vault_id: 'vault-1',
+        device_id: 'device-1',
+        public_signing_key: trusted.publicKeyB64Url,
+        device_name_encrypted: '',
+        added_by_device_id: null,
+        added_op_id: null,
+        added_at: '2025-01-01T00:00:00Z',
+        trust_epoch: 0,
+        status: 'trusted',
+        revoked_at: null,
+        revoked_by_device_id: null,
+      },
+      {
+        vault_id: 'vault-1',
+        device_id: 'device-recovered',
+        public_signing_key: recovered.publicKeyB64Url,
+        device_name_encrypted: '',
+        added_by_device_id: null,
+        // Regression guard for locally cached rows written before recover_device
+        // entries carried addedOpId. The OpLog target still proves this is not
+        // a bootstrap device.
+        added_op_id: null,
+        added_at: '2026-05-12T00:00:01.000Z',
+        trust_epoch: 0,
+        status: 'trusted',
+        revoked_at: null,
+        revoked_by_device_id: null,
+      },
+    ]);
+
+    const result = await loadVaultOpLogUiState({
+      rpcClient: client,
+      trustClient,
+      vaultId: 'vault-1',
+      deviceId: 'device-recovered',
+      publicSigningKeyB64Url: recovered.publicKeyB64Url,
+      vaultEncryptionKey: new Uint8Array(32),
+      requireLocalDeviceTrust: true,
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.localVaultState?.trustedDevicesById.get('device-recovered')).toMatchObject({
+      status: 'trusted',
+      publicSigningKey: recovered.publicKeyB64Url,
+      addedOpId: recover.signedOperation.body.opId,
+    });
   });
 
   it('does not load vault records when UI state requires local device trust and the local identity is missing', async () => {

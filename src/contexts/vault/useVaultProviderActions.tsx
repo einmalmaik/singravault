@@ -662,7 +662,7 @@ export function useVaultProviderActions(): VaultContextType {
     state,
     user,
     decryptTrustedRecoverySnapshotItem,
-    opLogUiRefresh: opLogUiState.refresh,
+    opLogUiRefresh: opLogUiState.refresh, localVaultState: opLogUiState.localVaultState,
   });
   const collectionOpLogActions = useCollectionOpLogActions(state, user);
   return buildVaultContextValue(state, {

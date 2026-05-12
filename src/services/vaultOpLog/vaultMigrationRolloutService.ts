@@ -9,6 +9,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
+import { getOfflineSnapshot, isAppOnline } from '@/services/offlineVaultService';
 import {
   loadMigrationCheckpoint,
   loadMigrationCompletionMarker,
@@ -20,6 +21,7 @@ import {
   loadVaultOpLogUiState,
   type VaultOpLogTrustReadClient,
 } from './vaultOpLogUiOrchestrator';
+import { listVerifiedVaultOpLogOfflineCachesForUser } from './vaultOpLogOfflineStore';
 
 export type VaultMigrationRolloutStatus =
   | 'notNeeded'
@@ -45,6 +47,12 @@ export type RemoteOpLogMigrationVerifier = (input: {
   readonly vaultEncryptionKey: Uint8Array;
 }) => Promise<{ readonly verified: boolean; readonly error: string | null }>;
 
+export type OfflineOpLogMigrationVerifier = (input: {
+  readonly userId: string;
+  readonly vaultId: string;
+  readonly vaultEncryptionKey: Uint8Array;
+}) => Promise<{ readonly verified: boolean; readonly error: string | null }>;
+
 interface VaultMigrationRolloutClient {
   readonly from: typeof supabase.from;
 }
@@ -57,6 +65,8 @@ export interface EvaluateVaultMigrationGateInput {
   readonly checkpointStorage?: MigrationStorage;
   readonly vaultEncryptionKey?: Uint8Array;
   readonly remoteOpLogVerifier?: RemoteOpLogMigrationVerifier;
+  readonly offlineOpLogVerifier?: OfflineOpLogMigrationVerifier;
+  readonly offlineVaultIdResolver?: (userId: string) => Promise<string | null>;
 }
 
 export async function evaluateVaultMigrationGate(
@@ -66,6 +76,10 @@ export async function evaluateVaultMigrationGate(
   const rpcClient = input.rpcClient ?? supabase;
 
   try {
+    if (!isAppOnline()) {
+      return evaluateOfflineMigrationGate(input);
+    }
+
     const legacySignals = await loadLegacyVaultSignals(client, input.userId);
     if (!legacySignals.vaultId) {
       return legacySignals.hasLegacyRows
@@ -126,6 +140,113 @@ export async function evaluateVaultMigrationGate(
   } catch {
     return block('preflightFailed', null, 'migration preflight could not be evaluated');
   }
+}
+
+async function evaluateOfflineMigrationGate(
+  input: EvaluateVaultMigrationGateInput,
+): Promise<VaultMigrationGateResult> {
+  const vaultIds = await resolveOfflineVaultIds(input);
+  if (vaultIds.length === 0) {
+    return block('preflightFailed', null, 'offline migration gate has no locally known vault id');
+  }
+
+  if (!input.vaultEncryptionKey) {
+    return block(
+      'preflightFailed',
+      vaultIds[0],
+      'offline migration gate requires vault key to verify local op-log cache',
+    );
+  }
+
+  const verifier = input.offlineOpLogVerifier ?? verifyOfflineOpLogMigration;
+  let lastVerificationError: string | null = null;
+
+  for (const vaultId of vaultIds) {
+    const completionMarker = loadMigrationCompletionMarker(vaultId, input.checkpointStorage);
+    if (completionMarker) {
+      return allow('verified', vaultId);
+    }
+
+    const checkpoint = loadMigrationCheckpoint(vaultId, input.checkpointStorage);
+    if (checkpoint) {
+      return gateFromCheckpoint(checkpoint.state, vaultId);
+    }
+
+    const verified = await verifier({
+      userId: input.userId,
+      vaultId,
+      vaultEncryptionKey: input.vaultEncryptionKey,
+    });
+    if (verified.verified) {
+      return allow('verified', vaultId);
+    }
+    lastVerificationError = verified.error ?? lastVerificationError;
+  }
+
+  return block(
+    'preflightFailed',
+    vaultIds[0],
+    lastVerificationError ?? 'offline op-log cache could not be verified',
+  );
+}
+
+async function resolveOfflineVaultIds(
+  input: EvaluateVaultMigrationGateInput,
+): Promise<readonly string[]> {
+  const candidates: string[] = [];
+
+  const explicitVaultId = input.offlineVaultIdResolver
+    ? await input.offlineVaultIdResolver(input.userId)
+    : null;
+  pushVaultId(candidates, explicitVaultId);
+
+  const snapshot = await getOfflineSnapshot(input.userId).catch(() => null);
+  pushVaultId(candidates, snapshot?.vaultId);
+
+  const offlineCaches = await listVerifiedVaultOpLogOfflineCachesForUser({ userId: input.userId }).catch(() => []);
+  for (const cache of offlineCaches) {
+    pushVaultId(candidates, cache.vaultId);
+  }
+
+  return candidates;
+}
+
+function pushVaultId(target: string[], vaultId: unknown): void {
+  if (typeof vaultId !== 'string' || vaultId.length === 0 || target.includes(vaultId)) {
+    return;
+  }
+  target.push(vaultId);
+}
+
+async function verifyOfflineOpLogMigration(input: {
+  readonly userId: string;
+  readonly vaultId: string;
+  readonly vaultEncryptionKey: Uint8Array;
+}): Promise<{ readonly verified: boolean; readonly error: string | null }> {
+  const offlineRpcClient: SupabaseRpcClient = {
+    rpc: async () => ({
+      data: null,
+      error: { code: 'OFFLINE', message: 'offline op-log migration verification uses local cache only' },
+    }),
+  };
+  const result = await loadVaultOpLogUiState({
+    rpcClient: offlineRpcClient,
+    userId: input.userId,
+    vaultId: input.vaultId,
+    vaultEncryptionKey: input.vaultEncryptionKey,
+  });
+
+  if (result.error || !result.localVaultState) {
+    return { verified: false, error: result.error ?? 'offline_op_log_state_missing' };
+  }
+
+  const hasVerifiedManifest = Array.from(result.localVaultState.recordsById.values()).some((record) => (
+    record.recordState === 'verified' && record.record.recordType === 'manifest'
+  ));
+
+  return hasVerifiedManifest
+    ? { verified: true, error: null }
+    : { verified: false, error: 'offline_op_log_manifest_missing' };
 }
 
 async function verifyRemoteOpLogMigration(input: {

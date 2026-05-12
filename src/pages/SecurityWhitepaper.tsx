@@ -44,8 +44,8 @@ interface MatrixRow {
   status?: Status;
 }
 
-const WHITEPAPER_VERSION = '2026.04.28-tech-1';
-const WHITEPAPER_LAST_UPDATED = '2026-04-28';
+const WHITEPAPER_VERSION = '2026.05.12-tech-1';
+const WHITEPAPER_LAST_UPDATED = '2026-05-12';
 
 const statusVariant: Record<Status, 'default' | 'secondary' | 'destructive'> = {
   BELEGT: 'default',
@@ -117,6 +117,9 @@ function buildSections(language: 'de' | 'en'): Section[] {
         de
           ? 'Das Whitepaper macht keine pauschalen Sicherheitsversprechen. Grenzen wie Same-Origin-XSS, Malware, entsperrter Client, Recovery-/Emergency-Pfade und fehlender externer Audit sind Teil des Modells.'
           : 'This whitepaper does not claim the product is unbreakable or fully secure. Limits such as same-origin XSS, malware, unlocked clients, recovery/emergency paths, and the missing external audit are part of the model.',
+        de
+          ? 'Seit dem OpLog-/Device-Trust-Branch ist Account-Login nicht mehr gleich Vault-Schreibvertrauen: normale Vault-Änderungen werden als signierte Operation eines verifizierten Geräts modelliert und vor Egress lokal geprüft.'
+          : 'Since the OpLog/device-trust branch, account login is no longer equivalent to vault write trust: normal vault changes are modeled as signed operations from a verified device and locally checked before egress.',
       ],
       evidence: [
         ev('src/services/cryptoService.ts', 'encryptVaultItem(), decryptVaultItem()', 'sv-vault-v1', 'src/services/vaultItemCryptoStorage.test.ts', de ? 'Entsperrter Client und lokales Gerät bleiben Vertrauensgrenzen.' : 'Unlocked clients and local devices remain trust boundaries.', 'BELEGT'),
@@ -128,8 +131,8 @@ function buildSections(language: 'de' | 'en'): Section[] {
       summary: de ? 'Beschreibt belegte Plattformen, Core/Premium-Grenzen und Audit-Status.' : 'Describes evidenced platforms, Core/Premium boundary, and audit status.',
       body: [
         de
-          ? 'Im Scope: Core-Vault-Einträge, Notizen, TOTP-Payloads, OPAQUE-Login, Vault Unlock, Offline-Cache, Integrity/Quarantine, RLS/Storage, Sessions, WebAuthn/Passkeys, Import/Export und dokumentierte Premium-Pfade für Dateien, Sharing und Emergency Access.'
-          : 'In scope: core vault items, notes, TOTP payloads, OPAQUE login, vault unlock, offline cache, integrity/quarantine, RLS/storage, sessions, WebAuthn/passkeys, import/export, and documented Premium paths for files, sharing, and Emergency Access.',
+          ? 'Im Scope: Core-Vault-Einträge, Notizen, TOTP-Payloads, OPAQUE-Login, Vault Unlock, Vault Operation Log, Device-Trust, Add-Device, Device-Trust-Recovery-Codes, Offline-Cache, Quarantäne, RLS/Storage, Sessions, WebAuthn/Passkeys, Import/Export und dokumentierte Premium-Pfade für Dateien, Sharing und Emergency Access.'
+          : 'In scope: core vault items, notes, TOTP payloads, OPAQUE login, vault unlock, vault operation log, device trust, add-device, device-trust recovery codes, offline cache, quarantine, RLS/storage, sessions, WebAuthn/passkeys, import/export, and documented Premium paths for files, sharing, and Emergency Access.',
         de
           ? 'Nicht belegt als externer Audit: eine unabhängige, vollständige Security-Prüfung. Belegt sind fokussierte interne Dokumente, Unit-/Integrationstests und einzelne manuelle Runtime-Prüfungen.'
           : 'Not evidenced as external audit: an independent full security review. Evidence exists for focused internal docs, unit/integration tests, and selected manual runtime checks.',
@@ -145,8 +148,8 @@ function buildSections(language: 'de' | 'en'): Section[] {
       summary: de ? 'Assets, Angreifer und explizite Grenzen.' : 'Assets, attackers, and explicit boundaries.',
       body: [
         de
-          ? 'Assets: Account-/Master-/Vault-Passwort, User/Vault Key, Device Keys, encrypted_user_key, Vault Items, Notes, TOTP-Secrets, Datei-Keys, Emergency-Key-Material, Sharing-Keys, Sessions/Refresh Tokens, Recovery/Backup Codes, Offline-Cache und Integrity-Baselines.'
-          : 'Assets: account/master/vault password, user/vault key, device keys, encrypted_user_key, vault items, notes, TOTP secrets, file keys, emergency key material, sharing keys, sessions/refresh tokens, recovery/backup codes, offline cache, and integrity baselines.',
+          ? 'Assets: Account-/Master-/Vault-Passwort, User/Vault Key, Device Keys, Device-Signing-Keys, encrypted_user_key, Vault Items, Notes, TOTP-Secrets, Datei-Keys, Emergency-Key-Material, Sharing-Keys, Sessions/Refresh Tokens, Recovery/Backup Codes, Device-Trust-Recovery-Codes, Offline-Cache, Operation Log und Trust-State.'
+          : 'Assets: account/master/vault password, user/vault key, device keys, device-signing keys, encrypted_user_key, vault items, notes, TOTP secrets, file keys, emergency key material, sharing keys, sessions/refresh tokens, recovery/backup codes, device-trust recovery codes, offline cache, operation log, and trust state.',
         de
           ? 'Angreifer: DB- oder Storage-Leser, bösartiger Server/Insider, Netzwerkangreifer, Same-Origin-XSS, Malware auf entsperrtem Gerät, kompromittierter Trustee, gestohlene Session, manipulierte Vault-Daten und gestohlene Exporte.'
           : 'Attackers: database or storage readers, malicious server/insider, network attacker, same-origin XSS, malware on an unlocked device, compromised trustee, stolen session, tampered vault data, and stolen exports.',
@@ -329,34 +332,63 @@ function buildSections(language: 'de' | 'en'): Section[] {
           : 'Memory cleaning in JavaScript is best-effort: Uint8Array.fill(0), SecureBuffer.destroy(), and non-extractable CryptoKeys help but do not guarantee safe RAM.',
       ],
       evidence: [
-        ev('src/services/offlineVaultService.ts', 'saveOfflineSnapshot(), syncOfflineMutations()', 'IndexedDB snapshot', 'src/services/__tests__/offlineVaultService.test.ts', de ? 'Kompromittierter lokaler Browser kann Offline-Daten abfragen.' : 'Compromised local browser can query offline data.', 'BELEGT'),
+        ev('src/services/offlineVaultService.ts', 'saveOfflineSnapshot(), syncOfflineMutations()', 'IndexedDB snapshot', 'src/services/__tests__/offlineVaultService.test.ts', de ? 'Offline-Snapshot-Overlay braucht vor Release erneute Prüfung; kompromittierter lokaler Browser kann Offline-Daten abfragen.' : 'Offline snapshot overlay needs another release check; compromised local browser can query offline data.', 'TEILWEISE'),
         ev('src/services/clipboardService.ts', 'writeClipboard()', '30s timer', 'src/test/edge-cases.test.ts', de ? 'Clipboard-History und Malware sind außerhalb der App-Kontrolle.' : 'Clipboard history and malware are outside app control.', 'BELEGT'),
         ev('src/services/secureBuffer.ts', 'SecureBuffer.destroy()', undefined, 'src/services/secureBuffer.test.ts', de ? 'JS-Strings und GC sind nicht zuverlässig löschbar.' : 'JS strings and GC cannot be reliably wiped.', 'BELEGT'),
       ],
     },
     {
       id: 'integrity-categories',
-      title: de ? '21-22. Manipulationserkennung, Quarantäne und Kategorien' : '21-22. Tamper Detection, Quarantine, and Categories',
-      summary: de ? 'AES-GCM Auth Tags und lokale Baselines erkennen Manipulationen; Freshness bleibt begrenzt.' : 'AES-GCM auth tags and local baselines detect tampering; freshness remains limited.',
+      title: de ? '21-24. Vault OpLog, Device-Trust, Quarantäne und Kategorien' : '21-24. Vault OpLog, Device Trust, Quarantine, and Categories',
+      summary: de ? 'Das aktuelle Integrationsmodell nutzt signierte Operationen vertrauenswürdiger Geräte statt lokaler Snapshot-Heuristiken.' : 'The current integration model uses signed operations from trusted devices instead of local snapshot heuristics.',
       body: [
         de
-          ? 'AES-GCM bindet Ciphertext und AAD. Zusätzlich berechnet vaultIntegrityService Digests über Items und Kategorien, speichert verschlüsselte lokale Baselines und kann verdächtige Items in Quarantäne isolieren.'
-          : 'AES-GCM binds ciphertext and AAD. Additionally, vaultIntegrityService computes digests over items and categories, stores encrypted local baselines, and can isolate suspicious items in quarantine.',
+          ? 'Jede normale Vault-Änderung wird als Operation gebaut, kanonisch gehasht, mit dem privaten Device-Signing-Key signiert und über `submit_vault_operation` gespeichert. Direkte Runtime-Writes auf alte Item-/Kategorie-Tabellen sind für den verifizierten OpLog-Pfad kein Trust-Anker.'
+          : 'Every normal vault change is built as an operation, canonically hashed, signed with the private device-signing key, and stored through `submit_vault_operation`. Direct runtime writes to legacy item/category tables are not a trust anchor for the verified OpLog path.',
         de
-          ? 'Kategorie-Felder name/icon/color werden verschlüsselt gespeichert und in die Baseline einbezogen. Legitimer Rebaseline-Flow aktualisiert nur vertrauenswürdige lokale Mutationen.'
-          : 'Category fields name/icon/color are stored encrypted and included in the baseline. Legitimate rebaseline flow updates only trusted local mutations.',
+          ? 'Ein Gerät ist nicht vertrauenswürdig, nur weil der Account angemeldet oder der Tresor entschlüsselbar ist. Das lokale Gerät darf erst schreiben und Vault-Inhalte normal anzeigen, wenn der verifizierte OpLog-State seinen öffentlichen Device-Signing-Key als `trusted` enthält.'
+          : 'A device is not trusted merely because the account is signed in or the vault can be decrypted. The local device may write and normally display vault contents only after the verified OpLog state contains its public device-signing key as `trusted`.',
         de
-          ? 'Grenze: Ohne vertrauenswürdigen letzten Checkpoint oder externe Freshness-Quelle kann ein bösartiger Server alte gültige Ciphertexts replayen.'
-          : 'Limit: without a trusted last checkpoint or external freshness source, a malicious server can replay old valid ciphertexts.',
+          ? 'Quarantäne ist granular: unbekannte Autoren, widerrufene Geräte, ungültige Signaturen, Hash-/AAD-Mismatches, Schemafehler oder fehlende Delete-Beweise werden isoliert und nicht entschlüsselt. Kategorien können einzelne Container-Zustände beeinflussen, ohne pauschal den gesamten Tresor als normale Liste freizugeben.'
+          : 'Quarantine is granular: unknown authors, revoked devices, invalid signatures, hash/AAD mismatches, schema failures, or missing delete proof are isolated and not decrypted. Categories can affect container states without broadly releasing the whole vault as a normal list.',
+        de
+          ? 'Grenze: Ein kompromittiertes bereits vertrauenswürdiges Gerät kann weiterhin gültige bösartige Operationen signieren. Außerdem bleibt Freshness ohne externe Zeit-/Transparenzquelle begrenzt, wenn ein Server gültige alte Operationen vorenthält oder wiederholt.'
+          : 'Limit: a compromised already trusted device can still sign valid malicious operations. Freshness also remains limited without an external time/transparency source if a server withholds or replays valid old operations.',
       ],
       evidence: [
-        ev('src/services/vaultIntegrityService.ts', 'inspectVaultSnapshotIntegrity(), persistIntegrityBaseline()', 'encrypted local baseline', 'src/services/vaultIntegrityService.test.ts', de ? 'Rollback-Erkennung braucht einen vorhandenen vertrauenswürdigen Zustand.' : 'Rollback detection needs an existing trusted state.', 'BELEGT'),
-        ev('src/components/vault/categoryIconPolicy.ts', 'normalizeCategoryIcon()', 'emoji allowlist', 'src/components/vault/__tests__/categoryIconPolicy.test.ts', de ? 'Kategorie-IDs und Zeilenmetadaten bleiben sichtbar.' : 'Category IDs and row metadata remain visible.', 'BELEGT'),
+        ev('src/services/vaultOpLog/operationSigningService.ts; src/services/vaultOpLog/verifyOperation.ts', 'signVaultOperation(), verifyVaultOperation()', 'device-signature-v1/v2 + canon-v1', 'src/services/vaultOpLog/__tests__/operationSigningService.test.ts; src/services/vaultOpLog/__tests__/verifyOperation.test.ts', de ? 'Kompromittierte vertrauenswürdige Geräte bleiben Teil der TCB.' : 'Compromised trusted devices remain part of the TCB.', 'BELEGT'),
+        ev('src/services/vaultOpLog/vaultOpLogCrudService.ts; src/services/vaultOpLog/vaultOpLogRepository.ts', 'submitVaultOperation(), commitVaultRecordMutation()', 'submit_vault_operation RPC', 'src/services/vaultOpLog/__tests__/vaultOpLogCrudService.test.ts; src/services/vaultOpLog/__tests__/vaultOpLogRepository.test.ts', de ? 'Cloud-/Tauri-E2E muss pro Release weiter manuell geprüft werden.' : 'Cloud/Tauri E2E still needs manual release verification.', 'BELEGT'),
+        ev('src/services/vaultOpLog/vaultOpLogUiOrchestrator.ts; src/services/vaultOpLog/vaultDataEgressPolicy.ts', 'loadVaultOpLogUiState(), assertVaultDataEgressAllowed()', 'verified-only egress policy', 'src/services/vaultOpLog/__tests__/vaultOpLogUiOrchestrator.test.ts; src/services/vaultOpLog/__tests__/vaultDataEgressPolicy.test.ts', de ? 'UI-/Exportpfade müssen bei neuen Features weiter gegen die Egress-Policy geprüft werden.' : 'UI/export paths must keep being checked against the egress policy when new features land.', 'BELEGT'),
+        ev('supabase/migrations/20260504130000_vault_op_log_phase2_records_operations_trust.sql; supabase/migrations/20260510002000_allow_device_record_type_for_trust_operations.sql', 'vault_records, vault_operations, vault_device_trust_records', 'OpLog tables + trust records', 'src/test/integration/vault-op-log-phase2-integration.test.ts', de ? 'Live-Cloud-Policies sind deploymentabhängig und müssen nach Migrationen geprüft bleiben.' : 'Live cloud policies are deployment-dependent and must remain checked after migrations.', 'TEILWEISE'),
+      ],
+    },
+    {
+      id: 'add-device-recovery-codes',
+      title: de ? '25. Add-Device und Recovery-Codes für Gerätevertrauen' : '25. Add-Device and Recovery Codes for Device Trust',
+      summary: de ? 'Neue Geräte werden entweder durch ein bereits vertrauenswürdiges Gerät oder durch einen einmaligen Recovery-Code in den Trust aufgenommen.' : 'New devices enter trust either through an already trusted device or through a one-time recovery code.',
+      body: [
+        de
+          ? 'Beim Add-Device-Flow erzeugt das neue Gerät ein eigenes Device-Signing-Schlüsselpaar. Nur der öffentliche Schlüssel, ein Pairing-Code/Fingerprint und sichere Metadaten gehen in die Pending-Anfrage; der private Key bleibt lokal und wird nicht an Supabase oder andere Geräte übertragen.'
+          : 'In the add-device flow, the new device creates its own device-signing key pair. Only the public key, pairing code/fingerprint, and safe metadata enter the pending request; the private key stays local and is not sent to Supabase or other devices.',
+        de
+          ? 'Ein bestehendes vertrauenswürdiges Gerät bestätigt die Anfrage, baut eine signierte `add_device`-Operation und reicht sie über die sichere Operation-Schicht ein. Der Browser wird erst nach lokal verifizierter Synchronisation dieser Operation trusted.'
+          : 'An existing trusted device approves the request, builds a signed `add_device` operation, and submits it through the safe operation layer. The browser becomes trusted only after locally verified sync of that operation.',
+        de
+          ? 'Recovery-Codes sind die letzte Geräte-Trust-Wiederherstellung, wenn kein vertrauenswürdiges Gerät verfügbar ist. Der Server erzeugt und validiert maximal fünf einmalig nutzbare Codes, speichert keine Plaintext-Codes und koppelt die Nutzung an eine lokal verifizierbare `recover_device`-Operation mit `device-signature-v2`.'
+          : 'Recovery codes are the last device-trust recovery path when no trusted device is available. The server creates and validates at most five single-use codes, stores no plaintext codes, and binds redemption to a locally verifiable `recover_device` operation with `device-signature-v2`.',
+        de
+          ? 'Recovery-Codes umgehen nicht Masterpasswort, Vault-Key-Ableitung, Device-Key-Required, Record-Integrität oder Quarantäne. Wer Codes verliert und kein vertrauenswürdiges Gerät mehr besitzt, hat keinen Support-Bypass in diesem Modell.'
+          : 'Recovery codes do not bypass the master password, vault-key derivation, device-key-required policy, record integrity, or quarantine. Losing the codes while having no trusted device leaves no support bypass in this model.',
+      ],
+      evidence: [
+        ev('src/services/vaultOpLog/addDeviceFlowService.ts; src/components/vault/VaultAddDeviceBanner.tsx; src/components/vault/VaultPendingDevicesPanel.tsx', 'createPendingDeviceRequest(), approvePendingDeviceRequest()', 'pending device request + add_device', 'src/services/vaultOpLog/__tests__/addDeviceFlowService.test.ts; src/services/vaultOpLog/__tests__/addDeviceFlowOperationBuilder.test.ts', de ? 'Gerätenamen und Zeitpunkte bleiben Metadaten.' : 'Device names and timestamps remain metadata.', 'BELEGT'),
+        ev('src/services/vaultOpLog/recoveryCodeTrustService.ts; src/services/vaultOpLog/vaultRecoveryCodeService.ts; src/components/settings/VaultRecoveryCodesSettings.tsx', 'buildRecoveryCodesRotateOperation(), redeemRecoveryCode()', 'recovery_codes_rotate / recover_device', 'src/services/vaultOpLog/__tests__/recoveryDeviceOperationBuilder.test.ts; src/services/vaultOpLog/__tests__/vaultRecoveryCodeService.test.ts', de ? 'Recovery-Code-Datei ist nach Download Nutzer-/OS-Verantwortung.' : 'The recovery-code file becomes user/OS responsibility after download.', 'BELEGT'),
+        ev('supabase/functions/vault-recovery-codes/index.ts; supabase/migrations/20260511120000_vault_device_recovery_codes.sql', 'prepare-code-set, activate-code-set, redeem-code', 'Argon2id verifier + commitment + single-use state', undefined, de ? 'Serverfunktion muss mit den aktuellen Migrationen deployed sein.' : 'The server function must be deployed with the current migrations.', 'TEILWEISE'),
       ],
     },
     {
       id: 'db-storage-xss-cors-logging',
-      title: de ? '23-26. Datenbank, Storage, XSS/CSP, CORS und Logging' : '23-26. Database, Storage, XSS/CSP, CORS, and Logging',
+      title: de ? '26-29. Datenbank, Storage, XSS/CSP, CORS und Logging' : '26-29. Database, Storage, XSS/CSP, CORS, and Logging',
       summary: de ? 'RLS, CSP und Logging sind Defense-in-Depth, keine Ersatzgrenzen für Client-Kompromiss.' : 'RLS, CSP, and logging are defense in depth, not replacement boundaries for client compromise.',
       body: [
         de
@@ -377,7 +409,7 @@ function buildSections(language: 'de' | 'en'): Section[] {
     },
     {
       id: 'import-export-delete-premium',
-      title: de ? '27-29. Import/Export, Account Delete und Premium/Core Boundary' : '27-29. Import/Export, Account Delete, and Premium/Core Boundary',
+      title: de ? '30-32. Import/Export, Account Delete und Premium/Core Boundary' : '30-32. Import/Export, Account Delete, and Premium/Core Boundary',
       summary: de ? 'Export ist ein lokales Klartext-Risiko; Delete und Premium sind realistisch begrenzt dokumentiert.' : 'Export is a local plaintext risk; delete and Premium are documented with realistic limits.',
       body: [
         de
@@ -398,12 +430,12 @@ function buildSections(language: 'de' | 'en'): Section[] {
     },
     {
       id: 'testing-limitations-claims-glossary',
-      title: de ? '30-33. Verification, offene Risiken, Claims Matrix und Glossar' : '30-33. Verification, Open Risks, Claims Matrix, and Glossary',
+      title: de ? '33-36. Verification, offene Risiken, Claims Matrix und Glossar' : '33-36. Verification, Open Risks, Claims Matrix, and Glossary',
       summary: de ? 'Die folgenden Tabellen markieren Status und Grenzen explizit.' : 'The following tables explicitly mark status and limits.',
       body: [
         de
-          ? 'Known limitations: kein externer Audit, Same-Origin-XSS im entsperrten Web/PWA-Client, Malware/RAM/Clipboard, Trusted Types nicht enforced, kein Datei-Padding belegt, Rollback-Freshness-Grenzen, Premium-Gesamttests teilweise offen, Provider-Metadaten, Recovery-/Trustee-Risiken.'
-          : 'Known limitations: no external audit, same-origin XSS in unlocked Web/PWA client, malware/RAM/clipboard, Trusted Types not enforced, no evidenced file padding, rollback freshness limits, Premium full tests partially open, provider metadata, recovery/trustee risks.',
+          ? 'Known limitations: kein externer Audit, Same-Origin-XSS im entsperrten Web/PWA-Client, Malware/RAM/Clipboard, Trusted Types nicht enforced, kein Datei-Padding belegt, Rollback-Freshness-Grenzen, kompromittierte vertrauenswürdige Geräte, verlorene lokale Device-Signing-Keys, Premium-Gesamttests teilweise offen, Provider-Metadaten, Recovery-/Trustee-Risiken.'
+          : 'Known limitations: no external audit, same-origin XSS in unlocked Web/PWA client, malware/RAM/clipboard, Trusted Types not enforced, no evidenced file padding, rollback freshness limits, compromised trusted devices, lost local device-signing keys, Premium full tests partially open, provider metadata, recovery/trustee risks.',
       ],
       evidence: [
         ev('docs/SECURITY.md', undefined, undefined, undefined, de ? 'Kanonisches Modell, kein externes Audit-Siegel.' : 'Canonical model, not an external audit seal.', 'TEILWEISE'),
@@ -426,18 +458,21 @@ function buildDataRows(language: 'de' | 'en'): MatrixRow[] {
     row(['Notes', de ? 'Notiztext' : 'Note text', 'encrypted_data', 'Nein', 'Ja', 'AES-GCM', 'VaultItemData.notes', 'vaultItemCryptoStorage.test.ts', de ? 'Klartext-Export enthält Notes' : 'Plaintext export contains notes'], 'BELEGT'),
     row(['TOTP Secret', 'JBSWY3...', 'encrypted_data', 'Nein', 'Ja', 'AES-GCM', 'VaultItemData.totpSecret', 'vaultItemCryptoStorage.test.ts', de ? 'Entsperrter Client kann Codes erzeugen' : 'Unlocked client can generate codes'], 'BELEGT'),
     row(['TOTP issuer/label/algorithm/digits/period', 'GitHub / SHA1 / 6 / 30', 'encrypted_data', 'Nein', 'Ja', 'AES-GCM', 'VaultItemData.totp*', 'vaultItemCryptoStorage.test.ts', de ? 'item_type kann sichtbar sein' : 'item_type can be visible'], 'BELEGT'),
-    row(['Categories', de ? 'Name, Icon, Farbe' : 'Name, icon, color', 'categories.name/icon/color', de ? 'Nein für verschlüsselte Felder' : 'No for encrypted fields', 'Ja', 'Encrypted category prefix + AES-GCM', 'cryptoService reEncryptVault()', 'vaultIntegrityService.test.ts', de ? 'Kategorie-ID/Zeilenstruktur sichtbar' : 'Category ID/row structure visible'], 'BELEGT'),
+    row(['Categories', de ? 'Name, Icon, Farbe' : 'Name, icon, color', 'vault_records encrypted category record / legacy categories fallback', de ? 'Nein für verschlüsselte Felder' : 'No for encrypted fields', 'Ja', 'record-aead-v1 + legacy encrypted category prefix', 'cryptoRecordService.ts; cryptoService reEncryptVault()', 'cryptoRecordService.test.ts; vaultStateMachine.test.ts', de ? 'Kategorie-ID/Zeilenstruktur sichtbar; Legacy-Fallbacks möglich' : 'Category ID/row structure visible; legacy fallbacks possible'], 'BELEGT'),
     row(['File Attachments', de ? 'Dateiinhalt' : 'File content', 'Supabase Storage chunks', 'Nein', 'Ja', 'Per-file key + chunk AES-GCM', 'docs/archive/premium-file-upload-e2ee.md', 'NICHT BELEGT im öffentlichen Repo', de ? 'Premium-Code privat; Größe/Zugriff sichtbar' : 'Premium code private; size/access visible'], 'TEILWEISE'),
     row(['File Attachment Metadata', de ? 'Name/MIME/Größe' : 'Name/MIME/size', 'encrypted manifest', de ? 'Laut archivierter Doku nein; technische Metadaten ja' : 'According to archived docs no; technical metadata yes', 'Ja', 'Encrypted manifest', 'docs/archive/premium-file-upload-e2ee.md', 'NICHT BELEGT im öffentlichen Repo', de ? 'Kein Padding belegt' : 'No padding evidenced'], 'TEILWEISE'),
     row(['Emergency Access Key Material', de ? 'Grantor Vault-Key Wrap' : 'Grantor vault-key wrap', 'emergency access tables', de ? 'Klartext nein; Status ja' : 'Plaintext no; status yes', 'Ja', 'Hybrid/PQ key wrapping', 'EMERGENCY_ACCESS.md; pqCryptoService.ts', 'security-rls-emergency-access.test.ts', de ? 'Trustee-Kompromiss' : 'Trustee compromise'], 'TEILWEISE'),
     row(['Sharing Data', de ? 'Collection membership' : 'Collection membership', 'shared collection tables', de ? 'Mitgliedschaft/Rollen ja' : 'Membership/roles yes', de ? 'Keys gewrappt' : 'Keys wrapped', 'RSA/PQ wrapping where implemented', 'SHARED_COLLECTIONS_ENCRYPTION.md', 'NICHT BELEGT vollständig', de ? 'Revocation-Grenzen' : 'Revocation limits'], 'TEILWEISE'),
     row(['Device Keys', de ? 'lokaler Device Key' : 'local device key', 'OS store / IndexedDB', de ? 'Server nein' : 'Server no', de ? 'lokal geschützt' : 'locally protected', 'HKDF device-key path', 'deviceKeyService.ts', 'deviceKeyService.test.ts', de ? 'Gerätekompromiss' : 'Device compromise'], 'BELEGT'),
+    row(['Device Signing Keys', de ? 'privater Signaturschlüssel pro Trusted Device' : 'private signing key per trusted device', 'IndexedDB CryptoKey handle / local device store', de ? 'Privat nein; Public Key ja' : 'Private no; public key yes', de ? 'Private Key lokal, Public Key im Trust' : 'Private key local, public key in trust', 'WebCrypto ECDSA P-256, device-signature-v1/v2', 'operationSigningService.ts; vaultOpLogDeviceSigningKeyStore.ts', 'operationSigningService.test.ts; vaultOpLogDeviceStore.test.ts', de ? 'Site-Data-Löschung ist Geräteverlust; kompromittiertes Gerät bleibt Risiko' : 'Site-data deletion is device loss; compromised device remains a risk'], 'BELEGT'),
+    row(['Device Trust Records', de ? 'Public Key, Status, Trust-Epoch' : 'public key, status, trust epoch', 'vault_device_trust_records', de ? 'Ja, Metadaten und Public Keys' : 'Yes, metadata and public keys', de ? 'Public-Key-Trust, kein Vault-Secret' : 'Public-key trust, no vault secret', 'signed add_device/revoke_device/recover_device operations', 'deviceTrustService.ts; vaultOpLogUiOrchestrator.ts', 'deviceTrustService.test.ts; vaultOpLogUiOrchestrator.test.ts', de ? 'Gerätenamen/Zeitpunkte bleiben Metadaten' : 'Device names/timestamps remain metadata'], 'BELEGT'),
+    row(['Vault Device Recovery Codes', de ? 'fünf einmalige Geräte-Trust-Codes' : 'five one-time device-trust codes', 'vault_recovery_code_sets / vault_recovery_codes', de ? 'Plaintext nein; Hash/Commitment ja' : 'Plaintext no; hash/commitment yes', de ? 'Serverseitig validiert, nicht wieder anzeigbar' : 'Server validated, not shown again', 'Argon2id verifier + recovery commitment + device-signature-v2', 'vault-recovery-codes edge function; recoveryCodeTrustService.ts', 'recoveryDeviceOperationBuilder.test.ts; vaultRecoveryCodeService.test.ts', de ? 'Download-Datei muss vom Nutzer geschützt werden' : 'Downloaded file must be protected by the user'], 'BELEGT'),
     row(['Recovery/Backup Codes', de ? 'Einmalcodes' : 'One-time codes', '2FA tables', 'Nein', de ? 'Gehasht' : 'Hashed', 'Argon2id hash v3', 'twoFactorService.ts', 'twoFactorService.mock.test.ts', de ? 'Codeverlust/Diebstahl' : 'Code loss/theft'], 'BELEGT'),
     row(['Sessions', 'JWT / refresh token', 'Supabase/BFF/client storage', de ? 'Server ja' : 'Server yes', de ? 'Transport/Storage geschützt, nicht Vault-E2EE' : 'Transport/storage protected, not vault E2EE', 'Supabase session + cleanup', 'authSessionManager.ts', 'authSessionManager.test.ts', de ? 'Bearer-Token bis Ablauf' : 'Bearer token until expiry'], 'TEILWEISE'),
     row(['Logs', de ? 'Fehler-/Diagnosedaten' : 'Error/diagnostic data', 'console/server logs', de ? 'Technische Daten möglich' : 'Technical data possible', de ? 'Keine Vault-Secrets beabsichtigt' : 'No vault secrets intended', 'logger sanitize()', 'logger.ts', 'security-regression-suite.test.ts', de ? 'Neue Logsites müssen geprüft werden' : 'New log sites need review'], 'TEILWEISE'),
     row(['Exportdaten', 'CSV/JSON', de ? 'lokale Datei' : 'local file', de ? 'Nach Export ja' : 'After export yes', de ? 'Klartext-Export: nein' : 'Plaintext export: no', 'User action', 'vaultExportService.ts', 'exportFileService.test.ts', de ? 'Lokale Datei enthält Secrets' : 'Local file contains secrets'], 'BELEGT'),
-    row(['Offline Cache', 'Snapshot', 'IndexedDB', 'Nein für Vault-Payloads', 'Ja', 'encrypted_data rows + local snapshot', 'offlineVaultService.ts', 'offlineVaultService.test.ts', de ? 'Lokaler Browser kompromittierbar' : 'Local browser can be compromised'], 'BELEGT'),
-    row(['Integrity Baselines', 'Digests', 'local secret store / IndexedDB', 'Nein', 'Ja', 'Encrypted baseline envelope', 'vaultIntegrityService.ts', 'vaultIntegrityService.test.ts', de ? 'Freshness braucht Checkpoint' : 'Freshness needs checkpoint'], 'BELEGT'),
+    row(['Offline Cache', 'Snapshot', 'IndexedDB', 'Nein für Vault-Payloads', 'Ja', 'encrypted_data rows + local snapshot', 'offlineVaultService.ts', 'offlineVaultService.test.ts', de ? 'Lokaler Browser kompromittierbar; stale-remote Overlay erneut prüfen' : 'Local browser can be compromised; stale-remote overlay needs recheck'], 'TEILWEISE'),
+    row(['Operation Log Heads', 'opHash / resultingVaultHead', 'vault_operations / vault_op_log_heads / local verified head', de ? 'Ja, Hashes und Sequenz-Metadaten' : 'Yes, hashes and sequence metadata', de ? 'Keine Vault-Plaintexts' : 'No vault plaintexts', 'canon-v1 + hash-v1 + head-v1', 'recordHashes.ts; vaultStateMachine.ts', 'recordHashes.test.ts; vaultStateMachine.test.ts', de ? 'Freshness braucht vertrauenswürdigen Checkpoint/Transparenzquelle' : 'Freshness needs a trusted checkpoint/transparency source'], 'BELEGT'),
   ];
 }
 
@@ -447,7 +482,9 @@ function buildTestRows(language: 'de' | 'en'): MatrixRow[] {
     row(['Vault item crypto', 'vaultItemCryptoStorage.test.ts; integration-crypto-pipeline.test.ts', de ? 'Route /vault/settings bei Kontextänderungen' : '/vault/settings route for context changes', 'npx tsc --noEmit; npm run build', 'BELEGT', WHITEPAPER_LAST_UPDATED], 'BELEGT'),
     row(['OPAQUE/Auth', 'opaque-registration-flow.test.ts; auth-flow-hardening.test.ts', de ? 'Login/Reset manuell prüfen' : 'Manually check login/reset', 'npx tsc --noEmit', 'TEILWEISE', WHITEPAPER_LAST_UPDATED], 'TEILWEISE'),
     row(['2FA/Backup codes', 'twoFactorService.mock.test.ts; auth-session-cookie.test.ts', de ? '2FA UI flows' : '2FA UI flows', 'npx tsc --noEmit', 'TEILWEISE', WHITEPAPER_LAST_UPDATED], 'TEILWEISE'),
-    row(['Offline/Integrity', 'offlineVaultService.test.ts; vaultIntegrityService.test.ts', de ? 'Offline sync conflict checks' : 'Offline sync conflict checks', 'npm run build', 'BELEGT', WHITEPAPER_LAST_UPDATED], 'BELEGT'),
+    row(['Vault OpLog / Device Trust', 'vaultOpLogCrudService.test.ts; verifyOperation.test.ts; deviceTrustService.test.ts; vaultStateMachine.test.ts', de ? '/vault und /vault/settings mit verifiziertem Gerät prüfen' : 'Check /vault and /vault/settings with a verified device', 'npx vitest run src/services/vaultOpLog/__tests__', 'BELEGT', WHITEPAPER_LAST_UPDATED], 'BELEGT'),
+    row(['Add-Device / Recovery Codes', 'addDeviceFlowOperationBuilder.test.ts; recoveryDeviceOperationBuilder.test.ts; vaultRecoveryCodeService.test.ts', de ? 'Multi-Client-Web/Tauri manuell prüfen' : 'Manually check multi-client Web/Tauri', 'npx vitest run targeted vaultOpLog suites', 'TEILWEISE', WHITEPAPER_LAST_UPDATED], 'TEILWEISE'),
+    row(['Offline/Integrity', 'offlineVaultService.test.ts; vaultDataEgressPolicy.test.ts; vaultOpLogUiOrchestrator.test.ts', de ? 'Offline sync conflict checks, stale-remote Overlay vor Release erneut prüfen' : 'Offline sync conflict checks; stale-remote overlay needs another release check', 'gezielte Vitest-Suites + npm run build', 'TEILWEISE', WHITEPAPER_LAST_UPDATED], 'TEILWEISE'),
     row(['Premium files', 'NICHT BELEGT im öffentlichen Repo', de ? 'Premium Build/Runtime nötig' : 'Premium build/runtime required', de ? 'nicht vollständig öffentlich belegbar' : 'not fully evidenced publicly', 'TEILWEISE', WHITEPAPER_LAST_UPDATED], 'TEILWEISE'),
     row(['XSS/CSP', 'security-regression-suite.test.ts; exportFileService.test.ts', de ? 'Browser-Konsole und CSP prüfen' : 'Check browser console and CSP', 'npm run build', 'TEILWEISE', WHITEPAPER_LAST_UPDATED], 'TEILWEISE'),
     row(['External audit', 'NICHT BELEGT', 'NICHT BELEGT', 'NICHT BELEGT', 'NICHT BELEGT', WHITEPAPER_LAST_UPDATED], 'NICHT BELEGT'),
@@ -459,6 +496,9 @@ function buildClaimRows(language: 'de' | 'en'): MatrixRow[] {
   return [
     row([de ? 'Passwort verlässt Client nicht beim App-eigenen Login.' : 'Password does not leave client in app-owned login.', 'OPAQUE password login', 'Ja', 'Ja', 'Ja', 'Ja', 'opaqueService.ts; auth-session function', 'opaque-registration-flow.test.ts', de ? 'OAuth ist separat; TLS/Serverfunktion bleiben TCB.' : 'OAuth is separate; TLS/server function remain TCB.', 'BELEGT'], 'BELEGT'),
     row([de ? 'Vault Items sind clientseitig verschlüsselt.' : 'Vault items are client-side encrypted.', 'Core vault', 'Ja', 'Ja', 'Ja', 'Ja', 'cryptoService.encryptVaultItem()', 'vaultItemCryptoStorage.test.ts', de ? 'Entsperrter Client sieht Klartext.' : 'Unlocked client sees plaintext.', 'BELEGT'], 'BELEGT'),
+    row([de ? 'Account-Login allein gibt keine Vault-Schreibrechte.' : 'Account login alone does not grant vault write rights.', 'Device Trust', 'Ja', 'Ja', 'Ja', 'Ja', 'deviceTrustService.ts; VaultAddDeviceBanner.tsx', 'deviceTrustService.test.ts; addDeviceFlowOperationBuilder.test.ts', de ? 'Lokaler Private-Key-Verlust erfordert erneutes Pairing oder Recovery-Code.' : 'Losing the local private key requires re-pairing or a recovery code.', 'BELEGT'], 'BELEGT'),
+    row([de ? 'Normale Vault-Writes laufen über signierte Operationen.' : 'Normal vault writes go through signed operations.', 'Vault OpLog', 'Ja', 'Ja', 'Ja', 'Ja', 'vaultOpLogCrudService.ts; submit_vault_operation', 'vaultOpLogCrudService.test.ts; vault-op-log-phase2-integration.test.ts', de ? 'Nicht migrierte Legacy-/Premium-Pfade bleiben separat zu prüfen.' : 'Non-migrated legacy/Premium paths remain separately checked.', 'BELEGT'], 'BELEGT'),
+    row([de ? 'Device-Trust-Recovery-Codes werden serverseitig validiert und einmalig verbraucht.' : 'Device-trust recovery codes are server-validated and single-use.', 'Recovery Codes', 'Ja', 'Ja', 'Ja', 'Ja', 'vault-recovery-codes edge function; recoveryCodeTrustService.ts', 'recoveryDeviceOperationBuilder.test.ts; vaultRecoveryCodeService.test.ts', de ? 'Die heruntergeladene Datei ist ein Nutzer-Backup und muss geschützt werden.' : 'The downloaded file is a user backup and must be protected.', 'BELEGT'], 'BELEGT'),
     row([de ? 'Notes sind verschlüsselt.' : 'Notes are encrypted.', 'Notes fields', 'Ja', 'Ja', 'Ja', 'Ja', 'VaultItemData.notes', 'vaultItemCryptoStorage.test.ts', de ? 'Klartext-Export enthält Notes.' : 'Plaintext export contains notes.', 'BELEGT'], 'BELEGT'),
     row([de ? 'TOTP Secrets sind verschlüsselt.' : 'TOTP secrets are encrypted.', 'TOTP item payload', 'Ja', 'Ja', 'Ja', 'Premium optional', 'VaultItemData.totpSecret', 'vaultItemCryptoStorage.test.ts', de ? 'TOTP-Code lokal im entsperrten Zustand berechenbar.' : 'TOTP code is locally computable when unlocked.', 'BELEGT'], 'BELEGT'),
     row([de ? 'Dateianhänge sind clientseitig E2EE.' : 'File attachments are client-side E2EE.', 'Premium files', 'Ja', 'Ja', 'Ja', 'Ja', 'docs/archive/premium-file-upload-e2ee.md', 'NICHT BELEGT vollständig öffentlich', de ? 'Premium-Code privat; kein Padding belegt.' : 'Premium code private; no padding evidenced.', 'TEILWEISE'], 'TEILWEISE'),
@@ -484,7 +524,11 @@ function buildGlossaryRows(language: 'de' | 'en'): MatrixRow[] {
     row(['Vault/User/Wrap/Device/File Key', de ? 'Getrennte Rollen für Vault-Daten, gewrapptes User-Key-Material, Wrap-Domain, Gerät und Datei.' : 'Separate roles for vault data, wrapped user-key material, wrap domain, device, and file.']),
     row(['Manifest', de ? 'Datei-Metadatenstruktur, bei Premium-Dateien laut Doku verschlüsselt.' : 'File metadata structure, encrypted for Premium files according to docs.']),
     row(['Ciphertext', de ? 'Verschlüsselte Daten inklusive Auth Tag/Envelope.' : 'Encrypted data including auth tag/envelope.']),
-    row(['Quarantine', de ? 'Isolation verdächtiger Vault-Einträge nach Integrity-Drift.' : 'Isolation of suspicious vault items after integrity drift.']),
+    row(['Vault Operation Log', de ? 'Signierte, versionierte Historie von Vault-Änderungen; lokale Verifikation ist der Trust-Anker.' : 'Signed, versioned history of vault changes; local verification is the trust anchor.']),
+    row(['Trusted Device', de ? 'Gerät mit lokalem privaten Device-Signing-Key und verifiziertem Public-Key-Eintrag im Vault-Trust.' : 'Device with a local private device-signing key and verified public-key entry in vault trust.']),
+    row(['Device Signing Key', de ? 'Pro-Gerät-Signaturschlüssel für Vault-Operationen; nicht identisch mit Vault Key oder Device Key.' : 'Per-device signing key for vault operations; not the same as vault key or device key.']),
+    row(['Device-Trust Recovery Code', de ? 'Einmalcode, der ein neues Gerät nur über eine verifizierbare recover_device-Operation in den Trust bringt.' : 'One-time code that adds a new device to trust only through a verifiable recover_device operation.']),
+    row(['Quarantine', de ? 'Isolation verdächtiger Vault-Records nach ungültiger Operation, Signatur, Herkunft, AAD, Ciphertext oder Schema.' : 'Isolation of suspicious vault records after invalid operation, signature, origin, AAD, ciphertext, or schema.']),
     row(['Trustee / Emergency Access', de ? 'Vertrauensperson und alternativer Vault-Key-Wrapping-Pfad.' : 'Trusted person and alternative vault-key wrapping path.']),
     row(['PQ / Hybrid', de ? 'Kombination klassischer und post-quantenorientierter Verfahren für Key-Wrapping-Pfade.' : 'Combination of classical and post-quantum-oriented methods for key-wrapping paths.']),
   ];

@@ -30,10 +30,16 @@ import {
   buildRevokeDeviceTrustPayload,
   toVaultOperationRowFromSigned,
 } from '@/services/vaultOpLog/vaultOpLogOperationBuilder';
-import { loadVerifiedVaultOpLogDeviceContext } from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
+import {
+  loadVerifiedVaultOpLogDeviceContext,
+  type VerifiedVaultOpLogDeviceContext,
+} from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
 import { loadVaultOpLogDeviceSigningKey } from '@/services/vaultOpLog/vaultOpLogDeviceSigningKeyStore';
+import { loadVaultOpLogDeviceIdentity } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
 import { loadVaultOpLogUiState } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
+import { isAppOnline } from '@/services/offlineVaultService';
 import { getVaultRecoveryCodeStatus } from '@/services/vaultOpLog/vaultRecoveryCodeService';
+import { resolveVaultOpLogDefaultVaultId } from '@/services/vaultOpLog/vaultOpLogDefaultVaultResolver';
 import type { VaultOpLogTrustReadClient } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
 import type { SubmitVaultOperationResult } from '@/services/vaultOpLog/vaultOpLogRpcTypes';
@@ -47,6 +53,7 @@ interface UseVaultOpLogCrudActionsInput {
   readonly user: User | null;
   readonly decryptTrustedRecoverySnapshotItem: VaultContextType['decryptTrustedRecoverySnapshotItem'];
   readonly opLogUiRefresh: () => Promise<void>;
+  readonly localVaultState: LocalVaultState | null;
 }
 
 interface VerifiedOpLogRuntimeContext {
@@ -129,21 +136,6 @@ function describeDeviceTrustSubmitFailure(
   return `${operationLabel} wurde nicht gespeichert: ${result.kind}`;
 }
 
-async function loadDefaultVaultId(userId: string): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('vaults')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('is_default', true)
-    .maybeSingle();
-
-  if (error || typeof data?.id !== 'string') {
-    return null;
-  }
-
-  return data.id;
-}
-
 export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
   const loadRuntimeContext = useCallback(async (): Promise<VerifiedOpLogRuntimeContext> => {
     const { state, user } = input;
@@ -154,16 +146,18 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
       throw new VaultOpLogUiActionBlockedError('Vault-Key ist nicht im Runtime-State verfügbar.');
     }
 
-    const vaultId = state.vaultMigrationKeyContext?.vaultId ?? await loadDefaultVaultId(user.id);
+    const vaultId = state.vaultMigrationKeyContext?.vaultId ?? await resolveVaultOpLogDefaultVaultId(user.id);
     if (!vaultId) {
       throw new VaultOpLogUiActionBlockedError('Vault-ID konnte nicht verifiziert geladen werden.');
     }
 
-    const deviceContext = await loadVerifiedVaultOpLogDeviceContext({
-      userId: user.id,
-      vaultId,
-      trustClient: supabase,
-    });
+    const deviceContext = isAppOnline()
+      ? await loadVerifiedVaultOpLogDeviceContext({
+          userId: user.id,
+          vaultId,
+          trustClient: supabase,
+        })
+      : loadVerifiedVaultOpLogDeviceContextFromLocalState(input.localVaultState);
     const identity = deviceContext?.identity ?? null;
     if (!identity) {
       throw new VaultOpLogUiActionBlockedError('OpLog-Device-Identität fehlt oder ist auf diesem Gerät nicht verfügbar.');
@@ -191,14 +185,17 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
       trustClient: supabase as unknown as VaultOpLogTrustReadClient,
     };
 
-    const loaded = await loadVaultOpLogUiState({
-      rpcClient: deps.rpcClient,
-      trustClient: deps.trustClient,
-      vaultId,
-      deviceId: identity.deviceId,
-      publicSigningKeyB64Url: identity.publicSigningKeyB64Url,
-      vaultEncryptionKey: state.vaultEncryptionKey,
-    });
+    const loaded = isAppOnline()
+      ? await loadVaultOpLogUiState({
+          rpcClient: deps.rpcClient,
+          trustClient: deps.trustClient,
+          userId: user.id,
+          vaultId,
+          deviceId: identity.deviceId,
+          publicSigningKeyB64Url: identity.publicSigningKeyB64Url,
+          vaultEncryptionKey: state.vaultEncryptionKey,
+        })
+      : { error: null, localVaultState: input.localVaultState };
 
     if (loaded.error || !loaded.localVaultState) {
       throw new VaultOpLogUiActionBlockedError(
@@ -476,5 +473,28 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
     opLogApproveDeviceRequest,
     opLogRejectDeviceRequest,
     opLogRevokeDevice,
+  };
+}
+
+function loadVerifiedVaultOpLogDeviceContextFromLocalState(
+  localVaultState: LocalVaultState | null,
+): VerifiedVaultOpLogDeviceContext | null {
+  const identity = loadVaultOpLogDeviceIdentity();
+  if (!identity || !localVaultState) {
+    return null;
+  }
+
+  const trusted = localVaultState.trustedDevicesById.get(identity.deviceId);
+  if (
+    !trusted
+    || trusted.status !== 'trusted'
+    || trusted.publicSigningKey !== identity.publicSigningKeyB64Url
+  ) {
+    return null;
+  }
+
+  return {
+    identity,
+    trustEpoch: trusted.trustEpoch,
   };
 }

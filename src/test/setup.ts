@@ -93,6 +93,7 @@ class MockIDBObjectStore {
     const actualKey = key
       || (typeof record?.id === "string" ? record.id : undefined)
       || (typeof record?.key === "string" ? record.key : undefined)
+      || (typeof record?.cacheKey === "string" ? record.cacheKey : undefined)
       || Math.random().toString();
     this.data.set(actualKey, value);
     return new MockIDBRequest(actualKey);

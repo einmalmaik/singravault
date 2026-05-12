@@ -444,6 +444,28 @@ describe('vaultOpLogCrudService', () => {
     expect(queued[0].retryCount).toBe(1);
   });
 
+  it('keeps offline creates as signed pending OpLog operations without treating them as verified server commits', async () => {
+    const restoreOnlineState = setNavigatorOnline(false);
+    try {
+      const rpc = new FakeRpcClient();
+      rpc.failNextSubmit = true;
+      const queue = new InMemoryQueuePersistence();
+      const serviceDeps = await deps(rpc, queue);
+
+      const result = await createItem(serviceDeps, { baseVaultHead: INITIAL_HEAD }, itemPlaintext());
+
+      expect(result.pendingLocal).toBe(true);
+      expect(rpc.operations).toHaveLength(0);
+      const queued = await queue.loadAll(VAULT_ID);
+      expect(queued).toHaveLength(1);
+      expect(queued[0].state).toBe('pending');
+      expect(queued[0].op.signature).toBeTruthy();
+      expect(queued[0].record?.ciphertext).toBeTruthy();
+    } finally {
+      restoreOnlineState();
+    }
+  });
+
   it('models conflict resolve as update and does not invent a resolve op type', async () => {
     const rpc = new FakeRpcClient();
     const serviceDeps = await deps(rpc);
@@ -460,3 +482,18 @@ describe('vaultOpLogCrudService', () => {
     expect(rpc.operations.at(-1)?.op_type).toBe('update');
   });
 });
+
+function setNavigatorOnline(online: boolean): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine')
+    ?? Object.getOwnPropertyDescriptor(navigator, 'onLine');
+  Object.defineProperty(navigator, 'onLine', {
+    configurable: true,
+    get: () => online,
+  });
+
+  return () => {
+    if (descriptor) {
+      Object.defineProperty(navigator, 'onLine', descriptor);
+    }
+  };
+}

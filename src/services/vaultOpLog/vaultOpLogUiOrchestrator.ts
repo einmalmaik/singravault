@@ -51,6 +51,14 @@ import {
   markRecoveryCodeCommitmentUsed,
   type RecoveryCodeSetState,
 } from './recoveryCodeTrustService';
+import {
+  loadVerifiedVaultOpLogOfflineCache,
+  saveVerifiedVaultOpLogOfflineCache,
+  type VaultOpLogOfflineCacheEntry,
+} from './vaultOpLogOfflineStore';
+import { VaultOpLogPendingQueue } from './vaultOpLogPendingQueue';
+import { LocalStorageQueuePersistence } from './vaultOpLogQueuePersistence';
+import type { PendingLocalOperation } from './vaultOpLogPendingQueueTypes';
 import type {
   VaultOperationRow,
   VaultRecordRow,
@@ -65,6 +73,7 @@ import type { SupabaseRpcClient } from './vaultOpLogRepository';
 export interface VaultOpLogUiOrchestratorInput {
   readonly rpcClient: SupabaseRpcClient;
   readonly trustClient?: VaultOpLogTrustReadClient;
+  readonly userId?: string;
   readonly vaultId: string;
   readonly deviceId?: string;
   readonly publicSigningKeyB64Url?: string;
@@ -120,6 +129,10 @@ export async function loadVaultOpLogUiState(
     // Step 1: Load vault head
     const headResult = await getVaultHead(input.rpcClient, input.vaultId);
     if (headResult.kind !== 'success') {
+      const cached = await loadCachedVaultOpLogUiState(input);
+      if (cached) {
+        return cached;
+      }
       return {
         uiView: null,
         localVaultState: null,
@@ -223,9 +236,22 @@ export async function loadVaultOpLogUiState(
         trust: chainResult.verifiedTrust,
         lastVerifiedVaultHead: chainResult.verifiedHead,
       });
+      await persistOfflineCacheIfPossible(input, {
+        currentHead: headResult.head.currentHead,
+        currentSequenceNumber: headResult.head.currentSequenceNumber,
+        operations: deduplicatedOps,
+        records: [],
+        trust: chainResult.verifiedTrust,
+      });
+      const withPending = await applyPendingLocalOperationsToState({
+        state: emptyState,
+        trust: chainResult.verifiedTrust,
+        vaultEncryptionKey: input.vaultEncryptionKey,
+        vaultId: input.vaultId,
+      });
       return {
-        uiView: buildVaultOpLogUiView(emptyState),
-        localVaultState: emptyState,
+        uiView: buildVaultOpLogUiView(withPending),
+        localVaultState: withPending,
         error: null,
       };
     }
@@ -327,6 +353,21 @@ export async function loadVaultOpLogUiState(
       }
     }
 
+    await persistOfflineCacheIfPossible(input, {
+      currentHead: headResult.head.currentHead,
+      currentSequenceNumber: headResult.head.currentSequenceNumber,
+      operations: deduplicatedOps,
+      records: recordsResult.records,
+      trust: chainResult.verifiedTrust,
+    });
+
+    localState = await applyPendingLocalOperationsToState({
+      state: localState,
+      trust: chainResult.verifiedTrust,
+      vaultEncryptionKey: input.vaultEncryptionKey,
+      vaultId: input.vaultId,
+    });
+
     // Step 6: Build UI view (no secrets)
     const uiView = buildVaultOpLogUiView(localState);
 
@@ -344,6 +385,224 @@ export async function loadVaultOpLogUiState(
   }
 }
 
+async function loadCachedVaultOpLogUiState(
+  input: VaultOpLogUiOrchestratorInput,
+): Promise<VaultOpLogUiOrchestratorResult | null> {
+  if (!input.userId || !isRuntimeOffline()) {
+    return null;
+  }
+
+  const cache = await loadVerifiedVaultOpLogOfflineCache({
+    userId: input.userId,
+    vaultId: input.vaultId,
+  }).catch(() => null);
+  if (!cache) {
+    return null;
+  }
+
+  const trust = trustFromOfflineCache(cache);
+  if (input.requireLocalDeviceTrust && !isLocalDeviceTrusted(input, trust)) {
+    const untrustedState = buildEmptyLocalVaultState({
+      trust,
+      lastVerifiedVaultHead: cache.currentHead,
+    });
+    return {
+      uiView: buildVaultOpLogUiView(untrustedState),
+      localVaultState: untrustedState,
+      error: null,
+    };
+  }
+
+  const chainResult = cache.operations.length === 0
+    ? {
+        kind: 'success' as const,
+        latestOperationByRecordId: new Map<string, VaultOperationRow>(),
+        trustByOperationId: new Map<string, TrustListInput>(),
+        verifiedTrust: trust,
+        verifiedHead: cache.currentHead,
+      }
+    : await verifyOperationChain({
+        operations: [...cache.operations].sort((a, b) => a.sequenceNumber - b.sequenceNumber),
+        trust,
+        expectedHead: cache.currentHead,
+      });
+  if (chainResult.kind !== 'success') {
+    return {
+      uiView: null,
+      localVaultState: null,
+      error: chainResult.error,
+    };
+  }
+
+  const recordsById = new Map(cache.records.map((record) => [record.recordId, record]));
+  let localState: LocalVaultState = {
+    recordsById: new Map(),
+    quarantinedRecordsById: new Map(),
+    conflictsByRecordId: new Map(),
+    trustedDevicesById: chainResult.verifiedTrust.trustedDevicesById,
+    lastVerifiedVaultHead: chainResult.verifiedHead,
+  };
+
+  for (const operation of chainResult.latestOperationByRecordId.values()) {
+    const record = recordsById.get(operation.recordId) ?? null;
+    if (!record) {
+      const nextQuarantined = new Map(localState.quarantinedRecordsById);
+      nextQuarantined.set(operation.recordId, {
+        record: null,
+        recordState: 'quarantinedMissingWithoutDelete',
+        reason: 'offline_cache_missing_record_without_delete',
+      });
+      localState = {
+        ...localState,
+        quarantinedRecordsById: nextQuarantined,
+      };
+      continue;
+    }
+
+    const verifiedBaseRecordState = buildVerifiedBaseRecordState(operation);
+    if (operation.opType !== 'create' && !verifiedBaseRecordState) {
+      const nextQuarantined = new Map(localState.quarantinedRecordsById);
+      nextQuarantined.set(operation.recordId, {
+        record,
+        recordState: 'quarantinedTampered',
+        reason: 'offline_cache_operation_missing_verified_base_record_state',
+      });
+      localState = {
+        ...localState,
+        quarantinedRecordsById: nextQuarantined,
+      };
+      continue;
+    }
+
+    const applyResult = operation.opType === 'delete'
+      ? await applyTrustedDelete({
+          state: localState,
+          operation,
+          record,
+          trust: chainResult.trustByOperationId.get(operation.opId) ?? trust,
+          verifiedBaseRecordState,
+          vaultHeadTransitionVerified: true,
+        })
+      : await applyRemoteOperation({
+          state: localState,
+          operation,
+          record,
+          trust: chainResult.trustByOperationId.get(operation.opId) ?? trust,
+          vaultEncryptionKey: input.vaultEncryptionKey,
+          verifiedBaseRecordState,
+          vaultHeadTransitionVerified: true,
+        });
+
+    localState = {
+      ...applyResult.nextState,
+      lastVerifiedVaultHead: cache.currentHead,
+    };
+  }
+
+  localState = await applyPendingLocalOperationsToState({
+    state: localState,
+    trust: chainResult.verifiedTrust,
+    vaultEncryptionKey: input.vaultEncryptionKey,
+    vaultId: input.vaultId,
+  });
+
+  return {
+    uiView: buildVaultOpLogUiView(localState),
+    localVaultState: localState,
+    error: null,
+  };
+}
+
+async function persistOfflineCacheIfPossible(
+  input: VaultOpLogUiOrchestratorInput,
+  verified: {
+    readonly currentHead: string | null;
+    readonly currentSequenceNumber: number;
+    readonly operations: readonly VaultOperationRow[];
+    readonly records: readonly VaultRecordRow[];
+    readonly trust: TrustListInput;
+  },
+): Promise<void> {
+  if (!input.userId) {
+    return;
+  }
+
+  await saveVerifiedVaultOpLogOfflineCache({
+    userId: input.userId,
+    vaultId: input.vaultId,
+    currentHead: verified.currentHead,
+    currentSequenceNumber: verified.currentSequenceNumber,
+    operations: verified.operations,
+    records: verified.records,
+    trustedDevices: Array.from(verified.trust.trustedDevicesById.values()),
+  }).catch(() => undefined);
+}
+
+async function applyPendingLocalOperationsToState(input: {
+  readonly state: LocalVaultState;
+  readonly trust: TrustListInput;
+  readonly vaultEncryptionKey: Uint8Array;
+  readonly vaultId: string;
+}): Promise<LocalVaultState> {
+  const queue = new VaultOpLogPendingQueue(input.vaultId, new LocalStorageQueuePersistence());
+  await queue.load().catch(() => undefined);
+  await queue.recoverAfterCrash().catch(() => undefined);
+
+  let localState = input.state;
+  const pending = queue.getPending();
+  for (const entry of pending) {
+    localState = await applyPendingEntryToState(localState, entry, input).catch(() => localState);
+  }
+  return localState;
+}
+
+async function applyPendingEntryToState(
+  state: LocalVaultState,
+  entry: PendingLocalOperation,
+  input: {
+    readonly trust: TrustListInput;
+    readonly vaultEncryptionKey: Uint8Array;
+  },
+): Promise<LocalVaultState> {
+  if (!entry.record) {
+    return state;
+  }
+  const verifiedBaseRecordState = buildVerifiedBaseRecordState(entry.op);
+  if (entry.op.opType !== 'create' && !verifiedBaseRecordState) {
+    return state;
+  }
+
+  const result = entry.op.opType === 'delete'
+    ? await applyTrustedDelete({
+        state,
+        operation: entry.op,
+        record: entry.record,
+        trust: input.trust,
+        verifiedBaseRecordState,
+      })
+    : await applyRemoteOperation({
+        state,
+        operation: entry.op,
+        record: entry.record,
+        trust: input.trust,
+        vaultEncryptionKey: input.vaultEncryptionKey,
+        verifiedBaseRecordState,
+      });
+
+  return result.nextState;
+}
+
+function trustFromOfflineCache(cache: VaultOpLogOfflineCacheEntry): TrustListInput {
+  return {
+    vaultId: cache.vaultId,
+    trustedDevicesById: new Map(cache.trustedDevices.map((device) => [device.deviceId, device])),
+  };
+}
+
+function isRuntimeOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
 async function verifyOperationChain(input: {
   readonly operations: readonly VaultOperationRow[];
   readonly trust: TrustListInput;
@@ -355,7 +614,7 @@ async function verifyOperationChain(input: {
   const trustByOperationId = new Map<string, TrustListInput>();
   let historicalTrust: TrustListInput = {
     vaultId: trust.vaultId,
-    trustedDevicesById: buildBootstrapTrustList(trust.trustedDevicesById),
+    trustedDevicesById: buildBootstrapTrustList(trust.trustedDevicesById, operations),
   };
   let historicalRecoveryCodeSets = new Map<string, RecoveryCodeSetState>();
 
@@ -463,9 +722,19 @@ function cloneTrustList(trust: TrustListInput): TrustListInput {
 
 function buildBootstrapTrustList(
   devices: ReadonlyMap<string, TrustedDeviceRecordV1>,
+  operations: readonly VaultOperationRow[],
 ): Map<string, TrustedDeviceRecordV1> {
+  const operationAddedDeviceIds = new Set(
+    operations
+      .filter((operation) => operation.opType === 'add_device' || operation.opType === 'recover_device')
+      .map((operation) => operation.recordId),
+  );
   const bootstrapDevices = new Map<string, TrustedDeviceRecordV1>();
   for (const device of devices.values()) {
+    if (operationAddedDeviceIds.has(device.deviceId)) {
+      continue;
+    }
+
     const isBootstrapDevice = (device.addedOpId ?? null) === null
       && (device.addedByDeviceId === null || device.addedByDeviceId === device.deviceId);
     if (!isBootstrapDevice) {
@@ -495,15 +764,16 @@ function buildDeviceTrustPayloadFromSignedOperation(
     }
     return {
       kind: 'add',
-      device: {
-        vaultId: operation.body.vaultId,
-        deviceId: operation.body.recordId,
-        publicSigningKey: targetPublicSigningKey,
-        deviceNameEncrypted: '',
-        addedByDeviceId: operation.body.authorDeviceId,
-        addedAt: operation.body.createdAtClient,
-        trustEpoch: 0,
-        status: 'trusted',
+        device: {
+          vaultId: operation.body.vaultId,
+          deviceId: operation.body.recordId,
+          publicSigningKey: targetPublicSigningKey,
+          deviceNameEncrypted: '',
+          addedByDeviceId: operation.body.authorDeviceId,
+          addedOpId: operation.body.opId,
+          addedAt: operation.body.createdAtClient,
+          trustEpoch: 0,
+          status: 'trusted',
         revokedAt: null,
         revokedByDeviceId: null,
       },
@@ -517,15 +787,16 @@ function buildDeviceTrustPayloadFromSignedOperation(
     }
     return {
       kind: 'recover',
-      device: {
-        vaultId: operation.body.vaultId,
-        deviceId: operation.body.recordId,
-        publicSigningKey: targetPublicSigningKey,
-        deviceNameEncrypted: '',
-        addedByDeviceId: null,
-        addedAt: operation.body.createdAtClient,
-        trustEpoch: 0,
-        status: 'trusted',
+        device: {
+          vaultId: operation.body.vaultId,
+          deviceId: operation.body.recordId,
+          publicSigningKey: targetPublicSigningKey,
+          deviceNameEncrypted: '',
+          addedByDeviceId: null,
+          addedOpId: operation.body.opId,
+          addedAt: operation.body.createdAtClient,
+          trustEpoch: 0,
+          status: 'trusted',
         revokedAt: null,
         revokedByDeviceId: null,
       },

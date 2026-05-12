@@ -21,6 +21,10 @@ import {
   saveVaultOpLogDeviceIdentity,
   type VaultOpLogDeviceIdentity,
 } from './vaultOpLogDeviceStore';
+import {
+  loadVerifiedVaultOpLogOfflineCache,
+  type VaultOpLogOfflineCacheEntry,
+} from './vaultOpLogOfflineStore';
 
 export interface VaultOpLogDeviceTrustLookupClient {
   readonly from: (table: 'vault_device_trust_records') => {
@@ -79,16 +83,64 @@ export async function loadVerifiedVaultOpLogDeviceContext(
 export async function recoverVaultOpLogDeviceIdentity(
   input: RecoverVaultOpLogDeviceIdentityInput,
 ): Promise<VaultOpLogDeviceIdentity | null> {
-  const [localRefs, trustRows] = await Promise.all([
-    listVaultOpLogDeviceSigningKeyRefs({ userId: input.userId, vaultId: input.vaultId }),
-    loadTrustedDeviceRows(input.trustClient, input.vaultId),
-  ]);
+  return recoverDeviceIdentityFromTrustedDevices({
+    userId: input.userId,
+    vaultId: input.vaultId,
+    trustRows: await loadTrustedDeviceRows(input.trustClient, input.vaultId),
+  });
+}
 
-  if (localRefs.length === 0 || trustRows.length === 0) {
+export async function recoverVaultOpLogDeviceIdentityFromOfflineCache(input: {
+  readonly userId: string;
+  readonly vaultId: string;
+}): Promise<VaultOpLogDeviceIdentity | null> {
+  const cache = await loadVerifiedVaultOpLogOfflineCache(input).catch(() => null);
+  if (!cache) {
     return null;
   }
 
-  const trustByDeviceId = new Map(trustRows.map((row) => [row.deviceId, row]));
+  return recoverDeviceIdentityFromTrustedDevices({
+    userId: input.userId,
+    vaultId: input.vaultId,
+    trustRows: trustedDeviceRowsFromOfflineCache(cache),
+  });
+}
+
+async function loadTrustedDeviceRows(
+  trustClient: VaultOpLogDeviceTrustLookupClient,
+  vaultId: string,
+): Promise<TrustedDeviceTrustRow[]> {
+  const { data, error } = await trustClient
+    .from('vault_device_trust_records')
+    .select('device_id,public_signing_key,trust_epoch,status')
+    .eq('vault_id', vaultId)
+    .eq('status', 'trusted');
+
+  if (error || !Array.isArray(data)) {
+    return [];
+  }
+
+  return data.flatMap((row) => {
+    const mapped = mapTrustedDeviceTrustRow(row);
+    return mapped ? [mapped] : [];
+  });
+}
+
+async function recoverDeviceIdentityFromTrustedDevices(input: {
+  readonly userId: string;
+  readonly vaultId: string;
+  readonly trustRows: readonly TrustedDeviceTrustRow[];
+}): Promise<VaultOpLogDeviceIdentity | null> {
+  const localRefs = await listVaultOpLogDeviceSigningKeyRefs({
+    userId: input.userId,
+    vaultId: input.vaultId,
+  });
+
+  if (localRefs.length === 0 || input.trustRows.length === 0) {
+    return null;
+  }
+
+  const trustByDeviceId = new Map(input.trustRows.map((row) => [row.deviceId, row]));
   for (const ref of localRefs) {
     const trust = trustByDeviceId.get(ref.deviceId);
     if (!trust) {
@@ -119,23 +171,19 @@ export async function recoverVaultOpLogDeviceIdentity(
   return null;
 }
 
-async function loadTrustedDeviceRows(
-  trustClient: VaultOpLogDeviceTrustLookupClient,
-  vaultId: string,
-): Promise<TrustedDeviceTrustRow[]> {
-  const { data, error } = await trustClient
-    .from('vault_device_trust_records')
-    .select('device_id,public_signing_key,trust_epoch,status')
-    .eq('vault_id', vaultId)
-    .eq('status', 'trusted');
+function trustedDeviceRowsFromOfflineCache(
+  cache: VaultOpLogOfflineCacheEntry,
+): TrustedDeviceTrustRow[] {
+  return cache.trustedDevices.flatMap((device) => {
+    if (device.status !== 'trusted') {
+      return [];
+    }
 
-  if (error || !Array.isArray(data)) {
-    return [];
-  }
-
-  return data.flatMap((row) => {
-    const mapped = mapTrustedDeviceTrustRow(row);
-    return mapped ? [mapped] : [];
+    return [{
+      deviceId: device.deviceId,
+      publicSigningKeyB64Url: device.publicSigningKey,
+      trustEpoch: device.trustEpoch,
+    }];
   });
 }
 

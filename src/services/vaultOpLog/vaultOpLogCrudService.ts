@@ -123,6 +123,7 @@ export interface VerifiedRecordBase {
 
 export interface SubmissionPipelineResult {
   readonly resultingVaultHead: string;
+  readonly pendingLocal?: boolean;
 }
 
 export interface ItemPlaintext {
@@ -421,6 +422,9 @@ async function submitAndVerify(
     ));
   } catch {
     await queue.markRetryable(opRow.opId, 'submit_vault_operation threw');
+    if (isRuntimeOffline()) {
+      return { resultingVaultHead: built.resultingVaultHead, pendingLocal: true };
+    }
     throw new OperationSubmissionRetryableError('submit_vault_operation threw');
   }
 
@@ -433,6 +437,9 @@ async function submitAndVerify(
     }
     case 'retryable':
       await queue.markRetryable(opRow.opId, classified.error);
+      if (isRuntimeOffline()) {
+        return { resultingVaultHead: built.resultingVaultHead, pendingLocal: true };
+      }
       throw new OperationSubmissionRetryableError(classified.error);
     case 'rebaseNeeded':
       await queue.markRebaseNeeded(opRow.opId);
@@ -447,6 +454,10 @@ async function submitAndVerify(
       await queue.markFailed(opRow.opId, 'unexpected_submit_classification');
       throw new OperationSubmissionFailedError('unexpected_submit_classification');
   }
+}
+
+function isRuntimeOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
 
 async function verifyCommittedOperation(
@@ -484,6 +495,7 @@ async function loadVerifiedVaultState(
   const verification = await loadVaultOpLogUiState({
     rpcClient: deps.rpcClient,
     trustClient: deps.trustClient,
+    userId: deps.userId,
     vaultId: deps.vaultId,
     deviceId: deps.deviceId,
     publicSigningKeyB64Url: deps.publicSigningKeyB64Url,

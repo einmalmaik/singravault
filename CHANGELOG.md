@@ -2,6 +2,47 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## Unreleased - 2026-05-12
+
+### Highlights
+
+- Neues Vault-Operation-Log: Vault-Änderungen werden als kryptografisch signierte Operationen vertrauenswürdiger Geräte verarbeitet, statt nur über alte Snapshot-/Baseline-Heuristiken integriert zu werden.
+- Neues Gerätevertrauen: Account-Login und Vault-Schreibrecht sind getrennt. Ein neues Gerät muss durch ein bestehendes vertrauenswürdiges Gerät oder durch einen einmaligen Recovery-Code in den Vault-Device-Trust aufgenommen werden.
+- Neue Recovery-Codes für Gerätezugriff: Nutzer können fünf einmalig nutzbare Codes herunterladen, um bei Verlust aller vertrauenswürdigen Geräte wieder ein neues Gerät zu verifizieren.
+- Geräteverwaltung in den Tresoreinstellungen: Vertrauenswürdige Geräte sind sichtbar und können widerrufen werden; widerrufene Geräte verlieren den Schreibzugriff und werden aus der aktiven Geräteliste entfernt.
+
+### Security
+
+- Alle normalen Vault-CRUD-Schreibpfade laufen im verifizierten OpLog-Modus über `submit_vault_operation`; direkte Client-Writes auf alte Item-/Kategorie-Tabellen sind kein Trust-Anker mehr.
+- Operationen werden kanonisch gehasht und mit per-Gerät-Signaturschlüsseln signiert. Zielgerät, Public Key, Trust-Epoch und Recovery-Code-Commitments sind Teil der sicherheitsrelevanten Signaturfelder.
+- Remote-Records werden erst nach lokaler Verifikation von Operation, Autorgerät, Signatur, Head-Kette, AAD-Hash, Ciphertext-Hash und Schema für Anzeige, Export, Suche oder Clipboard freigegeben.
+- Unbekannte Autoren, widerrufene Geräte, manipulierte Operationen, fehlende Delete-Beweise und beschädigte Ciphertexts führen zu granularer Quarantäne statt stiller Rebaseline.
+- Recovery-Codes werden serverseitig erzeugt und validiert, nicht im Klartext gespeichert, nur einmal angezeigt und nur einmal verbraucht. Sie umgehen weder Masterpasswort noch Vault-Key-Ableitung, Device-Key-Pflicht oder Quarantäne.
+- Revoke-Device-Operationen können aktive Clients zeitnah aus dem Tresor werfen; lokale Site-Data-Löschung gilt weiterhin als Verlust der lokalen Device-Identity und erfordert erneutes Pairing oder Recovery.
+
+### Fixed
+
+- Tauri-/Desktop-Operationen schlagen nach Migration nicht mehr mit `Operation Verification failed` oder `op_hash_mismatch` fehl, wenn der lokale Trust-Epoch korrekt geladen ist.
+- Add-Device-Genehmigungen bleiben erneut versuchbar, wenn der spätere Operation-Submit fehlschlägt; ein Pending Request wird nicht mehr zu früh verbraucht.
+- `recover_device` erzeugt jetzt einen Trust-Zustand, den die lokale State Machine verifizieren kann; danach sind Create/Edit/Delete wieder über den normalen signierten OpLog-Pfad möglich.
+- Recovery-Code-Download-Dateien verwenden lokalisierte Texte mit korrekten deutschen Umlauten.
+- Nach Gerätewiderruf kann ein Gerät ohne harten Reload direkt wieder über Pairing oder Recovery-Code in den untrusted Flow starten.
+- Der Sicherheitsstatus-Banner in der Vault-Liste reserviert Layout-Platz, damit Einträge oder der Leerzustand nicht mehr nach unten springen.
+
+### Changed
+
+- Die alte Integritätslogik aus lokalen Snapshot-Digests, Recent-Local-Mutation-Zeitfenstern und automatischer Rebaseline wird durch die neue Operation-Log-Verifikation abgelöst.
+- Kategorie-, Item- und TOTP-Anzeige im verifizierten Vault-Modus liest aus dem lokal verifizierten OpLog-State statt aus einem Legacy-Snapshot.
+- Export- und Datenfreigabe-Pfade blockieren fail-closed, wenn kein verifizierter OpLog-Egress-State verfügbar ist.
+- Die Geräteaufnahme erklärt Nutzern deutlicher, warum ein angemeldeter Browser den Tresor nicht automatisch ändern oder sensible Inhalte anzeigen darf.
+
+### Operational Notes
+
+- Vor Release müssen die Supabase-Migrationen und die Edge Function `vault-recovery-codes` auf der Zielumgebung aktuell deployed sein.
+- Recovery-Codes sind die letzte Geräte-Trust-Wiederherstellung. Wenn alle vertrauenswürdigen Geräte und alle Codes verloren sind, gibt es keinen Support-Bypass.
+- Ein kompromittiertes bereits vertrauenswürdiges Gerät bleibt ein Risiko, weil es gültige Operationen signieren kann. Dafür sind Gerätewiderruf, Audit-Anzeige und spätere Rekey-/Snapshot-Recovery-Flows weiter relevant.
+- Tauri-/Multi-Client-/Offline-E2E sollte vor dem Release mit einem isolierten Test-Vault erneut manuell geprüft werden.
+
 ## 0.4.3 - 2026-04-28
 
 ### Security Hardening
