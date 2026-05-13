@@ -205,14 +205,22 @@ export function DeviceKeySettings() {
         if (!disableMasterPassword || disablePhrase !== disableConfirmationPhrase || !disableAcknowledged) return;
         setLoading(true);
 
-        const { error } = await disableDeviceKey(
-            disableMasterPassword,
-            disableVaultTwoFactorRequired ? disableTwoFactorCode : undefined,
-            disablePhrase,
-        );
+        let disableError: Error | null = null;
+        try {
+            const result = await disableDeviceKey(
+                disableMasterPassword,
+                disableVaultTwoFactorRequired ? disableTwoFactorCode : undefined,
+                disablePhrase,
+            );
+            disableError = result.error;
+            await refreshDeviceKeyState();
+        } catch {
+            disableError = new Error('Device Key deactivation failed.');
+        } finally {
+            setLoading(false);
+        }
 
-        setLoading(false);
-        if (error) {
+        if (disableError) {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),

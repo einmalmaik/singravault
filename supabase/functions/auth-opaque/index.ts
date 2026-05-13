@@ -1,14 +1,64 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+
 /**
  * @fileoverview OPAQUE Protocol Edge Function
  *
  * App-owned password authentication is only allowed through OPAQUE.
  * The user's password never reaches this server, not even as a hash.
  *
- * Endpoints (via `action` field in POST body):
- *   - register-start:  Server processes registration request for an authenticated account
- *   - register-finish: Server stores the registration record for an authenticated account
- *   - login-start:     Server processes OPAQUE login request
- *   - login-finish:    Server verifies OPAQUE proof and issues session
+ * ## OPAQUE-Protokoll Übersicht
+ *
+ * OPAQUE ist ein asymmetrisches PAKE (Password-Authenticated Key Exchange) Protokoll:
+ * - Server speichert nur kryptografisches "Registration Record"
+ * - Aus dem Record kann das Passwort NICHT abgeleitet werden
+ * - Login erzeugt einen geteilten Session-Key ohne Passwort-Übertragung
+ *
+ * ## Endpoints (via `action` Feld)
+ *
+ * ### Registrierung (für bereits authentifizierte Accounts)
+ * - `register-start`:  Generiert Registration Response für OPAQUE-Setup
+ * - `register-finish`: Speichert Registration Record und deaktiviert GoTrue
+ *
+ * ### Login
+ * - `login-start`:  Startet OPAQUE-Login, gibt Login Response zurück
+ * - `login-finish`: Verifiziert OPAQUE-Proof, prüft 2FA, erstellt Session
+ *
+ * ## Login-Flow im Detail
+ *
+ * ```
+ * Client                          Server
+ *   |                                |
+ *   |-- login-start (identifier) -->|
+ *   |<- loginResponse, loginId -----|
+ *   |                                |
+ *   |-- login-finish (proof, 2fa) ->|
+ *   |<- session, opaqueBinding -----|
+ * ```
+ *
+ * ## Session-Binding
+ *
+ * Nach erfolgreichem Login wird ein "Session Binding Proof" erstellt:
+ * - Bindet OPAQUE Session-Key an Supabase Access-Token
+ * - Ermöglicht clientseitige Verifikation der Server-Authentizität
+ * - Schützt vor Session-Hijacking
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Aufgerufen via `invokeAuthedFunction('auth-opaque', {...})` aus:
+ * - `src/services/opaqueService.ts` - Alle OPAQUE-Operationen
+ * - Login-Flow in `src/contexts/AuthContext.tsx`
+ *
+ * ## Sicherheitsmaßnahmen
+ *
+ * - Rate-Limiting: opaque_login Action (streng bei Fehlversuchen)
+ * - 2FA-Enforcement: Falls aktiviert, vor Session-Erstellung
+ * - E-Mail-Verifizierung: Erforderlich vor erstem Login
+ * - Timing-Attack-Prävention: Minimum 300ms Response-Zeit
+ * - Log-Redaktion: E-Mails werden maskiert
+ *
+ * @see src/services/opaqueService.ts - Frontend OPAQUE-Client
+ * @see _shared/opaqueAuth.ts - Session-Binding, Identifier-Normalisierung
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";

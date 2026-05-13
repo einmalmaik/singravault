@@ -1,3 +1,60 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+
+/**
+ * @fileoverview Two-Factor Authentication (2FA) Edge Function
+ *
+ * Diese Edge Function verwaltet alle serverseitigen 2FA-Operationen.
+ * Unterstützt TOTP (Time-based One-Time Password) und Backup-Codes.
+ *
+ * ## Verfügbare Aktionen
+ *
+ * | Aktion                              | Beschreibung                                       |
+ * |-------------------------------------|---------------------------------------------------|
+ * | `requirement`                       | Prüft ob 2FA für einen bestimmten Zweck nötig ist |
+ * | `create-challenge`                  | Erstellt Challenge für 2FA-Verifikation           |
+ * | `verify-challenge`                  | Verifiziert TOTP/Backup-Code gegen Challenge      |
+ * | `disable-2fa`                       | Deaktiviert 2FA (erfordert gültigen TOTP-Code)    |
+ * | `complete-device-key-deactivation`  | Deaktiviert Device-Key-Schutz (kritische Aktion)  |
+ *
+ * ## 2FA-Zwecke (Purposes)
+ *
+ * | Purpose                   | Beschreibung                                |
+ * |---------------------------|---------------------------------------------|
+ * | `account_login`           | Login mit OPAQUE                            |
+ * | `password_reset`          | Passwort-Reset via E-Mail                   |
+ * | `password_change`         | Passwort-Änderung (authentifiziert)         |
+ * | `account_security_change` | Sicherheitseinstellungen ändern             |
+ * | `disable_2fa`             | 2FA deaktivieren                            |
+ * | `vault_unlock`            | Vault entsperren (optional je nach Policy)  |
+ * | `critical_action`         | Kritische Aktionen wie Device-Key-Änderung  |
+ *
+ * ## Challenge-Flow
+ *
+ * ```
+ * 1. Client: create-challenge → {challengeId, expiresAt}
+ * 2. User: Gibt TOTP-Code oder Backup-Code ein
+ * 3. Client: verify-challenge → {success: true, verified: true}
+ * ```
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Aufgerufen via `invokeAuthedFunction('auth-2fa', {...})` aus:
+ * - `src/services/twoFactorService.ts` - 2FA-Verifikation
+ * - `src/components/settings/TwoFactorSettings.tsx` - 2FA-Setup/Disable
+ * - `src/components/settings/SecuritySettings.tsx` - Device-Key-Deaktivierung
+ *
+ * ## Sicherheitsmaßnahmen
+ *
+ * - Rate-Limiting via `_shared/twoFactor.ts`
+ * - Challenge-TTL: 5 Minuten
+ * - Backup-Codes: Einmalig verwendbar
+ * - Device-Key-Deaktivierung: Erfordert Bestätigungswort + 2FA
+ *
+ * @see src/services/twoFactorService.ts - Frontend 2FA-Service
+ * @see _shared/twoFactor.ts - Shared 2FA-Utilities
+ */
+
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCorsHeaders } from "../_shared/cors.ts";
@@ -9,12 +66,46 @@ import {
   verifyTwoFactorServer,
 } from "../_shared/twoFactor.ts";
 
+// ============================================================================
+// Konfiguration
+// ============================================================================
+
+/**
+ * Supabase-URL aus Umgebungsvariablen.
+ */
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+
+/**
+ * Service Role Key für Admin-Operationen.
+ */
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+/**
+ * Admin-Client für Datenbankoperationen.
+ */
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+/**
+ * Challenge-Gültigkeit: 5 Minuten.
+ * Kurz genug für Sicherheit, lang genug für Benutzerfreundlichkeit.
+ */
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Bestätigungswort für Device-Key-Deaktivierung.
+ * Muss exakt eingegeben werden, um versehentliche Deaktivierung zu verhindern.
+ */
 const DEVICE_KEY_DEACTIVATION_CONFIRMATION_WORD = "DISABLE DEVICE KEY";
 
+// ============================================================================
+// Request Handler
+// ============================================================================
+
+/**
+ * Haupteinstiegspunkt der Edge Function.
+ *
+ * Alle Aktionen erfordern einen authentifizierten Benutzer (Bearer Token).
+ */
 Deno.serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
   const headers = new Headers({

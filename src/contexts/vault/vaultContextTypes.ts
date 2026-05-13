@@ -7,9 +7,20 @@ import type {
     VaultIntegrityVerificationResult,
 } from '@/services/vaultIntegrityService';
 import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecoveryService';
-import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngine';
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
+import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
+import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
+import type {
+    CategoryPlaintext,
+    ItemPlaintext,
+    OpLogCategoryDeleteMode,
+} from '@/services/vaultOpLog/vaultOpLogCrudService';
+import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+import type {
+    CreateSharedCollectionInput,
+    SharedCollectionSummary,
+} from './useCollectionOpLogActions';
 
 export type VaultSnapshotSource = 'remote' | 'cache' | 'empty';
 
@@ -58,20 +69,47 @@ export interface VaultContextType {
         options?: { source?: VaultSnapshotSource },
     ) => Promise<VaultIntegrityVerificationResult | null>;
     updateIntegrity: (items: VaultItemForIntegrity[]) => Promise<void>;
-    refreshIntegrityBaseline: (trustedMutation?: TrustedVaultMutation) => Promise<VaultIntegrityVerificationResult | null>;
+    refreshIntegrityBaseline: () => Promise<VaultIntegrityVerificationResult | null>;
     reportUnreadableItems: (items: QuarantinedVaultItem[]) => void;
     integrityVerified: boolean;
     lastIntegrityResult: VaultIntegrityVerificationResult | null;
     integrityMode: VaultIntegrityMode | 'safe';
+    vaultMigrationStatus: VaultMigrationRolloutStatus | null;
+    vaultMigrationError: string | null;
+    vaultMigrationCanStart: boolean;
+    startVaultMigration: () => Promise<{ error: Error | null }>;
+    retryVaultMigration: () => Promise<{ error: Error | null }>;
     quarantinedItems: QuarantinedVaultItem[];
     quarantineResolutionById: Record<string, QuarantineResolutionState>;
     vaultDataVersion: number;
     integrityBlockedReason: VaultIntegrityBlockedReason | null;
     trustedRecoveryAvailable: boolean;
     enterSafeMode: () => Promise<{ error: Error | null }>;
-    restoreQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
-    deleteQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
-    acceptMissingQuarantinedItem: (itemId: string) => Promise<{ error: Error | null }>;
     exitSafeMode: () => void;
     resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+
+    // Phase 9 — OpLog UI state (behind feature flag)
+    opLogVaultId: string | null;
+    opLogUiView: VaultOpLogUiView | null;
+    opLogLocalVaultState: LocalVaultState | null;
+    opLogUiLoading: boolean;
+    opLogUiError: string | null;
+    opLogUiRefresh: () => Promise<void>;
+    opLogCreateItem: (plaintext: ItemPlaintext) => Promise<{ error: Error | null; recordId: string | null }>;
+    opLogUpdateItem: (recordId: string, plaintext: ItemPlaintext) => Promise<{ error: Error | null }>;
+    opLogDeleteItem: (recordId: string) => Promise<{ error: Error | null }>;
+    opLogCreateCategory: (plaintext: CategoryPlaintext) => Promise<{ error: Error | null; recordId: string | null }>;
+    opLogUpdateCategory: (recordId: string, plaintext: CategoryPlaintext) => Promise<{ error: Error | null }>;
+    opLogDeleteCategory: (recordId: string, mode?: OpLogCategoryDeleteMode) => Promise<{ error: Error | null }>;
+    opLogRestoreRecord: (recordId: string) => Promise<{ error: Error | null }>;
+    opLogDeleteUntrustedRecord: (recordId: string) => Promise<{ error: Error | null }>;
+    opLogResolveConflict: (recordId: string) => Promise<{ error: Error | null }>;
+    opLogApproveDeviceRequest: (requestId: string) => Promise<{ error: Error | null }>;
+    opLogRejectDeviceRequest: (requestId: string) => Promise<{ error: Error | null }>;
+    opLogRevokeDevice: (deviceId: string) => Promise<{ error: Error | null }>;
+
+    // Shared Collections — Core-owned signed Collection OpLog facade for Premium.
+    listSharedCollections: () => Promise<{ error: Error | null; collections: SharedCollectionSummary[] }>;
+    createSharedCollection: (input: CreateSharedCollectionInput) => Promise<{ error: Error | null; collectionId: string | null }>;
+    deleteSharedCollection: (collectionId: string) => Promise<{ error: Error | null }>;
 }

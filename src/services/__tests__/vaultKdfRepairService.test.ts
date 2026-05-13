@@ -82,18 +82,18 @@ describe('vaultKdfRepairService', () => {
     errorSpy.mockRestore();
   });
 
-  it('propagates failed item updates as retryable KDF repair persistence errors', async () => {
-    const { KdfRepairPersistenceError, repairBrokenKdfUpgradeIfNeeded } = await import('../vaultKdfRepairService');
+  it('does not run legacy table repair writes after detecting broken legacy rows', async () => {
+    const { repairBrokenKdfUpgradeIfNeeded } = await import('../vaultKdfRepairService');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     mockSupabase._setChains([
       mockSupabase._createChain({ data: [{ id: 'item-1', encrypted_data: 'old-cipher' }], error: null }),
       mockSupabase._createChain({ data: [], error: null }),
       mockSupabase._createChain({ data: [{ id: 'item-1', encrypted_data: 'old-cipher' }], error: null }),
       mockSupabase._createChain({ data: [], error: null }),
-      mockSupabase._createChain({ data: null, error: { message: 'RLS rejected update', code: '42501' } }),
     ]);
 
-    const repair = repairBrokenKdfUpgradeIfNeeded({
+    await repairBrokenKdfUpgradeIfNeeded({
       userId: 'user-1',
       masterPassword: 'not-logged',
       salt: 'salt',
@@ -101,37 +101,38 @@ describe('vaultKdfRepairService', () => {
       activeKey,
     });
 
-    await expect(repair).rejects.toMatchObject({
-      name: 'KdfRepairPersistenceError',
-      rowKind: 'vault_item',
-      rowId: 'item-1',
-    });
-    await repair.catch((error) => {
-      expect(error).toBeInstanceOf(KdfRepairPersistenceError);
-    });
+    expect(cryptoMocks.reEncryptVault).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      'KDF repair is blocked because legacy vault table writes are disabled.',
+    );
+    warnSpy.mockRestore();
   });
 
-  it('does not report repair completion when a row update fails', async () => {
+  it('does not report repair completion when legacy repair writes are blocked', async () => {
     const { repairBrokenKdfUpgradeIfNeeded } = await import('../vaultKdfRepairService');
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     mockSupabase._setChains([
       mockSupabase._createChain({ data: [{ id: 'item-1', encrypted_data: 'old-cipher' }], error: null }),
       mockSupabase._createChain({ data: [], error: null }),
       mockSupabase._createChain({ data: [{ id: 'item-1', encrypted_data: 'old-cipher' }], error: null }),
       mockSupabase._createChain({ data: [], error: null }),
-      mockSupabase._createChain({ data: null, error: { message: 'connection reset' } }),
     ]);
 
-    await expect(repairBrokenKdfUpgradeIfNeeded({
+    await repairBrokenKdfUpgradeIfNeeded({
       userId: 'user-1',
       masterPassword: 'not-logged',
       salt: 'salt',
       kdfVersion: 2,
       activeKey,
-    })).rejects.toThrow(/Repair is incomplete and retryable/);
+    });
 
     expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('KDF repair complete'));
+    expect(warnSpy).toHaveBeenCalledWith(
+      'KDF repair is blocked because legacy vault table writes are disabled.',
+    );
     infoSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 });

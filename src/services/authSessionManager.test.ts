@@ -86,6 +86,8 @@ describe("authSessionManager", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    restoreNavigatorOnline?.();
+    restoreNavigatorOnline = null;
   });
 
   it("hydrates from the BFF cookie and stores only a token-free offline identity", async () => {
@@ -108,8 +110,9 @@ describe("authSessionManager", () => {
       userId: "user-1",
       email: "user@example.com",
     });
-    expect(localStorage.getItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY)).not.toContain("access-token");
-    expect(localStorage.getItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY)).not.toContain("refresh-token");
+    const legacyFallback = localStorage.getItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY) ?? "";
+    expect(legacyFallback).not.toContain("access-token");
+    expect(legacyFallback).not.toContain("refresh-token");
   });
 
   it("deduplicates concurrent refresh calls", async () => {
@@ -187,6 +190,25 @@ describe("authSessionManager", () => {
     expect(result.offlineIdentity).toBeNull();
   });
 
+  it("hydrates a desktop offline identity without trying a keychain refresh while offline", async () => {
+    restoreNavigatorOnline = setNavigatorOnline(false);
+    runtimeState.isTauri = true;
+    runtimeState.invoke.mockResolvedValue("keychain-refresh-token");
+    localStorage.setItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY, JSON.stringify({
+      userId: "offline-user",
+      email: "offline@example.com",
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const result = await hydrateAuthSession();
+
+    expect(result.mode).toBe("offline");
+    expect(result.user?.id).toBe("offline-user");
+    expect(result.offlineIdentity?.userId).toBe("offline-user");
+    expect(runtimeState.invoke).not.toHaveBeenCalledWith("load_refresh_token");
+    expect(mockRefreshSession).not.toHaveBeenCalled();
+  });
+
   it("keeps the desktop callback path unauthenticated until the deep link is applied", async () => {
     runtimeState.isTauri = true;
     runtimeState.deepLinks = ["singravault://auth/callback?code=desktop-code"];
@@ -259,3 +281,20 @@ describe("authSessionManager", () => {
     expect(result.session?.access_token).toBe("access-token");
   });
 });
+
+let restoreNavigatorOnline: (() => void) | null = null;
+
+function setNavigatorOnline(online: boolean): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(Navigator.prototype, "onLine")
+    ?? Object.getOwnPropertyDescriptor(navigator, "onLine");
+  Object.defineProperty(navigator, "onLine", {
+    configurable: true,
+    get: () => online,
+  });
+
+  return () => {
+    if (descriptor) {
+      Object.defineProperty(navigator, "onLine", descriptor);
+    }
+  };
+}

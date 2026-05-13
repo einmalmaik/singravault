@@ -10,7 +10,7 @@ const supabaseState = vi.hoisted(() => ({
 
 const dependencyMocks = vi.hoisted(() => ({
   clearOfflineVaultData: vi.fn(async () => undefined),
-  clearIntegrityBaseline: vi.fn(async () => undefined),
+  removeIntegrityBaselineEnvelope: vi.fn(async () => undefined),
   deleteDeviceKey: vi.fn(async () => undefined),
 }));
 
@@ -27,8 +27,8 @@ vi.mock('@/services/offlineVaultService', () => ({
   clearOfflineVaultData: dependencyMocks.clearOfflineVaultData,
 }));
 
-vi.mock('@/services/vaultIntegrityService', () => ({
-  clearIntegrityBaseline: dependencyMocks.clearIntegrityBaseline,
+vi.mock('@/services/integrityBaselineStore', () => ({
+  removeIntegrityBaselineEnvelope: dependencyMocks.removeIntegrityBaselineEnvelope,
 }));
 
 vi.mock('@/services/deviceKeyService', () => ({
@@ -45,7 +45,7 @@ describe('vaultRecoveryService', () => {
     supabaseState.rpcCalls.length = 0;
     supabaseState.rpcResults.length = 0;
     dependencyMocks.clearOfflineVaultData.mockClear();
-    dependencyMocks.clearIntegrityBaseline.mockClear();
+    dependencyMocks.removeIntegrityBaselineEnvelope.mockClear();
     dependencyMocks.deleteDeviceKey.mockClear();
   });
 
@@ -74,7 +74,7 @@ describe('vaultRecoveryService', () => {
       },
     ]);
     expect(dependencyMocks.clearOfflineVaultData).toHaveBeenCalledWith('user-1');
-    expect(dependencyMocks.clearIntegrityBaseline).toHaveBeenCalledWith('user-1');
+    expect(dependencyMocks.removeIntegrityBaselineEnvelope).toHaveBeenCalledWith('user-1');
     expect(dependencyMocks.deleteDeviceKey).toHaveBeenCalledWith('user-1');
   });
 
@@ -96,7 +96,7 @@ describe('vaultRecoveryService', () => {
       { name: 'begin_vault_reset_recovery', args: undefined },
     ]);
     expect(dependencyMocks.clearOfflineVaultData).not.toHaveBeenCalled();
-    expect(dependencyMocks.clearIntegrityBaseline).not.toHaveBeenCalled();
+    expect(dependencyMocks.removeIntegrityBaselineEnvelope).not.toHaveBeenCalled();
     expect(dependencyMocks.deleteDeviceKey).not.toHaveBeenCalled();
   });
 
@@ -118,7 +118,7 @@ describe('vaultRecoveryService', () => {
       { name: 'begin_vault_reset_recovery', args: undefined },
     ]);
     expect(dependencyMocks.clearOfflineVaultData).not.toHaveBeenCalled();
-    expect(dependencyMocks.clearIntegrityBaseline).not.toHaveBeenCalled();
+    expect(dependencyMocks.removeIntegrityBaselineEnvelope).not.toHaveBeenCalled();
     expect(dependencyMocks.deleteDeviceKey).not.toHaveBeenCalled();
   });
 
@@ -153,7 +153,7 @@ describe('vaultRecoveryService', () => {
       },
     ]);
     expect(dependencyMocks.clearOfflineVaultData).not.toHaveBeenCalled();
-    expect(dependencyMocks.clearIntegrityBaseline).not.toHaveBeenCalled();
+    expect(dependencyMocks.removeIntegrityBaselineEnvelope).not.toHaveBeenCalled();
     expect(dependencyMocks.deleteDeviceKey).not.toHaveBeenCalled();
   });
 });

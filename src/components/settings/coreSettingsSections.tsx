@@ -8,6 +8,8 @@ import { LegalLinksSettings } from '@/components/settings/LegalLinksSettings';
 import { PasswordSettings } from '@/components/settings/PasswordSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
 import { DeviceKeySettings } from '@/components/settings/DeviceKeySettings';
+import { TrustedDevicesSettings } from '@/components/settings/TrustedDevicesSettings';
+import { VaultRecoveryCodesSettings } from '@/components/settings/VaultRecoveryCodesSettings';
 import type { SettingsSectionDescriptor } from '@/extensions/types';
 
 export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDescriptor[] {
@@ -88,6 +90,24 @@ export function getCoreVaultSettingsSections(t: TFunction): SettingsSectionDescr
       title: t('settings.security.title'),
       keywords: ['vault', 'security', 'auto lock', 'passkey', 'tresor', 'sicherheit'],
       render: () => <SecuritySettings mode="vault" />,
+    },
+    {
+      id: 'vault-trusted-devices',
+      surface: 'vault',
+      tab: 'security',
+      order: 20,
+      title: 'Vertrauenswürdige Geräte',
+      keywords: ['device trust', 'geräte', 'geraete', 'trusted device', 'freigabe', 'autorisiert', 'entfernen'],
+      render: () => <TrustedDevicesSettings />,
+    },
+    {
+      id: 'vault-recovery-codes',
+      surface: 'vault',
+      tab: 'security',
+      order: 30,
+      title: 'Recovery-Codes',
+      keywords: ['recovery', 'backup codes', 'geraete recovery', 'wiederherstellung', 'notfall', 'device trust'],
+      render: () => <VaultRecoveryCodesSettings />,
     },
     {
       id: 'vault-data',

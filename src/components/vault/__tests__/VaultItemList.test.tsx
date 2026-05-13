@@ -71,17 +71,32 @@ const mockVaultContext = {
   reportUnreadableItems: (...args: unknown[]) => mockReportUnreadableItems(...args),
   isDuressMode: false,
   vaultDataVersion: 0,
+  vaultMigrationStatus: null as null | 'notNeeded' | 'required' | 'preflightFailed' | 'ready' | 'running' | 'committed' | 'verified' | 'failed',
+  opLogLocalVaultState: null as null | {
+    recordsById: Map<string, unknown>;
+    quarantinedRecordsById: Map<string, unknown>;
+    conflictsByRecordId: Map<string, unknown>;
+    trustedDevicesById: Map<string, unknown>;
+    lastVerifiedVaultHead: string | null;
+  },
+  opLogUiView: null as null | {
+    vaultSecurityMode: string;
+    verifiedItems: Array<{ recordId: string; recordType: string; recordVersion: number }>;
+    quarantinedItems: unknown[];
+    conflictedItems: unknown[];
+    deletedItemIds: string[];
+    restoredItemIds: string[];
+  },
+  opLogUiRefresh: vi.fn(),
   quarantineResolutionById: {} as Record<string, {
     canRestore: boolean;
     canDelete: boolean;
-    canAcceptMissing: boolean;
     hasTrustedLocalCopy: boolean;
     isBusy: boolean;
     lastError: string | null;
   }>,
-  restoreQuarantinedItem: vi.fn(),
-  deleteQuarantinedItem: vi.fn(),
-  acceptMissingQuarantinedItem: vi.fn(),
+  opLogRestoreRecord: vi.fn(),
+  opLogDeleteUntrustedRecord: vi.fn(),
   lastIntegrityResult: null as
     | null
     | {
@@ -198,6 +213,42 @@ function renderList() {
   );
 }
 
+function makeVerifiedOpLogItem(recordId: string, plaintext: Record<string, unknown>) {
+  return {
+    record: {
+      vaultId: 'vault-1',
+      recordId,
+      recordType: 'item',
+      recordVersion: 1,
+      keyVersion: 1,
+      aadHash: 'aad',
+      ciphertextHash: 'ciphertext-hash',
+      nonce: 'nonce',
+      ciphertext: 'ciphertext',
+      lastOpId: 'op-1',
+      lastOpHash: 'op-hash',
+      isTombstone: false,
+      createdAt: '2026-02-18T10:00:00.000Z',
+      updatedAt: '2026-02-18T12:00:00.000Z',
+    },
+    recordState: 'verified',
+    plaintext: new TextEncoder().encode(JSON.stringify(plaintext)),
+    lastOperation: {
+      opId: 'op-1',
+    },
+  };
+}
+
+function makeOpLogState(records: Array<ReturnType<typeof makeVerifiedOpLogItem>>) {
+  return {
+    recordsById: new Map(records.map((record) => [record.record.recordId, record])),
+    quarantinedRecordsById: new Map(),
+    conflictsByRecordId: new Map(),
+    trustedDevicesById: new Map(),
+    lastVerifiedVaultHead: 'head-1',
+  };
+}
+
 describe.sequential('VaultItemList', () => {
   afterEach(() => {
     cleanup();
@@ -211,10 +262,14 @@ describe.sequential('VaultItemList', () => {
     snapshotState.source = 'remote';
     mockVaultContext.lastIntegrityResult = null;
     mockVaultContext.vaultDataVersion = 0;
+    mockVaultContext.vaultMigrationStatus = null;
+    mockVaultContext.opLogLocalVaultState = null;
+    mockVaultContext.opLogUiView = null;
+    mockVaultContext.opLogUiRefresh.mockResolvedValue(undefined);
+    mockVaultContext.opLogUiRefresh.mockClear();
     mockVaultContext.quarantineResolutionById = {};
-    mockVaultContext.restoreQuarantinedItem.mockResolvedValue({ error: null });
-    mockVaultContext.deleteQuarantinedItem.mockResolvedValue({ error: null });
-    mockVaultContext.acceptMissingQuarantinedItem.mockResolvedValue({ error: null });
+    mockVaultContext.opLogRestoreRecord.mockResolvedValue({ error: null });
+    mockVaultContext.opLogDeleteUntrustedRecord.mockResolvedValue({ error: null });
     mockEncryptItem.mockResolvedValue('encrypted');
     mockDecryptItemForLegacyMigration.mockRejectedValue(new Error('not legacy'));
     mockMigrateLegacyVaultItemEncryptionAndMetadata.mockImplementation(async (input: {
@@ -324,6 +379,113 @@ describe.sequential('VaultItemList', () => {
     });
     expect(mockDecryptItem).not.toHaveBeenCalled();
     expect(mockMigrateLegacyVaultItemEncryptionAndMetadata).not.toHaveBeenCalled();
+  });
+
+  it('does not run the legacy manifest verifier after OpLog migration is verified', async () => {
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    mockVaultContext.opLogLocalVaultState = makeOpLogState([
+      makeVerifiedOpLogItem('oplog-item-1', {
+        title: 'Visible OpLog Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+      }),
+    ]);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: [{ recordId: 'oplog-item-1', recordType: 'item', recordVersion: 1 }],
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    await waitFor(() => {
+      expect(screen.getByText('Visible OpLog Item')).toBeInTheDocument();
+    });
+
+    expect(loadVaultSnapshot).not.toHaveBeenCalled();
+    expect(mockVerifyIntegrity).not.toHaveBeenCalled();
+    expect(mockRefreshIntegrityBaseline).not.toHaveBeenCalled();
+  });
+
+  it('keeps an empty verified OpLog vault on the empty state during background refresh', async () => {
+    snapshotState.online = true;
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    mockVaultContext.opLogLocalVaultState = makeOpLogState([]);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: [],
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    await screen.findByText('vault.empty.title');
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(await screen.findByText('vault.empty.title')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockVaultContext.opLogUiRefresh).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+    expect(loadVaultSnapshot).not.toHaveBeenCalled();
+    expect(mockVerifyIntegrity).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the verified OpLog state on cloud sync ticks and clears the syncing indicator', async () => {
+    snapshotState.online = true;
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    mockVaultContext.opLogLocalVaultState = makeOpLogState([
+      makeVerifiedOpLogItem('oplog-item-1', {
+        title: 'Visible OpLog Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+      }),
+    ]);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: [{ recordId: 'oplog-item-1', recordType: 'item', recordVersion: 1 }],
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    await screen.findByText('Visible OpLog Item');
+
+    let resolveRefresh: () => void = () => {};
+    mockVaultContext.opLogUiRefresh.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(await screen.findByText('Synchronisiere mit Cloud...')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockVaultContext.opLogUiRefresh).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => {
+      resolveRefresh();
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Synchronisiere mit Cloud...')).not.toBeInTheDocument();
+    });
+    expect(loadVaultSnapshot).not.toHaveBeenCalled();
+    expect(mockVerifyIntegrity).not.toHaveBeenCalled();
   });
 
   it('does not decrypt an item from the freshly returned quarantine result', async () => {
@@ -695,11 +857,7 @@ describe.sequential('VaultItemList', () => {
       }),
     );
     expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
-    expect(mockRefreshIntegrityBaseline).toHaveBeenCalledWith(
-      expect.objectContaining({
-        itemIds: expect.any(Set),
-      }),
-    );
+    expect(mockRefreshIntegrityBaseline).toHaveBeenCalledWith();
   });
 
   it('renders V2-native item envelopes without sending them through legacy migration', async () => {
@@ -921,7 +1079,6 @@ describe.sequential('VaultItemList', () => {
       'item-bad': {
         canRestore: true,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: true,
         isBusy: false,
         lastError: null,
@@ -929,7 +1086,6 @@ describe.sequential('VaultItemList', () => {
       'item-bad-totp': {
         canRestore: true,
         canDelete: true,
-        canAcceptMissing: false,
         hasTrustedLocalCopy: true,
         isBusy: false,
         lastError: null,
@@ -958,8 +1114,8 @@ describe.sequential('VaultItemList', () => {
     }));
 
     await waitFor(() => {
-      expect(mockVaultContext.restoreQuarantinedItem).toHaveBeenCalledWith('item-bad');
-      expect(mockVaultContext.restoreQuarantinedItem).toHaveBeenCalledWith('item-bad-totp');
+      expect(mockVaultContext.opLogRestoreRecord).toHaveBeenCalledWith('item-bad');
+      expect(mockVaultContext.opLogRestoreRecord).toHaveBeenCalledWith('item-bad-totp');
     });
     expect(await screen.findByText('2 Einträge wurden wiederhergestellt')).toBeInTheDocument();
   });

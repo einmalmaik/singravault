@@ -373,22 +373,59 @@ describe("security hardening contracts", () => {
     expect(vaultUnlock).not.toContain('href="/settings?tab=security#profile-device-key"');
   });
 
-  it("centralizes server-visible vault item metadata neutralization for new writes", () => {
+  it("routes vault item/category UI writes through signed OpLog actions", () => {
     const policy = readFileSync("src/services/vaultMetadataPolicy.ts", "utf-8");
     const itemDialog = readFileSync("src/components/vault/VaultItemDialog.tsx", "utf-8");
     const categoryDialog = readFileSync("src/components/vault/CategoryDialog.tsx", "utf-8");
     const offlineService = readFileSync("src/services/offlineVaultService.ts", "utf-8");
     const recoveryService = readFileSync("src/services/vaultQuarantineRecoveryService.ts", "utf-8");
     const legacyMigrationService = readFileSync("src/services/legacyVaultMetadataMigrationService.ts", "utf-8");
+    const blocker = readFileSync("src/services/vaultOpLog/vaultLegacyWriteBlocker.ts", "utf-8");
 
     expect(policy).toContain("neutralizeVaultItemServerMetadata");
     expect(policy).toContain("hasLegacyVaultItemServerMetadata");
     expect(policy).toContain("mergeLegacyVaultItemMetadataIntoPayload");
-    expect(itemDialog).toContain("neutralizeVaultItemServerMetadata");
-    expect(categoryDialog).toContain("neutralizeVaultItemServerMetadata");
+    expect(itemDialog).toContain("opLogCreateItem");
+    expect(itemDialog).toContain("opLogUpdateItem");
+    expect(itemDialog).toContain("opLogDeleteItem");
+    expect(itemDialog).toContain("shouldVerifyLegacyDialogCategorySnapshot(vaultMigrationStatus)");
+    expect(itemDialog).not.toContain("from('vault_items')");
+    expect(categoryDialog).toContain("opLogCreateCategory");
+    expect(categoryDialog).toContain("opLogUpdateCategory");
+    expect(categoryDialog).toContain("opLogDeleteCategory");
+    expect(categoryDialog).toContain("vaultMigrationStatus === 'verified'");
+    expect(categoryDialog).toContain("parseVerifiedOpLogItemCategoryId");
+    expect(categoryDialog).not.toContain("from('categories')");
     expect(offlineService).toContain("neutralizeVaultItemServerMetadata(mutation.payload)");
-    expect(recoveryService).toContain("neutralizeVaultItemServerMetadata");
+    expect(recoveryService).not.toContain("restoreQuarantinedItemFromTrustedSnapshot");
+    expect(recoveryService).not.toContain("deleteQuarantinedItemFromVault");
+    expect(recoveryService).not.toContain("canAcceptMissing");
     expect(legacyMigrationService).toContain("migrateLegacyVaultItemMetadata");
-    expect(legacyMigrationService).toContain(".eq('user_id', input.userId)");
+    expect(legacyMigrationService).toContain("blockLegacyVaultRuntimeWrite");
+    expect(blocker).toContain("LegacyVaultRuntimeWriteBlockedError");
+  });
+
+  it("keeps legacy manifest recovery UI inactive after OpLog verification", () => {
+    const vaultPage = readFileSync("src/pages/VaultPage.tsx", "utf-8");
+    const vaultSidebar = readFileSync("src/components/vault/VaultSidebar.tsx", "utf-8");
+
+    expect(vaultPage).toContain("const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified'");
+    expect(vaultPage).toContain("const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime");
+    expect(vaultPage).toContain("if (!useOpLogVerifiedRuntime && (integrityMode === 'blocked' || integrityMode === 'safe'))");
+    expect(vaultPage).toContain("if (shouldShowLegacyIntegrityRecovery)");
+    expect(vaultSidebar).toContain("if (useOpLogVerifiedRuntime)");
+    expect(vaultSidebar).toContain("mapVerifiedCategoryRecord");
+  });
+
+  it("requires a verified OpLog allowlist before export decrypts legacy vault rows", () => {
+    const dataSettings = readFileSync("src/components/settings/DataSettings.tsx", "utf-8");
+    const accountSettings = readFileSync("src/components/settings/AccountSettings.tsx", "utf-8");
+
+    for (const source of [dataSettings, accountSettings]) {
+      expect(source).toContain("const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView)");
+      expect(source).toContain("!opLogUiView || !allowedItemIds || isVaultSecurityModeBlockingEgress");
+      expect(source).toContain("allowedItemIds,");
+      expect(source).not.toContain("allowedItemIds: allowedItemIds ?? undefined");
+    }
   });
 });

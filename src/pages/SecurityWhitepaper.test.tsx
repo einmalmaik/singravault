@@ -57,7 +57,7 @@ describe('SecurityWhitepaper', () => {
 
     expect(screen.getAllByText('Singra Vault Security Whitepaper')[0]).toBeInTheDocument();
     expect(screen.getByText(/Noch kein externer unabhängiger Security Audit durchgeführt/)).toBeInTheDocument();
-    expect(screen.getByText('Whitepaper 2026.04.28-tech-1')).toBeInTheDocument();
+    expect(screen.getByText('Whitepaper 2026.05.12-tech-1')).toBeInTheDocument();
     expect(screen.getByText('App v1.2.3')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /6\. Kryptografie/ })).toHaveAttribute('href', '#cryptography');
     expect(screen.getByText('Security Claims Matrix')).toBeInTheDocument();

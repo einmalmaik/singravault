@@ -18,7 +18,8 @@ export type AuthRateLimitAction =
   | "account_delete"
   | "webauthn_challenge"
   | "webauthn_verify"
-  | "webauthn_manage";
+  | "webauthn_manage"
+  | "vault_recovery_code_redeem";
 
 type AccountIdentifierKind = "email" | "user";
 
@@ -180,6 +181,11 @@ const AUTH_RATE_LIMITS: Record<AuthRateLimitAction, AuthRateLimitConfig> = {
     maxAttempts: 30,
     windowMs: 10 * 60 * 1000,
     lockoutMs: 10 * 60 * 1000,
+  },
+  vault_recovery_code_redeem: {
+    maxAttempts: 5,
+    windowMs: 30 * 60 * 1000,
+    lockoutMs: 60 * 60 * 1000,
   },
 };
 

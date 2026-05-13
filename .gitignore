@@ -73,3 +73,8 @@ public/*.rar
 src-tauri/*backup-codes*.txt
 src-tauri/*recovery*.txt
 src-tauri/*rettung*.txt
+/.windsurf
+/.minimax
+/docs/integration Konzept
+temp_fingerprint.txt
+/.tmp

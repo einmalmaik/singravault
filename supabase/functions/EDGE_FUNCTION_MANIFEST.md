@@ -3,6 +3,60 @@
 Dieses Manifest definiert, welche Edge Functions zum öffentlichen Core und
 welche zum privaten Premium-Paket (`@singra/premium`) gehören.
 
+## Deployment Troubleshooting
+
+### 401 Unauthorized beim Deployment
+
+Der Fehler `401 Unauthorized` beim Deployment von Edge Functions deutet auf
+Authentifizierungsprobleme hin. Folgende Ursachen und Lösungen sind möglich:
+
+#### 1. CLI-Authentifizierung abgelaufen
+```bash
+# Status prüfen
+supabase projects list
+
+# Neu einloggen
+supabase logout && supabase login
+```
+
+#### 2. Projekt nicht verknüpft
+```bash
+# Projekt verknüpfen (project_id aus config.toml)
+supabase link --project-ref lcrtadxlojaucwapgzmy
+
+# Deployment mit expliziter Referenz
+supabase functions deploy vault-recovery-codes --project-ref lcrtadxlojaucwapgzmy
+```
+
+#### 3. Access Token ungültig (CI/CD)
+```bash
+# Token-basiertes Deployment
+SUPABASE_ACCESS_TOKEN=<token> supabase functions deploy vault-recovery-codes
+
+# Neuen Token generieren: https://supabase.com/dashboard/account/tokens
+```
+
+#### 4. Fehlende Berechtigungen
+- Prüfen: Dashboard → Project Settings → Team Members
+- Benötigte Rolle: Editor oder höher
+- Bei Organisationen: Mitgliedschaft in der Organisation erforderlich
+
+#### 5. Debug-Modus für detaillierte Fehlermeldungen
+```bash
+supabase functions deploy vault-recovery-codes --debug 2>&1 | tee deploy.log
+```
+
+### Häufige Fehlermeldungen
+
+| Fehler | Ursache | Lösung |
+|--------|---------|--------|
+| `401 Unauthorized` | Token abgelaufen | `supabase logout && supabase login` |
+| `403 Forbidden` | Keine Deploy-Rechte | Projektberechtigungen prüfen |
+| `404 Not Found` | Falsches Projekt | `--project-ref` Parameter prüfen |
+| `Connection refused` | CLI zu alt | `supabase update` ausführen |
+
+---
+
 ## Core Functions (öffentlich)
 
 Diese Functions bleiben im `singra-vault` Repository und sind die einzigen
@@ -19,6 +73,7 @@ Functions, die im Open-Core `supabase/config.toml` gelistet werden dürfen:
 | `webauthn` | Passkey/WebAuthn-Operationen |
 | `rate-limit` | Rate-Limiting |
 | `account-delete` | Authentifizierte und gedrosselte Account-Löschung |
+| `vault-recovery-codes` | Servergenerierte Einmalcodes für Vault-Device-Trust-Recovery |
 
 Private Admin-, Support-, Billing-, Family- und Release-Functions werden nicht
 aus diesem Repository deployt und dürfen nicht als `verify_jwt=false` Core-Stubs

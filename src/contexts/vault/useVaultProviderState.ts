@@ -24,7 +24,15 @@ import {
   persistAutoLockTimeoutIfAllowed,
   wipeRuntimeDeviceKey,
 } from '@/services/vaultRuntimeCleanupService';
+import { clearVaultOpLogDeviceIdentity } from '@/services/vaultOpLog/vaultOpLogDeviceStore';
 import { buildDisplayedIntegrityResult as buildDisplayedIntegrityResultFromQuarantine } from '@/services/vaultQuarantineOrchestrator';
+import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+
+export interface VaultMigrationKeyContext {
+  readonly activeKey: CryptoKey;
+  readonly vaultEncryptionKey: Uint8Array | null;
+  readonly vaultId: string | null;
+}
 
 function sameQuarantinedItems(left: QuarantinedVaultItem[], right: QuarantinedVaultItem[]): boolean {
   if (left.length !== right.length) {
@@ -80,10 +88,15 @@ export function useVaultProviderState() {
   const [currentDeviceKey, setCurrentDeviceKey] = useState<Uint8Array | null>(null);
   const [vaultProtectionMode, setVaultProtectionMode] = useState<VaultProtectionMode>(VAULT_PROTECTION_MODE_MASTER_ONLY);
   const [encryptedUserKey, setEncryptedUserKey] = useState<string | null>(null);
+  const [vaultEncryptionKey, setVaultEncryptionKey] = useState<Uint8Array | null>(null);
   const [integrityVerified, setIntegrityVerified] = useState(false);
   const baseIntegrityResultRef = useRef<VaultIntegrityVerificationResult | null>(null);
   const [lastIntegrityResult, setLastIntegrityResult] = useState<VaultIntegrityVerificationResult | null>(null);
   const [integrityMode, setIntegrityMode] = useState<VaultIntegrityMode | 'safe'>('healthy');
+  const [vaultMigrationStatus, setVaultMigrationStatus] = useState<VaultMigrationRolloutStatus | null>(null);
+  const [vaultMigrationError, setVaultMigrationError] = useState<string | null>(null);
+  const [vaultMigrationCanStart, setVaultMigrationCanStart] = useState(false);
+  const [vaultMigrationKeyContext, setVaultMigrationKeyContext] = useState<VaultMigrationKeyContext | null>(null);
   const [quarantinedItems, setQuarantinedItems] = useState<QuarantinedVaultItem[]>([]);
   const runtimeUnreadableItemsRef = useRef<QuarantinedVaultItem[]>([]);
   const [vaultDataVersion, setVaultDataVersion] = useState(0);
@@ -186,6 +199,13 @@ export function useVaultProviderState() {
     baseIntegrityResultRef.current = null;
     setLastIntegrityResult(null);
     setIntegrityMode('healthy');
+    setVaultMigrationStatus(null);
+    setVaultMigrationError(null);
+    setVaultMigrationCanStart(false);
+    setVaultMigrationKeyContext((existingContext) => {
+      existingContext?.vaultEncryptionKey?.fill(0);
+      return null;
+    });
     setQuarantinedItems([]);
     runtimeUnreadableItemsRef.current = [];
     setVaultDataVersion(0);
@@ -195,6 +215,12 @@ export function useVaultProviderState() {
     setTrustedSnapshotItemsById({});
     setPendingSessionRestore(false);
     setLastActivity(Date.now());
+    setVaultEncryptionKey((existingKey) => {
+      if (existingKey) {
+        existingKey.fill(0);
+      }
+      return null;
+    });
     clearRuntimeSessionMarkers();
   }, []);
 
@@ -210,6 +236,7 @@ export function useVaultProviderState() {
     setCurrentDeviceKey(null);
     setVaultProtectionMode(VAULT_PROTECTION_MODE_MASTER_ONLY);
     setEncryptedUserKey(null);
+    clearVaultOpLogDeviceIdentity();
   }, [clearActiveVaultSession]);
 
   const runQuarantineAction = useCallback(async (
@@ -310,6 +337,14 @@ export function useVaultProviderState() {
     setLastIntegrityResult,
     integrityMode,
     setIntegrityMode,
+    vaultMigrationStatus,
+    setVaultMigrationStatus,
+    vaultMigrationError,
+    setVaultMigrationError,
+    vaultMigrationCanStart,
+    setVaultMigrationCanStart,
+    vaultMigrationKeyContext,
+    setVaultMigrationKeyContext,
     quarantinedItems,
     setQuarantinedItems,
     runtimeUnreadableItemsRef,
@@ -325,6 +360,8 @@ export function useVaultProviderState() {
     setLastActivity,
     connectivityCheckNonce,
     setConnectivityCheckNonce,
+    vaultEncryptionKey,
+    setVaultEncryptionKey,
     applyCredentialsToState,
     applyTrustedRecoveryState,
     buildDisplayedIntegrityResult,

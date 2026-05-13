@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 Maunting Studios
+// Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Page - Main Dashboard
@@ -7,7 +7,7 @@
  * secure notes, and TOTP entries.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -34,18 +34,25 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
 import { MasterPasswordSetup } from '@/components/vault/MasterPasswordSetup';
 import { VaultUnlock } from '@/components/vault/VaultUnlock';
-import { VaultSidebar } from '@/components/vault/VaultSidebar';
-import { VaultItemList } from '@/components/vault/VaultItemList';
-import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
-import { VaultIntegrityRecovery } from '@/components/vault/VaultIntegrityRecovery';
+import { VaultOpLogSecurityModeBanner } from '@/components/vault/VaultOpLogSecurityModeBanner';
+import { VaultOpLogQuarantinePanel } from '@/components/vault/VaultOpLogQuarantinePanel';
+import { VaultOpLogConflictPanel } from '@/components/vault/VaultOpLogConflictPanel';
+import { VaultAddDeviceBanner } from '@/components/vault/VaultAddDeviceBanner';
+import { VaultPendingDevicesPanel } from '@/components/vault/VaultPendingDevicesPanel';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { isPremiumActive } from '@/extensions/registry';
 import { syncOfflineMutations } from '@/services/offlineVaultService';
 import { useToast } from '@/hooks/use-toast';
+import { VaultSidebar } from '@/components/vault/VaultSidebar';
+import { VaultItemList } from '@/components/vault/VaultItemList';
+import { VaultItemDialog } from '@/components/vault/VaultItemDialog';
+import { VaultIntegrityRecovery } from '@/components/vault/VaultIntegrityRecovery';
+import { VaultMigrationRequiredPanel } from '@/components/vault/VaultMigrationRequiredPanel';
 import { getAdminEntryPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState } from '@/services/returnNavigationState';
 import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
+import { getBrowserDeviceTrustStatus } from '@/services/vaultOpLog/addDeviceFlowService';
 import type { VaultIntegrityMode, VaultIntegrityNonTamperReason } from '@/services/vaultIntegrityService';
 
 export type ItemFilter = 'all' | 'passwords' | 'notes' | 'favorites';
@@ -103,7 +110,13 @@ export default function VaultPage() {
         isSetupRequired,
         isLoading: vaultLoading,
         lastIntegrityResult,
+        vaultMigrationStatus,
         refreshIntegrityBaseline,
+        opLogUiView,
+        opLogUiLoading,
+        opLogUiError,
+        opLogUiRefresh,
+        opLogResolveConflict,
     } = useVault();
 
     const [searchQuery, setSearchQuery] = useState('');
@@ -123,6 +136,18 @@ export default function VaultPage() {
     const { showAdminButton } = useAdminPanelAccess({
         enabled: isPremiumActive() && !isOfflineSession && !isLocked && !isSetupRequired,
     });
+    const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
+    const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime
+        && NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode);
+    const localDeviceTrustStatus = opLogUiView
+        ? getBrowserDeviceTrustStatus(opLogUiView.trustedDeviceIds)
+        : null;
+    const shouldBlockVaultForUntrustedDevice = useOpLogVerifiedRuntime
+        && opLogUiView !== null
+        && localDeviceTrustStatus?.trusted === false;
+    const shouldWaitForVerifiedDeviceTrust = useOpLogVerifiedRuntime
+        && !isLocked
+        && opLogUiView === null;
 
     useEffect(() => {
         const goOnline = () => setIsOnline(true);
@@ -171,6 +196,29 @@ export default function VaultPage() {
         };
     }, [user, isLocked, isSetupRequired, isOnline, toast, t]);
 
+    const runOpLogRecordAction = useCallback(async (
+        action: (recordId: string) => Promise<{ error: Error | null }>,
+        recordId: string,
+    ): Promise<void> => {
+        const result = await action(recordId);
+        if (result.error) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: result.error.message,
+            });
+            return;
+        }
+
+        setRefreshKey((prev) => prev + 1);
+        toast({
+            title: t('common.success'),
+            description: t('vault.oplog.actionCompleted', {
+                defaultValue: 'OpLog-Aktion wurde verifiziert abgeschlossen.',
+            }),
+        });
+    }, [t, toast]);
+
     if (vaultLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-background">
@@ -186,15 +234,24 @@ export default function VaultPage() {
         return <MasterPasswordSetup />;
     }
 
-    if (integrityMode === 'blocked' || integrityMode === 'safe') {
+    if (!useOpLogVerifiedRuntime && (integrityMode === 'blocked' || integrityMode === 'safe')) {
         return <VaultIntegrityRecovery />;
+    }
+
+    if (
+        isLocked
+        && vaultMigrationStatus
+        && vaultMigrationStatus !== 'notNeeded'
+        && vaultMigrationStatus !== 'verified'
+    ) {
+        return <VaultMigrationRequiredPanel />;
     }
 
     if (isLocked) {
         return <VaultUnlock />;
     }
 
-    if (NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode)) {
+    if (shouldShowLegacyIntegrityRecovery) {
         const handleIntegrityRecheck = async () => {
             setIsRecheckingIntegrity(true);
             try {
@@ -265,6 +322,46 @@ export default function VaultPage() {
                             {t('vault.integrity.retryCheck', { defaultValue: 'Erneut prüfen' })}
                         </Button>
                     </div>
+                </div>
+            </main>
+        );
+    }
+
+    if (shouldWaitForVerifiedDeviceTrust) {
+        return (
+            <main className="min-h-screen bg-background px-4 py-10 lg:px-8">
+                <div className="mx-auto flex max-w-3xl flex-col items-center gap-4 rounded-lg border p-6 text-center">
+                    {opLogUiLoading && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
+                    <div className="space-y-2">
+                        <h1 className="text-lg font-semibold">
+                            {t('vault.oplog.verifyingDeviceTrust', {
+                                defaultValue: 'Gerätestatus wird verifiziert',
+                            })}
+                        </h1>
+                        <p className="text-sm text-muted-foreground">
+                            {opLogUiError
+                                ? opLogUiError
+                                : t('vault.oplog.verifyingDeviceTrustDescription', {
+                                    defaultValue: 'Der Tresor wird erst angezeigt, wenn dieses Gerät lokal als vertrauenswürdig verifiziert wurde.',
+                                })}
+                        </p>
+                    </div>
+                    {opLogUiError && (
+                        <Button variant="outline" onClick={() => { void opLogUiRefresh(); }}>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            {t('vault.integrity.retryCheck', { defaultValue: 'Erneut prüfen' })}
+                        </Button>
+                    )}
+                </div>
+            </main>
+        );
+    }
+
+    if (shouldBlockVaultForUntrustedDevice) {
+        return (
+            <main className="min-h-screen bg-background px-4 py-10 lg:px-8">
+                <div className="mx-auto max-w-3xl">
+                    <VaultAddDeviceBanner />
                 </div>
             </main>
         );
@@ -418,7 +515,37 @@ export default function VaultPage() {
                     </div>
                 </header>
 
-                <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0">
+                <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0 space-y-4">
+                    {opLogUiView && (
+                        <>
+                            {opLogUiView.vaultSecurityMode !== 'normal' && (
+                                <VaultOpLogSecurityModeBanner mode={opLogUiView.vaultSecurityMode} />
+                            )}
+                            <VaultAddDeviceBanner />
+                            <VaultPendingDevicesPanel />
+                            <div className="min-h-5" aria-live="polite">
+                                {opLogUiLoading && (
+                                    <p className="text-xs text-muted-foreground animate-pulse">
+                                        {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
+                                    </p>
+                                )}
+                            </div>
+                            {opLogUiError && (
+                                <p className="text-xs text-destructive">
+                                    {opLogUiError}
+                                </p>
+                            )}
+                            <VaultOpLogQuarantinePanel
+                                items={opLogUiView.quarantinedItems}
+                            />
+                            <VaultOpLogConflictPanel
+                                items={opLogUiView.conflictedItems}
+                                onResolve={(recordId) => {
+                                    void runOpLogRecordAction(opLogResolveConflict, recordId);
+                                }}
+                            />
+                        </>
+                    )}
                     <VaultItemList
                         searchQuery={searchQuery}
                         filter={activeFilter}

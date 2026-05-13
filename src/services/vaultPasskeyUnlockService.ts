@@ -29,7 +29,7 @@ export interface VaultPasskeyUnlockInput {
   options?: VaultUnlockOptions;
   getRequiredDeviceKey: () => Promise<RequiredDeviceKeyResult>;
   enforceVaultTwoFactorBeforeKeyRelease: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
-  finalizeVaultUnlock: (activeKey: CryptoKey) => Promise<{ error: Error | null }>;
+  finalizeVaultUnlock: (activeKey: CryptoKey, vaultEncryptionKey?: Uint8Array) => Promise<{ error: Error | null }>;
   applyCredentialUpdates: (updates: {
     verificationHash?: string;
     encryptedUserKey?: string | null;
@@ -38,7 +38,7 @@ export interface VaultPasskeyUnlockInput {
 
 export async function unlockVaultWithPasskey(
   input: VaultPasskeyUnlockInput,
-): Promise<{ error: Error | null }> {
+): Promise<{ error: Error | null; vaultEncryptionKey?: Uint8Array }> {
   const cooldown = getUnlockCooldown();
   if (cooldown !== null) {
     const seconds = Math.ceil(cooldown / 1000);
@@ -73,7 +73,13 @@ export async function unlockVaultWithPasskey(
       return { error: new Error(result.error || 'Passkey authentication failed') };
     }
 
+    const clearReturnedKeyBytes = () => {
+      result.vaultKeyBytes?.fill(0);
+      result.legacyKdfOutputBytes?.fill(0);
+    };
+
     if (!result.encryptionKey) {
+      clearReturnedKeyBytes();
       recordFailedAttempt();
       return { error: new Error('Passkey authenticated but no encryption key derived') };
     }
@@ -83,6 +89,7 @@ export async function unlockVaultWithPasskey(
     if (input.verificationHash) {
       const isValid = await verifyKey(input.verificationHash, activeKey);
       if (!isValid) {
+        clearReturnedKeyBytes();
         recordFailedAttempt();
         return { error: new Error('Passkey-derived key does not match vault - key may be outdated') };
       }
@@ -94,11 +101,13 @@ export async function unlockVaultWithPasskey(
         candidateKey: activeKey,
       });
       if (!isValid) {
+        clearReturnedKeyBytes();
         recordFailedAttempt();
         return { error: new Error('Passkey-derived key does not match vault - key may be outdated') };
       }
     }
 
+    let vaultEncryptionKey: Uint8Array | undefined;
     if (!input.encryptedUserKey && result.keySource === 'legacy-kdf' && result.legacyKdfOutputBytes) {
       try {
         const migration = await migrateLegacyVaultToUserKey({
@@ -115,9 +124,16 @@ export async function unlockVaultWithPasskey(
         });
         shouldBackfillVerifier = false;
       } finally {
+        vaultEncryptionKey = result.legacyKdfOutputBytes
+          ? new Uint8Array(result.legacyKdfOutputBytes)
+          : undefined;
         result.legacyKdfOutputBytes.fill(0);
       }
+    } else if (result.vaultKeyBytes) {
+      vaultEncryptionKey = new Uint8Array(result.vaultKeyBytes);
+      result.vaultKeyBytes.fill(0);
     } else {
+      result.vaultKeyBytes?.fill(0);
       result.legacyKdfOutputBytes?.fill(0);
     }
 
@@ -127,7 +143,7 @@ export async function unlockVaultWithPasskey(
       return twoFactorResult;
     }
 
-    const finalizeResult = await input.finalizeVaultUnlock(activeKey);
+    const finalizeResult = await input.finalizeVaultUnlock(activeKey, vaultEncryptionKey);
     if (finalizeResult.error) {
       return finalizeResult;
     }
@@ -146,7 +162,7 @@ export async function unlockVaultWithPasskey(
       }
     }
 
-    return { error: null };
+    return { error: null, vaultEncryptionKey };
   } catch (error) {
     console.error('Passkey unlock error:', error);
     recordFailedAttempt();

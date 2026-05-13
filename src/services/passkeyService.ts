@@ -563,11 +563,13 @@ export async function authenticatePasskey(
         if (parsedEnvelope.version === 2) {
             assertPasskeyKeyMaterialLength(rawWrappedKeyBytes, 'Wrapped vault key');
             const encryptionKey = await importMasterKey(rawWrappedKeyBytes);
+            const vaultKeyBytes = new Uint8Array(rawWrappedKeyBytes);
             rawWrappedKeyBytes.fill(0);
 
             return {
                 success: true,
                 encryptionKey,
+                vaultKeyBytes,
                 prfEnabled: true,
                 credentialId: verifyData.credentialId,
                 keySource: 'vault-key',
@@ -588,9 +590,11 @@ export async function authenticatePasskey(
 
             try {
                 const encryptionKey = await importMasterKey(rawVaultKeyBytes);
+                const vaultKeyBytes = new Uint8Array(rawVaultKeyBytes);
                 return {
                     success: true,
                     encryptionKey,
+                    vaultKeyBytes,
                     prfEnabled: true,
                     credentialId: verifyData.credentialId,
                     keySource: 'vault-key',
@@ -610,8 +614,8 @@ export async function authenticatePasskey(
             keySource: 'legacy-kdf',
             legacyKdfOutputBytes: rawWrappedKeyBytes,
         };
-    } catch (err: unknown) {
-        console.error('Failed to unwrap encryption key:', err);
+    } catch {
+        console.error('Failed to unwrap passkey vault key');
         return { success: false, error: 'Key unwrapping failed — passkey data may be corrupted' };
     } finally {
         prfOutput.fill(0);
@@ -856,6 +860,11 @@ export interface PasskeyAuthenticationResult {
     error?: string;
     /** The unwrapped vault encryption key (only if PRF succeeded) */
     encryptionKey?: CryptoKey;
+    /**
+     * Raw vault UserKey bytes for migration/re-encryption flows.
+     * The caller owns this buffer and must wipe it after copying.
+     */
+    vaultKeyBytes?: Uint8Array;
     /** Whether PRF was used for key derivation */
     prfEnabled?: boolean;
     /** The credential that was used */

@@ -73,32 +73,24 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
 import { PasswordGenerator } from './PasswordGenerator';
 import { CategoryIcon } from './CategoryIcon';
 import { CategoryDialog } from './CategoryDialog';
 import { QRScanner } from './QRScanner';
 import { cn } from '@/lib/utils';
-import { getExtension, getServiceHooks, isPremiumActive } from '@/extensions/registry';
+import { getExtension, isPremiumActive } from '@/extensions/registry';
 import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { useFeatureGate } from '@/hooks/useFeatureGate';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import {
-    buildVaultItemRowFromInsert,
-    enqueueOfflineMutation,
-    isAppOnline,
-    isLikelyOfflineError,
     loadVaultSnapshot,
-    removeOfflineItemRow,
-    resolveDefaultVaultId,
-    shouldUseLocalOnlyVault,
-    upsertOfflineCategoryRow,
-    upsertOfflineItemRow,
 } from '@/services/offlineVaultService';
 import {
     ENCRYPTED_CATEGORY_PREFIX,
-    neutralizeVaultItemServerMetadata,
 } from '@/services/vaultMetadataPolicy';
+import type { ItemPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
+import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 
 interface Category {
     id: string;
@@ -151,6 +143,7 @@ const EMPTY_ITEM_FORM_VALUES: ItemFormData = {
     totpPeriod: DEFAULT_TOTP_PERIOD,
     isFavorite: false,
 };
+const OPLOG_TEXT_DECODER = new TextDecoder();
 
 interface VaultItemDialogProps {
     open: boolean;
@@ -195,6 +188,12 @@ function resolveInitialItemType(
     canUseTotp: boolean,
 ): 'password' | 'note' | 'totp' {
     return initialType === 'totp' && (!hasPremiumAuthenticator || !canUseTotp) ? 'password' : initialType;
+}
+
+function shouldVerifyLegacyDialogCategorySnapshot(
+    vaultMigrationStatus: VaultMigrationRolloutStatus | null,
+): boolean {
+    return vaultMigrationStatus !== 'verified';
 }
 
 function clearVaultItemDialogDraftStorage(): void {
@@ -248,18 +247,72 @@ export function buildVaultItemPayloadForEncryption(
     return itemData;
 }
 
+function buildOpLogItemPlaintext(itemData: VaultItemData): ItemPlaintext {
+    return {
+        title: itemData.title ?? '',
+        websiteUrl: itemData.websiteUrl ?? null,
+        username: itemData.username ?? null,
+        password: itemData.password ?? null,
+        notes: itemData.notes ?? null,
+        itemType: itemData.itemType === 'note'
+            ? 'note'
+            : itemData.itemType === 'totp'
+                ? 'totp'
+                : itemData.itemType === 'card'
+                    ? 'card'
+                    : 'password',
+        categoryRecordId: itemData.categoryId ?? null,
+        isFavorite: itemData.isFavorite ?? false,
+        sortOrder: null,
+        totpSecret: itemData.totpSecret ?? null,
+        totpIssuer: itemData.totpIssuer ?? null,
+        totpLabel: itemData.totpLabel ?? null,
+        totpAlgorithm: itemData.totpAlgorithm ?? null,
+        totpDigits: itemData.totpDigits ?? null,
+        totpPeriod: itemData.totpPeriod ?? null,
+        customFields: null,
+    };
+}
+
+function parseVerifiedOpLogPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
+    if (
+        (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+        || !record.plaintext
+    ) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(OPLOG_TEXT_DECODER.decode(record.plaintext)) as unknown;
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function getOptionalString(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined;
+}
+
+function getOptionalBoolean(value: unknown): boolean | undefined {
+    return typeof value === 'boolean' ? value : undefined;
+}
+
 export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialType = 'password' }: VaultItemDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
     const {
-        encryptItem,
         decryptItem,
-        encryptData,
         decryptData,
-        isDuressMode,
-        refreshIntegrityBaseline,
+        opLogCreateItem,
+        opLogUpdateItem,
+        opLogDeleteItem,
+        opLogLocalVaultState,
         verifyIntegrity,
+        vaultMigrationStatus,
     } = useVault();
     const { allowed: canUseTotp, requiredTier } = useFeatureGate('builtin_authenticator');
     const hasPremiumAuthenticator = isPremiumActive();
@@ -304,28 +357,43 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
     const fetchCategories = useCallback(async () => {
         if (!user || !open) return;
         try {
-            const { snapshot, source } = await loadVaultSnapshot(user.id);
-            const integrityResult = await verifyIntegrity(snapshot, { source });
-            if (integrityResult?.mode === 'blocked') {
-                setCategories([]);
+            if (vaultMigrationStatus === 'verified') {
+                const opLogCategories = opLogLocalVaultState
+                    ? Array.from(opLogLocalVaultState.recordsById.values()).flatMap((record) => {
+                        if (record.record.recordType !== 'category') {
+                            return [];
+                        }
+                        const plaintext = parseVerifiedOpLogPlaintext(record);
+                        const name = getOptionalString(plaintext?.name);
+                        if (!name) {
+                            return [];
+                        }
+                        return [{
+                            id: record.record.recordId,
+                            name,
+                            icon: getOptionalString(plaintext?.icon) ?? null,
+                            color: getOptionalString(plaintext?.color) ?? null,
+                        }];
+                    })
+                    : [];
+                setCategories(opLogCategories);
                 return;
             }
 
-            const canPersistMigrations = integrityResult?.mode === 'healthy'
-                && integrityResult.isFirstCheck
-                && source === 'remote'
-                && !shouldUseLocalOnlyVault(user.id)
-                && isAppOnline();
-            let integrityBaselineDirty = false;
-            const trustedCategoryIds = new Set<string>();
+            const { snapshot, source } = await loadVaultSnapshot(user.id);
+            if (shouldVerifyLegacyDialogCategorySnapshot(vaultMigrationStatus)) {
+                const integrityResult = await verifyIntegrity(snapshot, { source });
+                if (integrityResult?.mode === 'blocked') {
+                    setCategories([]);
+                    return;
+                }
+            }
+
             const resolvedCategories = await Promise.all(
                 snapshot.categories.map(async (cat) => {
                     let resolvedName = cat.name;
                     let resolvedIcon = cat.icon;
                     let resolvedColor = cat.color;
-                    let migratedName = cat.name;
-                    let migratedIcon = cat.icon;
-                    let migratedColor = cat.color;
 
                     if (cat.name.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
                         try {
@@ -333,18 +401,6 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                         } catch (err) {
                             console.error('Failed to decrypt category name:', cat.id, err);
                             resolvedName = 'Beschädigte Kategorie';
-                        }
-                    } else if (canPersistMigrations) {
-                        try {
-                            const encryptedName = await encryptData(cat.name);
-                            migratedName = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedName}`;
-                            await supabase
-                                .from('categories')
-                                .update({ name: migratedName })
-                                .eq('id', cat.id);
-                            integrityBaselineDirty = true;
-                        } catch (err) {
-                            console.error('Failed to migrate category name:', cat.id, err);
                         }
                     }
 
@@ -355,18 +411,6 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                             console.error('Failed to decrypt category icon:', cat.id, err);
                             resolvedIcon = null;
                         }
-                    } else if (cat.icon && canPersistMigrations) {
-                        try {
-                            const encryptedIcon = await encryptData(cat.icon);
-                            migratedIcon = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedIcon}`;
-                            await supabase
-                                .from('categories')
-                                .update({ icon: migratedIcon })
-                                .eq('id', cat.id);
-                            integrityBaselineDirty = true;
-                        } catch (err) {
-                            console.error('Failed to migrate category icon:', cat.id, err);
-                        }
                     }
 
                     if (cat.color && cat.color.startsWith(ENCRYPTED_CATEGORY_PREFIX)) {
@@ -376,29 +420,6 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                             console.error('Failed to decrypt category color:', cat.id, err);
                             resolvedColor = '#3b82f6';
                         }
-                    } else if (cat.color && canPersistMigrations) {
-                        try {
-                            const encryptedColor = await encryptData(cat.color);
-                            migratedColor = `${ENCRYPTED_CATEGORY_PREFIX}${encryptedColor}`;
-                            await supabase
-                                .from('categories')
-                                .update({ color: migratedColor })
-                                .eq('id', cat.id);
-                            integrityBaselineDirty = true;
-                        } catch (err) {
-                            console.error('Failed to migrate category color:', cat.id, err);
-                        }
-                    }
-
-                    if (canPersistMigrations && (migratedName !== cat.name || migratedIcon !== cat.icon || migratedColor !== cat.color)) {
-                        await upsertOfflineCategoryRow(user.id, {
-                            ...cat,
-                            name: migratedName,
-                            icon: migratedIcon,
-                            color: migratedColor,
-                            updated_at: new Date().toISOString(),
-                        });
-                        trustedCategoryIds.add(cat.id);
                     }
 
                     return {
@@ -410,18 +431,12 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                 }),
             );
 
-            if (integrityBaselineDirty && canPersistMigrations) {
-                await refreshIntegrityBaseline({
-                    categoryIds: trustedCategoryIds,
-                });
-            }
-
             setCategories(resolvedCategories);
         } catch (err) {
             console.error('Failed to load categories:', err);
             setCategories([]);
         }
-    }, [user, open, decryptData, encryptData, refreshIntegrityBaseline, verifyIntegrity]);
+    }, [user, open, decryptData, opLogLocalVaultState, verifyIntegrity, vaultMigrationStatus]);
 
     // Fetch categories
     useEffect(() => {
@@ -435,6 +450,47 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
             setLoading(true);
             try {
+                if (vaultMigrationStatus === 'verified') {
+                    const record = opLogLocalVaultState?.recordsById.get(normalizedItemId) ?? null;
+                    if (!record || record.record.recordType !== 'item') {
+                        throw new Error('Item not found');
+                    }
+
+                    const plaintext = parseVerifiedOpLogPlaintext(record);
+                    if (!plaintext) {
+                        throw new Error('Item not verified');
+                    }
+
+                    const candidateType = getOptionalString(plaintext.itemType) ?? 'password';
+                    const resolvedType: 'password' | 'note' | 'totp' =
+                        candidateType === 'note'
+                            ? 'note'
+                            : candidateType === 'totp' && hasPremiumAuthenticator
+                                ? 'totp'
+                                : 'password';
+
+                    form.reset({
+                        title: getOptionalString(plaintext.title) ?? '',
+                        url: getOptionalString(plaintext.websiteUrl) ?? '',
+                        username: getOptionalString(plaintext.username) ?? '',
+                        password: getOptionalString(plaintext.password) ?? '',
+                        notes: getOptionalString(plaintext.notes) ?? '',
+                        totpSecret: normalizeTOTPSecretInput(getOptionalString(plaintext.totpSecret) ?? ''),
+                        totpIssuer: getOptionalString(plaintext.totpIssuer) ?? '',
+                        totpLabel: getOptionalString(plaintext.totpLabel) ?? '',
+                        totpAlgorithm: plaintext.totpAlgorithm === 'SHA256' || plaintext.totpAlgorithm === 'SHA512'
+                            ? plaintext.totpAlgorithm
+                            : DEFAULT_TOTP_ALGORITHM,
+                        totpDigits: plaintext.totpDigits === 8 ? 8 : DEFAULT_TOTP_DIGITS,
+                        totpPeriod: typeof plaintext.totpPeriod === 'number' ? plaintext.totpPeriod : DEFAULT_TOTP_PERIOD,
+                        isFavorite: getOptionalBoolean(plaintext.isFavorite) ?? false,
+                    });
+
+                    setItemType(resolvedType);
+                    setSelectedCategoryId(getOptionalString(plaintext.categoryRecordId) ?? null);
+                    return;
+                }
+
                 const { snapshot } = await loadVaultSnapshot(user.id);
                 const item = snapshot.items.find((entry) => entry.id === normalizedItemId);
                 if (!item) {
@@ -487,7 +543,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         }
 
         loadItem();
-    }, [normalizedItemId, open, user, decryptItem, form, hasPremiumAuthenticator, toast, t]);
+    }, [normalizedItemId, open, user, vaultMigrationStatus, opLogLocalVaultState, decryptItem, form, hasPremiumAuthenticator, toast, t]);
 
     // Reset create forms every time the dialog opens so sensitive stale values
     // from the previous entry cannot be reused by React state or browser autofill.
@@ -517,164 +573,84 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
             return;
         }
 
-        setLoading(true);
-        try {
-            if (itemType === 'totp' && !isValidTOTPSecret(data.totpSecret || '')) {
+        if (itemType === 'totp' && !isValidTOTPSecret(data.totpSecret || '')) {
+            form.setError('totpSecret', {
+                type: 'validate',
+                message: t('authenticator.invalidSecret'),
+            });
+            return;
+        }
+
+        if (itemType === 'totp') {
+            const configValidation = validateTOTPConfig({
+                algorithm: data.totpAlgorithm,
+                digits: data.totpDigits,
+                period: data.totpPeriod,
+            });
+            if (!configValidation.valid) {
                 form.setError('totpSecret', {
                     type: 'validate',
-                    message: t('authenticator.invalidSecret'),
+                    message: t('authenticator.unsupportedParameters', {
+                        defaultValue: 'Nicht unterstützte TOTP-Parameter.',
+                    }),
                 });
                 return;
             }
+        }
 
-            if (itemType === 'totp') {
-                const configValidation = validateTOTPConfig({
-                    algorithm: data.totpAlgorithm,
-                    digits: data.totpDigits,
-                    period: data.totpPeriod,
-                });
-                if (!configValidation.valid) {
-                    form.setError('totpSecret', {
-                        type: 'validate',
-                        message: t('authenticator.unsupportedParameters', {
-                            defaultValue: 'Nicht unterstützte TOTP-Parameter.',
-                        }),
-                    });
-                    return;
-                }
+        setLoading(true);
+        try {
+            const itemData = buildVaultItemPayloadForEncryption(data, itemType, selectedCategoryId);
+            const plaintext = buildOpLogItemPlaintext(itemData);
+            const result = isEditing && normalizedItemId
+                ? await opLogUpdateItem(normalizedItemId, plaintext)
+                : await opLogCreateItem(plaintext);
+
+            if (result.error) {
+                throw result.error;
             }
 
-            let vaultId = sanitizeOptionalUuid(await resolveDefaultVaultId(user.id));
-            if (!vaultId) {
-                // Create default vault if it doesn't exist
-                const { data: newVault, error: vaultError } = await supabase
-                    .from('vaults')
-                    .insert({
-                        user_id: user.id,
-                        name: 'Encrypted Vault',
-                        is_default: true,
-                    })
-                    .select('id')
-                    .single();
-
-                if (vaultError || !newVault) {
-                    throw new Error('Failed to create vault');
-                }
-                vaultId = newVault.id;
-            }
-            const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
-
-            const itemDataToEncrypt = buildVaultItemPayloadForEncryption(data, itemType, selectedCategoryId);
-
-            // If in duress mode, mark as decoy item (internal marker inside encrypted data)
-            const hooks = getServiceHooks();
-            const finalItemData = (isDuressMode && hooks.markAsDecoyItem)
-                ? hooks.markAsDecoyItem(itemDataToEncrypt)
-                : itemDataToEncrypt;
-
-            // SECURITY: Generate or reuse item ID BEFORE encryption so it can
-            // be bound as AES-GCM AAD to prevent ciphertext-swap attacks.
-            const targetItemId = normalizedItemId ?? crypto.randomUUID();
-
-            // Encrypt sensitive data (with entry ID as AAD)
-            const encryptedData = await encryptItem(finalItemData, targetItemId);
-
-            const itemData = neutralizeVaultItemServerMetadata({
-                id: targetItemId,
-                user_id: user.id,
-                vault_id: vaultId,
-                encrypted_data: encryptedData,
-            });
-
-            let syncedOnline = false;
-            let itemRowForCache = buildVaultItemRowFromInsert(itemData);
-
-            if (canSyncOnline) {
-                try {
-                    const { data: savedItem, error } = await supabase
-                        .from('vault_items')
-                        .upsert(itemData, { onConflict: 'id' })
-                        .select('*')
-                        .single();
-
-                    if (error) throw error;
-                    if (savedItem) {
-                        itemRowForCache = savedItem;
-                    }
-                    syncedOnline = true;
-                } catch (err) {
-                    if (!isLikelyOfflineError(err)) {
-                        throw err;
-                    }
-                }
-            }
-
-            await upsertOfflineItemRow(user.id, itemRowForCache, vaultId);
-
-            if (!syncedOnline) {
-                await enqueueOfflineMutation({
-                    userId: user.id,
-                    type: 'upsert_item',
-                    payload: itemData,
-                });
-            }
-
+            const savedRecordId = isEditing ? normalizedItemId : 'recordId' in result ? result.recordId : null;
             let pendingAttachmentFailureCount = 0;
             if (pendingAttachmentCount > 0) {
-                if (syncedOnline && uploadPendingAttachmentsRef.current) {
+                if (savedRecordId && uploadPendingAttachmentsRef.current) {
                     try {
-                        const result = await uploadPendingAttachmentsRef.current(targetItemId);
-                        pendingAttachmentFailureCount = result.failureCount;
+                        const uploadResult = await uploadPendingAttachmentsRef.current(savedRecordId);
+                        pendingAttachmentFailureCount = uploadResult.failureCount;
                     } catch {
                         pendingAttachmentFailureCount = pendingAttachmentCount;
-                        setPendingAttachmentCount(0);
-                        uploadPendingAttachmentsRef.current = null;
                     }
                 } else {
                     pendingAttachmentFailureCount = pendingAttachmentCount;
-                    setPendingAttachmentCount(0);
-                    uploadPendingAttachmentsRef.current = null;
                 }
+                setPendingAttachmentCount(0);
+                uploadPendingAttachmentsRef.current = null;
             }
 
             toast({
                 title: t('common.success'),
-                description: syncedOnline
-                    ? (isEditing ? t('vault.itemUpdated') : t('vault.itemCreated'))
-                    : t('vault.offlineSaved', {
-                        defaultValue: 'Offline gespeichert. Wird bei Internet automatisch synchronisiert.',
-                    }),
+                description: isEditing ? t('vault.itemUpdated') : t('vault.itemCreated'),
             });
 
             if (pendingAttachmentFailureCount > 0) {
                 toast({
                     variant: 'destructive',
                     title: t('common.error'),
-                    description: syncedOnline
-                        ? t('fileAttachments.pendingUploadFailed', {
-                            count: pendingAttachmentFailureCount,
-                            defaultValue: '{{count}} Dateianhang/Dateianhänge konnten nicht hochgeladen werden. Der Eintrag wurde ohne diese Anhänge gespeichert.',
-                        })
-                        : t('fileAttachments.pendingUploadRequiresOnline', {
-                            defaultValue: 'Dateianhänge wurden nicht hochgeladen, weil der Eintrag offline gespeichert wurde. Bitte füge sie nach der Synchronisierung erneut hinzu.',
-                        }),
+                    description: t('fileAttachments.pendingUploadFailed', {
+                        count: pendingAttachmentFailureCount,
+                        defaultValue: '{{count}} Dateianhang/Dateianhänge konnten nicht hochgeladen werden. Der Eintrag wurde ohne diese Anhänge gespeichert.',
+                    }),
                 });
             }
 
-            await refreshIntegrityBaseline({
-                itemIds: [targetItemId],
-            });
-
             clearSensitiveDialogState();
-            onOpenChange(false);
-            // Trigger data refresh without page reload
             onSave?.();
-        } catch (err) {
-            console.error('Error saving item:', err);
+            onOpenChange(false);
+        } catch (error) {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
-                description: err instanceof Error ? err.message : 'Failed to save item',
+                description: error instanceof Error ? error.message : t('vault.saveError'),
             });
         } finally {
             setLoading(false);
@@ -686,52 +662,22 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
 
         setDeleting(true);
         try {
-            let syncedOnline = false;
-            const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
-            if (canSyncOnline) {
-                try {
-                    const { error } = await supabase
-                        .from('vault_items')
-                        .delete()
-                        .eq('id', normalizedItemId);
-
-                    if (error) throw error;
-                    syncedOnline = true;
-                } catch (err) {
-                    if (!isLikelyOfflineError(err)) {
-                        throw err;
-                    }
-                }
+            const result = await opLogDeleteItem(normalizedItemId);
+            if (result.error) {
+                throw result.error;
             }
-
-            await removeOfflineItemRow(user.id, normalizedItemId);
-            if (!syncedOnline) {
-                await enqueueOfflineMutation({
-                    userId: user.id,
-                    type: 'delete_item',
-                    payload: { id: normalizedItemId },
-                });
-            }
-
             toast({
                 title: t('common.success'),
-                description: syncedOnline
-                    ? t('vault.itemDeleted')
-                    : t('vault.offlineDeleteQueued', {
-                        defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
-                    }),
+                description: t('vault.itemDeleted'),
             });
-            await refreshIntegrityBaseline({
-                itemIds: [normalizedItemId],
-            });
-            onOpenChange(false);
+            clearSensitiveDialogState();
             onSave?.();
-        } catch (err) {
-            console.error('Error deleting item:', err);
+            onOpenChange(false);
+        } catch (error) {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
-                description: 'Failed to delete item',
+                description: error instanceof Error ? error.message : t('vault.deleteError'),
             });
         } finally {
             setDeleting(false);

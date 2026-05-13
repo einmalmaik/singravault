@@ -1,9 +1,6 @@
 import { isLikelyOfflineError, type OfflineVaultSnapshot } from '@/services/offlineVaultService';
-import {
-  computeVaultSnapshotDigest,
-  type VaultIntegritySnapshot,
-} from '@/services/vaultIntegrityService';
 import type {
+  VaultIntegritySnapshot,
   QuarantinedVaultItem,
   VaultIntegrityNonTamperMode,
   VaultIntegrityNonTamperReason,
@@ -315,7 +312,7 @@ export async function retryPendingRuntimeManifestV2ForSnapshot(input: {
     return { status: 'store_unavailable' };
   }
 
-  const currentSnapshotDigest = await resolveRetrySnapshotDigest(input);
+  const currentSnapshotDigest = await resolveRetrySnapshotDigest({ snapshotDigest: input.snapshotDigest });
   if (!currentSnapshotDigest) {
     return { status: 'snapshot_digest_unavailable', errorCode: 'manifest_retry_snapshot_digest_unavailable' };
   }
@@ -345,25 +342,9 @@ export async function retryPendingRuntimeManifestV2ForSnapshot(input: {
 }
 
 async function resolveRetrySnapshotDigest(input: {
-  snapshot: OfflineVaultSnapshot;
   snapshotDigest?: string | null;
 }): Promise<string | null> {
-  if (input.snapshotDigest !== undefined) {
-    return input.snapshotDigest;
-  }
-
-  try {
-    return await computeVaultSnapshotDigest(toIntegritySnapshot(input.snapshot));
-  } catch {
-    return null;
-  }
-}
-
-function toIntegritySnapshot(snapshot: OfflineVaultSnapshot): VaultIntegritySnapshot {
-  return {
-    items: snapshot.items,
-    categories: snapshot.categories,
-  };
+  return input.snapshotDigest ?? null;
 }
 
 async function deriveTrustedDeleteTombstones(input: {

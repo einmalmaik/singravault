@@ -1,18 +1,14 @@
 import { useCallback } from 'react';
 import type { VaultItemForIntegrity } from '@/extensions/types';
 import {
-  acceptMissingQuarantinedVaultItem,
-  deleteQuarantinedVaultItem,
   loadTrustedRecoverySnapshotState,
   resetVaultAfterIntegrityFailureForUser,
-  restoreQuarantinedVaultItem,
 } from '@/services/vaultRecoveryOrchestrator';
 import {
   refreshVaultIntegrityBaseline,
   verifyVaultIntegrity,
   type VaultIntegrityRuntimeCallbacks,
 } from '@/services/vaultIntegrityRuntimeService';
-import type { TrustedVaultMutation } from '@/services/vaultIntegrityDecisionEngine';
 import type { VaultIntegrityVerificationResult } from '@/services/vaultIntegrityService';
 import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import type { VaultSnapshotSource } from './vaultContextTypes';
@@ -32,7 +28,6 @@ export function useVaultIntegrityActions({
   integrityCallbacks,
 }: VaultIntegrityActionsInput) {
   const refreshIntegrityBaseline = useCallback(async (
-    trustedMutation?: TrustedVaultMutation,
   ): Promise<VaultIntegrityVerificationResult | null> => {
     if (!user || !state.encryptionKey) {
       return null;
@@ -42,7 +37,6 @@ export function useVaultIntegrityActions({
       userId: user.id,
       encryptionKey: state.encryptionKey,
       encryptedUserKey: state.encryptedUserKey,
-      trustedMutation,
       callbacks: integrityCallbacks(),
     });
   }, [integrityCallbacks, state.encryptedUserKey, state.encryptionKey, user]);
@@ -66,90 +60,11 @@ export function useVaultIntegrityActions({
   }, [integrityCallbacks, state.encryptedUserKey, state.encryptionKey, user]);
 
   const updateIntegrity = useCallback(async (
-    items: VaultItemForIntegrity[],
+    _items: VaultItemForIntegrity[],
   ): Promise<void> => {
-    await refreshIntegrityBaseline({ itemIds: items.map((item) => item.id) });
+    await refreshIntegrityBaseline();
   }, [refreshIntegrityBaseline]);
 
-  const restoreQuarantinedItem = useCallback(async (
-    itemId: string,
-  ): Promise<{ error: Error | null }> => {
-    if (!user || !state.encryptionKey) {
-      return { error: new Error('No active user session') };
-    }
-
-    const resolution = state.quarantineResolutionById[itemId];
-    const trustedSnapshotItem = state.trustedSnapshotItemsById[itemId];
-    if (!resolution?.canRestore || !trustedSnapshotItem) {
-      return { error: new Error('Für diesen Eintrag ist keine vertrauenswürdige lokale Kopie verfügbar.') };
-    }
-
-    return state.runQuarantineAction(itemId, async () => {
-      await restoreQuarantinedVaultItem({
-        userId: user.id,
-        itemId,
-        activeKey: state.encryptionKey!,
-        encryptedUserKey: state.encryptedUserKey,
-        trustedSnapshotItem,
-        refreshIntegrityBaseline: (mutation) => refreshIntegrityBaseline(mutation),
-        verifyIntegrity: () => {
-          state.removeRuntimeUnreadableItems([itemId]);
-          return verifyIntegrity();
-        },
-      });
-      state.bumpVaultDataVersion();
-    });
-  }, [
-    refreshIntegrityBaseline,
-    state,
-    user,
-    verifyIntegrity,
-  ]);
-
-  const deleteQuarantinedItem = useCallback(async (
-    itemId: string,
-  ): Promise<{ error: Error | null }> => {
-    if (!user) {
-      return { error: new Error('No active user session') };
-    }
-
-    const resolution = state.quarantineResolutionById[itemId];
-    if (!resolution?.canDelete) {
-      return { error: new Error('Dieser Quarantäne-Eintrag kann nicht gelöscht werden.') };
-    }
-
-    return state.runQuarantineAction(itemId, async () => {
-      await deleteQuarantinedVaultItem({
-        userId: user.id,
-        itemId,
-        reason: resolution.reason,
-        verifyIntegrity,
-        refreshIntegrityBaseline,
-      });
-      state.bumpVaultDataVersion();
-    });
-  }, [refreshIntegrityBaseline, state, user, verifyIntegrity]);
-
-  const acceptMissingQuarantinedItem = useCallback(async (
-    itemId: string,
-  ): Promise<{ error: Error | null }> => {
-    if (!user) {
-      return { error: new Error('No active user session') };
-    }
-
-    const resolution = state.quarantineResolutionById[itemId];
-    if (!resolution?.canAcceptMissing) {
-      return { error: new Error('Dieser Quarantäne-Eintrag kann nicht bestätigt werden.') };
-    }
-
-    return state.runQuarantineAction(itemId, async () => {
-      await acceptMissingQuarantinedVaultItem({
-        itemId,
-        refreshIntegrityBaseline,
-      });
-      state.bumpVaultDataVersion();
-    });
-  }, [refreshIntegrityBaseline, state, user]);
 
   const enterSafeMode = useCallback(async (): Promise<{ error: Error | null }> => {
     if (!user || !state.encryptionKey) {
@@ -191,9 +106,6 @@ export function useVaultIntegrityActions({
     refreshIntegrityBaseline,
     verifyIntegrity,
     updateIntegrity,
-    restoreQuarantinedItem,
-    deleteQuarantinedItem,
-    acceptMissingQuarantinedItem,
     enterSafeMode,
     exitSafeMode,
     resetVaultAfterIntegrityFailure,

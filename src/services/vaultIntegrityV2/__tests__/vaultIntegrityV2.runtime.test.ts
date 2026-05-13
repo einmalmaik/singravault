@@ -16,7 +16,7 @@ import {
   type ServerVaultItemV2,
 } from '../index';
 import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
-import { computeVaultSnapshotDigest } from '@/services/vaultIntegrityService';
+// Phase 11: computeVaultSnapshotDigest removed from runtime
 
 const USER_ID = 'user-runtime';
 const VAULT_ID = 'vault-runtime';
@@ -98,11 +98,8 @@ function snapshot(items: ServerVaultItemV2[], categories: ServerVaultCategoryV2[
   };
 }
 
-async function saveRetryForSnapshot(currentSnapshot: OfflineVaultSnapshot): Promise<string> {
-  const snapshotDigest = await computeVaultSnapshotDigest({
-    items: currentSnapshot.items,
-    categories: currentSnapshot.categories,
-  });
+async function saveRetryForSnapshot(_currentSnapshot: OfflineVaultSnapshot): Promise<string> {
+  const snapshotDigest = 'dummy-digest-phase11';
   await saveManifestPersistRetryRecord({
     userId: USER_ID,
     vaultId: VAULT_ID,

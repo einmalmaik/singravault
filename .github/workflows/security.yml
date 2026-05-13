@@ -42,7 +42,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: OSV scan
-        uses: google/osv-scanner-action@v1
+        uses: google/osv-scanner-action@v2.3.5
         with:
           scan-args: |-
             --lockfile=package-lock.json

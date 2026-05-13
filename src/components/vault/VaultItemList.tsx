@@ -40,6 +40,8 @@ import {
 } from '@/services/legacyVaultMetadataMigrationService';
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
 import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
+import { getVerifiedRecordIdsForEgress } from '@/services/vaultOpLog';
+import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 import { VaultItemCard } from './VaultItemCard';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
@@ -89,8 +91,14 @@ interface BulkRestoreProgress {
   lastError: string | null;
 }
 
+interface VaultItemListIntegrityGate {
+  readonly mode?: string;
+  readonly quarantinedItems: QuarantinedVaultItem[];
+  readonly isFirstCheck?: boolean;
+}
+
 function canDecryptFromIntegrityResult(
-  result: { mode?: string; quarantinedItems: QuarantinedVaultItem[] } | null | undefined,
+  result: VaultItemListIntegrityGate | null | undefined,
   itemId: string,
 ): boolean {
   if (!result?.mode) {
@@ -114,6 +122,82 @@ function canDecryptFromIntegrityResult(
   } catch {
     return false;
   }
+}
+
+function parseOpLogItemPlaintext(record: LocalVerifiedRecord): VaultItemData | null {
+  if (
+    (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+    || record.record.recordType !== 'item'
+    || !record.plaintext
+  ) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(record.plaintext)) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const value = parsed as Record<string, unknown>;
+    const title = typeof value.title === 'string' ? value.title : '';
+    const itemType = isVaultItemType(value.itemType) ? value.itemType : 'password';
+
+    return {
+      title,
+      websiteUrl: typeof value.websiteUrl === 'string' ? value.websiteUrl : undefined,
+      username: typeof value.username === 'string' ? value.username : undefined,
+      password: typeof value.password === 'string' ? value.password : undefined,
+      notes: typeof value.notes === 'string' ? value.notes : undefined,
+      itemType,
+      categoryId: typeof value.categoryRecordId === 'string' ? value.categoryRecordId : null,
+      isFavorite: typeof value.isFavorite === 'boolean' ? value.isFavorite : false,
+      totpSecret: typeof value.totpSecret === 'string' ? value.totpSecret : undefined,
+      totpIssuer: typeof value.totpIssuer === 'string' ? value.totpIssuer : undefined,
+      totpLabel: typeof value.totpLabel === 'string' ? value.totpLabel : undefined,
+      totpAlgorithm: isTotpAlgorithm(value.totpAlgorithm) ? value.totpAlgorithm : undefined,
+      totpDigits: value.totpDigits === 6 || value.totpDigits === 8 ? value.totpDigits : undefined,
+      totpPeriod: typeof value.totpPeriod === 'number' ? value.totpPeriod : undefined,
+      customFields: isStringRecord(value.customFields) ? value.customFields : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mapOpLogRecordToVaultItem(record: LocalVerifiedRecord): VaultItem | null {
+  const decryptedData = parseOpLogItemPlaintext(record);
+  if (!decryptedData) {
+    return null;
+  }
+
+  return {
+    id: record.record.recordId,
+    vault_id: record.record.vaultId,
+    title: decryptedData.title ?? '',
+    website_url: decryptedData.websiteUrl ?? null,
+    icon_url: null,
+    item_type: decryptedData.itemType ?? 'password',
+    is_favorite: decryptedData.isFavorite ?? false,
+    category_id: decryptedData.categoryId ?? null,
+    created_at: record.record.createdAt,
+    updated_at: record.record.updatedAt,
+    decryptedData,
+  };
+}
+
+function isVaultItemType(value: unknown): value is VaultItem['item_type'] {
+  return value === 'password' || value === 'note' || value === 'totp' || value === 'card';
+}
+
+function isTotpAlgorithm(value: unknown): value is NonNullable<VaultItemData['totpAlgorithm']> {
+  return value === 'SHA1' || value === 'SHA256' || value === 'SHA512';
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return !!value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.values(value).every((entry) => typeof entry === 'string');
 }
 
 function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
@@ -158,13 +242,18 @@ export function VaultItemList({
     encryptItem,
     isDuressMode,
     lastIntegrityResult,
+    opLogRestoreRecord,
     quarantineResolutionById,
     reportUnreadableItems,
     refreshIntegrityBaseline,
-    restoreQuarantinedItem,
     verifyIntegrity,
     vaultDataVersion,
+    vaultMigrationStatus,
+    opLogLocalVaultState,
+    opLogUiRefresh,
+    opLogUiView,
   } = useVault();
+  const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
 
   const [items, setItems] = useState<VaultItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,6 +278,7 @@ export function VaultItemList({
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
   const revalidationRequestIdRef = useRef(0);
   const revalidatingRef = useRef(false);
+  const opLogCloudSyncRef = useRef(false);
   const fetchItemsRef = useRef(false);
   const pendingFetchItemsRef = useRef(false);
   const hasRenderedVaultContentRef = useRef(false);
@@ -258,7 +348,7 @@ export function VaultItemList({
   }, [userId]);
 
   const revalidateRemoteIntegrity = useCallback(async () => {
-    if (!userId || revalidatingRef.current) {
+    if (!userId || revalidatingRef.current || useOpLogVerifiedRuntime) {
       return;
     }
 
@@ -274,7 +364,29 @@ export function VaultItemList({
         setRevalidating(false);
       }
     }
-  }, [userId]);
+  }, [useOpLogVerifiedRuntime, userId]);
+
+  useEffect(() => {
+    if (!useOpLogVerifiedRuntime || !userId || cloudSyncTick === 0 || !isAppOnline()) {
+      return;
+    }
+
+    if (opLogCloudSyncRef.current) {
+      return;
+    }
+
+    opLogCloudSyncRef.current = true;
+    setBackgroundSyncing(true);
+
+    void opLogUiRefresh()
+      .then(() => {
+        setLastCloudSyncAt(new Date());
+      })
+      .finally(() => {
+        opLogCloudSyncRef.current = false;
+        setBackgroundSyncing(false);
+      });
+  }, [cloudSyncTick, opLogUiRefresh, useOpLogVerifiedRuntime, userId]);
 
   useEffect(() => {
     async function fetchItems() {
@@ -286,24 +398,50 @@ export function VaultItemList({
 
       const isBackgroundSync = hasRenderedVaultContentRef.current;
       fetchItemsRef.current = true;
-      if (isBackgroundSync) {
+      if (isBackgroundSync && !useOpLogVerifiedRuntime) {
         setBackgroundSyncing(true);
       } else {
         setLoading(true);
         setDecrypting(true);
       }
       try {
+        if (useOpLogVerifiedRuntime) {
+          const opLogItems = opLogLocalVaultState
+            ? Array.from(opLogLocalVaultState.recordsById.values())
+              .map(mapOpLogRecordToVaultItem)
+              .filter((item): item is VaultItem => item !== null)
+              .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+            : [];
+
+reportUnreadableItemsRef.current([]);
+          setItems(opLogItems);
+          hasRenderedVaultContentRef.current = true;
+          setLastCloudSyncAt(new Date());
+          fetchItemsRef.current = false;
+          setLoading(false);
+          setDecrypting(false);
+
+          if (pendingFetchItemsRef.current) {
+            pendingFetchItemsRef.current = false;
+            void fetchItems();
+          }
+
+          return;
+        }
+
         const { snapshot, source } = await loadVaultSnapshot(userId);
-        const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
+        const integrityResult: VaultItemListIntegrityGate | null = await verifyIntegrityRef.current(snapshot, { source });
         const allowsAnyDecrypt = integrityResult?.mode === 'healthy' || integrityResult?.mode === 'quarantine';
         if (!allowsAnyDecrypt) {
           setItems([]);
         } else {
-          const canPersistMigrations = integrityResult?.mode === 'healthy'
+          const canPersistMigrations = !useOpLogVerifiedRuntime
+            && integrityResult?.mode === 'healthy'
             && integrityResult.isFirstCheck
             && source === 'remote'
             && isAppOnline();
-          const canPersistLegacyEncryptionMigration = source === 'remote'
+          const canPersistLegacyEncryptionMigration = !useOpLogVerifiedRuntime
+            && source === 'remote'
             && isAppOnline()
             && (
               integrityResult?.mode === 'healthy'
@@ -475,10 +613,7 @@ export function VaultItemList({
             (integrityBaselineDirty && (canPersistMigrations || canPersistLegacyEncryptionMigration))
             || canPersistTrustedFirstBaseline
           ) {
-            await refreshIntegrityBaselineRef.current({
-              itemIds: new Set([...decryptableItemIds, ...trustedItemIds]),
-              categoryIds: snapshot.categories.map((category) => category.id),
-            });
+            await refreshIntegrityBaselineRef.current();
           }
 
           setItems(decryptedItems as VaultItem[]);
@@ -489,7 +624,7 @@ export function VaultItemList({
           // Cached snapshots keep the vault usable offline and while local writes
           // are pending. A lightweight remote revalidation follows so DB-side
           // tampering can move items into quarantine without waiting for edit/open.
-          if (source !== 'remote' && isAppOnline()) {
+          if (!useOpLogVerifiedRuntime && source !== 'remote' && isAppOnline()) {
             void revalidateRemoteIntegrity();
           }
         }
@@ -515,6 +650,8 @@ export function VaultItemList({
     cloudSyncTick,
     isDuressMode,
     revalidateRemoteIntegrity,
+    opLogLocalVaultState,
+    useOpLogVerifiedRuntime,
     userId,
     vaultDataVersion,
   ]);
@@ -608,6 +745,15 @@ export function VaultItemList({
     });
   }, [ignoredQuarantineById, persistIgnoredQuarantine]);
 
+  // Phase 10: when OpLog UI is available, only verified items may be searched.
+  // When vault security mode is lockedCritical/safeMode/safeModeRecommended,
+  // getVerifiedRecordIdsForEgress returns an empty set, effectively hiding
+  // all items from search results.
+  const opLogVerifiedItemIds = useMemo(
+    () => getVerifiedRecordIdsForEgress(opLogUiView),
+    [opLogUiView],
+  );
+
   const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
     return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
       const quarantine = quarantinedItemsById.get(item.id);
@@ -619,6 +765,11 @@ export function VaultItemList({
       }
 
       if (!item.decryptedData) {
+        return entries;
+      }
+
+      // Phase 10: if OpLog UI is active, exclude non-verified records from search results.
+      if (opLogVerifiedItemIds && !opLogVerifiedItemIds.has(item.id)) {
         return entries;
       }
 
@@ -681,6 +832,7 @@ export function VaultItemList({
     categoryId,
     searchQuery,
     isDuressMode,
+    opLogVerifiedItemIds,
   ]);
 
   const inlineQuarantinedIds = useMemo(
@@ -755,7 +907,7 @@ export function VaultItemList({
         currentItemId: item.id,
       }));
 
-      const result = await restoreQuarantinedItem(item.id);
+      const result = await opLogRestoreRecord(item.id);
       if (result.error) {
         failed += 1;
         lastError = result.error.message;
@@ -777,7 +929,7 @@ export function VaultItemList({
       currentItemId: null,
       lastError,
     }));
-  }, [restorablePanelItems, restoreQuarantinedItem]);
+  }, [opLogRestoreRecord, restorablePanelItems]);
 
   const renderableItemCount = items.filter((item) => item.decryptedData).length;
 
@@ -950,6 +1102,9 @@ export function VaultItemList({
                 item={entry.item}
                 viewMode={viewMode}
                 onEdit={() => onEditItem(entry.item.id)}
+                canCopySecrets={
+                  opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(entry.item.id)
+                }
               />
             ) : (
               <VaultQuarantinedItemCard

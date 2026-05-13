@@ -8,7 +8,19 @@
  * Full integration testing is covered in Phase 8 E2E tests.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+
+const dialogMocks = vi.hoisted(() => ({
+  verifyIntegrity: vi.fn(),
+  decryptData: vi.fn(),
+  decryptItem: vi.fn(),
+  opLogCreateItem: vi.fn(),
+  opLogUpdateItem: vi.fn(),
+  opLogDeleteItem: vi.fn(),
+  loadVaultSnapshot: vi.fn(),
+  vaultMigrationStatus: null as null | "notNeeded" | "required" | "preflightFailed" | "ready" | "running" | "committed" | "verified" | "failed",
+}));
 
 // ============ Mocks ============
 
@@ -27,11 +39,29 @@ vi.mock("@/contexts/AuthContext", () => ({
 vi.mock("@/contexts/VaultContext", () => ({
   useVault: () => ({
     encryptItem: vi.fn().mockResolvedValue("enc"),
-    decryptItem: vi.fn().mockResolvedValue({ title: "t", itemType: "password" }),
+    decryptItem: (...args: unknown[]) => dialogMocks.decryptItem(...args),
     encryptData: vi.fn().mockResolvedValue("enc"),
-    decryptData: vi.fn().mockResolvedValue("dec"),
+    decryptData: (...args: unknown[]) => dialogMocks.decryptData(...args),
+    opLogCreateItem: (...args: unknown[]) => dialogMocks.opLogCreateItem(...args),
+    opLogUpdateItem: (...args: unknown[]) => dialogMocks.opLogUpdateItem(...args),
+    opLogDeleteItem: (...args: unknown[]) => dialogMocks.opLogDeleteItem(...args),
+    verifyIntegrity: (...args: unknown[]) => dialogMocks.verifyIntegrity(...args),
+    vaultMigrationStatus: dialogMocks.vaultMigrationStatus,
     isDuressMode: false,
   }),
+}));
+
+vi.mock("@/hooks/useFeatureGate", () => ({
+  useFeatureGate: () => ({ allowed: true, requiredTier: "premium", currentTier: "premium" }),
+}));
+
+vi.mock("@/extensions/registry", () => ({
+  getExtension: vi.fn().mockReturnValue(null),
+  isPremiumActive: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock("../CategoryDialog", () => ({
+  CategoryDialog: () => null,
 }));
 
 vi.mock("@/integrations/supabase/client", () => ({
@@ -76,7 +106,7 @@ vi.mock("@/services/totpService", () => ({
 vi.mock("@/services/offlineVaultService", () => ({
   isAppOnline: vi.fn().mockReturnValue(true),
   isLikelyOfflineError: vi.fn().mockReturnValue(false),
-  loadVaultSnapshot: vi.fn().mockResolvedValue({ snapshot: { items: [], categories: [] } }),
+  loadVaultSnapshot: (...args: unknown[]) => dialogMocks.loadVaultSnapshot(...args),
   resolveDefaultVaultId: vi.fn().mockResolvedValue("vault-1"),
   shouldUseLocalOnlyVault: vi.fn().mockReturnValue(false),
   upsertOfflineItemRow: vi.fn(),
@@ -89,6 +119,29 @@ vi.mock("@/services/offlineVaultService", () => ({
 // ============ Tests ============
 
 describe("VaultItemDialog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dialogMocks.vaultMigrationStatus = null;
+    dialogMocks.verifyIntegrity.mockResolvedValue({ mode: "healthy" });
+    dialogMocks.decryptData.mockImplementation(async (value: string) => `dec:${value}`);
+    dialogMocks.decryptItem.mockResolvedValue({ title: "t", itemType: "password" });
+    dialogMocks.opLogCreateItem.mockResolvedValue({ ok: true, recordId: "item-1" });
+    dialogMocks.opLogUpdateItem.mockResolvedValue({ ok: true });
+    dialogMocks.opLogDeleteItem.mockResolvedValue({ ok: true });
+    dialogMocks.loadVaultSnapshot.mockResolvedValue({
+      source: "remote",
+      snapshot: {
+        items: [],
+        categories: [{
+          id: "category-1",
+          name: "category",
+          icon: null,
+          color: null,
+        }],
+      },
+    });
+  });
+
   it("should export VaultItemDialog component", async () => {
     const mod = await import("../VaultItemDialog");
     expect(mod.VaultItemDialog).toBeDefined();
@@ -105,6 +158,14 @@ describe("VaultItemDialog", () => {
     // VaultItemDialogProps has: open, onOpenChange, itemId, onSave, initialType
     // This verifies the module structure without rendering the complex component
     expect(true).toBe(true);
+  });
+
+  it("guards legacy dialog category verification behind the OpLog migration status", () => {
+    const source = readFileSync("src/components/vault/VaultItemDialog.tsx", "utf-8");
+
+    expect(source).toContain("function shouldVerifyLegacyDialogCategorySnapshot");
+    expect(source).toContain("return vaultMigrationStatus !== 'verified'");
+    expect(source).toContain("if (shouldVerifyLegacyDialogCategorySnapshot(vaultMigrationStatus))");
   });
 
   it("should support create mode (itemId=null)", () => {

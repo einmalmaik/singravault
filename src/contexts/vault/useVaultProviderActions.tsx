@@ -43,9 +43,27 @@ import { loadRemoteVaultProfile, type VaultRuntimeCredentials } from '@/services
 import { buildVaultContextValue } from './buildVaultContextValue';
 import { useVaultCryptoActions } from './useVaultCryptoActions';
 import { useVaultIntegrityActions } from './useVaultIntegrityActions';
+import { useVaultMigrationActions } from './useVaultMigrationActions';
+import { useVaultOpLogCrudActions } from './useVaultOpLogCrudActions';
+import { useCollectionOpLogActions } from './useCollectionOpLogActions';
 import { useVaultProviderState } from './useVaultProviderState';
 import { useVaultLifecycleEffects } from './useVaultLifecycleEffects';
+import { useVaultOpLogUiState } from './useVaultOpLogUiState';
+import { useVaultRevokedDeviceAutoLock } from './useVaultRevokedDeviceAutoLock';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
+import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+
+function clearLegacyIntegrityStateAfterOpLogGate(
+  state: ReturnType<typeof useVaultProviderState>,
+): void {
+  state.setIntegrityVerified(true);
+  state.baseIntegrityResultRef.current = null;
+  state.setLastIntegrityResult(null);
+  state.setIntegrityMode('healthy');
+  state.setQuarantinedItems([]);
+  state.runtimeUnreadableItemsRef.current = [];
+  state.setIntegrityBlockedReason(null);
+}
 
 export function useVaultProviderActions(): VaultContextType {
   const { user, authReady } = useAuth();
@@ -57,20 +75,18 @@ export function useVaultProviderActions(): VaultContextType {
     applyTrustedRecoveryState, clearActiveVaultSession, currentDeviceKey, encryptedUserKey,
     encryptionKey, isLocked, kdfVersion, salt, setCurrentDeviceKey, setDeviceKeyActive,
     setEncryptedUserKey, setEncryptionKey, setHasPasskeyUnlock, setIsLoading,
-    setKdfVersion, setVaultProtectionMode, setVerificationHash, vaultProtectionMode,
+    setKdfVersion, setVaultEncryptionKey, setVaultProtectionMode, setVerificationHash, vaultProtectionMode,
   } = state;
   const vaultProtectionModeRef = useRef<VaultProtectionMode>(vaultProtectionMode);
   vaultProtectionModeRef.current = vaultProtectionMode;
   const isLockedRef = useRef(isLocked);
   isLockedRef.current = isLocked;
-
   const clearCurrentDeviceKey = useCallback((): void => {
     setCurrentDeviceKey((existingKey) => {
       wipeRuntimeDeviceKey(existingKey);
       return null;
     });
   }, [setCurrentDeviceKey]);
-
   const refreshRemoteCredentials = useCallback(async (): Promise<VaultRuntimeCredentials | null> => {
     if (!authReady || !user || !isAppOnline()) {
       return null;
@@ -92,7 +108,6 @@ export function useVaultProviderActions(): VaultContextType {
     );
     return profile.credentials;
   }, [applyCredentialsToState, authReady, user]);
-
   const refreshPasskeyUnlockStatus = useCallback(async (): Promise<void> => {
     if (!authReady || !user) {
       setHasPasskeyUnlock(false);
@@ -108,7 +123,6 @@ export function useVaultProviderActions(): VaultContextType {
       setHasPasskeyUnlock(false);
     }
   }, [authReady, setHasPasskeyUnlock, user]);
-
   const refreshDeviceKeyState = useCallback(async (): Promise<void> => {
     if (!user) {
       setDeviceKeyActive(false);
@@ -150,7 +164,6 @@ export function useVaultProviderActions(): VaultContextType {
     setDeviceKeyActive,
     user,
   ]);
-
   const getRequiredDeviceKey = useCallback(async () => {
     let loadedDeviceKey: Uint8Array | null = null;
     const result = await resolveRequiredDeviceKey({
@@ -179,7 +192,6 @@ export function useVaultProviderActions(): VaultContextType {
     vaultProtectionMode,
     user?.id,
   ]);
-
   const deriveVaultKdfOutput = useCallback(async (
     masterPassword: string,
     deviceKey: Uint8Array | null,
@@ -198,7 +210,6 @@ export function useVaultProviderActions(): VaultContextType {
       deviceKeyAvailable,
     });
   }, [state.kdfVersion, state.salt, user?.id]);
-
   const applyCredentialUpdates = useCallback(async (updates: {
     verificationHash?: string;
     kdfVersion?: number;
@@ -214,11 +225,9 @@ export function useVaultProviderActions(): VaultContextType {
       setEncryptedUserKey(updates.encryptedUserKey);
     }
   }, [setEncryptedUserKey, setKdfVersion, setVerificationHash]);
-
   const applyTrustedRecoveryStateForUser = useCallback(async (userId: string): Promise<void> => {
     applyTrustedRecoveryState(await loadTrustedRecoverySnapshotState(userId));
   }, [applyTrustedRecoveryState]);
-
   const setBlockedIntegrityState = useCallback(async (
     activeKey: CryptoKey,
     blockedReason: VaultIntegrityBlockedReason,
@@ -241,7 +250,6 @@ export function useVaultProviderActions(): VaultContextType {
       await applyTrustedRecoveryStateForUser(user.id);
     }
   }, [applyTrustedRecoveryStateForUser, state, user]);
-
   const integrityCallbacks = useCallback((): VaultIntegrityRuntimeCallbacks => ({
     applyIntegrityResultState: state.applyIntegrityResultState,
     applyTrustedRecoveryState: state.applyTrustedRecoveryState,
@@ -253,9 +261,9 @@ export function useVaultProviderActions(): VaultContextType {
     state.applyTrustedRecoveryState,
     state.bumpVaultDataVersion,
   ]);
-
   const finalizeVaultUnlock = useCallback(async (
     activeKey: CryptoKey,
+    vaultEncryptionKey?: Uint8Array,
   ): Promise<{ error: Error | null }> => {
     if (!user) {
       return { error: new Error('No active user session') };
@@ -271,16 +279,48 @@ export function useVaultProviderActions(): VaultContextType {
       return integrityResult;
     }
 
+    const migrationGate = await evaluateVaultMigrationGate({
+      userId: user.id,
+      vaultEncryptionKey,
+    });
+    state.setVaultMigrationStatus(migrationGate.status);
+    state.setVaultMigrationError(null);
+    if (!migrationGate.allowNormalUnlock) {
+      state.setEncryptionKey(null);
+      state.setIsLocked(true);
+      state.setIsDuressMode(false);
+      state.setPendingSessionRestore(false);
+      state.setIntegrityMode('migration_required');
+      state.setIntegrityBlockedReason(null);
+      state.setVaultMigrationCanStart(Boolean(
+        migrationGate.status !== 'preflightFailed'
+        && migrationGate.vaultId
+        && vaultEncryptionKey,
+      ));
+      state.setVaultMigrationKeyContext({
+        activeKey,
+        vaultEncryptionKey: vaultEncryptionKey ? new Uint8Array(vaultEncryptionKey) : null,
+        vaultId: migrationGate.vaultId,
+      });
+      state.setLastActivity(Date.now());
+      clearVaultSessionMarkers(sessionStorage);
+      return { error: null };
+    }
+
     state.setEncryptionKey(activeKey);
+    state.setVaultMigrationCanStart(false);
+    state.setVaultMigrationKeyContext((existingContext) => {
+      existingContext?.vaultEncryptionKey?.fill(0);
+      return null;
+    });
+    clearLegacyIntegrityStateAfterOpLogGate(state);
     state.setIsLocked(false);
     state.setIsDuressMode(false);
-    state.setIntegrityBlockedReason(null);
     state.setLastActivity(Date.now());
     markVaultSessionActive(sessionStorage);
     state.setPendingSessionRestore(false);
     return { error: null };
   }, [integrityCallbacks, state, user]);
-
   const enforceVaultTwoFactorBeforeKeyRelease = useCallback(async (
     options?: VaultUnlockOptions,
   ): Promise<{ error: Error | null }> => {
@@ -290,7 +330,6 @@ export function useVaultProviderActions(): VaultContextType {
 
     return enforceVaultTwoFactorGate({ userId: user.id, options });
   }, [user]);
-
   const openDuressVault = useCallback((activeKey: CryptoKey): void => {
     state.setEncryptionKey(activeKey);
     state.setIsDuressMode(true);
@@ -306,7 +345,6 @@ export function useVaultProviderActions(): VaultContextType {
     markVaultSessionActive(sessionStorage);
     state.setPendingSessionRestore(false);
   }, [state]);
-
   const setupMasterPassword = useCallback(async (
     masterPassword: string,
   ): Promise<{ error: Error | null }> => {
@@ -334,7 +372,6 @@ export function useVaultProviderActions(): VaultContextType {
       ? finalizeVaultUnlock(result.activeUserKey)
       : { error: null };
   }, [finalizeVaultUnlock, state, user]);
-
   const unlock = useCallback(async (
     masterPassword: string,
     options?: VaultUnlockOptions,
@@ -356,7 +393,7 @@ export function useVaultProviderActions(): VaultContextType {
       clearCurrentDeviceKey();
     }
 
-    return unlockVaultWithMasterPassword({
+    const unlockResult = await unlockVaultWithMasterPassword({
       userId: user.id,
       masterPassword,
       salt: credentials.salt,
@@ -380,6 +417,12 @@ export function useVaultProviderActions(): VaultContextType {
       openDuressVault,
       applyCredentialUpdates,
     });
+
+    if (unlockResult.vaultEncryptionKey) {
+      setVaultEncryptionKey(unlockResult.vaultEncryptionKey);
+    }
+
+    return { error: unlockResult.error };
   }, [
     applyCredentialUpdates,
     enforceVaultTwoFactorBeforeKeyRelease,
@@ -389,6 +432,7 @@ export function useVaultProviderActions(): VaultContextType {
     refreshRemoteCredentials,
     clearCurrentDeviceKey,
     setDeviceKeyActive,
+    setVaultEncryptionKey,
     state.duressConfig,
     state.encryptedUserKey,
     state.kdfVersion,
@@ -397,7 +441,6 @@ export function useVaultProviderActions(): VaultContextType {
     state.verificationHash,
     user,
   ]);
-
   const unlockWithPasskey = useCallback(async (
     options?: VaultUnlockOptions,
   ): Promise<{ error: Error | null }> => {
@@ -415,7 +458,7 @@ export function useVaultProviderActions(): VaultContextType {
       vaultProtectionMode: state.vaultProtectionMode,
     };
 
-    return unlockVaultWithPasskey({
+    const passkeyResult = await unlockVaultWithPasskey({
       userId: user.id,
       salt: credentials.salt,
       kdfVersion: credentials.kdfVersion ?? state.kdfVersion,
@@ -428,12 +471,19 @@ export function useVaultProviderActions(): VaultContextType {
       finalizeVaultUnlock,
       applyCredentialUpdates,
     });
+
+    if (passkeyResult.vaultEncryptionKey) {
+      setVaultEncryptionKey(passkeyResult.vaultEncryptionKey);
+    }
+
+    return { error: passkeyResult.error };
   }, [
     applyCredentialUpdates,
     enforceVaultTwoFactorBeforeKeyRelease,
     finalizeVaultUnlock,
     getRequiredDeviceKey,
     refreshRemoteCredentials,
+    setVaultEncryptionKey,
     state.encryptedUserKey,
     state.kdfVersion,
     state.salt,
@@ -441,7 +491,6 @@ export function useVaultProviderActions(): VaultContextType {
     state.verificationHash,
     user,
   ]);
-
   const getPasskeyWrappingMaterial = useCallback(async (
     masterPassword: string,
   ): Promise<Uint8Array | null> => {
@@ -469,12 +518,10 @@ export function useVaultProviderActions(): VaultContextType {
     state.verificationHash,
     user,
   ]);
-
   const lock = useCallback(() => {
     clearActiveVaultSession();
     setIsLoading(false);
   }, [clearActiveVaultSession, setIsLoading]);
-
   useVaultLifecycleEffects({
     user,
     authReady,
@@ -484,7 +531,6 @@ export function useVaultProviderActions(): VaultContextType {
     refreshPasskeyUnlockStatus,
     refreshDeviceKeyState,
   });
-
   const enableDeviceKey = useCallback(async (
     masterPassword: string,
   ): Promise<{ error: Error | null }> => {
@@ -535,7 +581,6 @@ export function useVaultProviderActions(): VaultContextType {
     state.verificationHash,
     user,
   ]);
-
   const disableDeviceKey = useCallback(async (
     masterPassword: string,
     twoFactorCode?: string,
@@ -583,19 +628,14 @@ export function useVaultProviderActions(): VaultContextType {
     state.isLocked,
     user,
   ]);
-
   const {
     refreshIntegrityBaseline,
     verifyIntegrity,
     updateIntegrity,
-    restoreQuarantinedItem,
-    deleteQuarantinedItem,
-    acceptMissingQuarantinedItem,
     enterSafeMode,
     exitSafeMode,
     resetVaultAfterIntegrityFailure,
   } = useVaultIntegrityActions({ state, user, integrityCallbacks });
-
   const {
     encryptData,
     decryptData,
@@ -606,7 +646,25 @@ export function useVaultProviderActions(): VaultContextType {
     decryptItemForLegacyMigration,
     decryptTrustedRecoverySnapshotItem,
   } = useVaultCryptoActions(state, user);
-
+  const opLogUiState = useVaultOpLogUiState(state, user?.id ?? null);
+  useVaultRevokedDeviceAutoLock({
+    isLocked: state.isLocked,
+    localVaultState: opLogUiState.localVaultState,
+    lock,
+    vaultMigrationStatus: state.vaultMigrationStatus,
+  });
+  const { startVaultMigration, retryVaultMigration } = useVaultMigrationActions({
+    state,
+    user,
+    decryptItemForLegacyMigration,
+  });
+  const opLogActions = useVaultOpLogCrudActions({
+    state,
+    user,
+    decryptTrustedRecoverySnapshotItem,
+    opLogUiRefresh: opLogUiState.refresh, localVaultState: opLogUiState.localVaultState,
+  });
+  const collectionOpLogActions = useCollectionOpLogActions(state, user);
   return buildVaultContextValue(state, {
     setupMasterPassword,
     unlock,
@@ -631,10 +689,11 @@ export function useVaultProviderActions(): VaultContextType {
     refreshIntegrityBaseline,
     reportUnreadableItems: state.reportUnreadableItems,
     enterSafeMode,
-    restoreQuarantinedItem,
-    deleteQuarantinedItem,
-    acceptMissingQuarantinedItem,
     exitSafeMode,
     resetVaultAfterIntegrityFailure,
-  });
+    startVaultMigration,
+    retryVaultMigration,
+    ...opLogActions,
+    ...collectionOpLogActions,
+  }, opLogUiState);
 }

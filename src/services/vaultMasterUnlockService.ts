@@ -1,8 +1,7 @@
 import {
   attemptKdfUpgrade,
   importMasterKey,
-  reEncryptVault,
-  unwrapUserKey,
+  unwrapUserKeyBytes,
   verifyKey,
 } from '@/services/cryptoService';
 import {
@@ -52,7 +51,7 @@ export interface VaultMasterUnlockInput {
     deviceKeyAvailable: boolean,
   ) => Promise<Uint8Array>;
   enforceVaultTwoFactorBeforeKeyRelease: (options?: VaultUnlockOptions) => Promise<{ error: Error | null }>;
-  finalizeVaultUnlock: (activeKey: CryptoKey) => Promise<{ error: Error | null }>;
+  finalizeVaultUnlock: (activeKey: CryptoKey, vaultEncryptionKey?: Uint8Array) => Promise<{ error: Error | null }>;
   openDuressVault: (activeKey: CryptoKey) => void;
   applyCredentialUpdates: (updates: {
     verificationHash?: string;
@@ -63,7 +62,7 @@ export interface VaultMasterUnlockInput {
 
 export async function unlockVaultWithMasterPassword(
   input: VaultMasterUnlockInput,
-): Promise<{ error: Error | null }> {
+): Promise<{ error: Error | null; vaultEncryptionKey?: Uint8Array }> {
   const cooldown = getUnlockCooldown();
   if (cooldown !== null) {
     const seconds = Math.ceil(cooldown / 1000);
@@ -135,43 +134,15 @@ async function tryDuressUnlock(
     return { handled: true, error: null };
   }
 
-  let activeKey = result.key!;
-  let shouldBackfillVerifier = !input.verificationHash;
-  const upgraded = await upgradeLegacyDirectKdfIfNeeded(input, activeKey);
-  if (upgraded.activeKey) {
-    activeKey = upgraded.activeKey;
-    shouldBackfillVerifier = false;
-  }
-
-  await repairBrokenKdfUpgradeIfNeeded({
-    userId: input.userId,
-    masterPassword: input.masterPassword,
-    salt: input.salt,
-    kdfVersion: input.kdfVersion,
-    activeKey,
-    contextLabel: 'duress path',
-  });
-
-  const twoFactorResult = await input.enforceVaultTwoFactorBeforeKeyRelease(input.options);
-  if (twoFactorResult.error) {
-    return { handled: true, error: twoFactorResult.error };
-  }
-
-  const finalizeResult = await input.finalizeVaultUnlock(activeKey);
-  if (finalizeResult.error) {
-    return { handled: true, error: finalizeResult.error };
-  }
-
-  if (shouldBackfillVerifier) {
-    await backfillVerifier(input, activeKey);
-  }
-
-  return { handled: true, error: null };
+  // A normal dual-unlock result must still use the primary unlock path.
+  // Phase-12 migration needs a copy of the vault KDF output; the duress hook
+  // only returns the active key and cannot safely supply that migration key.
+  return { handled: false, error: null };
 }
 
 async function unlockWithPrimaryVaultKey(
   input: VaultMasterUnlockInput,
-): Promise<{ error: Error | null }> {
+): Promise<{ error: Error | null; vaultEncryptionKey?: Uint8Array }> {
   const { deviceKey, deviceKeyAvailable, error: deviceKeyError } = await input.getRequiredDeviceKey();
   if (deviceKeyError) {
     return { error: deviceKeyError };
@@ -184,14 +155,19 @@ async function unlockWithPrimaryVaultKey(
   );
   let activeKey: CryptoKey;
   let shouldBackfillVerifier = !input.verificationHash;
+  let vaultEncryptionKey: Uint8Array | undefined;
+  let userKeyBytes: Uint8Array | null = null;
 
   try {
     if (input.encryptedUserKey) {
-      activeKey = await unwrapAndVerifyUserKey(input, kdfOutputBytes, deviceKeyAvailable);
+      const unwrapped = await unwrapAndVerifyUserKey(input, kdfOutputBytes, deviceKeyAvailable);
+      activeKey = unwrapped.userKey;
+      userKeyBytes = unwrapped.userKeyBytes;
       const upgraded = await upgradeUserKeyWrapperIfNeeded(input, kdfOutputBytes, deviceKey, deviceKeyAvailable);
       if (upgraded) {
         shouldBackfillVerifier = false;
       }
+      vaultEncryptionKey = new Uint8Array(userKeyBytes);
     } else {
       const legacyKey = await importMasterKey(kdfOutputBytes);
       const isValid = input.verificationHash
@@ -220,8 +196,10 @@ async function unlockWithPrimaryVaultKey(
       });
       activeKey = migration.userKey;
       shouldBackfillVerifier = false;
+      vaultEncryptionKey = new Uint8Array(kdfOutputBytes);
     }
   } finally {
+    userKeyBytes?.fill(0);
     kdfOutputBytes.fill(0);
   }
 
@@ -250,7 +228,7 @@ async function unlockWithPrimaryVaultKey(
     return twoFactorResult;
   }
 
-  const finalizeResult = await input.finalizeVaultUnlock(activeKey);
+  const finalizeResult = await input.finalizeVaultUnlock(activeKey, vaultEncryptionKey);
   if (finalizeResult.error) {
     return finalizeResult;
   }
@@ -259,17 +237,17 @@ async function unlockWithPrimaryVaultKey(
     await backfillVerifier(input, activeKey);
   }
 
-  return { error: null };
+  return { error: null, vaultEncryptionKey };
 }
 
 async function unwrapAndVerifyUserKey(
   input: VaultMasterUnlockInput,
   kdfOutputBytes: Uint8Array,
   deviceKeyAvailable: boolean,
-): Promise<CryptoKey> {
-  let userKey: CryptoKey;
+): Promise<{ userKey: CryptoKey; userKeyBytes: Uint8Array }> {
+  let userKeyBytes: Uint8Array;
   try {
-    userKey = await unwrapUserKey(input.encryptedUserKey!, kdfOutputBytes);
+    userKeyBytes = await unwrapUserKeyBytes(input.encryptedUserKey!, kdfOutputBytes);
   } catch (error) {
     if (requiresDeviceKey(input.vaultProtectionMode) && deviceKeyAvailable) {
       throw createDeviceKeyInvalidError();
@@ -277,17 +255,24 @@ async function unwrapAndVerifyUserKey(
     throw error;
   }
 
-  if (input.verificationHash) {
-    const isValid = await verifyKey(input.verificationHash, userKey);
-    if (!isValid) {
-      throw requiresDeviceKey(input.vaultProtectionMode) && deviceKeyAvailable
-        ? createDeviceKeyInvalidError()
-        : createMasterPasswordInvalidError();
-    }
-  }
+  try {
+    const userKey = await importMasterKey(userKeyBytes);
 
-  resetUnlockAttempts();
-  return userKey;
+    if (input.verificationHash) {
+      const isValid = await verifyKey(input.verificationHash, userKey);
+      if (!isValid) {
+        throw requiresDeviceKey(input.vaultProtectionMode) && deviceKeyAvailable
+          ? createDeviceKeyInvalidError()
+          : createMasterPasswordInvalidError();
+      }
+    }
+
+    resetUnlockAttempts();
+    return { userKey, userKeyBytes };
+  } catch (error) {
+    userKeyBytes.fill(0);
+    throw error;
+  }
 }
 
 async function upgradeUserKeyWrapperIfNeeded(
@@ -339,88 +324,6 @@ async function upgradeUserKeyWrapperIfNeeded(
   }
 
   return false;
-}
-
-async function upgradeLegacyDirectKdfIfNeeded(
-  input: VaultMasterUnlockInput,
-  currentKey: CryptoKey,
-): Promise<{ activeKey: CryptoKey | null }> {
-  try {
-    const upgrade = await attemptKdfUpgrade(input.masterPassword, input.salt, input.kdfVersion);
-    if (!upgrade.upgraded || !upgrade.newKey || !upgrade.newVerifier) {
-      return { activeKey: null };
-    }
-
-    const { data: vaultItems } = await supabase
-      .from('vault_items')
-      .select('id, encrypted_data')
-      .eq('user_id', input.userId);
-    const { data: categories } = await supabase
-      .from('categories')
-      .select('id, name, icon, color')
-      .eq('user_id', input.userId);
-    const reEncResult = await reEncryptVault(vaultItems || [], categories || [], currentKey, upgrade.newKey);
-    await persistReencryptedVaultRows(input.userId, reEncResult);
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        master_password_verifier: upgrade.newVerifier,
-        kdf_version: upgrade.activeVersion,
-      } as Record<string, unknown>)
-      .eq('user_id', input.userId);
-    if (!error) {
-      await input.applyCredentialUpdates({
-        verificationHash: upgrade.newVerifier,
-        kdfVersion: upgrade.activeVersion,
-      });
-      await saveOfflineCredentials(
-        input.userId,
-        input.salt,
-        upgrade.newVerifier,
-        upgrade.activeVersion,
-        input.encryptedUserKey,
-        input.vaultProtectionMode,
-      );
-      console.info(
-        `KDF upgraded from v${input.kdfVersion} to v${upgrade.activeVersion}. `
-        + `Re-encrypted ${reEncResult.itemsReEncrypted} items and `
-        + `${reEncResult.categoriesReEncrypted} categories.`,
-      );
-      return { activeKey: upgrade.newKey };
-    }
-  } catch (error) {
-    console.warn('KDF upgrade: re-encryption failed, staying on old version', error);
-  }
-
-  return { activeKey: null };
-}
-
-async function persistReencryptedVaultRows(
-  userId: string,
-  reEncResult: Awaited<ReturnType<typeof reEncryptVault>>,
-): Promise<void> {
-  for (const itemUpdate of reEncResult.itemUpdates) {
-    const { error } = await supabase
-      .from('vault_items')
-      .update({ encrypted_data: itemUpdate.encrypted_data })
-      .eq('id', itemUpdate.id)
-      .eq('user_id', userId);
-    if (error) {
-      throw new Error(`Failed to update item ${itemUpdate.id}: ${error.message}`);
-    }
-  }
-
-  for (const categoryUpdate of reEncResult.categoryUpdates) {
-    const { error } = await supabase
-      .from('categories')
-      .update({ name: categoryUpdate.name, icon: categoryUpdate.icon, color: categoryUpdate.color })
-      .eq('id', categoryUpdate.id)
-      .eq('user_id', userId);
-    if (error) {
-      throw new Error(`Failed to update category ${categoryUpdate.id}: ${error.message}`);
-    }
-  }
 }
 
 async function backfillVerifier(

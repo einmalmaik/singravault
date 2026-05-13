@@ -1,3 +1,64 @@
+// Copyright (c) 2025-2026 Maunting Studios
+// Licensed under the Business Source License 1.1 — see LICENSE
+
+/**
+ * @fileoverview OPAQUE Registration Edge Function
+ *
+ * Diese Edge Function implementiert die Benutzerregistrierung mit dem OPAQUE-Protokoll.
+ * OPAQUE ist ein asymmetrisches Password-Authenticated Key Exchange (PAKE) Protokoll,
+ * bei dem das Passwort NIEMALS den Server erreicht - nicht einmal als Hash.
+ *
+ * ## Warum OPAQUE statt klassischem Passwort-Hash?
+ *
+ * Bei klassischer Registrierung:
+ * 1. Client sendet Passwort (oder Hash) an Server
+ * 2. Server hasht (erneut) und speichert
+ * 3. Problem: Server sieht das Passwort temporär im Klartext/Hash
+ *
+ * Bei OPAQUE:
+ * 1. Client berechnet lokalen "Registration Request" aus Passwort
+ * 2. Server antwortet mit "Registration Response" (ohne Passwort-Kenntnis)
+ * 3. Client berechnet "Registration Record" und sendet an Server
+ * 4. Server speichert Record, kann aber daraus KEIN Passwort ableiten
+ *
+ * ## Zwei-Phasen-Registrierung
+ *
+ * ### Phase 1: `start` (handleRegistrationStart)
+ * - Validiert E-Mail und prüft auf Duplikate
+ * - Erstellt GoTrue-User mit zufälligem, unbrauchbarem Passwort
+ * - Generiert OPAQUE Registration Response
+ * - Sendet Verifizierungs-E-Mail (OTP)
+ * - Speichert Challenge mit 15 Min. TTL
+ *
+ * ### Phase 2: `finish` (handleRegistrationFinish)
+ * - Konsumiert Challenge (einmalig verwendbar)
+ * - Speichert OPAQUE Registration Record
+ * - Deaktiviert GoTrue-Passwort-Login (nur OPAQUE erlaubt)
+ *
+ * ## Aufruf aus dem Frontend
+ *
+ * Aufgerufen via `invokeAuthedFunction('auth-register', {...})` aus:
+ * - `src/services/opaqueService.ts` - `startRegistration()` und `finishRegistration()`
+ * - Registrierungsformular in `src/pages/Auth.tsx`
+ *
+ * ## Sicherheitsmaßnahmen
+ *
+ * - Rate-Limiting: Max. Registrierungsversuche pro E-Mail/IP
+ * - E-Mail-Verifizierung: OTP-Code vor Abschluss erforderlich
+ * - Rollback: Bei Fehlern werden erstellte User/Challenges gelöscht
+ * - Log-Redaktion: E-Mail-Adressen werden in Logs maskiert
+ *
+ * ## Datenbankstruktur
+ *
+ * Tabellen:
+ * - `user_opaque_records`: Speichert Registration Records
+ * - `opaque_registration_challenges`: Temporäre Challenges (15 Min. TTL)
+ * - `profiles`: Benutzerprofile mit `auth_protocol: 'opaque'`
+ *
+ * @see src/services/opaqueService.ts - Frontend OPAQUE-Client
+ * @see _shared/opaqueAuth.ts - Shared OPAQUE-Utilities
+ */
+
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import * as opaque from "npm:@serenity-kit/opaque";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -14,14 +75,54 @@ import {
 } from "../_shared/opaqueAuth.ts";
 import { AUTH_ERROR_CODES, isUniqueViolation, jsonError } from "../_shared/authErrors.ts";
 
+// ============================================================================
+// Konfiguration
+// ============================================================================
+
+/**
+ * Supabase-URL aus Umgebungsvariablen.
+ */
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+
+/**
+ * Service Role Key für Admin-Operationen.
+ * ACHTUNG: Umgeht RLS - nur für User-Erstellung und Record-Speicherung verwenden!
+ */
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+/**
+ * Anonymer Schlüssel für OTP-Versand via Supabase Auth.
+ */
 const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+/**
+ * OPAQUE Server Setup - kryptografische Serverkonfiguration.
+ * Wird bei Server-Initialisierung einmalig generiert und muss geheim bleiben.
+ */
 const OPAQUE_SERVER_SETUP = Deno.env.get("OPAQUE_SERVER_SETUP")!;
+
+/**
+ * Admin-Client für Datenbankoperationen mit vollen Rechten.
+ */
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
+/**
+ * Initialisiert die OPAQUE-Bibliothek (WASM-basiert).
+ * Muss vor Verwendung der OPAQUE-Funktionen abgeschlossen sein.
+ */
 await opaque.ready;
 
+// ============================================================================
+// Request Handler
+// ============================================================================
+
+/**
+ * Haupteinstiegspunkt der Edge Function.
+ *
+ * Routet basierend auf `action`-Feld:
+ * - `start` oder ohne action: Startet Registrierung
+ * - `finish`: Schließt Registrierung ab
+ */
 Deno.serve(async (req) => {
     const corsHeaders = getCorsHeaders(req);
     const headers = new Headers({
@@ -52,6 +153,27 @@ Deno.serve(async (req) => {
     }
 });
 
+// ============================================================================
+// Handler-Funktionen
+// ============================================================================
+
+/**
+ * Startet die OPAQUE-Registrierung (Phase 1).
+ *
+ * Workflow:
+ * 1. Validiert E-Mail-Format und Registrierungsrequest
+ * 2. Prüft Rate-Limits (opaque_register Action)
+ * 3. Prüft ob E-Mail bereits verwendet (GoTrue + OPAQUE)
+ * 4. Erstellt GoTrue-User mit zufälligem Passwort
+ * 5. Generiert OPAQUE Registration Response
+ * 6. Erstellt Challenge in DB (15 Min. gültig)
+ * 7. Sendet Verifizierungs-E-Mail
+ *
+ * @param req - Original-Request (für Rate-Limiting)
+ * @param body - Request-Body mit `email` und `registrationRequest`
+ * @param headers - Response-Headers
+ * @returns JSON mit `registrationId`, `registrationResponse`, `expiresAt`
+ */
 async function handleRegistrationStart(
     req: Request,
     body: { email?: unknown; registrationRequest?: unknown },
@@ -181,6 +303,24 @@ async function handleRegistrationStart(
     }), { status: 200, headers });
 }
 
+/**
+ * Schließt die OPAQUE-Registrierung ab (Phase 2).
+ *
+ * Workflow:
+ * 1. Validiert Eingaben
+ * 2. Konsumiert Challenge (markiert als verwendet)
+ * 3. Speichert OPAQUE Registration Record
+ * 4. Setzt auth_protocol auf 'opaque'
+ * 5. Löscht user_security (Legacy-Daten)
+ * 6. Deaktiviert GoTrue-Passwort-Login
+ *
+ * WICHTIG: Nach diesem Schritt kann sich der User NUR noch via OPAQUE
+ * authentifizieren, nicht mehr mit GoTrue-Passwort.
+ *
+ * @param body - Request-Body mit `email`, `registrationId`, `registrationRecord`
+ * @param headers - Response-Headers
+ * @returns JSON mit `success: true` bei Erfolg
+ */
 async function handleRegistrationFinish(
     body: { email?: unknown; registrationId?: unknown; registrationRecord?: unknown },
     headers: Headers,

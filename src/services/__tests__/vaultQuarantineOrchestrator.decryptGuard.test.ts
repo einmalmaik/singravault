@@ -59,4 +59,62 @@ describe('vault quarantine decrypt guard', () => {
       throw new VaultIntegrityDecryptBlockedError('revalidation_failed');
     })).rejects.toThrow(VaultIntegrityDecryptBlockedError);
   });
+
+  it('exports only allowlisted verified items and never decrypts non-allowlisted rows', async () => {
+    const decryptedIds: string[] = [];
+    const payload = await buildVaultExportPayload([
+      {
+        id: 'item-1',
+        title: 'Verified',
+        website_url: null,
+        item_type: 'password',
+        is_favorite: null,
+        category_id: null,
+        encrypted_data: 'encrypted-1',
+      },
+      {
+        id: 'item-2',
+        title: 'Unknown',
+        website_url: null,
+        item_type: 'password',
+        is_favorite: null,
+        category_id: null,
+        encrypted_data: 'encrypted-2',
+      },
+    ], async (_encryptedData, entryId) => {
+      decryptedIds.push(entryId ?? '');
+      return { title: entryId, itemType: 'password' };
+    }, {
+      allowedItemIds: new Set(['item-1']),
+    });
+
+    expect(decryptedIds).toEqual(['item-1']);
+    expect(payload.itemCount).toBe(1);
+    expect(payload.items.map((item) => item.id)).toEqual(['item-1']);
+  });
+
+  it('keeps quarantined diagnostics in safe export payloads without decrypting quarantined items', async () => {
+    const payload = await buildVaultExportPayload([
+      {
+        id: 'item-1',
+        title: 'Quarantined',
+        website_url: null,
+        item_type: 'password',
+        is_favorite: null,
+        category_id: null,
+        encrypted_data: 'encrypted-1',
+      },
+    ], async () => {
+      throw new Error('quarantined rows must not be decrypted');
+    }, {
+      mode: 'safe',
+      quarantinedItems: [{ id: 'item-1', reason: 'ciphertext_changed', updatedAt: null }],
+      allowedItemIds: new Set(['item-1']),
+    });
+
+    expect(payload.itemCount).toBe(0);
+    expect(payload.quarantinedItems).toEqual([
+      { id: 'item-1', reason: 'ciphertext_changed', updatedAt: null },
+    ]);
+  });
 });

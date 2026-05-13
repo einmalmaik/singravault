@@ -73,6 +73,8 @@ class MockIDBDatabase {
       })
     );
   }
+
+  close(): void { }
 }
 
 class MockIDBObjectStore {
@@ -82,11 +84,16 @@ class MockIDBObjectStore {
     return new MockIDBRequest(this.data.get(key));
   }
 
+  getAll(): MockIDBRequest {
+    return new MockIDBRequest(Array.from(this.data.values()));
+  }
+
   put(value: unknown, key?: string): MockIDBRequest {
     const record = value as Record<string, unknown>;
     const actualKey = key
       || (typeof record?.id === "string" ? record.id : undefined)
       || (typeof record?.key === "string" ? record.key : undefined)
+      || (typeof record?.cacheKey === "string" ? record.cacheKey : undefined)
       || Math.random().toString();
     this.data.set(actualKey, value);
     return new MockIDBRequest(actualKey);

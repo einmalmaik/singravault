@@ -620,6 +620,25 @@
     "offlineMode": "Offline mode active: changes are stored locally.",
     "syncingOfflineChanges": "Synchronizing offline changes...",
     "syncedAfterOffline": "{{count}} offline changes synchronized.",
+    "addDevice": {
+      "requestSent": "Device request sent",
+      "requestSentDesc": "Please approve this device on an already trusted device.",
+      "error": "The request could not be sent.",
+      "untrustedTitle": "Device not trusted",
+      "untrustedDesc": "This device is signed in, but has not yet been approved for this vault. Approve it on an already trusted device before contents are shown or changes are allowed.",
+      "pendingDesc": "Request pending. Please approve it on an existing device.",
+      "waiting": "Waiting for approval...",
+      "startPairing": "Pair device",
+      "approved": "Device was authorized successfully.",
+      "rejected": "Request was rejected.",
+      "pendingRequestsTitle": "New device requests"
+    },
+    "oplog": {
+      "loading": "Loading security status...",
+      "actionCompleted": "OpLog action was verified successfully.",
+      "verifyingDeviceTrust": "Verifying device status",
+      "verifyingDeviceTrustDescription": "The vault is shown only after this device has been locally verified as trusted."
+    },
     "copied": "Copied",
     "copiedPassword": "Password has been copied.",
     "copiedUsername": "Username has been copied.",

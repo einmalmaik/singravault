@@ -38,11 +38,15 @@ import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { deleteDeviceKey } from '@/services/deviceKeyService';
-import { clearIntegrityBaseline } from '@/services/vaultIntegrityService';
+import { removeIntegrityBaselineEnvelope } from '@/services/integrityBaselineStore';
 import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthService';
 import { clearOfflineVaultData } from '@/services/offlineVaultService';
 import { saveExportFile } from '@/services/exportFileService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
+import {
+  getVerifiedRecordIdsForEgress,
+  isVaultSecurityModeBlockingEgress,
+} from '@/services/vaultOpLog';
 import { verifyTwoFactorChallenge } from '@/services/twoFactorService';
 import { clearLastOAuthProvider } from '@/services/socialLoginPreferenceService';
 import { invokeAuthedFunction, isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
@@ -62,7 +66,7 @@ const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 export function AccountSettings() {
     const { t } = useTranslation();
     const { user, signOut } = useAuth();
-    const { decryptItem, isLocked } = useVault();
+    const { decryptItem, isLocked, opLogUiView } = useVault();
     const { toast } = useToast();
     const navigate = useNavigate();
 
@@ -170,7 +174,7 @@ export function AccountSettings() {
             localStorage.removeItem(`singra_verify_${user.id}`);
             await Promise.allSettled([
                 clearOfflineVaultData(user.id),
-                clearIntegrityBaseline(user.id),
+                removeIntegrityBaselineEnvelope(user.id),
                 deleteDeviceKey(user.id),
             ]);
             clearLastOAuthProvider();
@@ -234,6 +238,18 @@ export function AccountSettings() {
 
         setIsExporting(true);
         try {
+            const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView);
+            if (!opLogUiView || !allowedItemIds || isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)) {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: t('vault.export.blockedBySecurityMode', {
+                        defaultValue: 'Export ist ohne verifizierten Tresor-Zustand nicht erlaubt.',
+                    }),
+                });
+                return;
+            }
+
             const { data: items, error } = await supabase
                 .from('vault_items')
                 .select('*')
@@ -251,6 +267,9 @@ export function AccountSettings() {
                     encrypted_data: item.encrypted_data || '',
                 })),
                 decryptItem,
+                {
+                    allowedItemIds,
+                },
             );
 
             const saved = await saveExportFile({

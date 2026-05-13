@@ -32,7 +32,6 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
@@ -41,20 +40,10 @@ import { CategoryIcon } from './CategoryIcon';
 import { CATEGORY_ICON_PRESETS, normalizeCategoryIcon } from './categoryIconPolicy';
 import type { VaultItemData } from '@/services/cryptoService';
 import {
-    applyOfflineCategoryDeletion,
-    buildCategoryRowFromInsert,
-    buildVaultItemRowFromInsert,
-    enqueueOfflineMutation,
-    isAppOnline,
-    isLikelyOfflineError,
     loadVaultSnapshot,
-    shouldUseLocalOnlyVault,
-    upsertOfflineCategoryRow,
 } from '@/services/offlineVaultService';
-import {
-    ENCRYPTED_CATEGORY_PREFIX,
-    neutralizeVaultItemServerMetadata,
-} from '@/services/vaultMetadataPolicy';
+import type { CategoryPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
+import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 
 // Preset colors
 const PRESET_COLORS = [
@@ -89,11 +78,40 @@ interface CategoryItemMatch {
     decryptedData: VaultItemData | null;
 }
 
+function parseVerifiedOpLogItemCategoryId(record: LocalVerifiedRecord): string | null {
+    if (
+        (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+        || record.record.recordType !== 'item'
+        || !record.plaintext
+    ) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(new TextDecoder().decode(record.plaintext)) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return null;
+        }
+
+        const categoryRecordId = (parsed as Record<string, unknown>).categoryRecordId;
+        return typeof categoryRecordId === 'string' ? categoryRecordId : null;
+    } catch {
+        return null;
+    }
+}
+
 export function CategoryDialog({ open, onOpenChange, category, onSave }: CategoryDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
-    const { encryptData, decryptItem, encryptItem, refreshIntegrityBaseline } = useVault();
+    const {
+        decryptItem,
+        opLogCreateCategory,
+        opLogUpdateCategory,
+        opLogDeleteCategory,
+        opLogLocalVaultState,
+        vaultMigrationStatus,
+    } = useVault();
 
     const [name, setName] = useState('');
     const [icon, setIcon] = useState('');
@@ -123,84 +141,57 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
 
         setLoading(true);
         try {
-            const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
-            const normalizedIcon = normalizeCategoryIcon(icon);
-
-            const categoryId = isEditing ? category.id : crypto.randomUUID();
-            const categoryData = {
-                id: categoryId,
-                name: `${ENCRYPTED_CATEGORY_PREFIX}${await encryptData(name.trim())}`,
-                icon: normalizedIcon
-                    ? `${ENCRYPTED_CATEGORY_PREFIX}${await encryptData(normalizedIcon)}`
-                    : null,
-                color: `${ENCRYPTED_CATEGORY_PREFIX}${await encryptData(color)}`,
-                user_id: user.id,
-                parent_id: null,
-                sort_order: null,
+            const plaintext: CategoryPlaintext = {
+                name: name.trim(),
+                icon: normalizeCategoryIcon(icon),
+                color,
+                parentCategoryRecordId: null,
+                sortOrder: null,
             };
-
-            let syncedOnline = false;
-            let categoryRowForCache = buildCategoryRowFromInsert(categoryData);
-
-            if (canSyncOnline) {
-                try {
-                    const { data: savedCategory, error } = await supabase
-                        .from('categories')
-                        .upsert(categoryData, { onConflict: 'id' })
-                        .select('*')
-                        .single();
-
-                    if (error) throw error;
-                    if (savedCategory) {
-                        categoryRowForCache = savedCategory;
-                    }
-                    syncedOnline = true;
-                } catch (err) {
-                    if (!isLikelyOfflineError(err)) {
-                        throw err;
-                    }
-                }
+            const result = isEditing
+                ? await opLogUpdateCategory(category.id, plaintext)
+                : await opLogCreateCategory(plaintext);
+            if (result.error) {
+                throw result.error;
             }
 
-            await upsertOfflineCategoryRow(user.id, categoryRowForCache);
-
-            if (!syncedOnline) {
-                await enqueueOfflineMutation({
-                    userId: user.id,
-                    type: 'upsert_category',
-                    payload: categoryData,
-                });
-            }
-
+            const categoryId = isEditing
+                ? category.id
+                : 'recordId' in result ? result.recordId : null;
             toast({
                 title: t('common.success'),
-                description: syncedOnline
-                    ? (isEditing ? t('categories.updated') : t('categories.created'))
-                    : t('vault.offlineSaved', {
-                        defaultValue: 'Offline gespeichert. Wird bei Internet automatisch synchronisiert.',
-                    }),
+                description: t('categories.saved'),
             });
-
-            await refreshIntegrityBaseline({
-                categoryIds: [categoryId],
-            });
-
+            onSave?.({ type: 'saved', categoryId: categoryId ?? category?.id ?? '' });
             onOpenChange(false);
-            onSave?.({ type: 'saved', categoryId });
-        } catch (err) {
-            console.error('Error saving category:', err);
+        } catch (error) {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
-                description: t('categories.saveFailed'),
+                description: error instanceof Error ? error.message : t('categories.saveError'),
             });
         } finally {
             setLoading(false);
         }
     };
 
-    const loadItemsInCategory = useCallback(async (): Promise<CategoryItemMatch[]> => {
-        if (!category || !user) return [];
+    const loadItemCountInCategory = useCallback(async (): Promise<number> => {
+        if (!category || !user) return 0;
+
+        if (vaultMigrationStatus === 'verified') {
+            if (!opLogLocalVaultState) {
+                return 0;
+            }
+
+            let count = 0;
+            for (const record of opLogLocalVaultState.recordsById.values()) {
+                if (parseVerifiedOpLogItemCategoryId(record) === category.id) {
+                    count += 1;
+                }
+            }
+
+            return count;
+        }
 
         const { snapshot } = await loadVaultSnapshot(user.id);
         const items = snapshot.vaultId
@@ -226,8 +217,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             }
         }
 
-        return matches;
-    }, [category, decryptItem, user]);
+        return matches.length;
+    }, [category, decryptItem, opLogLocalVaultState, user, vaultMigrationStatus]);
 
     useEffect(() => {
         if (!showDeleteConfirm || !category || !user) {
@@ -240,10 +231,10 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         setDeleteImpactLoading(true);
         setDeleteImpactCount(null);
 
-        void loadItemsInCategory()
-            .then((items) => {
+        void loadItemCountInCategory()
+            .then((count) => {
                 if (!cancelled) {
-                    setDeleteImpactCount(items.length);
+                    setDeleteImpactCount(count);
                 }
             })
             .catch((err) => {
@@ -261,164 +252,33 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
         return () => {
             cancelled = true;
         };
-    }, [category, loadItemsInCategory, showDeleteConfirm, user]);
+    }, [category, loadItemCountInCategory, showDeleteConfirm, user]);
 
     const handleDelete = async (mode: CategoryDeleteMode) => {
         if (!category || !user) return;
 
         setLoading(true);
         try {
-            const canSyncOnline = !shouldUseLocalOnlyVault(user.id) && isAppOnline();
-            const affectedItems = await loadItemsInCategory();
-            const affectedItemIds = affectedItems.map(({ item }) => item.id);
-            const updatedItemRows: VaultItemRow[] = [];
-            const deletedItemIds: string[] = [];
-            const trustedItemIds: string[] = [];
-
-            if (mode === 'unlink-items') {
-                for (const { item, decryptedData } of affectedItems) {
-                    const itemData = decryptedData ?? {
-                        title: item.title,
-                        websiteUrl: item.website_url ?? undefined,
-                        itemType: item.item_type,
-                        isFavorite: !!item.is_favorite,
-                    };
-                    const migratedEncryptedData = await encryptItem({
-                        ...itemData,
-                        categoryId: null,
-                    }, item.id);
-
-                    const itemPayload = neutralizeVaultItemServerMetadata({
-                        id: item.id,
-                        user_id: item.user_id,
-                        vault_id: item.vault_id,
-                        encrypted_data: migratedEncryptedData,
-                    });
-
-                    let syncedItemOnline = false;
-                    let itemRowForCache = buildVaultItemRowFromInsert(itemPayload);
-                    if (canSyncOnline) {
-                        try {
-                            const { data: savedItem, error } = await supabase
-                                .from('vault_items')
-                                .upsert(itemPayload, { onConflict: 'id' })
-                                .select('*')
-                                .single();
-                            if (error) throw error;
-                            if (savedItem) {
-                                itemRowForCache = savedItem;
-                            }
-                            syncedItemOnline = true;
-                        } catch (err) {
-                            if (!isLikelyOfflineError(err)) {
-                                throw err;
-                            }
-                        }
-                    }
-
-                    updatedItemRows.push(itemRowForCache);
-
-                    if (!syncedItemOnline) {
-                        await enqueueOfflineMutation({
-                            userId: user.id,
-                            type: 'upsert_item',
-                            payload: itemPayload,
-                        });
-                    }
-
-                    trustedItemIds.push(item.id);
-                }
-            } else {
-                for (const { item } of affectedItems) {
-                    let syncedItemDelete = false;
-                    if (canSyncOnline) {
-                        try {
-                            const { error } = await supabase
-                                .from('vault_items')
-                                .delete()
-                                .eq('id', item.id);
-                            if (error) throw error;
-                            syncedItemDelete = true;
-                        } catch (err) {
-                            if (!isLikelyOfflineError(err)) {
-                                throw err;
-                            }
-                        }
-                    }
-
-                    deletedItemIds.push(item.id);
-                    if (!syncedItemDelete) {
-                        await enqueueOfflineMutation({
-                            userId: user.id,
-                            type: 'delete_item',
-                            payload: { id: item.id },
-                        });
-                    }
-                    trustedItemIds.push(item.id);
-                }
-            }
-
-            let syncedCategoryDelete = false;
-            if (canSyncOnline) {
-                try {
-                    const { error } = await supabase
-                        .from('categories')
-                        .delete()
-                        .eq('id', category.id);
-                    if (error) throw error;
-                    syncedCategoryDelete = true;
-                } catch (err) {
-                    if (!isLikelyOfflineError(err)) {
-                        throw err;
-                    }
-                }
-            }
-
-            await applyOfflineCategoryDeletion(user.id, category.id, {
-                updatedItems: updatedItemRows,
-                deletedItemIds,
-            });
-            if (!syncedCategoryDelete) {
-                await enqueueOfflineMutation({
-                    userId: user.id,
-                    type: 'delete_category',
-                    payload: { id: category.id },
-                });
+            const result = await opLogDeleteCategory(
+                category.id,
+                mode === 'delete-items' ? 'deleteItems' : 'unlinkItems',
+            );
+            if (result.error) {
+                throw result.error;
             }
 
             toast({
                 title: t('common.success'),
-                description: syncedCategoryDelete
-                    ? t(
-                        mode === 'delete-items'
-                            ? 'categories.deletedWithItems'
-                            : 'categories.deletedOnlyCategory',
-                        {
-                            defaultValue: mode === 'delete-items'
-                                ? 'Kategorie und {{count}} Einträge gelöscht.'
-                                : 'Kategorie gelöscht. {{count}} Einträge bleiben ohne Kategorie.',
-                            count: affectedItemIds.length,
-                        },
-                    )
-                    : t('vault.offlineDeleteQueued', {
-                        defaultValue: 'Offline gelöscht. Löschung wird bei Internet synchronisiert.',
-                    }),
+                description: t('categories.deleted'),
             });
-
-            await refreshIntegrityBaseline({
-                itemIds: trustedItemIds,
-                categoryIds: [category.id],
-            });
-
+            onSave?.({ type: 'deleted', categoryId: category.id });
             setShowDeleteConfirm(false);
             onOpenChange(false);
-            onSave?.({ type: 'deleted', categoryId: category.id });
-        } catch (err) {
-            console.error('Error deleting category:', err);
+        } catch (error) {
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
-                description: t('categories.deleteFailed'),
+                description: error instanceof Error ? error.message : t('categories.deleteError'),
             });
         } finally {
             setLoading(false);
@@ -554,9 +414,9 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                             {deleteImpactLoading
                                 ? t('common.loading')
                                 : categoryHasItems
-                                    ? t('categories.deleteWithItemsDesc', {
+                                    ? t('categories.deleteWithItemsOptionsDesc', {
                                         count: categoryDeleteItemCount,
-                                        defaultValue: 'Diese Kategorie enthält {{count}} Einträge. Du kannst nur die Kategorie löschen oder die Einträge mitlöschen.',
+                                        defaultValue: 'Diese Kategorie enthaelt {{count}} Eintrag/Eintraege. Waehle, ob die Eintraege behalten oder ebenfalls geloescht werden.',
                                     })
                                     : t('categories.deleteConfirmDesc')}
                         </AlertDialogDescription>
@@ -574,7 +434,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                                 className="h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug"
                             >
                                 {t('categories.deleteCategoryOnly', {
-                                    defaultValue: 'Nur Kategorie löschen',
+                                    defaultValue: 'Nur Kategorie loeschen',
                                 })}
                             </Button>
                         )}
@@ -587,7 +447,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         >
                             {categoryHasItems
                                 ? t('categories.deleteCategoryAndItems', {
-                                    defaultValue: 'Kategorie und Einträge löschen',
+                                    defaultValue: 'Kategorie und Eintraege loeschen',
                                 })
                                 : t('common.delete')}
                         </Button>

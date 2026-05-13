@@ -69,6 +69,10 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
 
   clearSessionFallback();
 
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return offlineOrUnauthenticatedState();
+  }
+
   if (isTauriRuntime()) {
     console.info("[AuthSessionManager] hydrateAuthSession entering Tauri refresh path.");
     const purgedLegacySessions = purgeLegacyDesktopAuthTokens(runtimeConfig.supabaseUrl);
@@ -102,10 +106,6 @@ export async function hydrateAuthSession(): Promise<HydratedAuthState> {
   }
 
   if (isInIframe()) {
-    return offlineOrUnauthenticatedState();
-  }
-
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return offlineOrUnauthenticatedState();
   }
 
@@ -239,6 +239,7 @@ export async function saveOfflineIdentity(identity: OfflineIdentity): Promise<vo
   await withOfflineIdentityStorage(
     async (store) => {
       store.put(identity, OFFLINE_IDENTITY_RECORD_KEY);
+      localStorage.removeItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
     },
     () => {
       localStorage.setItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY, JSON.stringify(identity));
@@ -247,46 +248,50 @@ export async function saveOfflineIdentity(identity: OfflineIdentity): Promise<vo
 }
 
 export async function readOfflineIdentity(): Promise<OfflineIdentity | null> {
-  return withOfflineIdentityStorage(
+  const indexedDbIdentity = await withOfflineIdentityStorage(
     async (store) => {
       const request = store.get(OFFLINE_IDENTITY_RECORD_KEY);
       return await idbRequest<OfflineIdentity | undefined>(request) ?? null;
     },
-    () => {
-      const raw = localStorage.getItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
-      if (!raw) {
-        return null;
-      }
-
-      try {
-        const parsed = JSON.parse(raw) as Partial<OfflineIdentity>;
-        if (typeof parsed.userId !== "string" || !parsed.userId) {
-          localStorage.removeItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
-          return null;
-        }
-
-        return {
-          userId: parsed.userId,
-          email: typeof parsed.email === "string" ? parsed.email : null,
-          updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
-        };
-      } catch {
-        localStorage.removeItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
-        return null;
-      }
-    },
+    readLocalStorageOfflineIdentity,
   );
+  return indexedDbIdentity ?? readLocalStorageOfflineIdentity();
 }
 
 export async function clearOfflineIdentity(): Promise<void> {
   await withOfflineIdentityStorage(
     async (store) => {
       store.delete(OFFLINE_IDENTITY_RECORD_KEY);
+      localStorage.removeItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
     },
     () => {
       localStorage.removeItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
     },
   );
+}
+
+function readLocalStorageOfflineIdentity(): OfflineIdentity | null {
+  const raw = localStorage.getItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<OfflineIdentity>;
+    if (typeof parsed.userId !== "string" || !parsed.userId) {
+      localStorage.removeItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
+      return null;
+    }
+
+    return {
+      userId: parsed.userId,
+      email: typeof parsed.email === "string" ? parsed.email : null,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
+    };
+  } catch {
+    localStorage.removeItem(AUTH_OFFLINE_IDENTITY_STORAGE_KEY);
+    return null;
+  }
 }
 
 async function refreshCurrentSessionUncached(): Promise<Session | null> {
