@@ -8,7 +8,7 @@
 
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
-import { Shield, Lock, ArrowRight } from 'lucide-react';
+import { Shield, Lock, ArrowRight, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BrandMedia } from '@/components/BrandMedia';
 import { SingraVaultLogo } from '@/components/SingraVaultLogo';
@@ -65,6 +65,16 @@ export function Hero() {
             <p className="singra-hero-desc max-w-xl text-base leading-8 text-foreground/72 [text-shadow:0_0_20px_hsl(228_26%_3%_/_0.88)] md:text-lg">
               {t('landing.hero.description')}
             </p>
+
+            <div className="max-w-xl rounded-lg border border-amber-400/35 bg-amber-950/35 p-4 text-left text-amber-50 shadow-[0_18px_55px_hsl(38_92%_35%_/_0.16)] backdrop-blur-xl">
+              <div className="flex gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold">{t('landing.prototypeWarning.title')}</p>
+                  <p className="text-sm leading-6 text-amber-50/82">{t('landing.prototypeWarning.description')}</p>
+                </div>
+              </div>
+            </div>
 
             {/* CTA Buttons */}
             <div className="singra-hero-cta flex flex-col gap-5">

@@ -10,7 +10,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { createClient, type Session } from '@supabase/supabase-js';
-import { Mail, Lock, Eye, EyeOff, Loader2, ClipboardPaste, Link2, WandSparkles } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Loader2, ClipboardPaste, Link2, WandSparkles, AlertTriangle } from 'lucide-react';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -894,6 +894,16 @@ export default function Auth() {
                 : mode === 'signup' ? t('auth.signup.subtitle')
                   : ''}
             </p>
+          </div>
+
+          <div className="mb-6 rounded-xl border border-amber-300/25 bg-amber-950/20 p-4 text-left text-amber-50 shadow-[0_1px_0_hsl(var(--foreground)/0.04)_inset,0_18px_36px_hsl(0_0%_0%/0.22)] backdrop-blur-xl">
+            <div className="flex gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-200" />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold tracking-tight">{t('auth.prototypeWarning.title')}</p>
+                <p className="text-sm leading-6 text-amber-50/78">{t('auth.prototypeWarning.description')}</p>
+              </div>
+            </div>
           </div>
 
           <div className="auth-view-enter space-y-4">

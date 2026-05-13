@@ -57,6 +57,10 @@
       "ctaSecondary": "Mehr erfahren",
       "description": "Singra Vault schützt deine Tresor-Daten lokal auf deinem Gerät, bevor sie synchronisiert werden. Der App-Passwortlogin läuft über OPAQUE; OAuth bleibt ein separater Anmeldeweg."
     },
+    "prototypeWarning": {
+      "title": "Experimental Prototype",
+      "description": "Nicht für echte Passwörter verwenden. Nur mit Testdaten nutzen."
+    },
     "security": {
       "title": "Höchste Sicherheitsstandards",
       "subtitle": "Wir kombinieren starke Kryptografie mit lokaler Integrit?tspr?fung, Passkey-Entsperrung und transparent dokumentierten Grenzen.",
@@ -516,6 +520,10 @@
   },
   "auth": {
     "success": "Erfolgreich angemeldet.",
+    "prototypeWarning": {
+      "title": "Experimental Prototype",
+      "description": "Nicht für echte Passwörter verwenden. Nur mit Testdaten nutzen."
+    },
     "login": {
       "title": "Willkommen zurück",
       "titleFirstVisit": "Willkommen bei Singra Vault",
