@@ -100,14 +100,16 @@ export function useVaultOpLogUiState(
       }
       setVaultId(vaultId);
 
+      const deviceIdentity = await loadVerifiedLocalDeviceIdentity(userId, vaultId);
+
       if (typeof navigator === 'undefined' || navigator.onLine !== false) {
         await syncPendingVaultOpLogOperations({
           rpcClient: supabase as unknown as SupabaseRpcClient,
+          trustClient: supabase as unknown as VaultOpLogTrustReadClient,
           vaultId,
+          authorDeviceId: deviceIdentity?.deviceId,
         }).catch(() => undefined);
       }
-
-      const deviceIdentity = await loadVerifiedLocalDeviceIdentity(userId, vaultId);
 
       const result = await loadVaultOpLogUiState({
         rpcClient: supabase as unknown as SupabaseRpcClient,

@@ -13,6 +13,7 @@ import { submitVaultOperation, type SupabaseRpcClient } from './vaultOpLogReposi
 import { VaultOpLogPendingQueue, classifySubmitResult } from './vaultOpLogPendingQueue';
 import { IndexedDbQueuePersistence } from './vaultOpLogQueuePersistence';
 import type { PendingLocalOperation, QueuePersistence } from './vaultOpLogPendingQueueTypes';
+import type { VaultOpLogTrustReadClient } from './vaultOpLogUiOrchestrator';
 
 export interface PendingOpLogSyncResult {
   readonly processed: number;
@@ -23,6 +24,8 @@ export interface PendingOpLogSyncResult {
 export async function syncPendingVaultOpLogOperations(input: {
   readonly rpcClient: SupabaseRpcClient;
   readonly vaultId: string;
+  readonly authorDeviceId?: string;
+  readonly trustClient?: VaultOpLogTrustReadClient;
   readonly queuePersistence?: QueuePersistence;
 }): Promise<PendingOpLogSyncResult> {
   const queuePersistence = input.queuePersistence ?? new IndexedDbQueuePersistence();
@@ -31,6 +34,33 @@ export async function syncPendingVaultOpLogOperations(input: {
   await queue.recoverAfterCrash();
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     return { processed: 0, remaining: queue.getPending().length, blocked: 0 };
+  }
+
+  const pending = queue.getPending();
+  const preflight = await verifyAuthorStillTrustedBeforePush({
+    vaultId: input.vaultId,
+    authorDeviceId: input.authorDeviceId,
+    trustClient: input.trustClient,
+    pending,
+  });
+  if (preflight.kind === 'blocked') {
+    await queue.blockAllForRevokedDevice(preflight.authorDeviceId);
+    await queue.load();
+    return {
+      processed: 0,
+      remaining: queue.getOperations().filter((entry) =>
+        entry.state === 'pending'
+        || entry.state === 'syncing'
+        || entry.state === 'submitted_unverified'
+        || entry.state === 'submitted_unverified_needs_verification'
+        || entry.state === 'rebase_needed'
+        || entry.state === 'conflict'
+      ).length,
+      blocked: pending.filter((entry) => entry.op.authorDeviceId === preflight.authorDeviceId).length,
+    };
+  }
+  if (preflight.kind === 'unverified') {
+    return { processed: 0, remaining: pending.length, blocked: pending.length };
   }
 
   let processed = 0;
@@ -60,6 +90,72 @@ export async function syncPendingVaultOpLogOperations(input: {
     || entry.state === 'conflict'
   ).length;
   return { processed, remaining, blocked };
+}
+
+type AuthorTrustPreflightResult =
+  | { readonly kind: 'ok' }
+  | { readonly kind: 'blocked'; readonly authorDeviceId: string }
+  | { readonly kind: 'unverified' };
+
+async function verifyAuthorStillTrustedBeforePush(input: {
+  readonly vaultId: string;
+  readonly authorDeviceId?: string;
+  readonly trustClient?: VaultOpLogTrustReadClient;
+  readonly pending: readonly PendingLocalOperation[];
+}): Promise<AuthorTrustPreflightResult> {
+  if (input.pending.length === 0) {
+    return { kind: 'ok' };
+  }
+  if (!input.authorDeviceId || !input.trustClient) {
+    return { kind: 'ok' };
+  }
+
+  try {
+    const { data, error } = await input.trustClient
+      .from('vault_device_trust_records')
+      .select('vault_id,device_id,trust_epoch,status')
+      .eq('vault_id', input.vaultId);
+    if (error || !Array.isArray(data)) {
+      return { kind: 'unverified' };
+    }
+
+    const row = data.find((candidate) =>
+      isTrustPreflightRow(candidate)
+      && candidate.device_id === input.authorDeviceId
+      && candidate.vault_id === input.vaultId
+    );
+    if (!row || row.status !== 'trusted') {
+      return { kind: 'blocked', authorDeviceId: input.authorDeviceId };
+    }
+
+    const expectedEpoch = Number(row.trust_epoch);
+    const hasEpochMismatch = input.pending.some((entry) =>
+      entry.op.authorDeviceId === input.authorDeviceId
+      && entry.op.trustEpoch !== expectedEpoch
+    );
+    if (hasEpochMismatch) {
+      return { kind: 'blocked', authorDeviceId: input.authorDeviceId };
+    }
+    return { kind: 'ok' };
+  } catch {
+    return { kind: 'unverified' };
+  }
+}
+
+function isTrustPreflightRow(value: unknown): value is {
+  readonly vault_id: string;
+  readonly device_id: string;
+  readonly trust_epoch: number | string;
+  readonly status: string;
+} {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const row = value as Record<string, unknown>;
+  return typeof row.vault_id === 'string'
+    && typeof row.device_id === 'string'
+    && (typeof row.trust_epoch === 'number' || typeof row.trust_epoch === 'string')
+    && typeof row.status === 'string';
 }
 
 async function submitAndClassify(

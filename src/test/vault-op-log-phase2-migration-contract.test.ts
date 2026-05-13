@@ -19,8 +19,12 @@ const changesSinceContractFixMigration = readFileSync(
   'supabase/migrations/20260507165242_fix_vault_changes_since_vault_id_contract.sql',
   'utf-8',
 );
+const authorTrustGuardMigration = readFileSync(
+  'supabase/migrations/20260513150000_guard_vault_operation_author_trust.sql',
+  'utf-8',
+);
 const effectiveReadRpcsMigration = `${rpcsMigration}\n${bootstrapFkFixMigration}\n${changesSinceContractFixMigration}`;
-const combined = `${tablesMigration}\n${rpcsMigration}`;
+const combined = `${tablesMigration}\n${rpcsMigration}\n${authorTrustGuardMigration}`;
 
 describe('vault op-log phase 2 — table contract', () => {
   it('creates vault_records, vault_operations, vault_device_trust_records and vault_op_log_heads', () => {
@@ -223,6 +227,14 @@ describe('vault op-log phase 2 — RPC contract', () => {
     expect(rpcsMigration).toContain(
       'GRANT EXECUTE ON FUNCTION public.submit_vault_operation(JSONB, JSONB, JSONB) TO authenticated;',
     );
+  });
+
+  it('guards operation inserts against revoked or unknown author devices', () => {
+    expect(authorTrustGuardMigration).toContain('CREATE OR REPLACE FUNCTION public.guard_vault_operation_author_trust()');
+    expect(authorTrustGuardMigration).toContain("RAISE EXCEPTION 'author_device_not_trusted'");
+    expect(authorTrustGuardMigration).toContain("RAISE EXCEPTION 'author_device_trust_epoch_mismatch'");
+    expect(authorTrustGuardMigration).toContain('BEFORE INSERT ON public.vault_operations');
+    expect(authorTrustGuardMigration).toContain("IF NEW.op_type = 'recover_device' THEN");
   });
 });
 

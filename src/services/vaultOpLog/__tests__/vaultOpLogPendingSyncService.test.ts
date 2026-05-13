@@ -8,6 +8,7 @@ import { DEVICE_SIGNATURE_SCHEMA_V1 } from '../types';
 import type { SupabaseRpcClient } from '../vaultOpLogRepository';
 import type { PendingLocalOperation } from '../vaultOpLogPendingQueueTypes';
 import type { VaultOperationRow, VaultRecordRow } from '../vaultOpLogRpcTypes';
+import type { VaultOpLogTrustReadClient } from '../vaultOpLogUiOrchestrator';
 
 const VAULT_ID = 'vault-pending-sync';
 beforeEach(() => {
@@ -70,12 +71,86 @@ describe('vaultOpLogPendingSyncService', () => {
     const stored = await queuePersistence.loadAll(VAULT_ID);
     expect(stored[0].state).toBe('rebase_needed');
   });
+
+  it('blocks pending operations before submit when remote trust says the author device is revoked', async () => {
+    const queuePersistence = new InMemoryQueuePersistence();
+    await queuePersistence.saveAll(VAULT_ID, [pendingEntry()]);
+    const rpcClient = createRpcClient({
+      applied: true,
+      idempotent: false,
+      op_id: 'op-1',
+      sequence_number: 2,
+      resulting_vault_head: 'head-server',
+      current_head: 'head-server',
+      current_sequence_number: 2,
+      conflict_reason: null,
+    });
+
+    const result = await syncPendingVaultOpLogOperations({
+      rpcClient,
+      vaultId: VAULT_ID,
+      authorDeviceId: 'device-1',
+      trustClient: createTrustClient([{
+        vault_id: VAULT_ID,
+        device_id: 'device-1',
+        trust_epoch: 0,
+        status: 'revoked',
+      }]),
+      queuePersistence,
+    });
+
+    expect(result).toEqual({ processed: 0, remaining: 0, blocked: 1 });
+    expect(rpcClient.rpc).not.toHaveBeenCalled();
+    const stored = await queuePersistence.loadAll(VAULT_ID);
+    expect(stored[0].state).toBe('blocked_revoked');
+  });
+
+  it('does not submit when remote trust preflight cannot be verified', async () => {
+    const queuePersistence = new InMemoryQueuePersistence();
+    await queuePersistence.saveAll(VAULT_ID, [pendingEntry()]);
+    const rpcClient = createRpcClient({
+      applied: true,
+      idempotent: false,
+      op_id: 'op-1',
+      sequence_number: 2,
+      resulting_vault_head: 'head-server',
+      current_head: 'head-server',
+      current_sequence_number: 2,
+      conflict_reason: null,
+    });
+
+    const result = await syncPendingVaultOpLogOperations({
+      rpcClient,
+      vaultId: VAULT_ID,
+      authorDeviceId: 'device-1',
+      trustClient: createTrustClient(null, { message: 'network unavailable' }),
+      queuePersistence,
+    });
+
+    expect(result).toEqual({ processed: 0, remaining: 1, blocked: 1 });
+    expect(rpcClient.rpc).not.toHaveBeenCalled();
+    const stored = await queuePersistence.loadAll(VAULT_ID);
+    expect(stored[0].state).toBe('pending');
+  });
 });
 
 function createRpcClient(data: unknown): SupabaseRpcClient {
   return {
     rpc: vi.fn(async () => ({ data, error: null })),
   } as unknown as SupabaseRpcClient;
+}
+
+function createTrustClient(
+  data: unknown[] | null,
+  error: { readonly message: string } | null = null,
+): VaultOpLogTrustReadClient {
+  return {
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(async () => ({ data, error })),
+      })),
+    })),
+  } as unknown as VaultOpLogTrustReadClient;
 }
 
 function pendingEntry(): PendingLocalOperation {
