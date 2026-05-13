@@ -6,14 +6,18 @@ Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
 ### Highlights
 
-- Der Tresor ist jetzt deutlich robuster im Offline-Modus: Eintraege koennen offline erstellt, bearbeitet und geloescht werden und werden nach dem Reconnect synchronisiert.
-- Neue Geraeteverwaltung: Vertrauenswuerdige Geraete sind in den Tresoreinstellungen sichtbar und koennen widerrufen werden.
-- Neue Recovery-Codes fuer den Geraetezugriff helfen, ein neues Geraet wieder zu verifizieren, wenn kein anderes vertrauenswuerdiges Geraet mehr verfuegbar ist.
-- Neue Sicherheitsanzeigen machen klarer, ob der Tresor verifiziert, eingeschraenkt, in Quarantaene oder wegen Geraetevertrauen gesperrt ist.
+- Neues Vault Operation Log: Tresor-Aenderungen laufen jetzt ueber signierte Operationen statt ueber das alte Integritaets-/Snapshot-System als primaere Vertrauensbasis.
+- OpLog Verification prueft Operation-Chain, Record-Kontext, Device-Trust, Trust-Epoch und Vault-Head, bevor Eintraege normal angezeigt oder fuer Export/Suche/Zwischenablage freigegeben werden.
+- Geraetevertrauen ist sichtbarer und strenger getrennt: Device Key entsperrt lokal, Device-Signing-Key und verifizierter Trust-State autorisieren Operationen.
+- Offline-Modus baut auf dem neuen OpLog-Modell auf: Offline erstellte, bearbeitete und geloeschte Eintraege werden als signierte Operationen nach dem Reconnect verifiziert synchronisiert.
+- Neue Sicherheitsanzeigen machen klarer, ob der Tresor verifiziert, eingeschraenkt, in Quarantaene, im Sicherheitsmodus oder wegen Geraetevertrauen gesperrt ist.
 - Singra Vault wird in App, README und Release-Kontext klarer als experimenteller Prototyp markiert: keine echten Passwoerter, produktiven Secrets oder Recovery-Daten speichern.
 
 ### Verbesserungen
 
+- Item-, Kategorie- und Delete-Flows sind an den OpLog-CRUD-Pfad angebunden und vermeiden direkte Legacy-Writes als normale Vertrauensbasis.
+- Quarantaene, Konflikte und geloeschte Eintraege werden aus dem verifizierten OpLog-UI-State abgeleitet statt aus einem ungeprueften Serverstand.
+- Restore-/Resolve-Pfade erzeugen neue signierte Operationen oder blockieren fail-closed, wenn kein verifizierter Kontext vorhanden ist.
 - Offline-Aenderungen werden als wartende Aenderungen behandelt und erst nach erfolgreicher Verifikation als synchronisiert markiert.
 - Ein widerrufenes Geraet kann wartende Offline-Aenderungen nicht mehr automatisch in die Cloud senden.
 - Eintraege, Kategorien und geloeschte Eintraege bleiben nach Offline-Nutzung und erneutem Online-Gehen konsistenter zwischen mehreren Geraeten.
@@ -31,7 +35,6 @@ Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
 ### Hinweise
 
-- Fuer dieses Release muessen die aktuellen Supabase-Migrationen und die Edge Function `vault-recovery-codes` deployed sein.
 - Wenn alle vertrauenswuerdigen Geraete und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass fuer den Tresorzugriff.
 
 ## 0.4.3 - 2026-04-28

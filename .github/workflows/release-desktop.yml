@@ -95,18 +95,22 @@ jobs:
           releaseBody: |
             ## Singra Vault 0.4.7
 
-            Dieses Release macht den Offline-Modus robuster und verbessert die Sicherheitsanzeige rund um Device-Trust, OpLog-Verifikation und Recovery.
+            Dieses Release fuehrt das neue Vault Operation Log als zentrale Vertrauens- und Verifikationsschicht ein. Der Offline-Modus ist dadurch robuster, aber das eigentliche Highlight ist die Umstellung vom alten Integritaets-/Snapshot-Pfad auf signierte, verifizierte Operationen.
 
             ### Highlights
 
-            - Offline erstellte, bearbeitete und geloeschte Eintraege werden nach dem Reconnect zuverlaessiger synchronisiert.
-            - Vertrauenswuerdige Geraete sind in den Tresoreinstellungen sichtbar und koennen widerrufen werden.
-            - Neue Recovery-Codes helfen beim Wiederherstellen des Geraetevertrauens, wenn kein anderes vertrauenswuerdiges Geraet mehr verfuegbar ist.
-            - Sicherheitsanzeigen zeigen klarer, ob der Tresor verifiziert, eingeschraenkt, in Quarantaene oder wegen Geraetevertrauen gesperrt ist.
+            - Neues Vault Operation Log: Tresor-Aenderungen laufen jetzt ueber signierte Operationen statt ueber das alte Integritaets-/Snapshot-System als primaere Vertrauensbasis.
+            - OpLog Verification prueft Operation-Chain, Record-Kontext, Device-Trust, Trust-Epoch und Vault-Head, bevor Eintraege normal angezeigt oder fuer Export/Suche/Zwischenablage freigegeben werden.
+            - Geraetevertrauen ist sichtbarer und strenger getrennt: Device Key entsperrt lokal, Device-Signing-Key und verifizierter Trust-State autorisieren Operationen.
+            - Offline-Modus baut auf dem neuen OpLog-Modell auf: Offline erstellte, bearbeitete und geloeschte Eintraege werden als signierte Operationen nach dem Reconnect verifiziert synchronisiert.
+            - Sicherheitsanzeigen zeigen klarer, ob der Tresor verifiziert, eingeschraenkt, in Quarantaene, im Sicherheitsmodus oder wegen Geraetevertrauen gesperrt ist.
             - Singra Vault ist sichtbar als experimenteller Prototyp markiert. Bitte keine echten Passwoerter, produktiven Secrets oder Recovery-Daten speichern.
 
             ### Verbesserungen
 
+            - Item-, Kategorie- und Delete-Flows sind an den OpLog-CRUD-Pfad angebunden und vermeiden direkte Legacy-Writes als normale Vertrauensbasis.
+            - Quarantaene, Konflikte und geloeschte Eintraege werden aus dem verifizierten OpLog-UI-State abgeleitet statt aus einem ungeprueften Serverstand.
+            - Restore-/Resolve-Pfade erzeugen neue signierte Operationen oder blockieren fail-closed, wenn kein verifizierter Kontext vorhanden ist.
             - Offline-Aenderungen werden als wartende Aenderungen behandelt und erst nach erfolgreicher Verifikation als synchronisiert markiert.
             - Widerrufene Geraete koennen wartende Offline-Aenderungen nicht mehr automatisch in die Cloud senden.
             - Eintraege, Kategorien und geloeschte Eintraege bleiben nach Offline-Nutzung und erneutem Online-Gehen konsistenter zwischen mehreren Geraeten.
@@ -123,7 +127,6 @@ jobs:
 
             ### Wichtige Hinweise
 
-            - Fuer dieses Release muessen die aktuellen Supabase-Migrationen und die Edge Function `vault-recovery-codes` deployed sein.
             - Wenn alle vertrauenswuerdigen Geraete und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass fuer den Tresorzugriff.
             - Der oeffentliche Quellcode bleibt Core-only; offizielle Desktop-Builds werden mit vorkonfigurierter Singra Cloud gebaut.
           generateReleaseNotes: false
