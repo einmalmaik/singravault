@@ -22,6 +22,8 @@ import {
     Activity,
     QrCode,
     Shield,
+    User,
+    ChevronDown,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -38,6 +40,17 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -68,6 +81,19 @@ interface VaultSidebarProps {
 }
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
+
+function getAccountLabel(email: string | undefined): string {
+    return email || 'Singra Vault';
+}
+
+function getAccountInitials(email: string | undefined): string {
+    const label = getAccountLabel(email).trim();
+    if (!label.includes('@')) {
+        return label.slice(0, 2).toUpperCase();
+    }
+    const [name, domain] = label.split('@');
+    return `${name.charAt(0)}${domain.charAt(0)}`.toUpperCase();
+}
 
 function parseVerifiedRecordPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
     if (
@@ -142,6 +168,7 @@ export function VaultSidebar({
     const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
     const { user } = useAuth();
     const userId = user?.id ?? null;
+    const accountEmail = user?.email ?? undefined;
     const [collapsed, setCollapsed] = useState(false);
 
     // Categories state
@@ -386,17 +413,17 @@ export function VaultSidebar({
         <>
             <aside
                 className={cn(
-                    'flex flex-col border-r',
-                    'bg-[hsl(var(--sidebar-background))] border-[hsl(var(--sidebar-border)/0.55)]',
+                    'flex flex-col border-r bg-[hsl(var(--sidebar-background)/0.86)] backdrop-blur-xl',
+                    'border-[hsl(var(--sidebar-border)/0.55)] shadow-[inset_-1px_0_0_hsl(var(--foreground)/0.03)]',
                     compactMode
                         ? 'h-full w-full'
-                        : cn('self-stretch min-h-full transition-all duration-300', collapsed ? 'w-16' : 'w-64')
+                        : cn('self-stretch min-h-full transition-all duration-300', collapsed ? 'w-16' : 'w-72')
                 )}
             >
                 {/* Header */}
-                <div className="p-4 flex items-center justify-between border-b border-[hsl(var(--sidebar-border)/0.45)]">
+                <div className="flex items-center justify-between border-b border-[hsl(var(--sidebar-border)/0.45)] p-4">
                     {!collapsed && (
-                        <h2 className="font-semibold text-lg">
+                        <h2 className="text-lg font-semibold">
                             {t('vault.sidebar.title')}
                         </h2>
                     )}
@@ -539,41 +566,122 @@ export function VaultSidebar({
                     </div>
                 </ScrollArea>
 
+                {!collapsed && isPremiumActive() && (
+                    <div className="mx-3 mb-3 rounded-2xl border border-emerald-400/18 bg-[linear-gradient(135deg,hsl(var(--success)/0.12),hsl(var(--el-1)/0.78))] p-4 shadow-[0_18px_42px_hsl(0_0%_0%/0.28)]">
+                        <div className="flex items-start gap-3">
+                            <div className="rounded-xl border border-emerald-300/25 bg-emerald-400/10 p-2 text-emerald-300">
+                                <Activity className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0 space-y-1">
+                                <p className="text-sm font-semibold text-foreground">Tresor-Status</p>
+                                <p className="text-sm font-medium text-emerald-300">Nicht geprüft</p>
+                                <p className="text-xs leading-5 text-muted-foreground">
+                                    Premium-Analyse öffnen, um den aktuellen Bericht zu laden.
+                                </p>
+                            </div>
+                        </div>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-3 w-full border-emerald-300/20 bg-background/35"
+                            onClick={() => {
+                                navigate('/vault-health');
+                                onActionComplete?.();
+                            }}
+                        >
+                            Bericht anzeigen
+                        </Button>
+                    </div>
+                )}
+
                 <Separator />
 
                 {/* Footer Actions */}
                 <div className="p-2 space-y-1">
-                    <SidebarItem
-                        icon={<Settings className="w-4 h-4" />}
-                        label={t('settings.accountPage.title')}
-                        collapsed={collapsed}
-                        active={location.pathname === '/settings'}
-                        onClick={() => {
-                            onActionComplete?.();
-                            navigate('/settings', { state: buildReturnState(location) });
-                        }}
-                    />
-                    <SidebarItem
-                        icon={<Shield className="w-4 h-4" />}
-                        label={t('settings.vaultPage.title')}
-                        collapsed={collapsed}
-                        active={location.pathname === '/vault/settings'}
-                        onClick={() => {
-                            onActionComplete?.();
-                            navigate('/vault/settings', { state: buildReturnState(location) });
-                        }}
-                    />
-                    <SidebarItem
-                        icon={<Lock className="w-4 h-4" />}
-                        label={t('vault.sidebar.lock')}
-                        collapsed={collapsed}
-                        onClick={() => {
-                            lock();
-                            onActionComplete?.();
-                            navigate('/vault', { replace: true });
-                        }}
-                        variant="destructive"
-                    />
+                    {!collapsed && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <button
+                                    type="button"
+                                    className="mb-1 flex w-full items-center gap-3 rounded-xl border border-border/45 bg-[hsl(var(--el-1)/0.74)] px-3 py-3 text-left transition-colors hover:border-border/70 hover:bg-[hsl(var(--el-2)/0.82)]"
+                                >
+                                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-xs font-semibold text-primary">
+                                        {getAccountInitials(accountEmail)}
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-sm font-medium text-foreground">
+                                            {getAccountLabel(accountEmail)}
+                                        </span>
+                                        <span className="block text-xs text-muted-foreground">Einstellungen</span>
+                                    </span>
+                                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" side="top" className="w-64">
+                                <DropdownMenuItem onClick={() => {
+                                    onActionComplete?.();
+                                    navigate('/settings', { state: buildReturnState(location) });
+                                }}>
+                                    <User className="mr-2 h-4 w-4" />
+                                    {t('settings.accountPage.title')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => {
+                                    onActionComplete?.();
+                                    navigate('/vault/settings', { state: buildReturnState(location) });
+                                }}>
+                                    <Shield className="mr-2 h-4 w-4" />
+                                    {t('settings.vaultPage.title')}
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
+                    {collapsed && (
+                        <SidebarItem
+                            icon={<Settings className="w-4 h-4" />}
+                            label={t('settings.accountPage.title')}
+                            collapsed={collapsed}
+                            active={location.pathname === '/settings' || location.pathname === '/vault/settings'}
+                            onClick={() => {
+                                onActionComplete?.();
+                                navigate('/settings', { state: buildReturnState(location) });
+                            }}
+                        />
+                    )}
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <button
+                                type="button"
+                                className={cn(
+                                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150',
+                                    'text-destructive hover:bg-destructive/10 hover:text-destructive',
+                                    collapsed && 'justify-center px-0',
+                                )}
+                            >
+                                <Lock className="w-4 h-4" />
+                                {!collapsed && <span className="flex-1 text-left text-sm truncate">{t('vault.sidebar.lock')}</span>}
+                            </button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>Tresor sperren?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                    Der Tresor wird geschlossen und muss danach erneut mit Masterpasswort und gegebenenfalls Device Key entsperrt werden.
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                                <AlertDialogAction
+                                    onClick={() => {
+                                        lock();
+                                        onActionComplete?.();
+                                        navigate('/vault', { replace: true });
+                                    }}
+                                >
+                                    Tresor sperren
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
                 </div>
             </aside>
 
@@ -613,10 +721,10 @@ function SidebarItem({
         <button
             onClick={onClick}
             className={cn(
-                'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-150',
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150',
                 'text-[hsl(var(--sidebar-foreground)/0.72)] hover:text-[hsl(var(--sidebar-foreground))]',
-                'hover:bg-[hsl(var(--el-2))]',
-                active && 'bg-[hsl(var(--el-3))] text-[hsl(var(--sidebar-primary))]',
+                'hover:bg-[hsl(var(--el-2)/0.82)]',
+                active && 'border border-primary/25 bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--sidebar-primary))] shadow-[0_0_24px_hsl(var(--primary)/0.08)]',
                 variant === 'destructive' && 'text-destructive hover:bg-destructive/10 hover:text-destructive',
                 collapsed && 'justify-center px-0'
             )}

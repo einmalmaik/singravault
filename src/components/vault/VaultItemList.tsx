@@ -8,8 +8,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Eye, KeyRound, Loader2, Plus, RefreshCw, Shield, TriangleAlert } from 'lucide-react';
+import { Clock3, Eye, KeyRound, Loader2, Pin, Plus, RefreshCw, Shield, TriangleAlert } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -52,7 +53,9 @@ import {
 
 const DECRYPT_BATCH_SIZE = 25;
 const QUARANTINE_SUMMARY_THRESHOLD = 2;
-const CLOUD_SYNC_REFRESH_INTERVAL_MS = 10_000;
+const CLOUD_SYNC_REFRESH_INTERVAL_MS = 60_000;
+const CLOUD_SYNC_MIN_REQUEST_GAP_MS = 25_000;
+const DASHBOARD_SECTION_LIMIT = 8;
 
 interface VaultItem {
   id: string;
@@ -274,11 +277,13 @@ export function VaultItemList({
   const [backgroundSyncing, setBackgroundSyncing] = useState(false);
   const [lastCloudSyncAt, setLastCloudSyncAt] = useState<Date | null>(null);
   const [cloudSyncTick, setCloudSyncTick] = useState(0);
+  const [recentlyCopiedItemIds, setRecentlyCopiedItemIds] = useState<string[]>([]);
   const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
   const revalidationRequestIdRef = useRef(0);
   const revalidatingRef = useRef(false);
   const opLogCloudSyncRef = useRef(false);
+  const lastCloudSyncRequestAtRef = useRef(0);
   const fetchItemsRef = useRef(false);
   const pendingFetchItemsRef = useRef(false);
   const hasRenderedVaultContentRef = useRef(false);
@@ -311,11 +316,17 @@ export function VaultItemList({
       return undefined;
     }
 
-    const requestCloudSync = () => {
+    const requestCloudSync = (options?: { force?: boolean }) => {
       if (!isAppOnline()) {
         return;
       }
 
+      const now = Date.now();
+      if (!options?.force && now - lastCloudSyncRequestAtRef.current < CLOUD_SYNC_MIN_REQUEST_GAP_MS) {
+        return;
+      }
+
+      lastCloudSyncRequestAtRef.current = now;
       setCloudSyncTick((tick) => tick + 1);
     };
 
@@ -333,15 +344,17 @@ export function VaultItemList({
       }
     };
 
+    const handleOnline = () => requestCloudSync({ force: true });
+
     window.addEventListener('focus', requestVisibleCloudSync);
-    window.addEventListener('online', requestVisibleCloudSync);
+    window.addEventListener('online', handleOnline);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     const intervalId = window.setInterval(requestVisibleCloudSync, CLOUD_SYNC_REFRESH_INTERVAL_MS);
 
     return () => {
       window.removeEventListener('focus', requestVisibleCloudSync);
-      window.removeEventListener('online', requestVisibleCloudSync);
+      window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.clearInterval(intervalId);
     };
@@ -402,7 +415,7 @@ export function VaultItemList({
         setBackgroundSyncing(true);
       } else {
         setLoading(true);
-        setDecrypting(!useOpLogVerifiedRuntime);
+        setDecrypting(false);
       }
       try {
         if (useOpLogVerifiedRuntime) {
@@ -457,6 +470,10 @@ reportUnreadableItemsRef.current([]);
           const trustedItemIds = new Set<string>();
           const decryptableItemIds = new Set<string>();
           const unreadableItems: QuarantinedVaultItem[] = [];
+
+          if (vaultItems.length > 0) {
+            setDecrypting(true);
+          }
 
           const decryptedItems = await mapInBatches(
             vaultItems,
@@ -754,6 +771,13 @@ reportUnreadableItemsRef.current([]);
     [opLogUiView],
   );
 
+  const markItemRecentlyUsed = useCallback((itemId: string) => {
+    setRecentlyCopiedItemIds((current) => [
+      itemId,
+      ...current.filter((id) => id !== itemId),
+    ].slice(0, 20));
+  }, []);
+
   const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
     return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
       const quarantine = quarantinedItemsById.get(item.id);
@@ -834,6 +858,83 @@ reportUnreadableItemsRef.current([]);
     isDuressMode,
     opLogVerifiedItemIds,
   ]);
+
+  const visibleItemEntries = useMemo(
+    () => visibleEntries.filter(
+      (entry): entry is Extract<RenderableVaultListEntry, { kind: 'item' }> => entry.kind === 'item',
+    ),
+    [visibleEntries],
+  );
+
+  const shouldRenderDashboardSections =
+    viewMode === 'grid'
+    && filter === 'all'
+    && !categoryId
+    && searchQuery.trim() === ''
+    && visibleItemEntries.length > 1;
+
+  const favoriteEntries = useMemo(
+    () => visibleItemEntries
+      .filter(({ item }) => item.decryptedData?.isFavorite ?? item.is_favorite)
+      .slice(0, DASHBOARD_SECTION_LIMIT),
+    [visibleItemEntries],
+  );
+
+  const recentlyUsedEntries = useMemo(() => {
+    const byId = new Map(visibleItemEntries.map((entry) => [entry.item.id, entry]));
+    const copiedEntries = recentlyCopiedItemIds
+      .map((id) => byId.get(id))
+      .filter((entry): entry is Extract<RenderableVaultListEntry, { kind: 'item' }> => !!entry);
+
+    if (copiedEntries.length > 0) {
+      return copiedEntries.slice(0, DASHBOARD_SECTION_LIMIT);
+    }
+
+    return [...visibleItemEntries]
+      .sort((left, right) => right.item.updated_at.localeCompare(left.item.updated_at))
+      .slice(0, DASHBOARD_SECTION_LIMIT);
+  }, [recentlyCopiedItemIds, visibleItemEntries]);
+
+  const renderItemCard = useCallback((
+    entry: Extract<RenderableVaultListEntry, { kind: 'item' }>,
+  ) => (
+    <VaultItemCard
+      key={entry.item.id}
+      item={entry.item}
+      viewMode={viewMode}
+      onEdit={() => {
+        markItemRecentlyUsed(entry.item.id);
+        onEditItem(entry.item.id);
+      }}
+      onSecretCopied={markItemRecentlyUsed}
+      canCopySecrets={
+        opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(entry.item.id)
+      }
+    />
+  ), [markItemRecentlyUsed, onEditItem, opLogVerifiedItemIds, viewMode]);
+
+  const renderVaultSection = useCallback((
+    title: string,
+    icon: ReactNode,
+    entries: Extract<RenderableVaultListEntry, { kind: 'item' }>[],
+    separated = false,
+  ) => {
+    if (entries.length === 0) {
+      return null;
+    }
+
+    return (
+      <section className={cn('space-y-3', separated && 'border-t border-border/35 pt-5')}>
+        <div className="flex items-center gap-2 px-1 text-sm font-semibold text-foreground">
+          {icon}
+          <span>{title}</span>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {entries.map(renderItemCard)}
+        </div>
+      </section>
+    );
+  }, [renderItemCard]);
 
   const inlineQuarantinedIds = useMemo(
     () => new Set(
@@ -1087,6 +1188,36 @@ reportUnreadableItemsRef.current([]);
             </>
           )}
         </div>
+      ) : shouldRenderDashboardSections ? (
+        <div className="space-y-7">
+          {renderVaultSection(
+            t('vault.sections.favorites', { defaultValue: 'Favoriten' }),
+            <Pin className="h-4 w-4 text-primary" aria-hidden="true" />,
+            favoriteEntries,
+          )}
+          {renderVaultSection(
+            t('vault.sections.recentlyUsed', { defaultValue: 'Zuletzt verwendet' }),
+            <Clock3 className="h-4 w-4 text-primary" aria-hidden="true" />,
+            recentlyUsedEntries,
+            favoriteEntries.length > 0,
+          )}
+          <section className="space-y-3 border-t border-border/35 pt-5">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <h2 className="text-sm font-semibold text-foreground">
+                {t('vault.sections.allEntries', { defaultValue: 'Alle Einträge' })}
+              </h2>
+              <span className="text-xs text-muted-foreground">
+                {t('vault.sections.entryCount', {
+                  defaultValue: '{{count}} Einträge',
+                  count: visibleItemEntries.length,
+                })}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {visibleItemEntries.map(renderItemCard)}
+            </div>
+          </section>
+        </div>
       ) : (
         <div
           className={cn(
@@ -1097,15 +1228,7 @@ reportUnreadableItemsRef.current([]);
         >
           {visibleEntries.map((entry) => (
             entry.kind === 'item' ? (
-              <VaultItemCard
-                key={entry.item.id}
-                item={entry.item}
-                viewMode={viewMode}
-                onEdit={() => onEditItem(entry.item.id)}
-                canCopySecrets={
-                  opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(entry.item.id)
-                }
-              />
+              renderItemCard(entry)
             ) : (
               <VaultQuarantinedItemCard
                 key={entry.quarantine.id}

@@ -464,6 +464,39 @@ describe.sequential('VaultItemList', () => {
     expect(mockVerifyIntegrity).not.toHaveBeenCalled();
   });
 
+  it('does not show the decrypting label for an empty legacy snapshot while the first view settles', async () => {
+    snapshotState.items = [];
+    mockVaultContext.vaultMigrationStatus = null;
+
+    let resolveInitialLoad: (value: Awaited<ReturnType<typeof loadVaultSnapshot>>) => void = () => {};
+    vi.mocked(loadVaultSnapshot).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveInitialLoad = resolve;
+    }) as ReturnType<typeof loadVaultSnapshot>);
+
+    renderList();
+
+    expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+    expect(screen.getByText('common.loading')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveInitialLoad({
+        source: 'remote',
+        snapshot: {
+          userId: 'user-1',
+          vaultId: 'vault-1',
+          categories: [],
+          items: [],
+          lastSyncedAt: '2026-02-18T10:00:00.000Z',
+          updatedAt: '2026-02-18T10:00:00.000Z',
+        },
+      });
+    });
+
+    expect(await screen.findByText('vault.empty.title')).toBeInTheDocument();
+    expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+    expect(mockDecryptItem).not.toHaveBeenCalled();
+  });
+
   it('refreshes the verified OpLog state on cloud sync ticks and clears the syncing indicator', async () => {
     snapshotState.online = true;
     mockVaultContext.vaultMigrationStatus = 'verified';

@@ -25,6 +25,8 @@ import {
     WifiOff,
     RefreshCw,
     Wrench,
+    Settings,
+    QrCode,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -382,7 +384,7 @@ export default function VaultPage() {
     };
 
     return (
-        <div className="min-h-screen flex overflow-hidden bg-background">
+        <div className="sv-app-shell min-h-screen flex overflow-hidden bg-background text-foreground">
             {!isMobile && (
                 <VaultSidebar
                     selectedCategory={selectedCategory}
@@ -405,7 +407,7 @@ export default function VaultPage() {
             )}
 
             <div className="flex-1 flex flex-col min-w-0">
-                <header className="sticky top-0 z-10 border-b border-border/55 bg-background/90 backdrop-blur-xl px-4 lg:px-6 py-4">
+                <header className="sv-vault-topbar ms-glass-header sticky top-0 z-10 px-4 py-4 lg:px-6">
                     <div className="flex flex-col gap-3 sm:flex-row sm:gap-4 items-start sm:items-center justify-between">
                         <div className="relative w-full sm:max-w-md min-w-0">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -413,7 +415,7 @@ export default function VaultPage() {
                                 placeholder={t('vault.search.placeholder')}
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="pl-10"
+                                className="ms-glass-input h-12 pl-10"
                             />
                         </div>
 
@@ -422,6 +424,7 @@ export default function VaultPage() {
                                 <Button
                                     variant="outline"
                                     size="icon"
+                                    className="ms-header-utility-button"
                                     onClick={() => setSidebarOpen(true)}
                                     aria-label={t('vault.sidebar.title')}
                                 >
@@ -430,7 +433,7 @@ export default function VaultPage() {
                             )}
 
                             {showWebsiteChrome && (
-                                <Button asChild variant="outline">
+                                <Button asChild variant="outline" className="ms-header-secondary-button">
                                     <Link to="/">{t('nav.home')}</Link>
                                 </Button>
                             )}
@@ -439,14 +442,14 @@ export default function VaultPage() {
                                 <Button
                                     variant="outline"
                                     onClick={() => navigate(adminEntryPath, { state: buildReturnState(location) })}
-                                    className="flex items-center gap-2"
+                                    className="ms-header-secondary-button flex items-center gap-2"
                                 >
                                     <Wrench className="w-4 h-4" />
                                     <span className="hidden md:inline">{t('admin.title')}</span>
                                 </Button>
                             )}
 
-                            <div className="hidden sm:flex border rounded-lg p-0.5">
+                            <div className="hidden rounded-lg border border-border/55 bg-[hsl(var(--el-1)/0.72)] p-0.5 sm:flex">
                                 <Button
                                     variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
                                     size="icon"
@@ -465,7 +468,7 @@ export default function VaultPage() {
                                 </Button>
                             </div>
 
-                            <Button onClick={handleOpenNewItem} className="ml-auto sm:ml-0">
+                            <Button onClick={handleOpenNewItem} className="ms-header-primary-button ml-auto sm:ml-0">
                                 <Plus className="w-4 h-4 mr-2" />
                                 {t('vault.actions.add')}
                             </Button>
@@ -515,7 +518,7 @@ export default function VaultPage() {
                     </div>
                 </header>
 
-                <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0 space-y-4">
+                <main className="sv-vault-main min-w-0 flex-1 space-y-4 p-3 pb-[calc(5.5rem+var(--safe-area-bottom))] sm:p-4 sm:pb-4 lg:p-6">
                     {opLogUiView && (
                         <>
                             {opLogUiView.vaultSecurityMode !== 'normal' && (
@@ -576,6 +579,53 @@ export default function VaultPage() {
                     </footer>
                 )}
             </div>
+
+            {isMobile && (
+                <nav
+                    className="sv-mobile-nav fixed inset-x-0 bottom-0 z-30 border-t border-border/55 bg-[hsl(var(--background)/0.92)] px-3 pb-[calc(0.75rem+var(--safe-area-bottom))] pt-2 backdrop-blur-xl"
+                    aria-label={t('vault.mobileNavigation', { defaultValue: 'Tresor Navigation' })}
+                >
+                    <div className="mx-auto grid max-w-md grid-cols-4 gap-1">
+                        <Button
+                            variant="ghost"
+                            className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
+                            onClick={() => navigate('/vault')}
+                        >
+                            <Shield className="h-4 w-4" />
+                            {t('vault.sidebar.allItems')}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
+                            onClick={() => setSidebarOpen(true)}
+                        >
+                            <Grid3X3 className="h-4 w-4" />
+                            {t('vault.sidebar.categories')}
+                        </Button>
+                        <Button
+                            className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
+                            onClick={handleOpenNewItem}
+                        >
+                            <Plus className="h-4 w-4" />
+                            {t('vault.actions.add')}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
+                            onClick={() => {
+                                if (isPremiumActive()) {
+                                    navigate('/authenticator');
+                                    return;
+                                }
+                                navigate('/vault/settings', { state: buildReturnState(location) });
+                            }}
+                        >
+                            {isPremiumActive() ? <QrCode className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
+                            {isPremiumActive() ? t('authenticator.title') : t('settings.vaultPage.title')}
+                        </Button>
+                    </div>
+                </nav>
+            )}
 
             <VaultItemDialog
                 open={dialogOpen}

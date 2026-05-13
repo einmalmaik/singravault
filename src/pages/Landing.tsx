@@ -26,7 +26,7 @@ export default function Landing() {
   const AfterHeroSlot = getExtension('landing.after-hero');
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="sv-public-page min-h-screen flex flex-col">
       <SEO
         title="Experimenteller clientseitig verschlüsselter Passwort-Manager"
         description="Singra Vault ist ein experimenteller Prototyp mit clientseitig verschlüsselten Vault-Payloads. Nicht für echte Passwörter, produktive Secrets oder Recovery-Daten verwenden."

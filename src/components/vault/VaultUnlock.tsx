@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Link, useLocation } from 'react-router-dom';
-import { Shield, Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint, KeyRound, Settings } from 'lucide-react';
+import { Shield, Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint, KeyRound, Settings, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -160,18 +160,19 @@ export function VaultUnlock() {
     const showDeviceKeyImportAction = requiresDeviceKey(vaultProtectionMode) && !deviceKeyActive;
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">
-            <Card className="w-full max-w-md shadow-xl">
+        <div className="sv-auth-page min-h-screen flex items-center justify-center p-4">
+            <Card className="sv-auth-card w-full max-w-md overflow-hidden">
                 <CardHeader className="text-center">
                     <div className="flex justify-center mb-4">
-                        <div className="p-3 rounded-full bg-primary/10">
+                        <div className="relative rounded-2xl border border-primary/25 bg-primary/10 p-4 shadow-[0_0_44px_hsl(var(--primary)/0.12)]">
                             <Shield className="w-8 h-8 text-primary" />
+                            <Sparkles className="absolute -right-1 -top-1 h-4 w-4 text-amber-300" />
                         </div>
                     </div>
-                    <CardTitle className="text-2xl">
+                    <CardTitle className="text-2xl tracking-tight">
                         {t('auth.unlock.title')}
                     </CardTitle>
-                    <CardDescription>
+                    <CardDescription className="leading-6">
                         {t('auth.unlock.subtitle')}
                     </CardDescription>
                     {pendingSessionRestore && (
@@ -198,7 +199,7 @@ export function VaultUnlock() {
                             <Button
                                 type="button"
                                 variant="outline"
-                                className="w-full h-12 text-base gap-3 border-primary/30 hover:bg-primary/5"
+                                className="ms-header-secondary-button w-full h-12 text-base gap-3 border-primary/30 hover:bg-primary/5"
                                 onClick={handlePasskeyUnlock}
                                 disabled={passkeyLoading || loading || authLoading}
                             >
@@ -232,7 +233,7 @@ export function VaultUnlock() {
                                     type={showPassword ? 'text' : 'password'}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="pl-10 pr-10"
+                                    className="ms-glass-input pl-10 pr-10"
                                     placeholder="••••••••••••"
                                     autoFocus={!showPasskeyOption}
                                     required
@@ -251,7 +252,7 @@ export function VaultUnlock() {
 
                         <Button
                             type="submit"
-                            className="w-full"
+                            className="ms-header-primary-button w-full"
                             disabled={loading || passkeyLoading || !password}
                         >
                             {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
@@ -263,7 +264,7 @@ export function VaultUnlock() {
                                 asChild
                                 type="button"
                                 variant="outline"
-                                className="mb-2 w-full"
+                                className="ms-header-secondary-button mb-2 w-full"
                             >
                                 <Link
                                     to="/settings"
@@ -278,7 +279,7 @@ export function VaultUnlock() {
                                     asChild
                                     type="button"
                                     variant="outline"
-                                    className="mb-2 w-full"
+                                    className="ms-header-secondary-button mb-2 w-full"
                                 >
                                     <Link
                                         to="/settings?tab=security#profile-device-key"

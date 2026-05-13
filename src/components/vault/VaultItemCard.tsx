@@ -15,9 +15,6 @@ import {
     EyeOff,
     Star,
     ExternalLink,
-    Key,
-    FileText,
-    Shield,
     MoreVertical,
     Trash2,
     Edit
@@ -39,6 +36,7 @@ import { VaultItemData } from '@/services/cryptoService';
 import { writeClipboard } from '@/services/clipboardService';
 import { TOTPDisplay } from './TOTPDisplay';
 import { openExternalUrl } from '@/platform/openExternalUrl';
+import { VaultIcon } from '@/components/icons/VaultIcon';
 
 interface VaultItemCardProps {
     item: {
@@ -61,6 +59,7 @@ interface VaultItemCardProps {
      * Defaults to `true` for backward compatibility.
      */
     canCopySecrets?: boolean;
+    onSecretCopied?: (itemId: string) => void;
 }
 
 export function VaultItemCard({
@@ -70,6 +69,7 @@ export function VaultItemCard({
     readOnly = false,
     showTotpCode = false,
     canCopySecrets = true,
+    onSecretCopied,
 }: VaultItemCardProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
@@ -80,19 +80,6 @@ export function VaultItemCard({
     const resolvedIsFavorite = typeof item.decryptedData?.isFavorite === 'boolean'
         ? item.decryptedData.isFavorite
         : !!item.is_favorite;
-
-    const getIcon = () => {
-        switch (resolvedItemType) {
-            case 'password':
-                return <Key className="w-5 h-5" />;
-            case 'note':
-                return <FileText className="w-5 h-5" />;
-            case 'totp':
-                return <Shield className="w-5 h-5" />;
-            default:
-                return <Key className="w-5 h-5" />;
-        }
-    };
 
     const getDomainFromUrl = (url: string | null) => {
         if (!url) return null;
@@ -110,6 +97,7 @@ export function VaultItemCard({
                 title: t('vault.copied'),
                 description: `${t(`vault.copied${type}`)} ${t('vault.clipboardAutoClear')}`,
             });
+            onSecretCopied?.(item.id);
         } catch {
             toast({
                 variant: 'destructive',
@@ -137,12 +125,10 @@ export function VaultItemCard({
 
     if (viewMode === 'list') {
         return (
-            <Card className="border-[hsl(var(--border)/0.4)] bg-[hsl(var(--card)/0.55)] hover:bg-[hsl(var(--el-2)/0.8)] hover:border-[hsl(var(--border)/0.65)] transition-all duration-200">
+            <Card className="sv-vault-row-card transition-all duration-200">
                 <CardContent className="flex items-center gap-4 p-3">
                     {/* Icon */}
-                    <div className="flex-shrink-0 p-2 rounded-lg bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.12)] text-primary">
-                        {getIcon()}
-                    </div>
+                    <VaultIcon title={resolvedTitle} websiteUrl={resolvedWebsiteUrl} />
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
@@ -210,7 +196,7 @@ export function VaultItemCard({
     return (
         <Card
             className={cn(
-                'group border-[hsl(var(--border)/0.38)] bg-[hsl(var(--card)/0.5)] hover:border-[hsl(var(--primary)/0.22)] hover:bg-[hsl(var(--el-2)/0.7)] hover:shadow-[0_8px_32px_hsl(0_0%_0%/0.3)] transition-all duration-250',
+                'sv-vault-entry-card group transition-all duration-250',
                 readOnly ? 'cursor-default' : 'cursor-pointer',
             )}
             onClick={readOnly ? undefined : onEdit}
@@ -219,9 +205,7 @@ export function VaultItemCard({
                 {/* Header */}
                 <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.12)] text-primary group-hover:bg-[hsl(var(--primary)/0.16)] group-hover:border-[hsl(var(--primary)/0.2)] transition-all duration-200">
-                            {getIcon()}
-                        </div>
+                        <VaultIcon title={resolvedTitle} websiteUrl={resolvedWebsiteUrl} />
                         <div>
                             <h3 className="font-medium line-clamp-1">{resolvedTitle}</h3>
                             {domain && (

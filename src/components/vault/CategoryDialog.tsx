@@ -38,6 +38,7 @@ import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { CategoryIcon } from './CategoryIcon';
 import { CATEGORY_ICON_PRESETS, normalizeCategoryIcon } from './categoryIconPolicy';
+import { getCategoryIconDefinition } from '@/lib/icons/categoryIconRegistry';
 import type { VaultItemData } from '@/services/cryptoService';
 import {
     loadVaultSnapshot,
@@ -327,17 +328,23 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                                 >
                                     <Folder className="mx-auto h-5 w-5" />
                                 </button>
-                                {CATEGORY_ICON_PRESETS.map((emoji, index) => (
+                                {CATEGORY_ICON_PRESETS.map((categoryIconId) => {
+                                    const definition = getCategoryIconDefinition(categoryIconId);
+                                    const PresetIcon = definition.Icon;
+                                    return (
                                     <button
-                                        key={`${emoji}-${index}`}
+                                        key={categoryIconId}
                                         type="button"
-                                        onClick={() => setIcon(emoji)}
-                                        className={`p-2 text-lg rounded hover:bg-accent transition-colors ${icon === emoji ? 'bg-accent ring-2 ring-primary' : ''
+                                        onClick={() => setIcon(categoryIconId)}
+                                        className={`p-2 text-lg rounded hover:bg-accent transition-colors ${icon === categoryIconId ? 'bg-accent ring-2 ring-primary' : ''
                                             }`}
+                                        aria-label={definition.label}
+                                        title={definition.label}
                                     >
-                                        {emoji}
+                                        <PresetIcon className="mx-auto h-5 w-5" aria-hidden="true" />
                                     </button>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
 

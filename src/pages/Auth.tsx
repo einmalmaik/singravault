@@ -854,7 +854,7 @@ export default function Auth() {
   }
 
   return (
-    <div className="min-h-screen flex overflow-hidden">
+    <div className="sv-auth-page min-h-screen flex overflow-hidden">
       <SEO title="Anmelden / Registrieren" description="Melde dich bei Singra Vault an oder registriere dich." noIndex={true} />
 
       {/* ── Brand Panel (desktop only, left 45%) ────────────────── */}
@@ -872,14 +872,14 @@ export default function Auth() {
       </div>
 
       {/* ── Form Panel (100% mobile / 55% desktop) ──────────────── */}
-      <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-12 auth-form-reveal relative">
+      <div className="sv-auth-form-panel flex-1 flex flex-col items-center justify-center p-6 md:p-12 auth-form-reveal relative">
         {/* Mobile logo */}
         <Link to="/" className="lg:hidden flex items-center gap-3 mb-10">
           <img src="/singra-icon.png" alt="Singra Vault" className="w-8 h-8 rounded-full shadow-lg shadow-primary/20 ring-1 ring-border/70" />
           <span className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/80">Singra Vault</span>
         </Link>
 
-        <div className="w-full max-w-sm">
+        <div className="sv-auth-card w-full max-w-sm">
           {/* Form header */}
           <div className="mb-8 text-center lg:text-left">
             <h1 className="text-2xl font-semibold text-foreground mb-1">

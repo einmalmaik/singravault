@@ -136,6 +136,27 @@ export async function evaluateVaultMigrationGate(
       return block('required', legacySignals.vaultId, 'legacy vault requires controlled migration');
     }
 
+    if (hasOpLogHead) {
+      if (!input.vaultEncryptionKey) {
+        return allow('notNeeded', legacySignals.vaultId);
+      }
+
+      const verified = await verifyRemoteOpLogWorkingSet({
+        rpcClient,
+        trustClient: input.trustClient ?? (client as unknown as VaultOpLogTrustReadClient),
+        vaultId: legacySignals.vaultId,
+        vaultEncryptionKey: input.vaultEncryptionKey,
+      });
+
+      return verified.verified
+        ? allow('verified', legacySignals.vaultId)
+        : block(
+          'preflightFailed',
+          legacySignals.vaultId,
+          verified.error ?? 'op-log head exists but remote op-log verification failed',
+        );
+    }
+
     return allow('notNeeded', legacySignals.vaultId);
   } catch {
     return block('preflightFailed', null, 'migration preflight could not be evaluated');
@@ -276,6 +297,24 @@ async function verifyRemoteOpLogMigration(input: {
   return hasVerifiedManifest
     ? { verified: true, error: null }
     : { verified: false, error: 'remote_op_log_manifest_missing' };
+}
+
+async function verifyRemoteOpLogWorkingSet(input: {
+  readonly rpcClient: SupabaseRpcClient;
+  readonly trustClient: VaultOpLogTrustReadClient;
+  readonly vaultId: string;
+  readonly vaultEncryptionKey: Uint8Array;
+}): Promise<{ readonly verified: boolean; readonly error: string | null }> {
+  const result = await loadVaultOpLogUiState({
+    rpcClient: input.rpcClient,
+    trustClient: input.trustClient,
+    vaultId: input.vaultId,
+    vaultEncryptionKey: input.vaultEncryptionKey,
+  });
+
+  return result.error || !result.localVaultState
+    ? { verified: false, error: result.error ?? 'remote_op_log_state_missing' }
+    : { verified: true, error: null };
 }
 
 function gateFromCheckpoint(

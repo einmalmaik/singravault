@@ -289,7 +289,7 @@ export default defineConfig(async ({ mode }) => {
         injectRegister: "script",
         injectManifest: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest}"],
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         },
         devOptions: {
           enabled: false,

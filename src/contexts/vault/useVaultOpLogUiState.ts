@@ -68,7 +68,9 @@ export function useVaultOpLogUiState(
     setLastError(null);
   }, []);
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const runRefresh = useCallback(async (options?: {
+    readonly showLoading?: boolean;
+  }): Promise<void> => {
     if (!isEnabled) {
       clearState();
       return;
@@ -85,7 +87,9 @@ export function useVaultOpLogUiState(
     }
 
     isRunningRef.current = true;
-    setIsLoading(true);
+    if (options?.showLoading !== false) {
+      setIsLoading(true);
+    }
     setLastError(null);
 
     try {
@@ -135,7 +139,9 @@ export function useVaultOpLogUiState(
       setUiView(null);
       setLocalVaultState(null);
     } finally {
-      setIsLoading(false);
+      if (options?.showLoading !== false) {
+        setIsLoading(false);
+      }
       isRunningRef.current = false;
     }
   }, [
@@ -145,6 +151,10 @@ export function useVaultOpLogUiState(
     vaultProviderState.vaultMigrationKeyContext?.vaultId,
     userId,
   ]);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    await runRefresh({ showLoading: true });
+  }, [runRefresh]);
 
   useEffect(() => {
     if (!isEnabled) {
@@ -188,7 +198,7 @@ export function useVaultOpLogUiState(
       }
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-        void refresh();
+        void runRefresh({ showLoading: false });
       }, 250);
     };
 
@@ -216,7 +226,7 @@ export function useVaultOpLogUiState(
       )
       .subscribe();
 
-    const pollingTimer = window.setInterval(scheduleRefresh, 5000);
+    const pollingTimer = window.setInterval(scheduleRefresh, 120000);
 
     return () => {
       if (debounceTimer) {
@@ -232,6 +242,7 @@ export function useVaultOpLogUiState(
     vaultId,
     vaultProviderState.isLocked,
     vaultProviderState.vaultEncryptionKey,
+    runRefresh,
   ]);
 
   return {

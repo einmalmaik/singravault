@@ -115,8 +115,8 @@ export function SettingsSurfaceLayout({
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <div className="sv-app-shell min-h-screen bg-background">
+      <header className="sv-vault-topbar ms-glass-header sticky top-0 z-50">
         <div className="container mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" onClick={() => navigate(backTo)} className="rounded-full">
@@ -153,8 +153,8 @@ export function SettingsSurfaceLayout({
         </div>
       </header>
 
-      <main className="container mx-auto max-w-4xl px-4 py-8">
-        <div className="mb-6 space-y-4">
+      <main className="container mx-auto max-w-5xl px-4 py-8">
+        <div className="mb-6 space-y-4 rounded-2xl border border-border/45 bg-[hsl(var(--card)/0.42)] p-4 shadow-[0_18px_48px_hsl(0_0%_0%/0.26)] backdrop-blur-xl">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -162,7 +162,7 @@ export function SettingsSurfaceLayout({
               placeholder={t('settings.searchPlaceholder')}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              className="pl-10"
+              className="ms-glass-input pl-10"
             />
           </div>
 
@@ -190,7 +190,7 @@ export function SettingsSurfaceLayout({
             <p className="text-muted-foreground">{t('settings.noResults')}</p>
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)]">
             {groupedSections.map((group) => (
               <section key={group.tab} className="space-y-4">
                 {searchQuery && (
@@ -202,7 +202,7 @@ export function SettingsSurfaceLayout({
                   </div>
                 )}
 
-                <div className="space-y-6">
+                <div className="grid gap-5">
                   {group.sections.map((section) => (
                     <div key={section.id} id={section.id}>
                       {section.content}

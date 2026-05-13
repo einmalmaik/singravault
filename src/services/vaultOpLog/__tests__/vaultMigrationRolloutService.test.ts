@@ -97,6 +97,60 @@ function makeRpc(hasHead = false): SupabaseRpcClient {
   };
 }
 
+function makeFreshOpLogRpc(): SupabaseRpcClient {
+  return {
+    rpc: async (fn: string) => {
+      if (fn === 'get_vault_head') {
+        return {
+          data: [{
+            vault_id: 'vault-1',
+            current_head: 'head-1',
+            current_op_id: null,
+            current_sequence_number: 0,
+            updated_at: '2026-05-05T00:00:00.000Z',
+          }],
+          error: null,
+        };
+      }
+      if (fn === 'get_vault_changes_since') {
+        return { data: [], error: null };
+      }
+      return { data: null, error: { code: 'TEST', message: `unexpected rpc ${fn}` } };
+    },
+  };
+}
+
+function makeTrustClient() {
+  return {
+    from() {
+      return {
+        select() {
+          return {
+            eq() {
+              return Promise.resolve({
+                data: [{
+                  vault_id: 'vault-1',
+                  device_id: 'device-1',
+                  public_signing_key: 'pub-local',
+                  device_name_encrypted: '',
+                  added_by_device_id: null,
+                  added_op_id: null,
+                  added_at: '2026-05-05T00:00:00.000Z',
+                  trust_epoch: 0,
+                  status: 'trusted',
+                  revoked_at: null,
+                  revoked_by_device_id: null,
+                }],
+                error: null,
+              });
+            },
+          };
+        },
+      };
+    },
+  } as never;
+}
+
 describe('evaluateVaultMigrationGate', () => {
   it('allows normal unlock when no legacy rows and no checkpoint exist', async () => {
     const result = await evaluateVaultMigrationGate({
@@ -108,6 +162,25 @@ describe('evaluateVaultMigrationGate', () => {
     expect(result).toMatchObject({
       allowNormalUnlock: true,
       status: 'notNeeded',
+    });
+  });
+
+  it('treats a fresh bootstrapped OpLog vault as verified after working-set verification', async () => {
+    const vaultEncryptionKey = new Uint8Array(32).fill(7);
+
+    const result = await evaluateVaultMigrationGate({
+      userId: 'user-1',
+      client: makeClient({ vaultId: 'vault-1' }),
+      rpcClient: makeFreshOpLogRpc(),
+      trustClient: makeTrustClient(),
+      vaultEncryptionKey,
+    });
+
+    expect(result).toMatchObject({
+      allowNormalUnlock: true,
+      status: 'verified',
+      vaultId: 'vault-1',
+      reason: null,
     });
   });
 

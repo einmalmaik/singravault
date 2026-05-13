@@ -40,6 +40,7 @@ import { loadVaultOpLogUiState } from '@/services/vaultOpLog/vaultOpLogUiOrchest
 import { isAppOnline } from '@/services/offlineVaultService';
 import { getVaultRecoveryCodeStatus } from '@/services/vaultOpLog/vaultRecoveryCodeService';
 import { resolveVaultOpLogDefaultVaultId } from '@/services/vaultOpLog/vaultOpLogDefaultVaultResolver';
+import { ensureInitialVaultOpLogTrust } from '@/services/vaultOpLog/vaultOpLogInitialTrustService';
 import type { VaultOpLogTrustReadClient } from '@/services/vaultOpLog/vaultOpLogUiOrchestrator';
 import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
 import type { SubmitVaultOperationResult } from '@/services/vaultOpLog/vaultOpLogRpcTypes';
@@ -151,13 +152,31 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
       throw new VaultOpLogUiActionBlockedError('Vault-ID konnte nicht verifiziert geladen werden.');
     }
 
-    const deviceContext = isAppOnline()
+    const online = isAppOnline();
+    let deviceContext = online
       ? await loadVerifiedVaultOpLogDeviceContext({
           userId: user.id,
           vaultId,
           trustClient: supabase,
         })
       : loadVerifiedVaultOpLogDeviceContextFromLocalState(input.localVaultState);
+
+    if (!deviceContext && online) {
+      const bootstrapResult = await ensureInitialVaultOpLogTrust({
+        userId: user.id,
+        vaultId,
+        rpcClient: supabase as unknown as SupabaseRpcClient,
+      });
+      if (bootstrapResult.kind === 'bootstrapped') {
+        await input.opLogUiRefresh();
+        deviceContext = await loadVerifiedVaultOpLogDeviceContext({
+          userId: user.id,
+          vaultId,
+          trustClient: supabase,
+        });
+      }
+    }
+
     const identity = deviceContext?.identity ?? null;
     if (!identity) {
       throw new VaultOpLogUiActionBlockedError('OpLog-Device-Identität fehlt oder ist auf diesem Gerät nicht verfügbar.');

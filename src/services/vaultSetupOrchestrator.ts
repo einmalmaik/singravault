@@ -11,6 +11,8 @@ import type { VaultRuntimeCredentials } from '@/services/offlineVaultRuntimeServ
 import { ensureTauriDevVaultSnapshot, loadCachedVaultCredentials } from '@/services/offlineVaultRuntimeService';
 import { supabase } from '@/integrations/supabase/client';
 import { isTauriDevUserId } from '@/platform/tauriDevMode';
+import { ensureInitialVaultOpLogTrust } from '@/services/vaultOpLog/vaultOpLogInitialTrustService';
+import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
 
 export interface VaultSetupResult {
   error: Error | null;
@@ -105,18 +107,12 @@ async function createInitialVault(input: {
     };
   }
 
-  const { data: existingVault } = await supabase
-    .from('vaults')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('is_default', true)
-    .single();
-
-  if (!existingVault) {
-    await supabase.from('vaults').insert({
-      user_id: userId,
-      name: 'Encrypted Vault',
-      is_default: true,
+  const vaultId = await ensureDefaultVaultId(userId);
+  if (isSupabaseRpcClient(supabase)) {
+    await ensureInitialVaultOpLogTrust({
+      userId,
+      vaultId,
+      rpcClient: supabase,
     });
   }
 
@@ -152,4 +148,45 @@ async function createInitialVault(input: {
     credentials,
     activeUserKey: userKeyBundle.userKey,
   };
+}
+
+async function ensureDefaultVaultId(userId: string): Promise<string> {
+  const { data: existingVault, error: existingVaultError } = await supabase
+    .from('vaults')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('is_default', true)
+    .maybeSingle() as { data: { id: string } | null; error: { message: string } | null };
+
+  if (existingVaultError) {
+    throw new Error(existingVaultError.message);
+  }
+
+  if (!existingVault) {
+    const createdVaultId = crypto.randomUUID();
+    const { error: createVaultError } = await supabase
+      .from('vaults')
+      .insert({
+        id: createdVaultId,
+        user_id: userId,
+        name: 'Encrypted Vault',
+        is_default: true,
+      }) as { error: { message: string } | null };
+
+    if (createVaultError) {
+      throw new Error(createVaultError.message);
+    }
+
+    return createdVaultId;
+  }
+
+  return existingVault.id;
+}
+
+function isSupabaseRpcClient(value: unknown): value is SupabaseRpcClient {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && typeof (value as { rpc?: unknown }).rpc === 'function',
+  );
 }
