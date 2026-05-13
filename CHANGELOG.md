@@ -10,6 +10,7 @@ Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 - Neue Geraeteverwaltung: Vertrauenswuerdige Geraete sind in den Tresoreinstellungen sichtbar und koennen widerrufen werden.
 - Neue Recovery-Codes fuer den Geraetezugriff helfen, ein neues Geraet wieder zu verifizieren, wenn kein anderes vertrauenswuerdiges Geraet mehr verfuegbar ist.
 - Neue Sicherheitsanzeigen machen klarer, ob der Tresor verifiziert, eingeschraenkt, in Quarantaene oder wegen Geraetevertrauen gesperrt ist.
+- Singra Vault wird in App, README und Release-Kontext klarer als experimenteller Prototyp markiert: keine echten Passwoerter, produktiven Secrets oder Recovery-Daten speichern.
 
 ### Verbesserungen
 
@@ -20,6 +21,8 @@ Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
 ### Behoben
 
+- Frische, leere Tresore nach Social-Login/Neuregistrierung werden nicht mehr faelschlich wegen fehlendem Manifest V2 blockiert.
+- Leere, verifizierte OpLog-Tresore zeigen beim Aktualisieren nicht mehr faelschlich "Entschluessele Eintraege..." an.
 - Offline erstellte oder geloeschte Eintraege wurden in manchen Situationen nicht zuverlaessig synchronisiert.
 - Kurzzeitige Quarantaene-Anzeigen beim Laden des Sicherheitsstatus verschwinden nun sauberer nach erfolgreicher Verifikation.
 - Geraete-Recovery und erneutes Vertrauen eines Geraets funktionieren nach Widerruf stabiler.

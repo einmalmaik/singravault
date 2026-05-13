@@ -398,11 +398,11 @@ export function VaultItemList({
 
       const isBackgroundSync = hasRenderedVaultContentRef.current;
       fetchItemsRef.current = true;
-      if (isBackgroundSync && !useOpLogVerifiedRuntime) {
+      if (isBackgroundSync) {
         setBackgroundSyncing(true);
       } else {
         setLoading(true);
-        setDecrypting(true);
+        setDecrypting(!useOpLogVerifiedRuntime);
       }
       try {
         if (useOpLogVerifiedRuntime) {

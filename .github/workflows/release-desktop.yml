@@ -93,11 +93,40 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Singra Vault v__VERSION__"
           releaseBody: |
-            Official desktop release for Singra Vault.
+            ## Singra Vault 0.4.7
 
-            - Official desktop build with preconfigured Singra Cloud
-            - Public source code remains core-only
-          generateReleaseNotes: true
+            Dieses Release macht den Offline-Modus robuster und verbessert die Sicherheitsanzeige rund um Device-Trust, OpLog-Verifikation und Recovery.
+
+            ### Highlights
+
+            - Offline erstellte, bearbeitete und geloeschte Eintraege werden nach dem Reconnect zuverlaessiger synchronisiert.
+            - Vertrauenswuerdige Geraete sind in den Tresoreinstellungen sichtbar und koennen widerrufen werden.
+            - Neue Recovery-Codes helfen beim Wiederherstellen des Geraetevertrauens, wenn kein anderes vertrauenswuerdiges Geraet mehr verfuegbar ist.
+            - Sicherheitsanzeigen zeigen klarer, ob der Tresor verifiziert, eingeschraenkt, in Quarantaene oder wegen Geraetevertrauen gesperrt ist.
+            - Singra Vault ist sichtbar als experimenteller Prototyp markiert. Bitte keine echten Passwoerter, produktiven Secrets oder Recovery-Daten speichern.
+
+            ### Verbesserungen
+
+            - Offline-Aenderungen werden als wartende Aenderungen behandelt und erst nach erfolgreicher Verifikation als synchronisiert markiert.
+            - Widerrufene Geraete koennen wartende Offline-Aenderungen nicht mehr automatisch in die Cloud senden.
+            - Eintraege, Kategorien und geloeschte Eintraege bleiben nach Offline-Nutzung und erneutem Online-Gehen konsistenter zwischen mehreren Geraeten.
+            - Export, Suche und Zwischenablage verwenden nur verifizierte Tresor-Eintraege.
+
+            ### Behoben
+
+            - Frische, leere Tresore nach Social-Login/Neuregistrierung werden nicht mehr faelschlich wegen fehlendem Manifest V2 blockiert.
+            - Leere, verifizierte OpLog-Tresore zeigen beim Aktualisieren nicht mehr faelschlich "Entschluessele Eintraege..." an.
+            - Offline erstellte oder geloeschte Eintraege wurden in manchen Situationen nicht zuverlaessig synchronisiert.
+            - Kurzzeitige Quarantaene-Anzeigen beim Laden des Sicherheitsstatus verschwinden sauberer nach erfolgreicher Verifikation.
+            - Geraete-Recovery und erneutes Vertrauen eines Geraets funktionieren nach Widerruf stabiler.
+            - Add-Device-Anfragen bleiben erneut versuchbar, wenn ein spaeterer Speichervorgang fehlschlaegt.
+
+            ### Wichtige Hinweise
+
+            - Fuer dieses Release muessen die aktuellen Supabase-Migrationen und die Edge Function `vault-recovery-codes` deployed sein.
+            - Wenn alle vertrauenswuerdigen Geraete und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass fuer den Tresorzugriff.
+            - Der oeffentliche Quellcode bleibt Core-only; offizielle Desktop-Builds werden mit vorkonfigurierter Singra Cloud gebaut.
+          generateReleaseNotes: false
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

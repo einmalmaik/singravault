@@ -427,6 +427,7 @@ describe.sequential('VaultItemList', () => {
     renderList();
 
     await screen.findByText('vault.empty.title');
+    expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
 
     act(() => {
       window.dispatchEvent(new Event('focus'));
@@ -436,6 +437,28 @@ describe.sequential('VaultItemList', () => {
     await waitFor(() => {
       expect(mockVaultContext.opLogUiRefresh).toHaveBeenCalledTimes(1);
     });
+    expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+    expect(loadVaultSnapshot).not.toHaveBeenCalled();
+    expect(mockVerifyIntegrity).not.toHaveBeenCalled();
+  });
+
+  it('does not show the decrypting label for an empty verified OpLog vault while the first view settles', async () => {
+    snapshotState.online = true;
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    mockVaultContext.opLogLocalVaultState = makeOpLogState([]);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: [],
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
+    await screen.findByText('vault.empty.title');
     expect(screen.queryByText('vault.items.decrypting')).not.toBeInTheDocument();
     expect(loadVaultSnapshot).not.toHaveBeenCalled();
     expect(mockVerifyIntegrity).not.toHaveBeenCalled();
