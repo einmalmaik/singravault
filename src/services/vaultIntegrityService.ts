@@ -101,6 +101,9 @@ export interface IntegrityVerificationResult {
   itemCount: number;
 }
 
+const LEGACY_INTEGRITY_ADAPTER_DISABLED =
+  'Legacy vault integrity adapter is disabled. Use the verified operation-log integrity runtime.';
+
 export function isNonTamperIntegrityMode(
   mode: VaultIntegrityMode,
 ): mode is VaultIntegrityNonTamperMode {
@@ -108,4 +111,54 @@ export function isNonTamperIntegrityMode(
     || mode === 'revalidation_failed'
     || mode === 'migration_required'
     || mode === 'scope_incomplete';
+}
+
+/**
+ * Compatibility export for older premium bundles.
+ *
+ * The V1 password+salt integrity-root path was intentionally removed from the
+ * runtime trust model. Keeping this symbol preserves build compatibility while
+ * failing closed if an outdated integration still tries to use it.
+ */
+export async function deriveIntegrityKey(
+  masterPassword: string,
+  saltBase64: string,
+): Promise<CryptoKey> {
+  void masterPassword;
+  void saltBase64;
+  throw new Error(LEGACY_INTEGRITY_ADAPTER_DISABLED);
+}
+
+/**
+ * Compatibility export for older premium bundles. This must not recreate the
+ * removed local baseline trust path.
+ */
+export async function verifyVaultIntegrity(
+  items: VaultItemForIntegrity[],
+  integrityKey: CryptoKey,
+  userId: string,
+): Promise<IntegrityVerificationResult> {
+  void items;
+  void integrityKey;
+  void userId;
+  throw new Error(LEGACY_INTEGRITY_ADAPTER_DISABLED);
+}
+
+/**
+ * Compatibility export for older premium bundles. Restore flows must create
+ * verified OpLog operations instead of mutating a local integrity root.
+ */
+export async function updateIntegrityRoot(
+  items: VaultItemForIntegrity[],
+  integrityKey: CryptoKey,
+  userId: string,
+): Promise<string> {
+  void items;
+  void integrityKey;
+  void userId;
+  throw new Error(LEGACY_INTEGRITY_ADAPTER_DISABLED);
+}
+
+export function clearIntegrityRoot(userId: string): void {
+  void userId;
 }
