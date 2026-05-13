@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildManifestEnvelopeV2FromVerifiedInputs,
+  computeRuntimeManifestRetrySnapshotDigest,
   encryptItemEnvelopeV2,
   evaluateRuntimeVaultIntegrityV2,
   loadManifestHighWaterMark,
@@ -98,8 +99,42 @@ function snapshot(items: ServerVaultItemV2[], categories: ServerVaultCategoryV2[
   };
 }
 
+function freshEmptyRemoteSnapshot(): OfflineVaultSnapshot {
+  const current = snapshot([], []);
+  return {
+    ...current,
+    completeness: {
+      kind: 'complete',
+      reason: 'remote_page_count_verified',
+      checkedAt: current.updatedAt,
+      source: 'remote',
+      scope: {
+        kind: 'private_default_vault',
+        userId: USER_ID,
+        vaultId: VAULT_ID,
+        includesSharedCollections: false,
+      },
+      vault: {
+        defaultVaultResolved: true,
+      },
+      items: {
+        loadedCount: 0,
+        totalCount: 0,
+        complete: true,
+        pageSize: 1000,
+      },
+      categories: {
+        loadedCount: 0,
+        totalCount: 0,
+        complete: true,
+        pageSize: 1000,
+      },
+    },
+  };
+}
+
 async function saveRetryForSnapshot(_currentSnapshot: OfflineVaultSnapshot): Promise<string> {
-  const snapshotDigest = 'dummy-digest-phase11';
+  const snapshotDigest = await computeRuntimeManifestRetrySnapshotDigest(_currentSnapshot);
   await saveManifestPersistRetryRecord({
     userId: USER_ID,
     vaultId: VAULT_ID,
@@ -156,6 +191,63 @@ describe('Vault Integrity V2 runtime bridge', () => {
       manifestHash: bundle.manifestHash,
       keyId: KEY_ID,
     });
+  });
+
+  it('bootstraps an empty Manifest V2 for a fresh verified remote vault', async () => {
+    const key = await testKey();
+    manifestStore.loadServerManifestEnvelopeV2.mockResolvedValue(null);
+    manifestStore.persistServerManifestEnvelopeV2.mockResolvedValue(undefined);
+
+    await expect(evaluateRuntimeVaultIntegrityV2({
+      userId: USER_ID,
+      snapshot: freshEmptyRemoteSnapshot(),
+      vaultKey: key,
+      evaluationSource: 'unlock',
+      snapshotSource: 'remote',
+    })).resolves.toMatchObject({
+      mode: 'healthy',
+      itemCount: 0,
+      categoryCount: 0,
+      quarantinedItems: [],
+    });
+
+    expect(manifestStore.persistServerManifestEnvelopeV2).toHaveBeenCalledWith(expect.objectContaining({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      previousManifestHash: null,
+      expectedPreviousManifestRevision: null,
+      expectedPreviousManifestHash: null,
+    }));
+    await expect(loadManifestHighWaterMark(USER_ID, VAULT_ID)).resolves.toMatchObject({
+      manifestRevision: 1,
+      keyId: KEY_ID,
+    });
+  });
+
+  it('does not bootstrap a missing Manifest V2 over an existing local manifest anchor', async () => {
+    const key = await testKey();
+    manifestStore.loadServerManifestEnvelopeV2.mockResolvedValue(null);
+    await saveManifestHighWaterMark({
+      userId: USER_ID,
+      vaultId: VAULT_ID,
+      manifestRevision: 3,
+      manifestHash: 'old-trusted-manifest-hash',
+      keyId: KEY_ID,
+    });
+
+    await expect(evaluateRuntimeVaultIntegrityV2({
+      userId: USER_ID,
+      snapshot: freshEmptyRemoteSnapshot(),
+      vaultKey: key,
+      evaluationSource: 'unlock',
+      snapshotSource: 'remote',
+    })).resolves.toMatchObject({
+      mode: 'integrity_unknown',
+      nonTamperReason: 'manifest_snapshot_conflict',
+      quarantinedItems: [],
+    });
+
+    expect(manifestStore.persistServerManifestEnvelopeV2).not.toHaveBeenCalled();
   });
 
   it('keeps a manifest hash mismatch as a precise active V2 quarantine reason', async () => {

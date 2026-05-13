@@ -1,10 +1,16 @@
 # Singra Vault
 
-> **Status:** `0.4.3`
+> [!WARNING]
+> **Experimenteller Prototyp. Speichere hier keine echten Passwörter, produktiven Secrets oder Recovery-Daten.**
+> Singra Vault wird aktiv entwickelt, ist nicht fertig extern auditiert und darf aktuell nicht wie ein ausgereifter Passwortmanager behandelt werden.
+
+> **Status:** `0.4.7` / experimentell
 >
-> Web, PWA und Desktop werden aktiv weiterentwickelt. Der aktuelle Core-Stand ist auf die Paketversion `0.4.3` ausgerichtet.
+> Web, PWA und Desktop werden aktiv weiterentwickelt. Der aktuelle Core-Stand ist auf die Paketversion `0.4.7` ausgerichtet.
 
 **Live-Instanz:** [singravault.mauntingstudios.de](https://singravault.mauntingstudios.de)
+
+**Wichtiger Nutzungshinweis:** Diese Version ist zum Testen, Entwickeln und Security-Review gedacht. Sie ist **nicht** für echte Passwort-Tresore freigegeben.
 
 ## Überblick
 

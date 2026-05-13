@@ -11,6 +11,7 @@ import {
   buildManifestEnvelopeV2FromVerifiedInputs,
   evaluateVaultIntegrityV2,
 } from './decisionEngine';
+import { sha256Base64, stableStringify } from './canonicalJson';
 import { isVaultItemEnvelopeV2 } from './itemEnvelopeCrypto';
 import { deriveVaultIntegrityKeyIdV2 } from './keyId';
 import { verifyVaultManifestV2 } from './manifestCrypto';
@@ -69,7 +70,29 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
     throw error;
   }
   if (!storedManifest) {
-    return null;
+    let localHighWaterMark: ManifestHighWaterMarkRecordV1 | null;
+    try {
+      localHighWaterMark = await loadManifestHighWaterMark(input.userId, vaultId);
+    } catch {
+      return buildRuntimeNonTamperResult(input.snapshot, 'integrity_unknown', 'rollback_check_unavailable');
+    }
+
+    if (localHighWaterMark) {
+      return buildRuntimeNonTamperResult(input.snapshot, 'integrity_unknown', 'manifest_snapshot_conflict');
+    }
+
+    const bootstrappedManifest = await bootstrapInitialEmptyRemoteManifest({
+      userId: input.userId,
+      snapshot: input.snapshot,
+      snapshotSource,
+      vaultKey: input.vaultKey,
+      encryptedUserKey: input.encryptedUserKey,
+    });
+    if (!bootstrappedManifest) {
+      return null;
+    }
+
+    storedManifest = bootstrappedManifest;
   }
 
   let localHighWaterMark: ManifestHighWaterMarkRecordV1 | null;
@@ -217,6 +240,76 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
   return mapDecisionToRuntimeResult(decision, input.snapshot, snapshotSource);
 }
 
+async function bootstrapInitialEmptyRemoteManifest(input: {
+  userId: string;
+  snapshot: OfflineVaultSnapshot;
+  snapshotSource: 'remote' | 'cache' | 'empty';
+  vaultKey: CryptoKey;
+  encryptedUserKey?: string | null;
+}): Promise<Awaited<ReturnType<typeof loadServerManifestEnvelopeV2>> | null> {
+  const vaultId = input.snapshot.vaultId;
+  if (!vaultId || !isFreshEmptyRemoteSnapshot(input.snapshot, input.snapshotSource)) {
+    return null;
+  }
+
+  const keyId = deriveVaultIntegrityKeyIdV2({ encryptedUserKey: input.encryptedUserKey });
+  const bundle = await buildManifestEnvelopeV2FromVerifiedInputs({
+    userId: input.userId,
+    vaultId,
+    keyId,
+    keysetVersion: 1,
+    manifestRevision: 1,
+    categories: [],
+    items: [],
+    vaultKey: input.vaultKey,
+  });
+
+  await persistServerManifestEnvelopeV2({
+    userId: input.userId,
+    vaultId,
+    envelope: bundle.envelope,
+    manifestHash: bundle.manifestHash,
+    previousManifestHash: null,
+    expectedPreviousManifestRevision: null,
+    expectedPreviousManifestHash: null,
+  });
+  await saveManifestHighWaterMark({
+    userId: input.userId,
+    vaultId,
+    manifestRevision: 1,
+    manifestHash: bundle.manifestHash,
+    keyId,
+  });
+
+  return {
+    userId: input.userId,
+    vaultId,
+    manifestRevision: 1,
+    manifestHash: bundle.manifestHash,
+    previousManifestHash: null,
+    keyId,
+    envelope: bundle.envelope,
+  };
+}
+
+function isFreshEmptyRemoteSnapshot(
+  snapshot: OfflineVaultSnapshot,
+  snapshotSource: 'remote' | 'cache' | 'empty',
+): boolean {
+  const completeness = snapshot.completeness;
+  return snapshotSource === 'remote'
+    && snapshot.items.length === 0
+    && snapshot.categories.length === 0
+    && completeness?.kind === 'complete'
+    && completeness.source === 'remote'
+    && completeness.vault.defaultVaultResolved === true
+    && completeness.scope.vaultId === snapshot.vaultId
+    && completeness.items.loadedCount === 0
+    && completeness.items.totalCount === 0
+    && completeness.categories.loadedCount === 0
+    && completeness.categories.totalCount === 0;
+}
+
 export async function persistRuntimeManifestV2ForTrustedSnapshot(input: {
   userId: string;
   snapshot: OfflineVaultSnapshot;
@@ -312,7 +405,10 @@ export async function retryPendingRuntimeManifestV2ForSnapshot(input: {
     return { status: 'store_unavailable' };
   }
 
-  const currentSnapshotDigest = await resolveRetrySnapshotDigest({ snapshotDigest: input.snapshotDigest });
+  const currentSnapshotDigest = await resolveRetrySnapshotDigest({
+    snapshot: input.snapshot,
+    snapshotDigest: input.snapshotDigest,
+  });
   if (!currentSnapshotDigest) {
     return { status: 'snapshot_digest_unavailable', errorCode: 'manifest_retry_snapshot_digest_unavailable' };
   }
@@ -342,9 +438,45 @@ export async function retryPendingRuntimeManifestV2ForSnapshot(input: {
 }
 
 async function resolveRetrySnapshotDigest(input: {
+  snapshot: OfflineVaultSnapshot;
   snapshotDigest?: string | null;
 }): Promise<string | null> {
-  return input.snapshotDigest ?? null;
+  if (input.snapshotDigest === null) {
+    return null;
+  }
+  return input.snapshotDigest ?? computeRuntimeManifestRetrySnapshotDigest(input.snapshot);
+}
+
+export async function computeRuntimeManifestRetrySnapshotDigest(
+  snapshot: OfflineVaultSnapshot,
+): Promise<string> {
+  return sha256Base64(stableStringify({
+    schemaVersion: 1,
+    userId: snapshot.userId,
+    vaultId: snapshot.vaultId ?? null,
+    items: toServerItems(snapshot.items)
+      .map((item) => ({
+        id: item.id,
+        user_id: item.user_id,
+        vault_id: item.vault_id,
+        item_type: item.item_type,
+        updated_at: item.updated_at ?? null,
+        encrypted_data: item.encrypted_data,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    categories: toServerCategories(snapshot.categories)
+      .map((category) => ({
+        id: category.id,
+        user_id: category.user_id,
+        name: category.name,
+        icon: category.icon ?? null,
+        color: category.color ?? null,
+        parent_id: category.parent_id ?? null,
+        sort_order: category.sort_order ?? null,
+        updated_at: category.updated_at ?? null,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  }));
 }
 
 async function deriveTrustedDeleteTombstones(input: {
