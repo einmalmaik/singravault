@@ -5,7 +5,7 @@
  *
  * Coverage:
  * - Enqueue creates a pending entry.
- * - State transitions: pending -> syncing -> synced.
+ * - State transitions: pending -> syncing -> submitted_unverified -> synced.
  * - Retry increments retryCount and keeps op_id/intent_id stable.
  * - Rebase needed classification.
  * - Conflict classification.
@@ -21,7 +21,11 @@ import {
   classifySubmitResult,
   sanitizeQueueErrorForStorage,
 } from '../vaultOpLogPendingQueue';
-import { InMemoryQueuePersistence } from '../vaultOpLogQueuePersistence';
+import {
+  IndexedDbQueuePersistence,
+  InMemoryQueuePersistence,
+  LEGACY_LOCAL_STORAGE_QUEUE_PREFIX,
+} from '../vaultOpLogQueuePersistence';
 import type { PendingLocalOperation } from '../vaultOpLogPendingQueueTypes';
 import type { VaultOperationRow, SubmitVaultOperationResult } from '../vaultOpLogRpcTypes';
 import { DEVICE_SIGNATURE_SCHEMA_V1 } from '../types';
@@ -106,13 +110,17 @@ describe('VaultOpLogPendingQueue', () => {
     expect(q.getPending()[0].state).toBe('pending');
   });
 
-  it('marks syncing then synced', async () => {
+  it('marks syncing, submitted_unverified, then synced after verification', async () => {
     const q = new VaultOpLogPendingQueue('v1', persistence);
     await q.load();
     q['operations'] = [makePendingEntry()];
 
     await q.markSyncing('op-1');
     expect(q.getSyncing().length).toBe(1);
+
+    await q.markSubmittedUnverified('op-1', 'server-head');
+    expect(q.getSubmittedUnverified()).toHaveLength(1);
+    expect(q.getSubmittedUnverified()[0].op.resultingVaultHead).toBe('server-head');
 
     await q.markSynced('op-1', 'new-head');
     const synced = q.getOperations().filter((e) => e.state === 'synced');
@@ -169,6 +177,17 @@ describe('VaultOpLogPendingQueue', () => {
     expect(all[1].state).toBe('pending');
   });
 
+  it('keeps submitted_unverified across crash recovery', async () => {
+    const q = new VaultOpLogPendingQueue('v1', persistence);
+    await q.load();
+    q['operations'] = [
+      makePendingEntry({ state: 'submitted_unverified' }),
+    ];
+
+    await q.recoverAfterCrash();
+    expect(q.getOperations()[0].state).toBe('submitted_unverified');
+  });
+
   it('persists across load/save cycles', async () => {
     const q1 = new VaultOpLogPendingQueue('v1', persistence);
     await q1.load();
@@ -181,8 +200,37 @@ describe('VaultOpLogPendingQueue', () => {
   });
 });
 
+describe('IndexedDbQueuePersistence legacy migration', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('migrates a valid legacy localStorage queue and removes it only after reload verification', async () => {
+    const key = `${LEGACY_LOCAL_STORAGE_QUEUE_PREFIX}v1`;
+    localStorage.setItem(key, JSON.stringify([makePendingEntry()]));
+    const persistence = new IndexedDbQueuePersistence();
+
+    const loaded = await persistence.loadAll('v1');
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].op.opId).toBe('op-1');
+    expect(localStorage.getItem(key)).toBeNull();
+  });
+
+  it('does not delete a malformed legacy queue', async () => {
+    const key = `${LEGACY_LOCAL_STORAGE_QUEUE_PREFIX}v-malformed`;
+    localStorage.setItem(key, '{not-json');
+    const persistence = new IndexedDbQueuePersistence();
+
+    const loaded = await persistence.loadAll('v-malformed');
+
+    expect(loaded).toEqual([]);
+    expect(localStorage.getItem(key)).toBe('{not-json');
+  });
+});
+
 describe('classifySubmitResult', () => {
-  it('classifies applied as synced', () => {
+  it('classifies applied as submitted_unverified', () => {
     const result: SubmitVaultOperationResult = {
       kind: 'applied',
       idempotent: false,
@@ -193,13 +241,13 @@ describe('classifySubmitResult', () => {
       currentSequenceNumber: 1,
     };
     const classified = classifySubmitResult(result);
-    expect(classified.kind).toBe('synced');
-    if (classified.kind === 'synced') {
+    expect(classified.kind).toBe('submittedUnverified');
+    if (classified.kind === 'submittedUnverified') {
       expect(classified.resultingVaultHead).toBe('rvh');
     }
   });
 
-  it('classifies idempotent applied as idempotentSynced', () => {
+  it('classifies idempotent applied as idempotentSubmittedUnverified', () => {
     const result: SubmitVaultOperationResult = {
       kind: 'applied',
       idempotent: true,
@@ -210,7 +258,7 @@ describe('classifySubmitResult', () => {
       currentSequenceNumber: 1,
     };
     const classified = classifySubmitResult(result);
-    expect(classified.kind).toBe('idempotentSynced');
+    expect(classified.kind).toBe('idempotentSubmittedUnverified');
   });
 
   it('classifies rebaseNeeded', () => {

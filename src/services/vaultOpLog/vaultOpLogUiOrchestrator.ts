@@ -57,7 +57,7 @@ import {
   type VaultOpLogOfflineCacheEntry,
 } from './vaultOpLogOfflineStore';
 import { VaultOpLogPendingQueue } from './vaultOpLogPendingQueue';
-import { LocalStorageQueuePersistence } from './vaultOpLogQueuePersistence';
+import { IndexedDbQueuePersistence } from './vaultOpLogQueuePersistence';
 import type { PendingLocalOperation } from './vaultOpLogPendingQueueTypes';
 import type {
   VaultOperationRow,
@@ -544,7 +544,7 @@ async function applyPendingLocalOperationsToState(input: {
   readonly vaultEncryptionKey: Uint8Array;
   readonly vaultId: string;
 }): Promise<LocalVaultState> {
-  const queue = new VaultOpLogPendingQueue(input.vaultId, new LocalStorageQueuePersistence());
+  const queue = new VaultOpLogPendingQueue(input.vaultId, new IndexedDbQueuePersistence());
   await queue.load().catch(() => undefined);
   await queue.recoverAfterCrash().catch(() => undefined);
 

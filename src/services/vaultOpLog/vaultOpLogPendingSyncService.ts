@@ -11,8 +11,8 @@
 
 import { submitVaultOperation, type SupabaseRpcClient } from './vaultOpLogRepository';
 import { VaultOpLogPendingQueue, classifySubmitResult } from './vaultOpLogPendingQueue';
-import { LocalStorageQueuePersistence } from './vaultOpLogQueuePersistence';
-import type { PendingLocalOperation } from './vaultOpLogPendingQueueTypes';
+import { IndexedDbQueuePersistence } from './vaultOpLogQueuePersistence';
+import type { PendingLocalOperation, QueuePersistence } from './vaultOpLogPendingQueueTypes';
 
 export interface PendingOpLogSyncResult {
   readonly processed: number;
@@ -23,8 +23,10 @@ export interface PendingOpLogSyncResult {
 export async function syncPendingVaultOpLogOperations(input: {
   readonly rpcClient: SupabaseRpcClient;
   readonly vaultId: string;
+  readonly queuePersistence?: QueuePersistence;
 }): Promise<PendingOpLogSyncResult> {
-  const queue = new VaultOpLogPendingQueue(input.vaultId, new LocalStorageQueuePersistence());
+  const queuePersistence = input.queuePersistence ?? new IndexedDbQueuePersistence();
+  const queue = new VaultOpLogPendingQueue(input.vaultId, queuePersistence);
   await queue.load();
   await queue.recoverAfterCrash();
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -36,8 +38,8 @@ export async function syncPendingVaultOpLogOperations(input: {
 
   for (const entry of queue.getPending()) {
     await queue.markSyncing(entry.op.opId);
-    const classified = await submitAndClassify(input.rpcClient, entry);
-    if (classified === 'synced') {
+    const classified = await submitAndClassify(input.rpcClient, entry, queuePersistence);
+    if (classified === 'submitted_unverified') {
       processed += 1;
       continue;
     }
@@ -50,7 +52,12 @@ export async function syncPendingVaultOpLogOperations(input: {
 
   await queue.load();
   const remaining = queue.getOperations().filter((entry) =>
-    entry.state === 'pending' || entry.state === 'syncing' || entry.state === 'rebase_needed' || entry.state === 'conflict'
+    entry.state === 'pending'
+    || entry.state === 'syncing'
+    || entry.state === 'submitted_unverified'
+    || entry.state === 'submitted_unverified_needs_verification'
+    || entry.state === 'rebase_needed'
+    || entry.state === 'conflict'
   ).length;
   return { processed, remaining, blocked };
 }
@@ -58,8 +65,9 @@ export async function syncPendingVaultOpLogOperations(input: {
 async function submitAndClassify(
   rpcClient: SupabaseRpcClient,
   entry: PendingLocalOperation,
-): Promise<'synced' | 'retryable' | 'blocked'> {
-  const queue = new VaultOpLogPendingQueue(entry.op.vaultId, new LocalStorageQueuePersistence());
+  queuePersistence: QueuePersistence,
+): Promise<'submitted_unverified' | 'retryable' | 'blocked'> {
+  const queue = new VaultOpLogPendingQueue(entry.op.vaultId, queuePersistence);
   await queue.load();
 
   try {
@@ -79,10 +87,10 @@ async function submitAndClassify(
     ));
 
     switch (result.kind) {
-      case 'synced':
-      case 'idempotentSynced':
-        await queue.markSynced(entry.op.opId, result.resultingVaultHead);
-        return 'synced';
+      case 'submittedUnverified':
+      case 'idempotentSubmittedUnverified':
+        await queue.markSubmittedUnverified(entry.op.opId, result.resultingVaultHead);
+        return 'submitted_unverified';
       case 'retryable':
         await queue.markRetryable(entry.op.opId, result.error);
         return 'retryable';

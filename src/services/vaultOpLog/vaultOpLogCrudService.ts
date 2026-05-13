@@ -23,7 +23,7 @@ import {
   classifySubmitResult,
 } from './vaultOpLogPendingQueue';
 import type { QueuePersistence } from './vaultOpLogPendingQueueTypes';
-import { LocalStorageQueuePersistence } from './vaultOpLogQueuePersistence';
+import { IndexedDbQueuePersistence } from './vaultOpLogQueuePersistence';
 import {
   submitVaultOperation,
   type SupabaseRpcClient,
@@ -404,7 +404,7 @@ async function submitAndVerify(
   const opRow: VaultOperationRow = toVaultOperationRow(built);
   const queue = new VaultOpLogPendingQueue(
     deps.vaultId,
-    deps.queuePersistence ?? new LocalStorageQueuePersistence(),
+    deps.queuePersistence ?? new IndexedDbQueuePersistence(),
   );
 
   await queue.load();
@@ -429,10 +429,19 @@ async function submitAndVerify(
   }
 
   switch (classified.kind) {
-    case 'synced':
-    case 'idempotentSynced': {
+    case 'submittedUnverified':
+    case 'idempotentSubmittedUnverified': {
+      await queue.markSubmittedUnverified(opRow.opId, classified.resultingVaultHead);
+      try {
+        await verifyCommittedOperation(deps, opRow, expectedState);
+      } catch (error) {
+        await queue.markSubmittedUnverifiedNeedsVerification(
+          opRow.opId,
+          error instanceof Error ? error.message : 'submitted_unverified_needs_verification',
+        );
+        throw error;
+      }
       await queue.markSynced(opRow.opId, classified.resultingVaultHead);
-      await verifyCommittedOperation(deps, opRow, expectedState);
       return { resultingVaultHead: classified.resultingVaultHead };
     }
     case 'retryable':

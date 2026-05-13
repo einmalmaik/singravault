@@ -13,10 +13,13 @@ import type { VaultOperationRow, VaultRecordRow } from './vaultOpLogRpcTypes';
 export type PendingOperationState =
   | 'pending'
   | 'syncing'
+  | 'submitted_unverified'
+  | 'submitted_unverified_needs_verification'
   | 'synced'
   | 'failed'
-  | 'rebase_needed'
   | 'conflict'
+  | 'blocked_revoked'
+  | 'rebase_needed'
   | 'superseded';
 
 /**
@@ -38,6 +41,7 @@ export interface PendingLocalOperation {
   readonly createdAtLocal: string;
   readonly retryCount: number;
   readonly lastError: string | null;
+  readonly lastSanitizedError?: string | null;
   readonly state: PendingOperationState;
 }
 
@@ -46,8 +50,8 @@ export interface PendingLocalOperation {
  * from the perspective of the pending queue.
  */
 export type ClassifiedSubmitResult =
-  | { readonly kind: 'synced'; readonly resultingVaultHead: string }
-  | { readonly kind: 'idempotentSynced'; readonly resultingVaultHead: string }
+  | { readonly kind: 'submittedUnverified'; readonly resultingVaultHead: string }
+  | { readonly kind: 'idempotentSubmittedUnverified'; readonly resultingVaultHead: string }
   | { readonly kind: 'retryable'; readonly error: string }
   | { readonly kind: 'rebaseNeeded' }
   | { readonly kind: 'recordConflict' }

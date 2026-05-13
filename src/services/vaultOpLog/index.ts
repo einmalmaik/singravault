@@ -152,7 +152,9 @@ export {
 } from './vaultOpLogPendingQueue';
 
 export {
+  IndexedDbQueuePersistence,
   InMemoryQueuePersistence,
+  LEGACY_LOCAL_STORAGE_QUEUE_PREFIX,
   LocalStorageQueuePersistence,
 } from './vaultOpLogQueuePersistence';
 
@@ -313,6 +315,22 @@ export type {
   VaultOpLogUiOrchestratorInput,
   VaultOpLogUiOrchestratorResult,
 } from './vaultOpLogUiOrchestrator';
+
+export {
+  evaluateOfflineVaultGates,
+  validateOfflineIdentity,
+} from './localUnlockGate';
+
+export type {
+  LocalDeviceSigningTrustGate,
+  LocalTrustWorkingSetGate,
+  OfflineGateEvaluation,
+  OfflineGateEvaluationInput,
+  OfflineGateFailureReason,
+  OfflineIdentityContext,
+  OfflineVaultSecurityMode,
+  VaultKeyUnlockGate,
+} from './localUnlockGate';
 
 // ---------------------------------------------------------------------------
 // Phase 10 — Data egress policy gates (Export, Search, Clipboard, Autofill)

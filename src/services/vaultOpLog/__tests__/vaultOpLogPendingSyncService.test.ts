@@ -3,14 +3,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncPendingVaultOpLogOperations } from '../vaultOpLogPendingSyncService';
+import { InMemoryQueuePersistence } from '../vaultOpLogQueuePersistence';
 import { DEVICE_SIGNATURE_SCHEMA_V1 } from '../types';
 import type { SupabaseRpcClient } from '../vaultOpLogRepository';
 import type { PendingLocalOperation } from '../vaultOpLogPendingQueueTypes';
 import type { VaultOperationRow, VaultRecordRow } from '../vaultOpLogRpcTypes';
 
 const VAULT_ID = 'vault-pending-sync';
-const STORAGE_KEY = `singra:vaultOpLog:pending:${VAULT_ID}`;
-
 beforeEach(() => {
   localStorage.clear();
 });
@@ -21,8 +20,9 @@ afterEach(() => {
 });
 
 describe('vaultOpLogPendingSyncService', () => {
-  it('replays pending signed operations through submit_vault_operation and marks them synced', async () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([pendingEntry()]));
+  it('replays pending signed operations through submit_vault_operation and marks them submitted_unverified', async () => {
+    const queuePersistence = new InMemoryQueuePersistence();
+    await queuePersistence.saveAll(VAULT_ID, [pendingEntry()]);
     const rpcClient = createRpcClient({
       applied: true,
       idempotent: false,
@@ -34,9 +34,9 @@ describe('vaultOpLogPendingSyncService', () => {
       conflict_reason: null,
     });
 
-    const result = await syncPendingVaultOpLogOperations({ rpcClient, vaultId: VAULT_ID });
+    const result = await syncPendingVaultOpLogOperations({ rpcClient, vaultId: VAULT_ID, queuePersistence });
 
-    expect(result).toEqual({ processed: 1, remaining: 0, blocked: 0 });
+    expect(result).toEqual({ processed: 1, remaining: 1, blocked: 0 });
     expect(rpcClient.rpc).toHaveBeenCalledWith(
       'submit_vault_operation',
       expect.objectContaining({
@@ -44,13 +44,15 @@ describe('vaultOpLogPendingSyncService', () => {
         p_record_payload: expect.objectContaining({ ciphertext_hash: 'ciphertext-hash-1' }),
       }),
     );
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as PendingLocalOperation[];
-    expect(stored[0].state).toBe('synced');
+    const stored = await queuePersistence.loadAll(VAULT_ID);
+    expect(stored[0].state).toBe('submitted_unverified');
+    expect(stored[0].state).not.toBe('synced');
     expect(stored[0].op.resultingVaultHead).toBe('head-server');
   });
 
   it('marks remote-head drift as rebase-needed instead of quarantining trusted local work', async () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([pendingEntry()]));
+    const queuePersistence = new InMemoryQueuePersistence();
+    await queuePersistence.saveAll(VAULT_ID, [pendingEntry()]);
     const rpcClient = createRpcClient({
       applied: false,
       idempotent: false,
@@ -62,10 +64,10 @@ describe('vaultOpLogPendingSyncService', () => {
       conflict_reason: 'stale_vault_head',
     });
 
-    const result = await syncPendingVaultOpLogOperations({ rpcClient, vaultId: VAULT_ID });
+    const result = await syncPendingVaultOpLogOperations({ rpcClient, vaultId: VAULT_ID, queuePersistence });
 
     expect(result).toEqual({ processed: 0, remaining: 1, blocked: 1 });
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as PendingLocalOperation[];
+    const stored = await queuePersistence.loadAll(VAULT_ID);
     expect(stored[0].state).toBe('rebase_needed');
   });
 });

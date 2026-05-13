@@ -50,6 +50,7 @@ export class VaultOpLogPendingQueue {
       createdAtLocal: new Date().toISOString(),
       retryCount: 0,
       lastError: null,
+      lastSanitizedError: null,
       state: 'pending',
     };
     this.operations = [...this.operations, entry];
@@ -70,11 +71,35 @@ export class VaultOpLogPendingQueue {
     await this.save();
   }
 
+  async markSubmittedUnverified(opId: string, resultingVaultHead: string): Promise<void> {
+    this.operations = this.operations.map((e) =>
+      e.op.opId === opId
+        ? { ...e, state: 'submitted_unverified' as PendingOperationState, op: { ...e.op, resultingVaultHead }, lastError: null, lastSanitizedError: null }
+        : e,
+    );
+    await this.save();
+  }
+
+  async markSubmittedUnverifiedNeedsVerification(opId: string, error: string): Promise<void> {
+    const sanitized = sanitizeQueueErrorForStorage(error);
+    this.operations = this.operations.map((e) =>
+      e.op.opId === opId
+        ? {
+            ...e,
+            state: 'submitted_unverified_needs_verification' as PendingOperationState,
+            lastError: sanitized,
+            lastSanitizedError: sanitized,
+          }
+        : e,
+    );
+    await this.save();
+  }
+
   async markRetryable(opId: string, error: string): Promise<void> {
     const sanitized = sanitizeQueueErrorForStorage(error);
     this.operations = this.operations.map((e) =>
       e.op.opId === opId
-        ? { ...e, state: 'pending' as PendingOperationState, retryCount: e.retryCount + 1, lastError: sanitized }
+        ? { ...e, state: 'pending' as PendingOperationState, retryCount: e.retryCount + 1, lastError: sanitized, lastSanitizedError: sanitized }
         : e,
     );
     await this.save();
@@ -88,7 +113,30 @@ export class VaultOpLogPendingQueue {
   async markConflict(opId: string, error?: string): Promise<void> {
     const sanitized = error ? sanitizeQueueErrorForStorage(error) : null;
     this.operations = this.operations.map((e) =>
-      e.op.opId === opId ? { ...e, state: 'conflict' as PendingOperationState, lastError: sanitized } : e,
+      e.op.opId === opId ? { ...e, state: 'conflict' as PendingOperationState, lastError: sanitized, lastSanitizedError: sanitized } : e,
+    );
+    await this.save();
+  }
+
+  async markBlockedRevoked(opId: string, error = 'device_revoked'): Promise<void> {
+    const sanitized = sanitizeQueueErrorForStorage(error);
+    this.operations = this.operations.map((e) =>
+      e.op.opId === opId ? { ...e, state: 'blocked_revoked' as PendingOperationState, lastError: sanitized, lastSanitizedError: sanitized } : e,
+    );
+    await this.save();
+  }
+
+  async blockAllForRevokedDevice(authorDeviceId: string): Promise<void> {
+    this.operations = this.operations.map((e) =>
+      e.op.authorDeviceId === authorDeviceId
+      && (e.state === 'pending' || e.state === 'syncing' || e.state === 'submitted_unverified')
+        ? {
+            ...e,
+            state: 'blocked_revoked' as PendingOperationState,
+            lastError: 'device_revoked',
+            lastSanitizedError: 'device_revoked',
+          }
+        : e,
     );
     await this.save();
   }
@@ -101,7 +149,7 @@ export class VaultOpLogPendingQueue {
   async markFailed(opId: string, error: string): Promise<void> {
     const sanitized = sanitizeQueueErrorForStorage(error);
     this.operations = this.operations.map((e) =>
-      e.op.opId === opId ? { ...e, state: 'failed' as PendingOperationState, lastError: sanitized } : e,
+      e.op.opId === opId ? { ...e, state: 'failed' as PendingOperationState, lastError: sanitized, lastSanitizedError: sanitized } : e,
     );
     await this.save();
   }
@@ -118,6 +166,10 @@ export class VaultOpLogPendingQueue {
     return this.operations.filter((e) => e.state === 'rebase_needed');
   }
 
+  getSubmittedUnverified(): readonly PendingLocalOperation[] {
+    return this.operations.filter((e) => e.state === 'submitted_unverified');
+  }
+
   /**
    * After a crash, any `syncing` entry may have been partially
    * committed (the RPC is idempotent) or not. We conservatively
@@ -132,6 +184,7 @@ export class VaultOpLogPendingQueue {
             state: 'pending' as PendingOperationState,
             retryCount: e.retryCount + 1,
             lastError: 'recovered_from_crash: operation was syncing when app terminated',
+            lastSanitizedError: 'recovered_from_crash: operation was syncing when app terminated',
           }
         : e,
     );
@@ -181,9 +234,9 @@ export function classifySubmitResult(
   switch (result.kind) {
     case 'applied': {
       if (result.idempotent) {
-        return { kind: 'idempotentSynced', resultingVaultHead: result.resultingVaultHead };
+        return { kind: 'idempotentSubmittedUnverified', resultingVaultHead: result.resultingVaultHead };
       }
-      return { kind: 'synced', resultingVaultHead: result.resultingVaultHead };
+      return { kind: 'submittedUnverified', resultingVaultHead: result.resultingVaultHead };
     }
     case 'rebaseNeeded':
       return { kind: 'rebaseNeeded' };
