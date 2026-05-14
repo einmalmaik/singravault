@@ -664,6 +664,12 @@
       "totp": "2FA Codes",
       "favorites": "Favoriten"
     },
+    "sections": {
+      "favorites": "Favoriten",
+      "recentlyUsed": "Zuletzt verwendet",
+      "allEntries": "Alle EintrÃ¤ge",
+      "entryCount": "{{count}} EintrÃ¤ge"
+    },
     "categories": {
       "title": "Kategorien",
       "all": "Alle Einträge",
@@ -838,6 +844,8 @@
       "general": "Allgemein",
       "security": "Sicherheit",
       "billingSupport": "Abo & Support",
+      "billing": "Abonnement",
+      "support": "Support",
       "data": "Daten",
       "dataLegal": "Daten & Rechtliches",
       "sharingEmergency": "Freigabe & Notfall"
@@ -1533,6 +1541,8 @@
     "select_plan": "Plan wählen",
     "upgrade": "Upgrade",
     "upgrade_now": "Jetzt upgraden",
+    "premiumFeatureLockedShort": "Premiumfunktion",
+    "premiumFeatureLockedDescription": "Für diese Funktion brauchst du Premium oder Families.",
     "features": {
       "unlimited_passwords": "Unbegrenzte Passwörter",
       "device_sync": "Geräte-Synchronisation",
@@ -1549,6 +1559,7 @@
       "emergency_access": "Notfallzugang",
       "vault_health": "Tresor-Gesundheitsbericht",
       "passkey_unlock": "Passkey Tresor-Entsperrung (PRF)",
+      "vault_health_reports": "Tresor-Gesundheitsbericht",
       "vault_integrity": "Tresor-Integritätsprüfung",
       "priority_support": "Prioritäts-Support",
       "six_accounts": "6 Premium-Konten",

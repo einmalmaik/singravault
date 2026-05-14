@@ -16,7 +16,10 @@ async function resolveAppVersion(mode: string, packageVersion: string): Promise<
   }
 
   if (mode === "development") {
-    return { version: "dev build", source: "development-mode" };
+    return {
+      version: packageVersion || "dev build",
+      source: packageVersion ? "package-version-development" : "development-mode",
+    };
   }
 
   try {

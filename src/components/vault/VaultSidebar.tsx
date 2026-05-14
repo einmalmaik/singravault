@@ -54,6 +54,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useFeatureGate } from '@/hooks/useFeatureGate';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CategoryIcon } from './CategoryIcon';
 import { CategoryDialog, type CategoryChangeEvent } from './CategoryDialog';
@@ -237,6 +238,9 @@ export function VaultSidebar({
         opLogLocalVaultState,
     } = useVault();
     const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
+    const vaultHealthAccess = useFeatureGate('vault_health_reports');
+    const authenticatorAccess = useFeatureGate('builtin_authenticator');
+    const premiumFeaturesAvailable = isPremiumActive();
     const { user } = useAuth();
     const userId = user?.id ?? null;
     const accountEmail = user?.email ?? undefined;
@@ -525,25 +529,33 @@ export function VaultSidebar({
                             navigate('/vault');
                         }}
                     />
-                    {isPremiumActive() && (
+                    {premiumFeaturesAvailable && (
                         <SidebarItem
                             icon={<Activity className="w-4 h-4" />}
                             label={t('vaultHealth.title')}
+                            badge={!vaultHealthAccess.allowed ? t('subscription.premiumFeatureLockedShort') : undefined}
                             collapsed={collapsed}
                             active={location.pathname === '/vault-health'}
+                            disabled={!vaultHealthAccess.allowed}
+                            disabledReason={t('subscription.premiumFeatureLockedDescription')}
                             onClick={() => {
+                                if (!vaultHealthAccess.allowed) return;
                                 navigate('/vault-health');
                                 onActionComplete?.();
                             }}
                         />
                     )}
-                    {isPremiumActive() && (
+                    {premiumFeaturesAvailable && (
                         <SidebarItem
                             icon={<QrCode className="w-4 h-4" />}
                             label={t('authenticator.title')}
+                            badge={!authenticatorAccess.allowed ? t('subscription.premiumFeatureLockedShort') : undefined}
                             collapsed={collapsed}
                             active={location.pathname === '/authenticator'}
+                            disabled={!authenticatorAccess.allowed}
+                            disabledReason={t('subscription.premiumFeatureLockedDescription')}
                             onClick={() => {
+                                if (!authenticatorAccess.allowed) return;
                                 navigate('/authenticator');
                                 onActionComplete?.();
                             }}
@@ -639,7 +651,7 @@ export function VaultSidebar({
                     </div>
                 </ScrollArea>
 
-                {!collapsed && isPremiumActive() && (
+                {!collapsed && vaultHealthAccess.allowed && (
                     <div className={cn(
                         'mx-3 mb-3 rounded-2xl border p-4 shadow-[0_18px_42px_hsl(0_0%_0%/0.28)]',
                         vaultStatusToneClasses.card,
@@ -778,8 +790,11 @@ interface SidebarItemProps {
     icon: React.ReactNode;
     label: string;
     count?: number;
+    badge?: string;
     collapsed?: boolean;
     active?: boolean;
+    disabled?: boolean;
+    disabledReason?: string;
     variant?: 'default' | 'destructive';
     color?: string | null;
     onClick?: () => void;
@@ -789,8 +804,11 @@ function SidebarItem({
     icon,
     label,
     count,
+    badge,
     collapsed,
     active,
+    disabled,
+    disabledReason,
     variant = 'default',
     color,
     onClick
@@ -798,12 +816,14 @@ function SidebarItem({
     const content = (
         <button
             onClick={onClick}
+            aria-disabled={disabled}
             className={cn(
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150',
                 'text-[hsl(var(--sidebar-foreground)/0.72)] hover:text-[hsl(var(--sidebar-foreground))]',
                 'hover:bg-[hsl(var(--el-2)/0.82)]',
                 active && 'border border-primary/25 bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--sidebar-primary))] shadow-[0_0_24px_hsl(var(--primary)/0.08)]',
                 variant === 'destructive' && 'text-destructive hover:bg-destructive/10 hover:text-destructive',
+                disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-[hsl(var(--sidebar-foreground)/0.72)]',
                 collapsed && 'justify-center px-0'
             )}
         >
@@ -814,12 +834,17 @@ function SidebarItem({
                     {count !== undefined && count > 0 && (
                         <span className="text-xs text-muted-foreground">{count}</span>
                     )}
+                    {badge && (
+                        <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[0.65rem] font-medium text-primary">
+                            {badge}
+                        </span>
+                    )}
                 </>
             )}
         </button>
     );
 
-    if (collapsed) {
+    if (collapsed || disabledReason) {
         return (
             <Tooltip>
                 <TooltipTrigger asChild>
@@ -827,6 +852,7 @@ function SidebarItem({
                 </TooltipTrigger>
                 <TooltipContent side="right">
                     <p>{label}</p>
+                    {disabledReason && <p className="text-xs text-muted-foreground">{disabledReason}</p>}
                 </TooltipContent>
             </Tooltip>
         );

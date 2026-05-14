@@ -668,6 +668,12 @@
       "totp": "2FA Codes",
       "favorites": "Favorites"
     },
+    "sections": {
+      "favorites": "Favorites",
+      "recentlyUsed": "Recently used",
+      "allEntries": "All entries",
+      "entryCount": "{{count}} entries"
+    },
     "categories": {
       "title": "Categories",
       "all": "All entries",
@@ -818,6 +824,8 @@
       "general": "General",
       "security": "Security",
       "billingSupport": "Billing & Support",
+      "billing": "Subscription",
+      "support": "Support",
       "data": "Data",
       "dataLegal": "Data & Legal",
       "sharingEmergency": "Sharing & Emergency"
@@ -1515,6 +1523,8 @@
     "select_plan": "Select Plan",
     "upgrade": "Upgrade",
     "upgrade_now": "Upgrade Now",
+    "premiumFeatureLockedShort": "Premium feature",
+    "premiumFeatureLockedDescription": "This feature requires Premium or Families.",
     "features": {
       "unlimited_passwords": "Unlimited Passwords",
       "device_sync": "Device Sync",
@@ -1531,6 +1541,7 @@
       "emergency_access": "Emergency Access",
       "vault_health": "Vault Health Reports",
       "passkey_unlock": "Passkey Vault Unlock (PRF)",
+      "vault_health_reports": "Vault Health Reports",
       "vault_integrity": "Vault Integrity Verification",
       "priority_support": "Priority Support",
       "six_accounts": "6 Premium Accounts",

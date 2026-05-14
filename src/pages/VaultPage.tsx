@@ -54,6 +54,7 @@ import { VaultMigrationRequiredPanel } from '@/components/vault/VaultMigrationRe
 import { getAdminEntryPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState } from '@/services/returnNavigationState';
 import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
+import { useFeatureGate } from '@/hooks/useFeatureGate';
 import { getBrowserDeviceTrustStatus } from '@/services/vaultOpLog/addDeviceFlowService';
 import type { VaultIntegrityMode, VaultIntegrityNonTamperReason } from '@/services/vaultIntegrityService';
 
@@ -138,6 +139,7 @@ export default function VaultPage() {
     const { showAdminButton } = useAdminPanelAccess({
         enabled: isPremiumActive() && !isOfflineSession && !isLocked && !isSetupRequired,
     });
+    const authenticatorAccess = useFeatureGate('builtin_authenticator');
     const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
     const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime
         && NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode);
@@ -518,7 +520,7 @@ export default function VaultPage() {
                     </div>
                 </header>
 
-                <main className="sv-vault-main min-w-0 flex-1 space-y-4 p-3 pb-[calc(5.5rem+var(--safe-area-bottom))] sm:p-4 sm:pb-4 lg:p-6">
+                <main className="sv-vault-main min-w-0 flex-1 space-y-4 p-3 pt-1 pb-[calc(5.5rem+var(--safe-area-bottom))] sm:p-4 sm:pt-2 sm:pb-4 lg:p-4 lg:pt-1">
                     {opLogUiView && (
                         <>
                             {opLogUiView.vaultSecurityMode !== 'normal' && (
@@ -526,13 +528,13 @@ export default function VaultPage() {
                             )}
                             <VaultAddDeviceBanner />
                             <VaultPendingDevicesPanel />
-                            <div className="min-h-5" aria-live="polite">
-                                {opLogUiLoading && (
+                            {opLogUiLoading && (
+                                <div aria-live="polite">
                                     <p className="text-xs text-muted-foreground animate-pulse">
                                         {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
                                     </p>
-                                )}
-                            </div>
+                                </div>
+                            )}
                             {opLogUiError && (
                                 <p className="text-xs text-destructive">
                                     {opLogUiError}
@@ -612,8 +614,10 @@ export default function VaultPage() {
                         <Button
                             variant="ghost"
                             className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
+                            disabled={isPremiumActive() && !authenticatorAccess.allowed}
+                            title={isPremiumActive() && !authenticatorAccess.allowed ? t('subscription.premiumFeatureLockedDescription') : undefined}
                             onClick={() => {
-                                if (isPremiumActive()) {
+                                if (isPremiumActive() && authenticatorAccess.allowed) {
                                     navigate('/authenticator');
                                     return;
                                 }
@@ -621,7 +625,11 @@ export default function VaultPage() {
                             }}
                         >
                             {isPremiumActive() ? <QrCode className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
-                            {isPremiumActive() ? t('authenticator.title') : t('settings.vaultPage.title')}
+                            {isPremiumActive()
+                                ? authenticatorAccess.allowed
+                                    ? t('authenticator.title')
+                                    : t('subscription.premiumFeatureLockedShort')
+                                : t('settings.vaultPage.title')}
                         </Button>
                     </div>
                 </nav>

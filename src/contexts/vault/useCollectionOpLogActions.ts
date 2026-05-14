@@ -169,8 +169,16 @@ export function useCollectionOpLogActions(
 
   const listSharedCollections = useCallback(async () => {
     try {
+      if (!user) {
+        throw new Error('Keine aktive Sitzung.');
+      }
+
+      const memberships = await loadActiveCollectionMemberships(user.id);
+      if (memberships.length === 0) {
+        return { error: null, collections: [] };
+      }
+
       const base = await loadRuntimeBase();
-      const memberships = await loadActiveCollectionMemberships(base.userId);
       const collections: SharedCollectionSummary[] = [];
 
       for (const membership of memberships) {
@@ -197,7 +205,7 @@ export function useCollectionOpLogActions(
     } catch (error) {
       return { error: error instanceof Error ? error : new Error('Shared Collections konnten nicht geladen werden.'), collections: [] };
     }
-  }, [loadRuntimeBase, makeDeps]);
+  }, [loadRuntimeBase, makeDeps, user]);
 
   const createSharedCollection = useCallback(async (input: CreateSharedCollectionInput) => {
     const collectionId = crypto.randomUUID();
