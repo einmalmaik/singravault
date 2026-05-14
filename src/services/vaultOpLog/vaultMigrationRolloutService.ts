@@ -138,7 +138,11 @@ export async function evaluateVaultMigrationGate(
 
     if (hasOpLogHead) {
       if (!input.vaultEncryptionKey) {
-        return allow('notNeeded', legacySignals.vaultId);
+        return block(
+          'preflightFailed',
+          legacySignals.vaultId,
+          'op-log head exists; vault key is required to verify remote op-log state',
+        );
       }
 
       const verified = await verifyRemoteOpLogWorkingSet({

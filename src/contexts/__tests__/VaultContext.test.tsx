@@ -700,6 +700,14 @@ describe("VaultContext", () => {
       expect(mockGenerateSalt).toHaveBeenCalled();
       expect(mockDeriveRawKey).toHaveBeenCalledWith("SecurePassword123!", "new-salt-789", 2);
       expect(mockCreateVerificationHash).toHaveBeenCalled();
+      expect(mockUnwrapUserKeyBytes).toHaveBeenCalledWith(
+        "mock-encrypted-user-key",
+        expect.any(Uint8Array),
+      );
+      expect(mockEvaluateVaultMigrationGate).toHaveBeenCalledWith(expect.objectContaining({
+        userId: mockUser.id,
+        vaultEncryptionKey: expect.any(Uint8Array),
+      }));
 
       // Vault should be unlocked after setup
       expect(result.current.isLocked).toBe(false);

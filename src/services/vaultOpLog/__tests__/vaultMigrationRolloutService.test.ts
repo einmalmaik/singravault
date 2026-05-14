@@ -184,6 +184,22 @@ describe('evaluateVaultMigrationGate', () => {
     });
   });
 
+  it('blocks an OpLog vault head when no vault key is available for verification', async () => {
+    const result = await evaluateVaultMigrationGate({
+      userId: 'user-1',
+      client: makeClient({ vaultId: 'vault-1' }),
+      rpcClient: makeFreshOpLogRpc(),
+      trustClient: makeTrustClient(),
+    });
+
+    expect(result).toMatchObject({
+      allowNormalUnlock: false,
+      status: 'preflightFailed',
+      vaultId: 'vault-1',
+      reason: 'op-log head exists; vault key is required to verify remote op-log state',
+    });
+  });
+
   it('blocks normal unlock when legacy rows require migration', async () => {
     const result = await evaluateVaultMigrationGate({
       userId: 'user-1',
