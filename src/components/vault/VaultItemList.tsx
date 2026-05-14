@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Clock3, Eye, KeyRound, Loader2, Pin, Plus, RefreshCw, Shield, TriangleAlert } from 'lucide-react';
+import { Clock3, Cloud, Eye, KeyRound, Loader2, Pin, Plus, RefreshCw, Shield, ShieldCheck, TriangleAlert } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -55,7 +55,7 @@ const DECRYPT_BATCH_SIZE = 25;
 const QUARANTINE_SUMMARY_THRESHOLD = 2;
 const CLOUD_SYNC_REFRESH_INTERVAL_MS = 60_000;
 const CLOUD_SYNC_MIN_REQUEST_GAP_MS = 25_000;
-const DASHBOARD_SECTION_LIMIT = 8;
+const RECENT_SECTION_LIMIT = 5;
 
 interface VaultItem {
   id: string;
@@ -875,25 +875,31 @@ reportUnreadableItemsRef.current([]);
 
   const favoriteEntries = useMemo(
     () => visibleItemEntries
-      .filter(({ item }) => item.decryptedData?.isFavorite ?? item.is_favorite)
-      .slice(0, DASHBOARD_SECTION_LIMIT),
+      .filter(({ item }) => item.decryptedData?.isFavorite ?? item.is_favorite),
     [visibleItemEntries],
+  );
+
+  const favoriteItemIds = useMemo(
+    () => new Set(favoriteEntries.map((entry) => entry.item.id)),
+    [favoriteEntries],
   );
 
   const recentlyUsedEntries = useMemo(() => {
     const byId = new Map(visibleItemEntries.map((entry) => [entry.item.id, entry]));
     const copiedEntries = recentlyCopiedItemIds
       .map((id) => byId.get(id))
-      .filter((entry): entry is Extract<RenderableVaultListEntry, { kind: 'item' }> => !!entry);
+      .filter((entry): entry is Extract<RenderableVaultListEntry, { kind: 'item' }> => !!entry)
+      .filter((entry) => !favoriteItemIds.has(entry.item.id));
 
     if (copiedEntries.length > 0) {
-      return copiedEntries.slice(0, DASHBOARD_SECTION_LIMIT);
+      return copiedEntries.slice(0, RECENT_SECTION_LIMIT);
     }
 
     return [...visibleItemEntries]
+      .filter((entry) => !favoriteItemIds.has(entry.item.id))
       .sort((left, right) => right.item.updated_at.localeCompare(left.item.updated_at))
-      .slice(0, DASHBOARD_SECTION_LIMIT);
-  }, [recentlyCopiedItemIds, visibleItemEntries]);
+      .slice(0, RECENT_SECTION_LIMIT);
+  }, [favoriteItemIds, recentlyCopiedItemIds, visibleItemEntries]);
 
   const renderItemCard = useCallback((
     entry: Extract<RenderableVaultListEntry, { kind: 'item' }>,
@@ -918,6 +924,7 @@ reportUnreadableItemsRef.current([]);
     icon: ReactNode,
     entries: Extract<RenderableVaultListEntry, { kind: 'item' }>[],
     separated = false,
+    horizontal = false,
   ) => {
     if (entries.length === 0) {
       return null;
@@ -929,9 +936,22 @@ reportUnreadableItemsRef.current([]);
           {icon}
           <span>{title}</span>
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {entries.map(renderItemCard)}
-        </div>
+        {horizontal ? (
+          <div className="flex snap-x gap-4 overflow-x-auto pb-2 pr-4 [scrollbar-width:thin]">
+            {entries.map((entry) => (
+              <div
+                key={entry.item.id}
+                className="min-w-[240px] max-w-[280px] flex-[0_0_260px] snap-start sm:basis-[280px]"
+              >
+                {renderItemCard(entry)}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {entries.map(renderItemCard)}
+          </div>
+        )}
       </section>
     );
   }, [renderItemCard]);
@@ -1078,44 +1098,37 @@ reportUnreadableItemsRef.current([]);
   return (
     <div className="space-y-4">
       {(backgroundSyncing || lastCloudSyncAt) && (
-        <div className="flex items-center justify-end text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1))] px-3 py-1">
-            <RefreshCw className={cn('h-3.5 w-3.5', backgroundSyncing && 'animate-spin')} />
-            {backgroundSyncing
-              ? t('vault.items.cloudSyncing', {
-                defaultValue: 'Synchronisiere mit Cloud...',
-              })
-              : t('vault.items.cloudSyncedRecently', {
-                defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden',
-              })}
+        <div className="flex items-center justify-end">
+          <span
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-primary shadow-[0_0_24px_hsl(var(--primary)/0.08)]"
+            title={backgroundSyncing
+              ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
+              : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
+            aria-label={backgroundSyncing
+              ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
+              : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
+          >
+            <Cloud className={cn('h-4 w-4', backgroundSyncing && 'animate-pulse')} />
           </span>
         </div>
       )}
 
       {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[hsl(var(--border)/0.45)] bg-[hsl(var(--el-1))] px-4 py-3 text-sm">
-          <p className="inline-flex items-center gap-2 text-muted-foreground">
-            <RefreshCw className={cn('h-4 w-4', revalidating && 'animate-spin')} />
-            {revalidating
-              ? t('vault.integrity.revalidatingEntries', {
-                defaultValue: 'Prüfe Einträge...',
-              })
-              : t('vault.integrity.revalidationHint', {
-                defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.',
-              })}
-          </p>
-          <Button
+        <div className="flex items-center justify-end">
+          <button
             type="button"
-            variant="outline"
-            size="sm"
             disabled={revalidating}
             onClick={() => void revalidateRemoteIntegrity()}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-emerald-300 shadow-[0_0_24px_hsl(var(--success)/0.08)] transition-colors hover:border-emerald-300/40 hover:bg-emerald-400/10 disabled:cursor-wait"
+            title={revalidating
+              ? t('vault.integrity.revalidatingEntries', { defaultValue: 'Prüfe Einträge...' })
+              : t('vault.integrity.revalidationHint', { defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.' })}
+            aria-label={revalidating
+              ? t('vault.integrity.revalidatingEntries', { defaultValue: 'Prüfe Einträge...' })
+              : t('vault.integrity.revalidationHint', { defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.' })}
           >
-            <RefreshCw className={cn('mr-2 h-4 w-4', revalidating && 'animate-spin')} />
-            {t('vault.integrity.revalidateAction', {
-              defaultValue: 'Tresor erneut prüfen',
-            })}
-          </Button>
+            <ShieldCheck className={cn('h-4 w-4', revalidating && 'animate-pulse')} />
+          </button>
         </div>
       )}
 
@@ -1194,14 +1207,20 @@ reportUnreadableItemsRef.current([]);
             t('vault.sections.favorites', { defaultValue: 'Favoriten' }),
             <Pin className="h-4 w-4 text-primary" aria-hidden="true" />,
             favoriteEntries,
+            false,
+            true,
           )}
           {renderVaultSection(
             t('vault.sections.recentlyUsed', { defaultValue: 'Zuletzt verwendet' }),
             <Clock3 className="h-4 w-4 text-primary" aria-hidden="true" />,
             recentlyUsedEntries,
             favoriteEntries.length > 0,
+            true,
           )}
-          <section className="space-y-3 border-t border-border/35 pt-5">
+          <section className={cn(
+            'space-y-3',
+            (favoriteEntries.length > 0 || recentlyUsedEntries.length > 0) && 'border-t border-border/35 pt-5',
+          )}>
             <div className="flex items-center justify-between gap-3 px-1">
               <h2 className="text-sm font-semibold text-foreground">
                 {t('vault.sections.allEntries', { defaultValue: 'Alle Einträge' })}

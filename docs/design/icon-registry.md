@@ -24,6 +24,8 @@ Kategorie-Icons nutzen die bereits vorhandene Dependency `lucide-react` als gene
 
 Brand-SVGs werden als statische Teilmenge aus `simple-icons@16.19.0` unter `public/icons/brands/` ausgeliefert. Die Simple-Icons-Dateien stehen unter CC0; Markenrechte, Namen und Logos bleiben trotzdem bei den jeweiligen Rechteinhabern. Die Icons duerfen in Singra Vault nur zur identifizierenden Darstellung gespeicherter Anbieter genutzt werden. Sie duerfen nicht als eigene Marke, Werbeaussage, Partnerschaftsbehauptung oder Endorsement verwendet werden.
 
+Die ausgelieferte Brand-Teilmenge umfasst derzeit 125 kontrollierte SVGs. Simple Icons liefert ueberwiegend einfarbige Marken-Glyphen; Singra Vault faerbt diese deshalb ausschliesslich ueber die entwicklergepflegte Registry-Farbe und nicht ueber Nutzerwerte. Google und Gmail nutzen statische, mehrfarbige Sonderdateien aus der internen Registry, weil ihre Wiedererkennbarkeit stark von der Originalfarbgebung abhaengt. Weitere mehrfarbige offizielle Logos werden erst aufgenommen, wenn Quelle, Lizenz und Trademark-Guidelines separat geprueft wurden. `Hytale` ist aktuell nicht enthalten, weil in der verwendeten Simple-Icons-Version kein passendes SVG vorhanden ist.
+
 Lokale Lizenzkopien:
 
 - `docs/design/third-party-icons/simple-icons-LICENSE.md`

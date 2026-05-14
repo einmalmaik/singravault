@@ -33,9 +33,16 @@ describe('providerMatcher', () => {
     expect(resolveBrandIconId({ title: 'McDonalds App' })).toBe('mcdonalds');
     expect(resolveBrandIconId({ title: 'Proton Drive', websiteUrl: 'https://drive.proton.me' })).toBe('proton-drive');
     expect(resolveBrandIconId({ title: 'OpenAI ChatGPT', websiteUrl: 'https://chatgpt.com' })).toBe('openai');
+    expect(resolveBrandIconId({ title: 'Tinder Premium', websiteUrl: 'https://tinder.com' })).toBe('tinder');
+    expect(resolveBrandIconId({ title: 'GOG Games', websiteUrl: 'https://gog.com' })).toBe('gog');
+    expect(resolveBrandIconId({ title: 'Riot' })).toBe('riotgames');
+    expect(resolveBrandIconId({ title: 'Docker Desktop', websiteUrl: 'https://docker.com' })).toBe('docker');
+    expect(resolveBrandIconId({ title: 'JetBrains Toolbox', websiteUrl: 'https://jetbrains.com' })).toBe('jetbrains');
+    expect(resolveBrandIconId({ title: 'Epic Games Store', websiteUrl: 'https://epicgames.com' })).toBe('epicgames');
   });
 
   it('falls back for unknown providers', () => {
     expect(resolveBrandIconId({ title: 'Unknown Internal Tool' })).toBe('generic');
+    expect(resolveBrandIconId({ title: 'Hytale Account' })).toBe('generic');
   });
 });

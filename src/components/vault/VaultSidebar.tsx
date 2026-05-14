@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 Maunting Studios
+﻿// Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 /**
  * @fileoverview Vault Sidebar Component
@@ -95,6 +95,77 @@ function getAccountInitials(email: string | undefined): string {
     return `${name.charAt(0)}${domain.charAt(0)}`.toUpperCase();
 }
 
+function getVaultStatusSummary(result: { mode?: string; quarantinedItems?: unknown[] } | null | undefined): {
+    label: string;
+    description: string;
+    tone: 'success' | 'warning' | 'danger';
+} {
+    const quarantinedCount = result?.quarantinedItems?.length ?? 0;
+
+    if (result?.mode === 'blocked') {
+        return {
+            label: 'Kritisch',
+            description: 'Tresorzugriff ist durch eine Integritätsprüfung blockiert.',
+            tone: 'danger',
+        };
+    }
+
+    if (quarantinedCount > 0 || result?.mode === 'quarantine') {
+        const count = Math.max(quarantinedCount, 1);
+        return {
+            label: `${count} Fall${count === 1 ? '' : 'e'}`,
+            description: 'Einzelne Einträge brauchen Aufmerksamkeit.',
+            tone: 'warning',
+        };
+    }
+
+    if (result?.mode === 'healthy') {
+        return {
+            label: 'Unauffällig',
+            description: 'Keine aktuellen Integritätsfälle erkannt.',
+            tone: 'success',
+        };
+    }
+
+    return {
+        label: 'Analyse bereit',
+        description: 'Bericht öffnen, um den aktuellen Stand zu laden.',
+        tone: 'warning',
+    };
+}
+
+function getVaultStatusToneClasses(tone: 'success' | 'warning' | 'danger'): {
+    card: string;
+    icon: string;
+    text: string;
+    button: string;
+} {
+    if (tone === 'danger') {
+        return {
+            card: 'border-red-400/18 bg-[linear-gradient(135deg,hsl(var(--destructive)/0.12),hsl(var(--el-1)/0.78))]',
+            icon: 'border-red-300/25 bg-red-400/10 text-red-300',
+            text: 'text-red-300',
+            button: 'border-red-300/20 bg-background/35',
+        };
+    }
+
+    if (tone === 'warning') {
+        return {
+            card: 'border-amber-400/18 bg-[linear-gradient(135deg,hsl(var(--warning)/0.12),hsl(var(--el-1)/0.78))]',
+            icon: 'border-amber-300/25 bg-amber-400/10 text-amber-300',
+            text: 'text-amber-300',
+            button: 'border-amber-300/20 bg-background/35',
+        };
+    }
+
+    return {
+        card: 'border-emerald-400/18 bg-[linear-gradient(135deg,hsl(var(--success)/0.12),hsl(var(--el-1)/0.78))]',
+        icon: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-300',
+        text: 'text-emerald-300',
+        button: 'border-emerald-300/20 bg-background/35',
+    };
+}
+
 function parseVerifiedRecordPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
     if (
         (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
@@ -178,6 +249,8 @@ export function VaultSidebar({
     // Dialog state
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+    const vaultStatusSummary = getVaultStatusSummary(lastIntegrityResult);
+    const vaultStatusToneClasses = getVaultStatusToneClasses(vaultStatusSummary.tone);
     const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
     const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
     const fetchRequestIdRef = useRef(0);
@@ -567,23 +640,28 @@ export function VaultSidebar({
                 </ScrollArea>
 
                 {!collapsed && isPremiumActive() && (
-                    <div className="mx-3 mb-3 rounded-2xl border border-emerald-400/18 bg-[linear-gradient(135deg,hsl(var(--success)/0.12),hsl(var(--el-1)/0.78))] p-4 shadow-[0_18px_42px_hsl(0_0%_0%/0.28)]">
+                    <div className={cn(
+                        'mx-3 mb-3 rounded-2xl border p-4 shadow-[0_18px_42px_hsl(0_0%_0%/0.28)]',
+                        vaultStatusToneClasses.card,
+                    )}>
                         <div className="flex items-start gap-3">
-                            <div className="rounded-xl border border-emerald-300/25 bg-emerald-400/10 p-2 text-emerald-300">
+                            <div className={cn('rounded-xl border p-2', vaultStatusToneClasses.icon)}>
                                 <Activity className="h-4 w-4" />
                             </div>
                             <div className="min-w-0 space-y-1">
                                 <p className="text-sm font-semibold text-foreground">Tresor-Status</p>
-                                <p className="text-sm font-medium text-emerald-300">Nicht geprüft</p>
+                                <p className={cn('text-sm font-medium', vaultStatusToneClasses.text)}>
+                                    {vaultStatusSummary.label}
+                                </p>
                                 <p className="text-xs leading-5 text-muted-foreground">
-                                    Premium-Analyse öffnen, um den aktuellen Bericht zu laden.
+                                    {vaultStatusSummary.description}
                                 </p>
                             </div>
                         </div>
                         <Button
                             variant="outline"
                             size="sm"
-                            className="mt-3 w-full border-emerald-300/20 bg-background/35"
+                            className={cn('mt-3 w-full', vaultStatusToneClasses.button)}
                             onClick={() => {
                                 navigate('/vault-health');
                                 onActionComplete?.();

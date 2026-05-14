@@ -1,7 +1,7 @@
 import type { SettingsSurface, SettingsTabId } from '@/extensions/types';
 
 export const SETTINGS_TABS_BY_SURFACE: Record<SettingsSurface, SettingsTabId[]> = {
-  profile: ['general', 'security', 'billing-support', 'data-legal'],
+  profile: ['general', 'security', 'billing', 'support', 'data-legal'],
   vault: ['security', 'data', 'sharing-emergency'],
 };
 

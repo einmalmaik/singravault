@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Link, useLocation } from 'react-router-dom';
-import { Shield, Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint, KeyRound, Settings, Sparkles } from 'lucide-react';
+import { Lock, Eye, EyeOff, Loader2, LogOut, Fingerprint, KeyRound, Settings, UserRound } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -159,14 +159,31 @@ export function VaultUnlock() {
     const showPasskeyOption = hasPasskeyUnlock;
     const showDeviceKeyImportAction = requiresDeviceKey(vaultProtectionMode) && !deviceKeyActive;
 
+    const accountEmail = user?.email ?? t('auth.unlock.accountUnknown', 'Angemeldetes Konto');
+    const accountInitials = accountEmail.includes('@')
+        ? accountEmail.split('@').map((part) => part.charAt(0)).join('').slice(0, 2).toUpperCase()
+        : accountEmail.slice(0, 2).toUpperCase();
+
     return (
-        <div className="sv-auth-page min-h-screen flex items-center justify-center p-4">
-            <Card className="sv-auth-card w-full max-w-md overflow-hidden">
+        <div className="relative min-h-screen overflow-hidden bg-[hsl(var(--background))] p-4">
+            <div
+                className="absolute inset-0 bg-cover bg-center opacity-65"
+                style={{ backgroundImage: "url('/brand/vault-unlock-background.png')" }}
+                aria-hidden="true"
+            />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,transparent_0%,hsl(var(--background)/0.42)_48%,hsl(var(--background)/0.92)_100%)]" aria-hidden="true" />
+            <div className="relative z-10 mx-auto flex min-h-[calc(100vh-2rem)] max-w-6xl flex-col">
+                <div className="flex items-center gap-3 py-4">
+                    <img src="/singra-icon.png" alt="" className="h-10 w-10" draggable={false} />
+                    <span className="text-xl font-semibold tracking-tight text-foreground">SingraVault</span>
+                </div>
+
+                <div className="flex flex-1 items-center justify-center py-8">
+            <Card className="w-full max-w-lg overflow-hidden border-primary/18 bg-[hsl(var(--el-1)/0.72)] shadow-[0_28px_80px_hsl(0_0%_0%/0.48)] backdrop-blur-2xl">
                 <CardHeader className="text-center">
                     <div className="flex justify-center mb-4">
-                        <div className="relative rounded-2xl border border-primary/25 bg-primary/10 p-4 shadow-[0_0_44px_hsl(var(--primary)/0.12)]">
-                            <Shield className="w-8 h-8 text-primary" />
-                            <Sparkles className="absolute -right-1 -top-1 h-4 w-4 text-amber-300" />
+                        <div className="rounded-full border border-primary/30 bg-[hsl(var(--el-2)/0.75)] p-3 shadow-[0_0_46px_hsl(var(--primary)/0.16)]">
+                            <img src="/singra-icon.png" alt="" className="h-10 w-10" draggable={false} />
                         </div>
                     </div>
                     <CardTitle className="text-2xl tracking-tight">
@@ -193,6 +210,18 @@ export function VaultUnlock() {
                 </CardHeader>
 
                 <CardContent className="space-y-4">
+                    <div className="flex items-center gap-3 rounded-xl border border-[hsl(var(--border)/0.42)] bg-[hsl(var(--el-2)/0.62)] px-4 py-3">
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-sm font-semibold text-primary">
+                            {accountInitials || <UserRound className="h-4 w-4" />}
+                        </span>
+                        <span className="min-w-0 flex-1 text-left">
+                            <span className="block text-sm font-semibold text-foreground">
+                                {t('auth.unlock.currentAccount', 'Aktuelles Konto')}
+                            </span>
+                            <span className="block truncate text-sm text-muted-foreground">{accountEmail}</span>
+                        </span>
+                    </div>
+
                     {/* Passkey unlock button (shown first if available) */}
                     {showPasskeyOption && (
                         <>
@@ -233,7 +262,7 @@ export function VaultUnlock() {
                                     type={showPassword ? 'text' : 'password'}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="ms-glass-input pl-10 pr-10"
+                                    className="ms-glass-input sv-password-input pl-10 pr-10"
                                     placeholder="••••••••••••"
                                     autoFocus={!showPasskeyOption}
                                     required
@@ -303,6 +332,12 @@ export function VaultUnlock() {
                     </form>
                 </CardContent>
             </Card>
+                </div>
+
+                <div className="pb-6 text-center text-sm text-muted-foreground">
+                    {t('auth.unlock.zeroKnowledgeHint', 'Zero-Knowledge geschützt. Deine Daten werden nur auf deinen Geräten entschlüsselt.')}
+                </div>
+            </div>
 
             {/* Two-Factor Verification Modal for Vault */}
             <TwoFactorVerificationModal

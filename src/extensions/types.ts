@@ -21,6 +21,8 @@ export type SettingsSurface = 'profile' | 'vault';
 export type SettingsTabId =
     | 'general'
     | 'security'
+    | 'billing'
+    | 'support'
     | 'billing-support'
     | 'data'
     | 'data-legal'

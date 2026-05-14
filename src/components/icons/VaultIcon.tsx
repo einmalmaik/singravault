@@ -40,7 +40,7 @@ export function VaultIcon({
       aria-label={decorative ? undefined : label}
       title={label}
     >
-      {definition.svgSrc ? (
+      {definition.svgSrc && definition.renderMode === 'image' ? (
         <img
           src={definition.svgSrc}
           alt=""
@@ -48,6 +48,22 @@ export function VaultIcon({
           loading="lazy"
           decoding="async"
           draggable={false}
+        />
+      ) : definition.svgSrc ? (
+        <span
+          className={cn('h-5 w-5', iconClassName)}
+          style={{
+            backgroundColor: definition.accent,
+            maskImage: `url(${definition.svgSrc})`,
+            maskPosition: 'center',
+            maskRepeat: 'no-repeat',
+            maskSize: 'contain',
+            WebkitMaskImage: `url(${definition.svgSrc})`,
+            WebkitMaskPosition: 'center',
+            WebkitMaskRepeat: 'no-repeat',
+            WebkitMaskSize: 'contain',
+          }}
+          aria-hidden="true"
         />
       ) : (
         <Icon className={cn('h-5 w-5', iconClassName)} />

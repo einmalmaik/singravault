@@ -240,6 +240,10 @@ function getSettingsTabLabel(
       return t('settings.tabs.general', 'Allgemein');
     case 'security':
       return t('settings.tabs.security', 'Sicherheit');
+    case 'billing':
+      return t('settings.tabs.billing', 'Abonnement');
+    case 'support':
+      return t('settings.tabs.support', 'Support');
     case 'billing-support':
       return t('settings.tabs.billingSupport', 'Abo & Support');
     case 'data':

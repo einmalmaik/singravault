@@ -61,10 +61,13 @@ export interface BrandIconDefinition {
   accent: string;
   Icon: LucideIcon;
   svgSrc: string | null;
+  renderMode: 'mask' | 'image';
 }
 
-type BrandIconBaseDefinition = Omit<BrandIconDefinition, 'svgSrc'> & {
+type BrandIconBaseDefinition = Omit<BrandIconDefinition, 'svgSrc' | 'renderMode'> & {
+  renderMode?: BrandIconDefinition['renderMode'];
   simpleIconSlug?: string;
+  imageSrc?: string;
 };
 
 function simpleIconUrl(slug: string | undefined): string | null {
@@ -85,10 +88,20 @@ function brand(
   return { id, label, accent, Icon, simpleIconSlug: simpleIconSlug ?? undefined };
 }
 
+function imageBrand(
+  id: string,
+  label: string,
+  accent: string,
+  Icon: LucideIcon,
+  imageSrc: string,
+): BrandIconBaseDefinition {
+  return { id, label, accent, Icon, renderMode: 'image', imageSrc };
+}
+
 const BRAND_ICON_BASE_REGISTRY: Record<string, BrandIconBaseDefinition> = {
   generic: brand('generic', 'Website', 'hsl(var(--accent))', Globe, null),
-  google: brand('google', 'Google', '#8ab4f8', Globe),
-  gmail: brand('gmail', 'Gmail', '#ea4335', Mail),
+  google: imageBrand('google', 'Google', '#4285f4', Globe, '/icons/brands/google-color.svg'),
+  gmail: imageBrand('gmail', 'Gmail', '#ea4335', Mail, '/icons/brands/gmail-color.svg'),
   'google-maps': brand('google-maps', 'Google Maps', '#34a853', Map, 'googlemaps'),
   'google-drive': brand('google-drive', 'Google Drive', '#fbbc04', HardDrive, 'googledrive'),
   github: brand('github', 'GitHub', '#ffffff', Github),
@@ -123,6 +136,15 @@ const BRAND_ICON_BASE_REGISTRY: Record<string, BrandIconBaseDefinition> = {
   netflix: brand('netflix', 'Netflix', '#e50914', Film),
   spotify: brand('spotify', 'Spotify', '#1db954', Music2),
   steam: brand('steam', 'Steam', '#66c0f4', Gamepad2),
+  gog: brand('gog', 'GOG.com', '#86328a', Gamepad2, 'gogdotcom'),
+  tinder: brand('tinder', 'Tinder', '#ff4458', Users),
+  riotgames: brand('riotgames', 'Riot Games', '#d32936', Gamepad2),
+  leagueoflegends: brand('leagueoflegends', 'League of Legends', '#c89b3c', Gamepad2),
+  valorant: brand('valorant', 'Valorant', '#fa4454', Gamepad2),
+  battlenet: brand('battlenet', 'Battle.net', '#148eff', Gamepad2, 'battledotnet'),
+  ubisoft: brand('ubisoft', 'Ubisoft', '#f8fafc', Gamepad2),
+  rockstargames: brand('rockstargames', 'Rockstar Games', '#fcaf17', Gamepad2),
+  itchio: brand('itchio', 'itch.io', '#fa5c5c', Gamepad2, 'itchdotio'),
   shopify: brand('shopify', 'Shopify', '#95bf47', ShoppingBag),
   wordpress: brand('wordpress', 'WordPress', '#21759b', FileText),
   vercel: brand('vercel', 'Vercel', '#f8fafc', Code2),
@@ -146,6 +168,20 @@ const BRAND_ICON_BASE_REGISTRY: Record<string, BrandIconBaseDefinition> = {
   ebay: brand('ebay', 'eBay', '#e53238', ShoppingBag),
   adobe: brand('adobe', 'Adobe', '#ff0000', AppWindow, null),
   canva: brand('canva', 'Canva', '#00c4cc', Figma, null),
+  jetbrains: brand('jetbrains', 'JetBrains', '#f8fafc', Code2),
+  intellijidea: brand('intellijidea', 'IntelliJ IDEA', '#f8fafc', Code2),
+  pycharm: brand('pycharm', 'PyCharm', '#21d789', Code2),
+  webstorm: brand('webstorm', 'WebStorm', '#00cdd7', Code2),
+  postman: brand('postman', 'Postman', '#ff6c37', Code2),
+  insomnia: brand('insomnia', 'Insomnia', '#4000bf', Code2),
+  notepadplusplus: brand('notepadplusplus', 'Notepad++', '#90e59a', FileText),
+  obsidian: brand('obsidian', 'Obsidian', '#7c3aed', NotebookTabs),
+  obsstudio: brand('obsstudio', 'OBS Studio', '#f8fafc', Video),
+  blender: brand('blender', 'Blender', '#f5792a', AppWindow),
+  autocad: brand('autocad', 'AutoCAD', '#e51050', AppWindow),
+  unity: brand('unity', 'Unity', '#f8fafc', AppWindow),
+  unrealengine: brand('unrealengine', 'Unreal Engine', '#f8fafc', AppWindow),
+  godot: brand('godot', 'Godot Engine', '#478cbf', AppWindow, 'godotengine'),
   openai: brand('openai', 'OpenAI', '#f8fafc', Bot, null),
   anthropic: brand('anthropic', 'Anthropic', '#d4a373', Bot),
   bmw: brand('bmw', 'BMW', '#0066b1', Store),
@@ -182,11 +218,20 @@ const BRAND_ICON_BASE_REGISTRY: Record<string, BrandIconBaseDefinition> = {
   linux: brand('linux', 'Linux', '#f8fafc', Server),
   playstation: brand('playstation', 'PlayStation', '#0070cc', Gamepad2),
   epicgames: brand('epicgames', 'Epic Games', '#f8fafc', Gamepad2),
+  ea: brand('ea', 'EA', '#ff4747', Gamepad2),
   roblox: brand('roblox', 'Roblox', '#f8fafc', Gamepad2),
+  hbo: brand('hbo', 'HBO', '#f8fafc', Tv),
+  hbomax: brand('hbomax', 'HBO Max', '#6b46ff', Tv),
+  audible: brand('audible', 'Audible', '#f7991c', BookOpen),
+  goodreads: brand('goodreads', 'Goodreads', '#553b08', BookOpen),
   duolingo: brand('duolingo', 'Duolingo', '#58cc02', BookOpen),
   coursera: brand('coursera', 'Coursera', '#0056d2', BookOpen),
   udemy: brand('udemy', 'Udemy', '#a435f0', BookOpen),
   deepl: brand('deepl', 'DeepL', '#0f2b46', FileText),
+  klarna: brand('klarna', 'Klarna', '#ffb3c7', CreditCard),
+  shopware: brand('shopware', 'Shopware', '#189eff', ShoppingBag),
+  etsy: brand('etsy', 'Etsy', '#f1641e', ShoppingBag),
+  zalando: brand('zalando', 'Zalando', '#ff6900', ShoppingBag),
   api: brand('api', 'API', 'hsl(var(--primary))', LinkIcon, null),
   server: brand('server', 'Server', 'hsl(var(--warning))', Server, null),
   database: brand('database', 'Database', 'hsl(var(--success))', Database, null),
@@ -199,7 +244,8 @@ export const BRAND_ICON_REGISTRY: Record<string, BrandIconDefinition> = Object.f
     id,
     {
       ...definition,
-      svgSrc: simpleIconUrl(definition.simpleIconSlug),
+      svgSrc: definition.imageSrc ?? simpleIconUrl(definition.simpleIconSlug),
+      renderMode: definition.renderMode ?? 'mask',
     },
   ]),
 ) as Record<string, BrandIconDefinition>;
