@@ -39,6 +39,7 @@ export interface PendingLocalOperation {
   readonly op: VaultOperationRow;
   readonly record: VaultRecordRow | null;
   readonly createdAtLocal: string;
+  readonly syncingStartedAtLocal?: string | null;
   readonly retryCount: number;
   readonly lastError: string | null;
   readonly lastSanitizedError?: string | null;

@@ -19,6 +19,8 @@ import type {
 import type { BuiltVaultOperation } from './vaultOpLogOperationBuilder';
 import { toVaultOperationRow, toVaultRecordRow } from './vaultOpLogOperationBuilder';
 
+const DEFAULT_SYNCING_RECOVERY_GRACE_MS = 120_000;
+
 export class VaultOpLogPendingQueue {
   private operations: PendingLocalOperation[] = [];
 
@@ -58,14 +60,22 @@ export class VaultOpLogPendingQueue {
   }
 
   async markSyncing(opId: string): Promise<void> {
-    this.operations = transitionOp(this.operations, opId, 'syncing');
+    if (!this.operations.some((e) => e.op.opId === opId)) {
+      throw new Error(`pending operation ${opId} not found in queue`);
+    }
+    const syncingStartedAtLocal = new Date().toISOString();
+    this.operations = this.operations.map((e) =>
+      e.op.opId === opId
+        ? { ...e, state: 'syncing' as PendingOperationState, syncingStartedAtLocal }
+        : e,
+    );
     await this.save();
   }
 
   async markSynced(opId: string, resultingVaultHead: string): Promise<void> {
     this.operations = this.operations.map((e) =>
       e.op.opId === opId
-        ? { ...e, state: 'synced' as PendingOperationState, op: { ...e.op, resultingVaultHead } }
+        ? { ...e, state: 'synced' as PendingOperationState, op: { ...e.op, resultingVaultHead }, syncingStartedAtLocal: null }
         : e,
     );
     await this.save();
@@ -74,7 +84,7 @@ export class VaultOpLogPendingQueue {
   async markSubmittedUnverified(opId: string, resultingVaultHead: string): Promise<void> {
     this.operations = this.operations.map((e) =>
       e.op.opId === opId
-        ? { ...e, state: 'submitted_unverified' as PendingOperationState, op: { ...e.op, resultingVaultHead }, lastError: null, lastSanitizedError: null }
+        ? { ...e, state: 'submitted_unverified' as PendingOperationState, op: { ...e.op, resultingVaultHead }, syncingStartedAtLocal: null, lastError: null, lastSanitizedError: null }
         : e,
     );
     await this.save();
@@ -87,6 +97,7 @@ export class VaultOpLogPendingQueue {
         ? {
             ...e,
             state: 'submitted_unverified_needs_verification' as PendingOperationState,
+            syncingStartedAtLocal: null,
             lastError: sanitized,
             lastSanitizedError: sanitized,
           }
@@ -99,21 +110,21 @@ export class VaultOpLogPendingQueue {
     const sanitized = sanitizeQueueErrorForStorage(error);
     this.operations = this.operations.map((e) =>
       e.op.opId === opId
-        ? { ...e, state: 'pending' as PendingOperationState, retryCount: e.retryCount + 1, lastError: sanitized, lastSanitizedError: sanitized }
+        ? { ...e, state: 'pending' as PendingOperationState, syncingStartedAtLocal: null, retryCount: e.retryCount + 1, lastError: sanitized, lastSanitizedError: sanitized }
         : e,
     );
     await this.save();
   }
 
   async markRebaseNeeded(opId: string): Promise<void> {
-    this.operations = transitionOp(this.operations, opId, 'rebase_needed');
+    this.operations = transitionOp(this.operations, opId, 'rebase_needed', { syncingStartedAtLocal: null });
     await this.save();
   }
 
   async markConflict(opId: string, error?: string): Promise<void> {
     const sanitized = error ? sanitizeQueueErrorForStorage(error) : null;
     this.operations = this.operations.map((e) =>
-      e.op.opId === opId ? { ...e, state: 'conflict' as PendingOperationState, lastError: sanitized, lastSanitizedError: sanitized } : e,
+      e.op.opId === opId ? { ...e, state: 'conflict' as PendingOperationState, syncingStartedAtLocal: null, lastError: sanitized, lastSanitizedError: sanitized } : e,
     );
     await this.save();
   }
@@ -121,7 +132,7 @@ export class VaultOpLogPendingQueue {
   async markBlockedRevoked(opId: string, error = 'device_revoked'): Promise<void> {
     const sanitized = sanitizeQueueErrorForStorage(error);
     this.operations = this.operations.map((e) =>
-      e.op.opId === opId ? { ...e, state: 'blocked_revoked' as PendingOperationState, lastError: sanitized, lastSanitizedError: sanitized } : e,
+      e.op.opId === opId ? { ...e, state: 'blocked_revoked' as PendingOperationState, syncingStartedAtLocal: null, lastError: sanitized, lastSanitizedError: sanitized } : e,
     );
     await this.save();
   }
@@ -133,6 +144,7 @@ export class VaultOpLogPendingQueue {
         ? {
             ...e,
             state: 'blocked_revoked' as PendingOperationState,
+            syncingStartedAtLocal: null,
             lastError: 'device_revoked',
             lastSanitizedError: 'device_revoked',
           }
@@ -142,14 +154,14 @@ export class VaultOpLogPendingQueue {
   }
 
   async markSuperseded(opId: string): Promise<void> {
-    this.operations = transitionOp(this.operations, opId, 'superseded');
+    this.operations = transitionOp(this.operations, opId, 'superseded', { syncingStartedAtLocal: null });
     await this.save();
   }
 
   async markFailed(opId: string, error: string): Promise<void> {
     const sanitized = sanitizeQueueErrorForStorage(error);
     this.operations = this.operations.map((e) =>
-      e.op.opId === opId ? { ...e, state: 'failed' as PendingOperationState, lastError: sanitized, lastSanitizedError: sanitized } : e,
+      e.op.opId === opId ? { ...e, state: 'failed' as PendingOperationState, syncingStartedAtLocal: null, lastError: sanitized, lastSanitizedError: sanitized } : e,
     );
     await this.save();
   }
@@ -176,12 +188,18 @@ export class VaultOpLogPendingQueue {
    * roll them back to `pending` with a diagnostic lastError so the
    * next retry attempt can resolve the state via the server.
    */
-  async recoverAfterCrash(): Promise<void> {
+  async recoverAfterCrash(options?: {
+    readonly now?: Date;
+    readonly staleAfterMs?: number;
+  }): Promise<void> {
+    const now = options?.now ?? new Date();
+    const staleAfterMs = options?.staleAfterMs ?? DEFAULT_SYNCING_RECOVERY_GRACE_MS;
     this.operations = this.operations.map((e) =>
-      e.state === 'syncing'
+      e.state === 'syncing' && isStaleSyncingOperation(e, now, staleAfterMs)
         ? {
             ...e,
             state: 'pending' as PendingOperationState,
+            syncingStartedAtLocal: null,
             retryCount: e.retryCount + 1,
             lastError: 'recovered_from_crash: operation was syncing when app terminated',
             lastSanitizedError: 'recovered_from_crash: operation was syncing when app terminated',
@@ -200,12 +218,26 @@ function transitionOp(
   ops: PendingLocalOperation[],
   opId: string,
   newState: PendingOperationState,
+  patch: Partial<PendingLocalOperation> = {},
 ): PendingLocalOperation[] {
   const found = ops.some((e) => e.op.opId === opId);
   if (!found) {
     throw new Error(`pending operation ${opId} not found in queue`);
   }
-  return ops.map((e) => (e.op.opId === opId ? { ...e, state: newState } : e));
+  return ops.map((e) => (e.op.opId === opId ? { ...e, ...patch, state: newState } : e));
+}
+
+function isStaleSyncingOperation(
+  entry: PendingLocalOperation,
+  now: Date,
+  staleAfterMs: number,
+): boolean {
+  const startedAt = entry.syncingStartedAtLocal ?? entry.createdAtLocal;
+  const startedAtMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedAtMs)) {
+    return true;
+  }
+  return now.getTime() - startedAtMs >= staleAfterMs;
 }
 
 /**

@@ -542,6 +542,277 @@ describe.sequential('VaultItemList', () => {
     });
   });
 
+  it('does not submit a signed update when an item is dropped on its current category', async () => {
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    const category = makeVerifiedOpLogCategory('category-work', { name: 'Arbeit' });
+    const categorizedItem = makeVerifiedOpLogItem('work-item', {
+      title: 'Work Item',
+      itemType: 'password',
+      isFavorite: false,
+      categoryRecordId: 'category-work',
+      username: 'work-user',
+      password: 'work-password',
+    });
+    const looseItem = makeVerifiedOpLogItem('loose-item', {
+      title: 'Loose Item',
+      itemType: 'password',
+      isFavorite: false,
+      categoryRecordId: null,
+      username: 'loose-user',
+      password: 'loose-password',
+    });
+    mockVaultContext.opLogLocalVaultState = makeOpLogState([category, categorizedItem, looseItem]);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: [
+        { recordId: 'work-item', recordType: 'item', recordVersion: 1 },
+        { recordId: 'loose-item', recordType: 'item', recordVersion: 1 },
+      ],
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    const categoryHeader = await screen.findByText('Arbeit');
+    const dataTransfer = {
+      types: ['application/x-singra-vault-item-id'],
+      getData: vi.fn((type: string) => (type === 'application/x-singra-vault-item-id' ? 'work-item' : '')),
+      setData: vi.fn(),
+      effectAllowed: '',
+      dropEffect: '',
+    };
+
+    fireEvent.dragOver(categoryHeader, { dataTransfer });
+    fireEvent.drop(categoryHeader, { dataTransfer });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockVaultContext.opLogUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it('submits a signed category move from the touch drag handle after a long press', async () => {
+    const originalSetPointerCapture = HTMLElement.prototype.setPointerCapture;
+    const originalReleasePointerCapture = HTMLElement.prototype.releasePointerCapture;
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    try {
+      mockVaultContext.vaultMigrationStatus = 'verified';
+      const category = makeVerifiedOpLogCategory('category-work', { name: 'Arbeit' });
+      const categorizedItem = makeVerifiedOpLogItem('work-item', {
+        title: 'Work Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: 'category-work',
+        username: 'work-user',
+        password: 'work-password',
+      });
+      const looseItem = makeVerifiedOpLogItem('loose-item', {
+        title: 'Loose Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+        username: 'loose-user',
+        password: 'loose-password',
+      });
+      mockVaultContext.opLogLocalVaultState = makeOpLogState([category, categorizedItem, looseItem]);
+      mockVaultContext.opLogUiView = {
+        vaultSecurityMode: 'normal',
+        verifiedItems: [
+          { recordId: 'work-item', recordType: 'item', recordVersion: 1 },
+          { recordId: 'loose-item', recordType: 'item', recordVersion: 1 },
+        ],
+        quarantinedItems: [],
+        conflictedItems: [],
+        deletedItemIds: [],
+        restoredItemIds: [],
+      };
+
+      renderList();
+
+      const categoryLabel = await screen.findByText('Arbeit');
+      const categoryDropTarget = categoryLabel.closest('[data-vault-category-drop-id]');
+      expect(categoryDropTarget).not.toBeNull();
+      Object.defineProperty(document, 'elementFromPoint', {
+        configurable: true,
+        value: vi.fn(() => categoryDropTarget),
+      });
+
+      const handles = await screen.findAllByLabelText('Eintrag verschieben');
+      const looseHandle = handles.find((handle) => (
+        handle.closest('[draggable="true"]')?.textContent?.includes('Loose Item')
+      ));
+      expect(looseHandle).toBeDefined();
+
+      vi.useFakeTimers();
+      fireEvent.pointerDown(looseHandle as HTMLElement, {
+        pointerId: 1,
+        pointerType: 'touch',
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      fireEvent.pointerUp(looseHandle as HTMLElement, {
+        pointerId: 1,
+        pointerType: 'touch',
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockVaultContext.opLogUpdateItem).toHaveBeenCalledWith(
+        'loose-item',
+        expect.objectContaining({ categoryRecordId: 'category-work' }),
+      );
+    } finally {
+      if (originalSetPointerCapture) {
+        Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+          configurable: true,
+          value: originalSetPointerCapture,
+        });
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture;
+      }
+      if (originalReleasePointerCapture) {
+        Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+          configurable: true,
+          value: originalReleasePointerCapture,
+        });
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).releasePointerCapture;
+      }
+      Object.defineProperty(document, 'elementFromPoint', {
+        configurable: true,
+        value: originalElementFromPoint,
+      });
+      vi.useRealTimers();
+    }
+  });
+
+  it('submits a signed category move from the pointer drag handle without native HTML drag', async () => {
+    const originalSetPointerCapture = HTMLElement.prototype.setPointerCapture;
+    const originalReleasePointerCapture = HTMLElement.prototype.releasePointerCapture;
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    try {
+      mockVaultContext.vaultMigrationStatus = 'verified';
+      const category = makeVerifiedOpLogCategory('category-work', { name: 'Arbeit' });
+      const categorizedItem = makeVerifiedOpLogItem('work-item', {
+        title: 'Work Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: 'category-work',
+        username: 'work-user',
+        password: 'work-password',
+      });
+      const looseItem = makeVerifiedOpLogItem('loose-item', {
+        title: 'Loose Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+        username: 'loose-user',
+        password: 'loose-password',
+      });
+      mockVaultContext.opLogLocalVaultState = makeOpLogState([category, categorizedItem, looseItem]);
+      mockVaultContext.opLogUiView = {
+        vaultSecurityMode: 'normal',
+        verifiedItems: [
+          { recordId: 'work-item', recordType: 'item', recordVersion: 1 },
+          { recordId: 'loose-item', recordType: 'item', recordVersion: 1 },
+        ],
+        quarantinedItems: [],
+        conflictedItems: [],
+        deletedItemIds: [],
+        restoredItemIds: [],
+      };
+
+      renderList();
+
+      const categoryLabel = await screen.findByText('Arbeit');
+      const categoryDropTarget = categoryLabel.closest('[data-vault-category-drop-id]');
+      expect(categoryDropTarget).not.toBeNull();
+      Object.defineProperty(document, 'elementFromPoint', {
+        configurable: true,
+        value: vi.fn(() => categoryDropTarget),
+      });
+
+      const handles = await screen.findAllByLabelText('Eintrag verschieben');
+      const looseHandle = handles.find((handle) => (
+        handle.closest('[draggable="true"]')?.textContent?.includes('Loose Item')
+      ));
+      expect(looseHandle).toBeDefined();
+
+      fireEvent.pointerDown(looseHandle as HTMLElement, {
+        pointerId: 2,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      });
+      fireEvent.pointerUp(looseHandle as HTMLElement, {
+        pointerId: 2,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+      });
+
+      await waitFor(() => {
+        expect(mockVaultContext.opLogUpdateItem).toHaveBeenCalledWith(
+          'loose-item',
+          expect.objectContaining({ categoryRecordId: 'category-work' }),
+        );
+      });
+    } finally {
+      if (originalSetPointerCapture) {
+        Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+          configurable: true,
+          value: originalSetPointerCapture,
+        });
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture;
+      }
+      if (originalReleasePointerCapture) {
+        Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+          configurable: true,
+          value: originalReleasePointerCapture,
+        });
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).releasePointerCapture;
+      }
+      Object.defineProperty(document, 'elementFromPoint', {
+        configurable: true,
+        value: originalElementFromPoint,
+      });
+    }
+  });
+
   it('submits a signed update when a table favorite star is toggled', async () => {
     mockVaultContext.vaultMigrationStatus = 'verified';
     const records = [
@@ -592,6 +863,59 @@ describe.sequential('VaultItemList', () => {
         expect.objectContaining({ isFavorite: true }),
       );
     });
+  });
+
+  it('rate-limits rapid favorite toggles so OpLog writes can settle', async () => {
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    const records = [
+      makeVerifiedOpLogItem('favorite-item', {
+        title: 'Favorite Candidate',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+        username: 'fav-user',
+        password: 'fav-password',
+      }),
+      makeVerifiedOpLogItem('other-item', {
+        title: 'Other Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+        username: 'other-user',
+        password: 'other-password',
+      }),
+    ];
+    mockVaultContext.opLogLocalVaultState = makeOpLogState(records);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: records.map((record) => ({
+        recordId: record.record.recordId,
+        recordType: 'item',
+        recordVersion: 1,
+      })),
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    const favoriteRow = (await screen.findAllByText('Favorite Candidate'))[0].closest('[draggable="true"]');
+    const otherRow = (await screen.findAllByText('Other Item'))[0].closest('[draggable="true"]');
+    expect(favoriteRow).not.toBeNull();
+    expect(otherRow).not.toBeNull();
+
+    fireEvent.click(within(favoriteRow as HTMLElement).getByLabelText('Als Favorit markieren'));
+    fireEvent.click(within(otherRow as HTMLElement).getByLabelText('Als Favorit markieren'));
+
+    await waitFor(() => {
+      expect(mockVaultContext.opLogUpdateItem).toHaveBeenCalledTimes(1);
+    });
+    expect(mockVaultContext.opLogUpdateItem).toHaveBeenCalledWith(
+      'favorite-item',
+      expect.objectContaining({ isFavorite: true }),
+    );
   });
 
   it('keeps an empty verified OpLog vault on the empty state during background refresh', async () => {

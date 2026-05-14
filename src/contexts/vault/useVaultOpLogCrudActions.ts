@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, type MutableRefObject } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { User } from '@supabase/supabase-js';
 import type { VaultItemData } from '@/services/cryptoService';
@@ -48,6 +48,7 @@ import type { LocalVaultState, LocalVerifiedRecord } from '@/services/vaultOpLog
 import type { RecordType } from '@/services/vaultOpLog/types';
 import type { VaultContextType } from './vaultContextTypes';
 import type { VaultProviderState } from './useVaultProviderState';
+import { createOpLogActionQueue, type OpLogActionQueue } from './opLogActionQueue';
 
 interface UseVaultOpLogCrudActionsInput {
   readonly state: VaultProviderState;
@@ -137,7 +138,25 @@ function describeDeviceTrustSubmitFailure(
   return `${operationLabel} wurde nicht gespeichert: ${result.kind}`;
 }
 
+function getOpLogActionQueue(
+  ref: MutableRefObject<OpLogActionQueue | null>,
+): OpLogActionQueue {
+  if (ref.current && typeof ref.current.run === 'function') {
+    return ref.current;
+  }
+
+  const queue = createOpLogActionQueue();
+  ref.current = queue;
+  return queue;
+}
+
 export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
+  const opLogActionQueueRef = useRef<OpLogActionQueue | null>(null);
+
+  const runSerializedAction = useCallback(<T,>(action: () => Promise<T>): Promise<T> => (
+    getOpLogActionQueue(opLogActionQueueRef).run(action)
+  ), []);
+
   const loadRuntimeContext = useCallback(async (): Promise<VerifiedOpLogRuntimeContext> => {
     const { state, user } = input;
     if (!user) {
@@ -233,30 +252,34 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
   const wrap = useCallback(async (
     action: () => Promise<void>,
   ): Promise<{ error: Error | null }> => {
-    try {
-      await action();
-      await afterVerifiedCommit();
-      return { error: null };
-    } catch (error) {
-      return { error: error instanceof Error ? error : new Error('OpLog-Aktion fehlgeschlagen.') };
-    }
-  }, [afterVerifiedCommit]);
+    return runSerializedAction(async () => {
+      try {
+        await action();
+        await afterVerifiedCommit();
+        return { error: null };
+      } catch (error) {
+        return { error: error instanceof Error ? error : new Error('OpLog-Aktion fehlgeschlagen.') };
+      }
+    });
+  }, [afterVerifiedCommit, runSerializedAction]);
 
   const opLogCreateItem = useCallback(async (
     plaintext: ItemPlaintext,
   ): Promise<{ error: Error | null; recordId: string | null }> => {
-    try {
-      const { deps, localVaultState } = await loadRuntimeContext();
-      const result = await createItem(deps, { baseVaultHead: localVaultState.lastVerifiedVaultHead }, plaintext);
-      await afterVerifiedCommit();
-      return { error: null, recordId: result.recordId };
-    } catch (error) {
-      return {
-        error: error instanceof Error ? error : new Error('OpLog-Create fehlgeschlagen.'),
-        recordId: null,
-      };
-    }
-  }, [afterVerifiedCommit, loadRuntimeContext]);
+    return runSerializedAction(async () => {
+      try {
+        const { deps, localVaultState } = await loadRuntimeContext();
+        const result = await createItem(deps, { baseVaultHead: localVaultState.lastVerifiedVaultHead }, plaintext);
+        await afterVerifiedCommit();
+        return { error: null, recordId: result.recordId };
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error : new Error('OpLog-Create fehlgeschlagen.'),
+          recordId: null,
+        };
+      }
+    });
+  }, [afterVerifiedCommit, loadRuntimeContext, runSerializedAction]);
 
   const opLogUpdateItem = useCallback((recordId: string, plaintext: ItemPlaintext) => wrap(async () => {
     const { deps, localVaultState } = await loadRuntimeContext();
@@ -271,18 +294,20 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
   const opLogCreateCategory = useCallback(async (
     plaintext: CategoryPlaintext,
   ): Promise<{ error: Error | null; recordId: string | null }> => {
-    try {
-      const { deps, localVaultState } = await loadRuntimeContext();
-      const result = await createCategory(deps, { baseVaultHead: localVaultState.lastVerifiedVaultHead }, plaintext);
-      await afterVerifiedCommit();
-      return { error: null, recordId: result.recordId };
-    } catch (error) {
-      return {
-        error: error instanceof Error ? error : new Error('OpLog-Create fehlgeschlagen.'),
-        recordId: null,
-      };
-    }
-  }, [afterVerifiedCommit, loadRuntimeContext]);
+    return runSerializedAction(async () => {
+      try {
+        const { deps, localVaultState } = await loadRuntimeContext();
+        const result = await createCategory(deps, { baseVaultHead: localVaultState.lastVerifiedVaultHead }, plaintext);
+        await afterVerifiedCommit();
+        return { error: null, recordId: result.recordId };
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error : new Error('OpLog-Create fehlgeschlagen.'),
+          recordId: null,
+        };
+      }
+    });
+  }, [afterVerifiedCommit, loadRuntimeContext, runSerializedAction]);
 
   const opLogUpdateCategory = useCallback((recordId: string, plaintext: CategoryPlaintext) => wrap(async () => {
     const { deps, localVaultState } = await loadRuntimeContext();
@@ -311,173 +336,185 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
     );
   }), [loadRuntimeContext, wrap]);
 
-  const opLogRestoreRecord = useCallback((recordId: string) => input.state.runQuarantineAction(recordId, async () => {
-    const { deps, localVaultState } = await loadRuntimeContext();
-    const record = localVaultState.recordsById.get(recordId) ?? null;
-    if (!record || record.recordState !== 'deletedByTrustedDevice') {
-      throw new VaultOpLogUiActionBlockedError('Restore benötigt einen verifizierten Tombstone-Kontext.');
-    }
+  const opLogRestoreRecord = useCallback((recordId: string) => runSerializedAction(() =>
+    input.state.runQuarantineAction(recordId, async () => {
+      const { deps, localVaultState } = await loadRuntimeContext();
+      const record = localVaultState.recordsById.get(recordId) ?? null;
+      if (!record || record.recordState !== 'deletedByTrustedDevice') {
+        throw new VaultOpLogUiActionBlockedError('Restore benötigt einen verifizierten Tombstone-Kontext.');
+      }
 
-    const trustedState = await loadTrustedRecoverySnapshotState(deps.userId);
-    const trustedSnapshot = trustedState.trustedSnapshot;
-    const trustedItem = trustedSnapshot?.items.find((item) => item.id === recordId) ?? null;
-    if (!trustedSnapshot || !trustedItem || !trustedSnapshot.vaultId) {
-      throw new VaultOpLogUiActionBlockedError('Kein verifizierter Trusted-Snapshot-Kontext für Restore verfügbar.');
-    }
+      const trustedState = await loadTrustedRecoverySnapshotState(deps.userId);
+      const trustedSnapshot = trustedState.trustedSnapshot;
+      const trustedItem = trustedSnapshot?.items.find((item) => item.id === recordId) ?? null;
+      if (!trustedSnapshot || !trustedItem || !trustedSnapshot.vaultId) {
+        throw new VaultOpLogUiActionBlockedError('Kein verifizierter Trusted-Snapshot-Kontext für Restore verfügbar.');
+      }
 
-    const snapshotId = `trusted-recovery:${trustedSnapshot.updatedAt}`;
-    const restoredData = await input.decryptTrustedRecoverySnapshotItem(
-      trustedItem,
-      snapshotId,
-      trustedSnapshot.vaultId,
-    );
-    await restoreRecord(
-      deps,
-      recordId,
-      'item',
-      recordBase(localVaultState, recordId),
-      textEncoder.encode(JSON.stringify(itemPlaintextFromVaultItemData(restoredData))),
-    );
-    await afterVerifiedCommit();
-  }), [afterVerifiedCommit, input, loadRuntimeContext]);
-
-  const opLogDeleteUntrustedRecord = useCallback((recordId: string) => input.state.runQuarantineAction(recordId, async () => {
-    const { deps, localVaultState } = await loadRuntimeContext();
-    const record = localVaultState.recordsById.get(recordId) ?? null;
-    if (!record || (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')) {
-      throw new VaultOpLogUiActionBlockedError('Delete benötigt verifizierte Record-Basisdaten.');
-    }
-    if (record.record.recordType === 'category') {
-      await deleteCategory(
+      const snapshotId = `trusted-recovery:${trustedSnapshot.updatedAt}`;
+      const restoredData = await input.decryptTrustedRecoverySnapshotItem(
+        trustedItem,
+        snapshotId,
+        trustedSnapshot.vaultId,
+      );
+      await restoreRecord(
         deps,
         recordId,
+        'item',
         recordBase(localVaultState, recordId),
-        getReferencedVerifiedItemIdsForCategory(localVaultState, recordId),
+        textEncoder.encode(JSON.stringify(itemPlaintextFromVaultItemData(restoredData))),
       );
-    } else {
-      await deleteItem(deps, recordId, recordBase(localVaultState, recordId));
-    }
-    await afterVerifiedCommit();
-  }), [afterVerifiedCommit, input, loadRuntimeContext]);
+      await afterVerifiedCommit();
+    }),
+  ), [afterVerifiedCommit, input, loadRuntimeContext, runSerializedAction]);
 
-  const opLogResolveConflict = useCallback((recordId: string) => input.state.runQuarantineAction(recordId, async () => {
-    const { deps, localVaultState } = await loadRuntimeContext();
-    const conflict = localVaultState.conflictsByRecordId.get(recordId);
-    const record = localVaultState.recordsById.get(recordId) ?? null;
-    if (!conflict || !record || (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')) {
-      throw new VaultOpLogUiActionBlockedError('Resolve benötigt einen verifizierten lokalen Konflikt-Kontext.');
-    }
-    await resolveConflict(
-      deps,
-      recordId,
-      record.record.recordType as Extract<RecordType, 'item' | 'category'>,
-      recordBase(localVaultState, recordId),
-      encodeResolvedPlaintext(record),
-    );
-    await afterVerifiedCommit();
-  }), [afterVerifiedCommit, input, loadRuntimeContext]);
+  const opLogDeleteUntrustedRecord = useCallback((recordId: string) => runSerializedAction(() =>
+    input.state.runQuarantineAction(recordId, async () => {
+      const { deps, localVaultState } = await loadRuntimeContext();
+      const record = localVaultState.recordsById.get(recordId) ?? null;
+      if (!record || (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')) {
+        throw new VaultOpLogUiActionBlockedError('Delete benötigt verifizierte Record-Basisdaten.');
+      }
+      if (record.record.recordType === 'category') {
+        await deleteCategory(
+          deps,
+          recordId,
+          recordBase(localVaultState, recordId),
+          getReferencedVerifiedItemIdsForCategory(localVaultState, recordId),
+        );
+      } else {
+        await deleteItem(deps, recordId, recordBase(localVaultState, recordId));
+      }
+      await afterVerifiedCommit();
+    }),
+  ), [afterVerifiedCommit, input, loadRuntimeContext, runSerializedAction]);
+
+  const opLogResolveConflict = useCallback((recordId: string) => runSerializedAction(() =>
+    input.state.runQuarantineAction(recordId, async () => {
+      const { deps, localVaultState } = await loadRuntimeContext();
+      const conflict = localVaultState.conflictsByRecordId.get(recordId);
+      const record = localVaultState.recordsById.get(recordId) ?? null;
+      if (!conflict || !record || (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')) {
+        throw new VaultOpLogUiActionBlockedError('Resolve benötigt einen verifizierten lokalen Konflikt-Kontext.');
+      }
+      await resolveConflict(
+        deps,
+        recordId,
+        record.record.recordType as Extract<RecordType, 'item' | 'category'>,
+        recordBase(localVaultState, recordId),
+        encodeResolvedPlaintext(record),
+      );
+      await afterVerifiedCommit();
+    }),
+  ), [afterVerifiedCommit, input, loadRuntimeContext, runSerializedAction]);
 
   const opLogApproveDeviceRequest = useCallback(async (requestId: string): Promise<{ error: Error | null }> => {
-    try {
-      const { deps, localVaultState } = await loadRuntimeContext();
-      
-      const approveResult = await approvePendingDeviceRequest(deps.rpcClient, requestId, deps.deviceId);
+    return runSerializedAction(async () => {
+      try {
+        const { deps, localVaultState } = await loadRuntimeContext();
 
-      if (approveResult.kind !== 'approved') {
-        throw new Error(`Konnte Anfrage nicht genehmigen: ${approveResult.kind}`);
+        const approveResult = await approvePendingDeviceRequest(deps.rpcClient, requestId, deps.deviceId);
+
+        if (approveResult.kind !== 'approved') {
+          throw new Error(`Konnte Anfrage nicht genehmigen: ${approveResult.kind}`);
+        }
+
+        const builtOp = await buildAddDeviceOperation({
+          opId: crypto.randomUUID(),
+          intentId: crypto.randomUUID(),
+          rebasedFromOpId: null,
+          vaultId: deps.vaultId,
+          deviceId: deps.deviceId,
+          deviceSigningKey: deps.deviceSigningKey,
+          targetDeviceId: approveResult.requestedDeviceId,
+          targetPublicSigningKey: approveResult.requestedPublicSigningKey,
+          targetDeviceName: approveResult.requestedDeviceName,
+          baseVaultHead: localVaultState.lastVerifiedVaultHead,
+          trustEpoch: deps.trustEpoch,
+        });
+
+        const submitResult = await submitVaultOperation(
+          deps.rpcClient,
+          toVaultOperationRowFromSigned(builtOp.signedOperation, builtOp.resultingVaultHead),
+          null,
+          buildAddDeviceTrustPayload(builtOp, deps.deviceId),
+        );
+
+        if (submitResult.kind !== 'applied') {
+          throw new Error(describeDeviceTrustSubmitFailure(submitResult, 'Add-Device-Operation'));
+        }
+
+        await afterVerifiedCommit();
+        return { error: null };
+      } catch (error) {
+        return { error: error instanceof Error ? error : new Error('Geräte-Genehmigung fehlgeschlagen.') };
       }
-
-      const builtOp = await buildAddDeviceOperation({
-        opId: crypto.randomUUID(),
-        intentId: crypto.randomUUID(),
-        rebasedFromOpId: null,
-        vaultId: deps.vaultId,
-        deviceId: deps.deviceId,
-        deviceSigningKey: deps.deviceSigningKey,
-        targetDeviceId: approveResult.requestedDeviceId,
-        targetPublicSigningKey: approveResult.requestedPublicSigningKey,
-        targetDeviceName: approveResult.requestedDeviceName,
-        baseVaultHead: localVaultState.lastVerifiedVaultHead,
-        trustEpoch: deps.trustEpoch,
-      });
-
-      const submitResult = await submitVaultOperation(
-        deps.rpcClient,
-        toVaultOperationRowFromSigned(builtOp.signedOperation, builtOp.resultingVaultHead),
-        null,
-        buildAddDeviceTrustPayload(builtOp, deps.deviceId),
-      );
-
-      if (submitResult.kind !== 'applied') {
-        throw new Error(describeDeviceTrustSubmitFailure(submitResult, 'Add-Device-Operation'));
-      }
-
-      await afterVerifiedCommit();
-      return { error: null };
-    } catch (error) {
-      return { error: error instanceof Error ? error : new Error('Geräte-Genehmigung fehlgeschlagen.') };
-    }
-  }, [afterVerifiedCommit, loadRuntimeContext]);
+    });
+  }, [afterVerifiedCommit, loadRuntimeContext, runSerializedAction]);
 
   const opLogRejectDeviceRequest = useCallback(async (requestId: string): Promise<{ error: Error | null }> => {
-    try {
-      const { deps } = await loadRuntimeContext();
-      const rejectResult = await rejectPendingDeviceRequest(deps.rpcClient, requestId, deps.deviceId);
+    return runSerializedAction(async () => {
+      try {
+        const { deps } = await loadRuntimeContext();
+        const rejectResult = await rejectPendingDeviceRequest(deps.rpcClient, requestId, deps.deviceId);
 
-      if (rejectResult.kind !== 'rejected') {
-        throw new Error(`Konnte Anfrage nicht ablehnen: ${rejectResult.kind}`);
+        if (rejectResult.kind !== 'rejected') {
+          throw new Error(`Konnte Anfrage nicht ablehnen: ${rejectResult.kind}`);
+        }
+
+        return { error: null };
+      } catch (error) {
+        return { error: error instanceof Error ? error : new Error('Geräte-Ablehnung fehlgeschlagen.') };
       }
-
-      return { error: null };
-    } catch (error) {
-      return { error: error instanceof Error ? error : new Error('Geräte-Ablehnung fehlgeschlagen.') };
-    }
-  }, [loadRuntimeContext]);
+    });
+  }, [loadRuntimeContext, runSerializedAction]);
 
   const opLogRevokeDevice = useCallback(async (targetDeviceId: string): Promise<{ error: Error | null }> => {
-    try {
-      const { deps, localVaultState } = await loadRuntimeContext();
-      const trustedDevices = Array.from(localVaultState.trustedDevicesById.values())
-        .filter((device) => device.status === 'trusted');
-      if (trustedDevices.length <= 1) {
-        const recoveryStatus = await getVaultRecoveryCodeStatus(deps.vaultId);
-        if (!recoveryStatus.hasActiveSet || recoveryStatus.remainingCodes < 1) {
-          throw new VaultOpLogUiActionBlockedError('Das letzte vertrauenswürdige Gerät kann erst entfernt werden, wenn mindestens ein aktiver Recovery-Code verfügbar ist.');
+    return runSerializedAction(async () => {
+      try {
+        const { deps, localVaultState } = await loadRuntimeContext();
+        const trustedDevices = Array.from(localVaultState.trustedDevicesById.values())
+          .filter((device) => device.status === 'trusted');
+        if (trustedDevices.length <= 1) {
+          const recoveryStatus = await getVaultRecoveryCodeStatus(deps.vaultId);
+          if (!recoveryStatus.hasActiveSet || recoveryStatus.remainingCodes < 1) {
+            throw new VaultOpLogUiActionBlockedError('Das letzte vertrauenswürdige Gerät kann erst entfernt werden, wenn mindestens ein aktiver Recovery-Code verfügbar ist.');
+          }
         }
+        if (!trustedDevices.some((device) => device.deviceId === targetDeviceId)) {
+          throw new VaultOpLogUiActionBlockedError('Dieses Gerät ist nicht als vertrauenswürdig registriert.');
+        }
+
+        const builtOp = await buildRevokeDeviceOperation({
+          opId: crypto.randomUUID(),
+          intentId: crypto.randomUUID(),
+          rebasedFromOpId: null,
+          vaultId: deps.vaultId,
+          deviceId: deps.deviceId,
+          deviceSigningKey: deps.deviceSigningKey,
+          targetDeviceId,
+          baseVaultHead: localVaultState.lastVerifiedVaultHead,
+          trustEpoch: deps.trustEpoch,
+        });
+
+        const submitResult = await submitVaultOperation(
+          deps.rpcClient,
+          toVaultOperationRowFromSigned(builtOp.signedOperation, builtOp.resultingVaultHead),
+          null,
+          buildRevokeDeviceTrustPayload(builtOp),
+        );
+
+        if (submitResult.kind !== 'applied') {
+          throw new Error(describeDeviceTrustSubmitFailure(submitResult, 'Revoke-Device-Operation'));
+        }
+
+        await afterVerifiedCommit();
+        return { error: null };
+      } catch (error) {
+        return { error: error instanceof Error ? error : new Error('Gerät konnte nicht entfernt werden.') };
       }
-      if (!trustedDevices.some((device) => device.deviceId === targetDeviceId)) {
-        throw new VaultOpLogUiActionBlockedError('Dieses Gerät ist nicht als vertrauenswürdig registriert.');
-      }
-
-      const builtOp = await buildRevokeDeviceOperation({
-        opId: crypto.randomUUID(),
-        intentId: crypto.randomUUID(),
-        rebasedFromOpId: null,
-        vaultId: deps.vaultId,
-        deviceId: deps.deviceId,
-        deviceSigningKey: deps.deviceSigningKey,
-        targetDeviceId,
-        baseVaultHead: localVaultState.lastVerifiedVaultHead,
-        trustEpoch: deps.trustEpoch,
-      });
-
-      const submitResult = await submitVaultOperation(
-        deps.rpcClient,
-        toVaultOperationRowFromSigned(builtOp.signedOperation, builtOp.resultingVaultHead),
-        null,
-        buildRevokeDeviceTrustPayload(builtOp),
-      );
-
-      if (submitResult.kind !== 'applied') {
-        throw new Error(describeDeviceTrustSubmitFailure(submitResult, 'Revoke-Device-Operation'));
-      }
-
-      await afterVerifiedCommit();
-      return { error: null };
-    } catch (error) {
-      return { error: error instanceof Error ? error : new Error('Gerät konnte nicht entfernt werden.') };
-    }
-  }, [afterVerifiedCommit, loadRuntimeContext]);
+    });
+  }, [afterVerifiedCommit, loadRuntimeContext, runSerializedAction]);
 
   return {
     opLogCreateItem,

@@ -174,7 +174,7 @@ export function VaultUnlock() {
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,transparent_0%,hsl(var(--background)/0.42)_48%,hsl(var(--background)/0.92)_100%)]" aria-hidden="true" />
             <div className="relative z-10 mx-auto flex min-h-[calc(100vh-2rem)] max-w-6xl flex-col">
                 <div className="flex items-center gap-3 py-4">
-                    <img src="/singra-icon.png" alt="" className="h-10 w-10" draggable={false} />
+                    <img src="/singra-icon.png" alt="" className="h-10 w-10 rounded-full object-cover" draggable={false} />
                     <span className="text-xl font-semibold tracking-tight text-foreground">SingraVault</span>
                 </div>
 
@@ -182,8 +182,8 @@ export function VaultUnlock() {
             <Card className="w-full max-w-lg overflow-hidden border-primary/18 bg-[hsl(var(--el-1)/0.72)] shadow-[0_28px_80px_hsl(0_0%_0%/0.48)] backdrop-blur-2xl">
                 <CardHeader className="text-center">
                     <div className="flex justify-center mb-4">
-                        <div className="rounded-full border border-primary/30 bg-[hsl(var(--el-2)/0.75)] p-3 shadow-[0_0_46px_hsl(var(--primary)/0.16)]">
-                            <img src="/singra-icon.png" alt="" className="h-10 w-10" draggable={false} />
+                        <div className="h-16 w-16 overflow-hidden rounded-full border border-primary/30 bg-white shadow-[0_0_46px_hsl(var(--primary)/0.16)]">
+                            <img src="/singra-icon.png" alt="" className="h-full w-full rounded-full object-cover" draggable={false} />
                         </div>
                     </div>
                     <CardTitle className="text-2xl tracking-tight">

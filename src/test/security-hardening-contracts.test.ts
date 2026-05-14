@@ -20,6 +20,14 @@ describe("security hardening contracts", () => {
     expect(vite).toContain("https://api.pwnedpasswords.com");
   });
 
+  it("keeps Tauri native file-drop interception disabled for internal vault drag and drop", () => {
+    const tauriConfig = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf-8")) as {
+      app?: { windows?: Array<{ dragDropEnabled?: boolean }> };
+    };
+
+    expect(tauriConfig.app?.windows?.[0]?.dragDropEnabled).toBe(false);
+  });
+
   it("binds WebAuthn verification to the exact stored challenge id", () => {
     const source = readFileSync("supabase/functions/webauthn/index.ts", "utf-8");
 

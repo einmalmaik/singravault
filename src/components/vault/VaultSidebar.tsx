@@ -194,8 +194,8 @@ function parseVerifiedRecordPlaintext(record: LocalVerifiedRecord): Record<strin
     }
 }
 
-function getVerifiedItemCategoryId(record: LocalVerifiedRecord): string | null {
-    if (record.record.recordType !== 'item') {
+function getVerifiedItemCategoryId(record: LocalVerifiedRecord | null | undefined): string | null {
+    if (!record || record.record.recordType !== 'item') {
         return null;
     }
 
@@ -350,6 +350,7 @@ export function VaultSidebar({
     const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
     const fetchRequestIdRef = useRef(0);
     const fetchingCategoriesRef = useRef(false);
+    const suppressedCategorySelectRef = useRef<{ categoryId: string; until: number } | null>(null);
     const decryptDataRef = useRef(decryptData);
     const decryptItemRef = useRef(decryptItem);
     const verifyIntegrityRef = useRef(verifyIntegrity);
@@ -585,8 +586,26 @@ export function VaultSidebar({
         fetchCategories();
     };
 
+    const consumeSuppressedCategorySelect = (categoryId: string): boolean => {
+        const suppressed = suppressedCategorySelectRef.current;
+        if (!suppressed) {
+            return false;
+        }
+        if (suppressed.until < Date.now()) {
+            suppressedCategorySelectRef.current = null;
+            return false;
+        }
+        if (suppressed.categoryId !== categoryId) {
+            return false;
+        }
+        suppressedCategorySelectRef.current = null;
+        return true;
+    };
+
     const handleCategoryDrop = async (categoryId: string, event: React.DragEvent) => {
         event.preventDefault();
+        event.stopPropagation();
+        suppressedCategorySelectRef.current = { categoryId, until: Date.now() + 500 };
         setDropTargetCategoryId(null);
 
         const itemId = getDraggedVaultItemId(event);
@@ -594,17 +613,18 @@ export function VaultSidebar({
             return;
         }
 
-        const plaintext = mapVerifiedItemRecordToPlaintext(
-            opLogLocalVaultState.recordsById.get(itemId),
-            categoryId,
-        );
+        const record = opLogLocalVaultState.recordsById.get(itemId);
+        if (getVerifiedItemCategoryId(record) === categoryId) {
+            return;
+        }
+
+        const plaintext = mapVerifiedItemRecordToPlaintext(record, categoryId);
         if (!plaintext) {
             return;
         }
 
         const result = await opLogUpdateItem(itemId, plaintext);
         if (!result.error) {
-            onSelectCategory(categoryId);
             onActionComplete?.();
             await fetchCategories();
         }
@@ -733,6 +753,7 @@ export function VaultSidebar({
                             categories.map((category) => (
                                 <div
                                     key={category.id}
+                                    data-vault-category-drop-id={category.id}
                                     className={cn(
                                         'group relative rounded-lg',
                                         dropTargetCategoryId === category.id && 'ring-2 ring-primary/55',
@@ -767,6 +788,9 @@ export function VaultSidebar({
                                         collapsed={collapsed}
                                         active={selectedCategory === category.id}
                                         onClick={() => {
+                                            if (consumeSuppressedCategorySelect(category.id)) {
+                                                return;
+                                            }
                                             onSelectCategory(category.id);
                                             onActionComplete?.();
                                         }}

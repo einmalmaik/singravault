@@ -51,6 +51,28 @@ describe('vaultOpLogPendingSyncService', () => {
     expect(stored[0].op.resultingVaultHead).toBe('head-server');
   });
 
+  it('does not recover or replay a fresh syncing operation from another active submitter', async () => {
+    const queuePersistence = new InMemoryQueuePersistence();
+    await queuePersistence.saveAll(VAULT_ID, [syncingEntry()]);
+    const rpcClient = createRpcClient({
+      applied: true,
+      idempotent: false,
+      op_id: 'op-1',
+      sequence_number: 2,
+      resulting_vault_head: 'head-server',
+      current_head: 'head-server',
+      current_sequence_number: 2,
+      conflict_reason: null,
+    });
+
+    const result = await syncPendingVaultOpLogOperations({ rpcClient, vaultId: VAULT_ID, queuePersistence });
+
+    expect(result).toEqual({ processed: 0, remaining: 1, blocked: 0 });
+    expect(rpcClient.rpc).not.toHaveBeenCalled();
+    const stored = await queuePersistence.loadAll(VAULT_ID);
+    expect(stored[0].state).toBe('syncing');
+  });
+
   it('marks remote-head drift as rebase-needed instead of quarantining trusted local work', async () => {
     const queuePersistence = new InMemoryQueuePersistence();
     await queuePersistence.saveAll(VAULT_ID, [pendingEntry()]);
@@ -161,6 +183,14 @@ function pendingEntry(): PendingLocalOperation {
     retryCount: 0,
     lastError: null,
     state: 'pending',
+  };
+}
+
+function syncingEntry(): PendingLocalOperation {
+  return {
+    ...pendingEntry(),
+    state: 'syncing',
+    syncingStartedAtLocal: new Date().toISOString(),
   };
 }
 

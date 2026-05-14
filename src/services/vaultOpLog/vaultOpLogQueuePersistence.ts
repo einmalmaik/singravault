@@ -255,6 +255,7 @@ function isKnownPendingState(state: unknown): boolean {
 function normalizeLegacyPendingOperation(entry: PendingLocalOperation): PendingLocalOperation {
   return {
     ...entry,
+    syncingStartedAtLocal: entry.syncingStartedAtLocal ?? null,
     lastSanitizedError: entry.lastSanitizedError ?? entry.lastError ?? null,
   };
 }

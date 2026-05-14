@@ -117,6 +117,7 @@ describe('VaultOpLogPendingQueue', () => {
 
     await q.markSyncing('op-1');
     expect(q.getSyncing().length).toBe(1);
+    expect(q.getSyncing()[0].syncingStartedAtLocal).toBeTruthy();
 
     await q.markSubmittedUnverified('op-1', 'server-head');
     expect(q.getSubmittedUnverified()).toHaveLength(1);
@@ -165,16 +166,43 @@ describe('VaultOpLogPendingQueue', () => {
     const q = new VaultOpLogPendingQueue('v1', persistence);
     await q.load();
     q['operations'] = [
-      makePendingEntry({ state: 'syncing', retryCount: 0 }),
+      makePendingEntry({
+        state: 'syncing',
+        retryCount: 0,
+        syncingStartedAtLocal: '2026-05-01T00:00:00.000Z',
+      }),
       makePendingEntry({ op: makeOpRow({ opId: 'op-2' }), state: 'pending' }),
     ];
 
-    await q.recoverAfterCrash();
+    await q.recoverAfterCrash({
+      now: new Date('2026-05-01T00:03:00.000Z'),
+      staleAfterMs: 120_000,
+    });
     const all = q.getOperations();
     expect(all[0].state).toBe('pending');
     expect(all[0].retryCount).toBe(1);
     expect(all[0].lastError).toContain('recovered_from_crash');
     expect(all[1].state).toBe('pending');
+  });
+
+  it('keeps fresh syncing operations reserved for the active submitter', async () => {
+    const q = new VaultOpLogPendingQueue('v1', persistence);
+    await q.load();
+    q['operations'] = [
+      makePendingEntry({
+        state: 'syncing',
+        retryCount: 0,
+        syncingStartedAtLocal: '2026-05-01T00:00:00.000Z',
+      }),
+    ];
+
+    await q.recoverAfterCrash({
+      now: new Date('2026-05-01T00:00:30.000Z'),
+      staleAfterMs: 120_000,
+    });
+    const all = q.getOperations();
+    expect(all[0].state).toBe('syncing');
+    expect(all[0].retryCount).toBe(0);
   });
 
   it('keeps submitted_unverified across crash recovery', async () => {

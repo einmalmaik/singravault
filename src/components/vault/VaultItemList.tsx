@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
@@ -79,6 +79,13 @@ const QUARANTINE_SUMMARY_THRESHOLD = 2;
 const CLOUD_SYNC_REFRESH_INTERVAL_MS = 60_000;
 const CLOUD_SYNC_MIN_REQUEST_GAP_MS = 25_000;
 const RECENT_SECTION_LIMIT = 8;
+const TOUCH_DRAG_ACTIVATION_MS = 260;
+const TOUCH_DRAG_MOVE_THRESHOLD_PX = 8;
+const DRAG_SCROLL_EDGE_PX = 96;
+const DRAG_SCROLL_STEP_PX = 28;
+const FAVORITE_ACTION_COOLDOWN_MS = 3_000;
+const FAVORITE_COLLAPSED_LIMIT_MOBILE = 4;
+const FAVORITE_COLLAPSED_LIMIT_DESKTOP = 6;
 
 interface VaultItem {
   id: string;
@@ -127,6 +134,19 @@ interface VaultItemListIntegrityGate {
 interface CategorySummary {
   readonly id: string;
   readonly name: string;
+}
+
+interface PointerDragState {
+  readonly itemId: string;
+  readonly title: string;
+  readonly pointerId: number;
+  readonly pointerType: string;
+  readonly active: boolean;
+  readonly originX: number;
+  readonly originY: number;
+  readonly x: number;
+  readonly y: number;
+  readonly dropCategoryId: string | null;
 }
 
 function canDecryptFromIntegrityResult(
@@ -351,6 +371,23 @@ function formatRelativeUpdatedAt(value: string): string {
   return `vor ${days} Tag${days === 1 ? '' : 'en'}`;
 }
 
+function scrollViewportForDrag(clientY: number): void {
+  if (typeof window === 'undefined' || !Number.isFinite(clientY)) {
+    return;
+  }
+
+  const viewportHeight = window.innerHeight || 0;
+  if (viewportHeight <= 0) {
+    return;
+  }
+
+  if (clientY < DRAG_SCROLL_EDGE_PX) {
+    window.scrollBy({ top: -DRAG_SCROLL_STEP_PX, behavior: 'auto' });
+  } else if (clientY > viewportHeight - DRAG_SCROLL_EDGE_PX) {
+    window.scrollBy({ top: DRAG_SCROLL_STEP_PX, behavior: 'auto' });
+  }
+}
+
 function isVaultItemType(value: unknown): value is VaultItem['item_type'] {
   return value === 'password' || value === 'note' || value === 'totp' || value === 'card';
 }
@@ -446,6 +483,21 @@ export function VaultItemList({
   const [recentlyCopiedItemIds, setRecentlyCopiedItemIds] = useState<string[]>([]);
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(() => new Set());
   const [dropTargetCategoryId, setDropTargetCategoryId] = useState<string | null>(null);
+  const [pointerDrag, setPointerDrag] = useState<PointerDragState | null>(null);
+  const [nativeDraggingItemId, setNativeDraggingItemId] = useState<string | null>(null);
+  const [favoriteExpanded, setFavoriteExpanded] = useState(false);
+  const [favoriteCollapsedLimit, setFavoriteCollapsedLimit] = useState(FAVORITE_COLLAPSED_LIMIT_DESKTOP);
+  const pointerDragRef = useRef<PointerDragState | null>(null);
+  const pointerDragTimerRef = useRef<number | null>(null);
+  const favoriteScrollerRef = useRef<HTMLDivElement | null>(null);
+  const favoriteScrollDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    scrollLeft: number;
+    dragging: boolean;
+  } | null>(null);
+  const nextFavoriteActionAtRef = useRef(0);
+  const suppressedCategoryToggleRef = useRef<{ categoryId: string; until: number } | null>(null);
   const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
   const revalidationRequestIdRef = useRef(0);
@@ -478,6 +530,33 @@ export function VaultItemList({
     setLastCloudSyncAt(null);
     setBackgroundSyncing(false);
   }, [userId, isDuressMode]);
+
+  useEffect(() => {
+    const updateFavoriteLimit = () => {
+      setFavoriteCollapsedLimit(
+        window.innerWidth < 768
+          ? FAVORITE_COLLAPSED_LIMIT_MOBILE
+          : FAVORITE_COLLAPSED_LIMIT_DESKTOP,
+      );
+    };
+
+    updateFavoriteLimit();
+    window.addEventListener('resize', updateFavoriteLimit);
+    return () => window.removeEventListener('resize', updateFavoriteLimit);
+  }, []);
+
+  useEffect(() => {
+    if (!nativeDraggingItemId) {
+      return undefined;
+    }
+
+    const handleDragOver = (event: DragEvent) => {
+      scrollViewportForDrag(event.clientY);
+    };
+
+    window.addEventListener('dragover', handleDragOver);
+    return () => window.removeEventListener('dragover', handleDragOver);
+  }, [nativeDraggingItemId]);
 
   useEffect(() => {
     if (!userId) {
@@ -964,13 +1043,21 @@ reportUnreadableItemsRef.current([]);
 
   const moveItemToCategory = useCallback(async (itemId: string, nextCategoryId: string | null) => {
     const item = items.find((candidate) => candidate.id === itemId);
-    const sourcePlaintext = parseVerifiedPlaintextObject(opLogLocalVaultState?.recordsById.get(itemId) as LocalVerifiedRecord | undefined);
-    const plaintext = item ? itemPlaintextFromVaultItem(item, { categoryRecordId: nextCategoryId }, sourcePlaintext) : null;
-    if (!item || !plaintext) {
+    if (!item) {
       return;
     }
 
     const previousCategoryId = getItemCategoryId(item);
+    if (previousCategoryId === nextCategoryId) {
+      return;
+    }
+
+    const sourcePlaintext = parseVerifiedPlaintextObject(opLogLocalVaultState?.recordsById.get(itemId) as LocalVerifiedRecord | undefined);
+    const plaintext = itemPlaintextFromVaultItem(item, { categoryRecordId: nextCategoryId }, sourcePlaintext);
+    if (!plaintext) {
+      return;
+    }
+
     setItems((current) => current.map((currentItem) => {
       if (currentItem.id !== item.id) {
         return currentItem;
@@ -1010,10 +1097,26 @@ reportUnreadableItemsRef.current([]);
   }, [items, markItemRecentlyUsed, opLogLocalVaultState, opLogUpdateItem, t, toast]);
 
   const toggleItemFavorite = useCallback(async (item: VaultItem) => {
+    const now = Date.now();
+    const remainingMs = nextFavoriteActionAtRef.current - now;
+    if (remainingMs > 0) {
+      const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+      toast({
+        title: t('vault.favoriteCooldown.title', { defaultValue: 'Bitte kurz warten' }),
+        description: t('vault.favoriteCooldown.description', {
+          defaultValue: 'Favoriten werden gerade verschlüsselt gespeichert. Du kannst in {{count}} Sekunden weitermachen.',
+          count: remainingSeconds,
+        }),
+      });
+      return;
+    }
+
+    nextFavoriteActionAtRef.current = now + FAVORITE_ACTION_COOLDOWN_MS;
     const nextFavorite = !isItemFavorite(item);
     const sourcePlaintext = parseVerifiedPlaintextObject(opLogLocalVaultState?.recordsById.get(item.id) as LocalVerifiedRecord | undefined);
     const plaintext = itemPlaintextFromVaultItem(item, { isFavorite: nextFavorite }, sourcePlaintext);
     if (!plaintext) {
+      nextFavoriteActionAtRef.current = 0;
       return;
     }
 
@@ -1036,6 +1139,7 @@ reportUnreadableItemsRef.current([]);
       return;
     }
 
+    nextFavoriteActionAtRef.current = 0;
     setItems((current) => current.map((currentItem) => {
       if (currentItem.id !== item.id) {
         return currentItem;
@@ -1088,6 +1192,22 @@ reportUnreadableItemsRef.current([]);
     });
   }, []);
 
+  const consumeSuppressedCategoryToggle = useCallback((categoryId: string): boolean => {
+    const suppressed = suppressedCategoryToggleRef.current;
+    if (!suppressed) {
+      return false;
+    }
+    if (suppressed.until < Date.now()) {
+      suppressedCategoryToggleRef.current = null;
+      return false;
+    }
+    if (suppressed.categoryId !== categoryId) {
+      return false;
+    }
+    suppressedCategoryToggleRef.current = null;
+    return true;
+  }, []);
+
   const getDraggedVaultItemId = useCallback((event: React.DragEvent): string => (
     event.dataTransfer.getData(VAULT_ITEM_DRAG_MIME)
     || event.dataTransfer.getData('text/plain')
@@ -1095,6 +1215,9 @@ reportUnreadableItemsRef.current([]);
 
   const handleCategoryDrop = useCallback((categoryId: string, event: React.DragEvent) => {
     event.preventDefault();
+    event.stopPropagation();
+    suppressedCategoryToggleRef.current = { categoryId, until: Date.now() + 500 };
+    setNativeDraggingItemId(null);
     setDropTargetCategoryId(null);
     const itemId = getDraggedVaultItemId(event);
     if (!itemId) {
@@ -1102,6 +1225,173 @@ reportUnreadableItemsRef.current([]);
     }
     void moveItemToCategory(itemId, categoryId);
   }, [getDraggedVaultItemId, moveItemToCategory]);
+
+  const setPointerDragState = useCallback((nextState: PointerDragState | null) => {
+    pointerDragRef.current = nextState;
+    setPointerDrag(nextState);
+  }, []);
+
+  const clearPointerDragTimer = useCallback(() => {
+    if (pointerDragTimerRef.current !== null) {
+      window.clearTimeout(pointerDragTimerRef.current);
+      pointerDragTimerRef.current = null;
+    }
+  }, []);
+
+  const resolveCategoryDropIdAtPoint = useCallback((x: number, y: number): string | null => {
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    const element = document.elementFromPoint(x, y);
+    const dropTarget = element?.closest<HTMLElement>('[data-vault-category-drop-id]');
+    return dropTarget?.dataset.vaultCategoryDropId ?? null;
+  }, []);
+
+  const releasePointerCapture = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // Some test and WebView runtimes expose Pointer Events without capture support.
+    }
+  }, []);
+
+  const cancelPointerDrag = useCallback((event?: ReactPointerEvent<HTMLElement>) => {
+    clearPointerDragTimer();
+    if (event) {
+      releasePointerCapture(event);
+    }
+    setDropTargetCategoryId(null);
+    setPointerDragState(null);
+  }, [clearPointerDragTimer, releasePointerCapture, setPointerDragState]);
+
+  const startPointerDrag = useCallback((item: VaultItem, event: ReactPointerEvent<HTMLElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    clearPointerDragTimer();
+    const originX = Number.isFinite(event.clientX) ? event.clientX : 0;
+    const originY = Number.isFinite(event.clientY) ? event.clientY : 0;
+    const activeImmediately = event.pointerType !== 'touch';
+    const initialDropCategoryId = activeImmediately
+      ? resolveCategoryDropIdAtPoint(originX, originY)
+      : null;
+
+    const initialState: PointerDragState = {
+      itemId: item.id,
+      title: getItemTitle(item),
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      active: activeImmediately,
+      originX,
+      originY,
+      x: originX,
+      y: originY,
+      dropCategoryId: initialDropCategoryId,
+    };
+    setPointerDragState(initialState);
+    if (activeImmediately) {
+      setDropTargetCategoryId(initialDropCategoryId);
+    }
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is best-effort; native browser drag remains available for mouse users.
+    }
+
+    if (activeImmediately) {
+      return;
+    }
+
+    pointerDragTimerRef.current = window.setTimeout(() => {
+      const current = pointerDragRef.current;
+      if (!current || current.pointerId !== event.pointerId) {
+        return;
+      }
+
+      const dropCategoryId = resolveCategoryDropIdAtPoint(current.x, current.y);
+      setPointerDragState({
+        ...current,
+        active: true,
+        dropCategoryId,
+      });
+      setDropTargetCategoryId(dropCategoryId);
+    }, TOUCH_DRAG_ACTIVATION_MS);
+  }, [clearPointerDragTimer, resolveCategoryDropIdAtPoint, setPointerDragState]);
+
+  const handlePointerDragMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const current = pointerDragRef.current;
+    if (!current || current.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const x = Number.isFinite(event.clientX) ? event.clientX : current.x;
+    const y = Number.isFinite(event.clientY) ? event.clientY : current.y;
+    const deltaX = x - current.originX;
+    const deltaY = y - current.originY;
+    const movedDistance = Math.hypot(deltaX, deltaY);
+    if (!current.active && movedDistance > TOUCH_DRAG_MOVE_THRESHOLD_PX) {
+      cancelPointerDrag(event);
+      return;
+    }
+
+    const dropCategoryId = current.active
+      ? resolveCategoryDropIdAtPoint(x, y)
+      : current.dropCategoryId;
+    const nextState: PointerDragState = {
+      ...current,
+      x,
+      y,
+      dropCategoryId,
+    };
+    setPointerDragState(nextState);
+
+    if (current.active) {
+      event.preventDefault();
+      event.stopPropagation();
+      scrollViewportForDrag(y);
+      setDropTargetCategoryId(dropCategoryId);
+    }
+  }, [cancelPointerDrag, resolveCategoryDropIdAtPoint, setPointerDragState]);
+
+  const completePointerDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const current = pointerDragRef.current;
+    if (!current || current.pointerId !== event.pointerId) {
+      return;
+    }
+
+    clearPointerDragTimer();
+    releasePointerCapture(event);
+    setPointerDragState(null);
+    setDropTargetCategoryId(null);
+
+    if (!current.active) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const x = Number.isFinite(event.clientX) ? event.clientX : current.x;
+    const y = Number.isFinite(event.clientY) ? event.clientY : current.y;
+    const dropCategoryId = current.dropCategoryId ?? resolveCategoryDropIdAtPoint(x, y);
+    if (dropCategoryId) {
+      void moveItemToCategory(current.itemId, dropCategoryId);
+    }
+  }, [
+    clearPointerDragTimer,
+    moveItemToCategory,
+    releasePointerCapture,
+    resolveCategoryDropIdAtPoint,
+    setPointerDragState,
+  ]);
+
+  useEffect(() => () => {
+    clearPointerDragTimer();
+  }, [clearPointerDragTimer]);
 
   const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
     return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
@@ -1232,18 +1522,54 @@ reportUnreadableItemsRef.current([]);
     visibleItemEntries.filter((entry) => !getItemCategoryId(entry.item))
   ), [visibleItemEntries]);
 
+  const renderPointerDragHandle = useCallback((item: VaultItem, className?: string) => (
+    <button
+      type="button"
+      className={cn(
+        'inline-flex h-8 w-8 shrink-0 touch-none items-center justify-center rounded-md border border-border/35 bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:border-primary/55 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45',
+        className,
+      )}
+      aria-label={t('vault.dragDrop.dragHandle', { defaultValue: 'Eintrag verschieben' })}
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => startPointerDrag(item, event)}
+      onPointerMove={handlePointerDragMove}
+      onPointerUp={completePointerDrag}
+      onPointerCancel={cancelPointerDrag}
+    >
+      <GripVertical className="h-4 w-4" aria-hidden="true" />
+    </button>
+  ), [
+    cancelPointerDrag,
+    completePointerDrag,
+    handlePointerDragMove,
+    startPointerDrag,
+    t,
+  ]);
+
   const renderItemCard = useCallback((
     entry: Extract<RenderableVaultListEntry, { kind: 'item' }>,
+    options?: { draggable?: boolean },
   ) => (
     <div
       key={entry.item.id}
-      draggable
+      className="group/drag relative"
+      draggable={options?.draggable ?? true}
       onDragStart={(event) => {
+        if (options?.draggable === false) {
+          event.preventDefault();
+          return;
+        }
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData(VAULT_ITEM_DRAG_MIME, entry.item.id);
         event.dataTransfer.setData('text/plain', entry.item.id);
+        setNativeDraggingItemId(entry.item.id);
+      }}
+      onDragEnd={() => {
+        setNativeDraggingItemId(null);
+        setDropTargetCategoryId(null);
       }}
     >
+      {renderPointerDragHandle(entry.item, 'absolute -left-2 top-2 z-20 sm:opacity-0 sm:group-hover/drag:opacity-100 sm:focus-visible:opacity-100')}
       <VaultItemCard
         item={entry.item}
         viewMode={viewMode}
@@ -1257,44 +1583,7 @@ reportUnreadableItemsRef.current([]);
         }
       />
     </div>
-  ), [markItemRecentlyUsed, onEditItem, opLogVerifiedItemIds, viewMode]);
-
-  const renderVaultSection = useCallback((
-    title: string,
-    icon: ReactNode,
-    entries: Extract<RenderableVaultListEntry, { kind: 'item' }>[],
-    separated = false,
-    horizontal = false,
-  ) => {
-    if (entries.length === 0) {
-      return null;
-    }
-
-    return (
-      <section className={cn('space-y-3', separated && 'border-t border-border/35 pt-5')}>
-        <div className="flex items-center gap-2 px-1 text-sm font-semibold text-foreground">
-          {icon}
-          <span>{title}</span>
-        </div>
-        {horizontal ? (
-          <div className="flex snap-x gap-4 overflow-x-auto pb-2 pr-4 [scrollbar-width:thin]">
-            {entries.map((entry) => (
-              <div
-                key={entry.item.id}
-                className="min-w-[240px] max-w-[280px] flex-[0_0_260px] snap-start sm:basis-[280px]"
-              >
-                {renderItemCard(entry)}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {entries.map(renderItemCard)}
-          </div>
-        )}
-      </section>
-    );
-  }, [renderItemCard]);
+  ), [markItemRecentlyUsed, onEditItem, opLogVerifiedItemIds, renderPointerDragHandle, viewMode]);
 
   const renderTableRow = useCallback((
     entry: Extract<RenderableVaultListEntry, { kind: 'item' }>,
@@ -1317,11 +1606,16 @@ reportUnreadableItemsRef.current([]);
           event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData(VAULT_ITEM_DRAG_MIME, item.id);
           event.dataTransfer.setData('text/plain', item.id);
+          setNativeDraggingItemId(item.id);
+        }}
+        onDragEnd={() => {
+          setNativeDraggingItemId(null);
+          setDropTargetCategoryId(null);
         }}
         className="group grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-[hsl(var(--border)/0.22)] px-3 py-2.5 transition-all duration-200 ease-out hover:bg-white/[0.035] md:grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px]"
       >
         <div className="flex min-w-0 items-center gap-2.5">
-          <GripVertical className="hidden h-4 w-4 shrink-0 text-muted-foreground/45 group-hover:text-muted-foreground sm:block" aria-hidden="true" />
+          {renderPointerDragHandle(item, 'h-7 w-7 border-transparent bg-transparent shadow-none sm:h-8 sm:w-8')}
           <VaultIcon title={title} websiteUrl={websiteUrl} className="h-7 w-7 shrink-0" />
           <div className="min-w-0">
             <button
@@ -1416,8 +1710,139 @@ reportUnreadableItemsRef.current([]);
     markItemRecentlyUsed,
     onEditItem,
     opLogVerifiedItemIds,
+    renderPointerDragHandle,
     t,
     toggleItemFavorite,
+  ]);
+
+  const handleFavoriteScrollerPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button,a,input,textarea,select,[role="button"]')) {
+      return;
+    }
+
+    const scroller = favoriteScrollerRef.current;
+    if (!scroller) {
+      return;
+    }
+
+    favoriteScrollDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      scrollLeft: scroller.scrollLeft,
+      dragging: false,
+    };
+    try {
+      scroller.setPointerCapture(event.pointerId);
+    } catch {
+      favoriteScrollDragRef.current = null;
+    }
+  }, []);
+
+  const handleFavoriteScrollerPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = favoriteScrollDragRef.current;
+    const scroller = favoriteScrollerRef.current;
+    if (!current || !scroller || current.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - current.startX;
+    if (Math.abs(deltaX) > 4) {
+      current.dragging = true;
+    }
+    if (!current.dragging) {
+      return;
+    }
+
+    event.preventDefault();
+    scroller.scrollLeft = current.scrollLeft - deltaX;
+  }, []);
+
+  const handleFavoriteScrollerPointerEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const scroller = favoriteScrollerRef.current;
+    if (scroller) {
+      try {
+        scroller.releasePointerCapture(event.pointerId);
+      } catch {
+        favoriteScrollDragRef.current = null;
+      }
+    }
+    favoriteScrollDragRef.current = null;
+  }, []);
+
+  const renderFavoriteSection = useCallback(() => {
+    if (favoriteEntries.length === 0) {
+      return null;
+    }
+
+    const hiddenCount = Math.max(0, favoriteEntries.length - favoriteCollapsedLimit);
+    const entries = favoriteExpanded
+      ? favoriteEntries
+      : favoriteEntries.slice(0, favoriteCollapsedLimit);
+
+    return (
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3 px-1">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Pin className="h-4 w-4 text-primary" aria-hidden="true" />
+            <span>{t('vault.sections.favorites', { defaultValue: 'Favoriten' })}</span>
+          </div>
+          {hiddenCount > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 rounded-full px-3 text-xs text-primary hover:text-primary"
+              onClick={() => setFavoriteExpanded((expanded) => !expanded)}
+            >
+              {favoriteExpanded
+                ? t('vault.sections.showFewerFavorites', { defaultValue: 'Weniger anzeigen' })
+                : t('vault.sections.showMoreFavorites', {
+                  defaultValue: '+ {{count}} weitere anzeigen',
+                  count: hiddenCount,
+                })}
+            </Button>
+          )}
+        </div>
+        {favoriteExpanded ? (
+          <div
+            ref={favoriteScrollerRef}
+            className="scrollbar-hide flex cursor-grab touch-pan-x select-none gap-4 overflow-x-auto pb-2 pr-4 active:cursor-grabbing"
+            onPointerDown={handleFavoriteScrollerPointerDown}
+            onPointerMove={handleFavoriteScrollerPointerMove}
+            onPointerUp={handleFavoriteScrollerPointerEnd}
+            onPointerCancel={handleFavoriteScrollerPointerEnd}
+            onPointerLeave={handleFavoriteScrollerPointerEnd}
+          >
+            {entries.map((entry) => (
+              <div
+                key={entry.item.id}
+                className="min-w-[240px] max-w-[280px] flex-[0_0_72%] sm:basis-[260px] lg:basis-[240px] xl:basis-[220px]"
+              >
+                {renderItemCard(entry, { draggable: false })}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            {entries.map((entry) => renderItemCard(entry))}
+          </div>
+        )}
+      </section>
+    );
+  }, [
+    favoriteCollapsedLimit,
+    favoriteEntries,
+    favoriteExpanded,
+    handleFavoriteScrollerPointerDown,
+    handleFavoriteScrollerPointerEnd,
+    handleFavoriteScrollerPointerMove,
+    renderItemCard,
+    t,
   ]);
 
   const renderTableHeader = useCallback((options?: { fourthColumn?: string }) => (
@@ -1499,6 +1924,7 @@ reportUnreadableItemsRef.current([]);
           return (
             <div
               key={category.id}
+              data-vault-category-drop-id={category.id}
               className={cn(
                 'overflow-hidden rounded-xl border border-[hsl(var(--border)/0.32)] bg-[hsl(var(--el-1)/0.72)] backdrop-blur transition-colors',
                 isDropTarget && 'border-primary/70 ring-2 ring-primary/30',
@@ -1521,7 +1947,12 @@ reportUnreadableItemsRef.current([]);
               <button
                 type="button"
                 className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left transition-colors hover:bg-white/[0.035]"
-                onClick={() => toggleCategoryCollapsed(category.id)}
+                onClick={() => {
+                  if (consumeSuppressedCategoryToggle(category.id)) {
+                    return;
+                  }
+                  toggleCategoryCollapsed(category.id);
+                }}
               >
                 <span className="flex min-w-0 items-center gap-2">
                   {collapsed ? <ChevronRight className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
@@ -1570,6 +2001,7 @@ reportUnreadableItemsRef.current([]);
     renderTableRow,
     renderVaultTable,
     t,
+    consumeSuppressedCategoryToggle,
     toggleCategoryCollapsed,
     uncategorizedEntries,
     visibleItemEntries.length,
@@ -1838,13 +2270,7 @@ reportUnreadableItemsRef.current([]);
         </div>
       ) : shouldRenderDashboardSections ? (
         <div className="space-y-7">
-          {renderVaultSection(
-            t('vault.sections.favorites', { defaultValue: 'Favoriten' }),
-            <Pin className="h-4 w-4 text-primary" aria-hidden="true" />,
-            favoriteEntries,
-            false,
-            true,
-          )}
+          {renderFavoriteSection()}
           {renderRecentSection()}
           {renderGroupedAllEntries()}
         </div>
@@ -1868,6 +2294,21 @@ reportUnreadableItemsRef.current([]);
               />
             )
           ))}
+        </div>
+      )}
+
+      {pointerDrag?.active && (
+        <div
+          className="pointer-events-none fixed z-[90] max-w-[min(280px,calc(100vw-2rem))] rounded-lg border border-primary/40 bg-background/90 px-3 py-2 text-sm font-medium text-foreground shadow-[0_18px_52px_hsl(0_0%_0%/0.45)] backdrop-blur-xl"
+          style={{
+            left: (Number.isFinite(pointerDrag.x) ? pointerDrag.x : 0) + 12,
+            top: (Number.isFinite(pointerDrag.y) ? pointerDrag.y : 0) + 12,
+          }}
+        >
+          <span className="block truncate">{pointerDrag.title}</span>
+          <span className="text-xs text-primary">
+            {t('vault.dragDrop.moving', { defaultValue: 'Verschieben' })}
+          </span>
         </div>
       )}
 
