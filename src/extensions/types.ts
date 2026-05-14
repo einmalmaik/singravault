@@ -142,6 +142,32 @@ export interface IntegrityVerificationResult {
     itemCount: number;
 }
 
+export interface VaultHealthAnalysisItem {
+    id: string;
+    title: string;
+    password: string;
+    itemType?: 'password' | 'note' | 'totp' | 'card';
+    username?: string;
+    websiteUrl?: string;
+    updatedAt: string;
+}
+
+export interface VaultHealthSidebarSummary {
+    status: 'healthy' | 'review' | 'critical';
+    score: number;
+    passwordItems: number;
+    affectedItems: number;
+    criticalItems: number;
+    warningItems: number;
+    stats: {
+        weak: number;
+        duplicate: number;
+        old: number;
+        reused: number;
+        strong: number;
+    };
+}
+
 /**
  * Service hooks that premium can register to inject business logic
  * into the core without direct imports.
@@ -240,6 +266,8 @@ export interface ServiceHooks {
      * Clear the local integrity baseline for a user.
      */
     clearIntegrityRoot?: (userId: string) => void;
+
+    analyzeVaultHealthSummary?: (items: VaultHealthAnalysisItem[]) => VaultHealthSidebarSummary;
 }
 
 /**

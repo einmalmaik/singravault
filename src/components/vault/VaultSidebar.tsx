@@ -63,10 +63,11 @@ import {
     loadVaultSnapshot,
 } from '@/services/offlineVaultService';
 import { migrateLegacyVaultItemMetadata } from '@/services/legacyVaultMetadataMigrationService';
-import { isPremiumActive } from '@/extensions/registry';
+import { getServiceHooks, isPremiumActive } from '@/extensions/registry';
 import { buildReturnState } from '@/services/returnNavigationState';
 import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 import type { ItemPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
+import type { VaultHealthSidebarSummary } from '@/extensions/types';
 
 interface Category {
     id: string;
@@ -103,7 +104,26 @@ function getDraggedVaultItemId(event: React.DragEvent): string {
     return event.dataTransfer.getData(VAULT_ITEM_DRAG_MIME) || event.dataTransfer.getData('text/plain');
 }
 
-function getVaultStatusSummary(result: { mode?: string; quarantinedItems?: unknown[] } | null | undefined): {
+function formatHealthCountParts(stats: VaultHealthSidebarSummary['stats']): string {
+    const parts = [
+        stats.weak > 0 ? `${stats.weak} schwach` : null,
+        stats.duplicate > 0 ? `${stats.duplicate} doppelt` : null,
+        stats.old > 0 ? `${stats.old} alt` : null,
+        stats.strong > 0 ? `${stats.strong} stark` : null,
+    ].filter((part): part is string => Boolean(part));
+
+    return parts.length > 0 ? parts.join(' · ') : 'keine Auffälligkeiten';
+}
+
+function formatEntryCount(count: number): string {
+    return `${count} Eintr${count === 1 ? 'ag' : 'äge'}`;
+}
+
+function getVaultStatusSummary(
+    result: { mode?: string; quarantinedItems?: unknown[] } | null | undefined,
+    healthSummary: VaultHealthSidebarSummary | null,
+    healthLoading: boolean,
+): {
     label: string;
     description: string;
     tone: 'success' | 'warning' | 'danger';
@@ -127,6 +147,38 @@ function getVaultStatusSummary(result: { mode?: string; quarantinedItems?: unkno
         };
     }
 
+    if (healthSummary?.status === 'critical') {
+        return {
+            label: 'Kritisch',
+            description: `Bitte Tresor überprüfen: ${formatEntryCount(healthSummary.affectedItems)} brauchen Aufmerksamkeit (${formatHealthCountParts(healthSummary.stats)}).`,
+            tone: 'danger',
+        };
+    }
+
+    if (healthSummary?.status === 'review') {
+        return {
+            label: 'Bitte prüfen',
+            description: `Bitte Tresor überprüfen: ${formatEntryCount(healthSummary.affectedItems)} mit Hinweisen (${formatHealthCountParts(healthSummary.stats)}).`,
+            tone: 'warning',
+        };
+    }
+
+    if (healthSummary?.status === 'healthy') {
+        return {
+            label: 'Stark',
+            description: `${formatEntryCount(healthSummary.passwordItems)} analysiert (${formatHealthCountParts(healthSummary.stats)}).`,
+            tone: 'success',
+        };
+    }
+
+    if (healthLoading) {
+        return {
+            label: 'Analyse läuft',
+            description: 'Tresorgesundheit wird lokal aus dem entsperrten Tresor berechnet.',
+            tone: 'warning',
+        };
+    }
+
     if (result?.mode === 'healthy') {
         return {
             label: 'Unauffällig',
@@ -136,8 +188,10 @@ function getVaultStatusSummary(result: { mode?: string; quarantinedItems?: unkno
     }
 
     return {
-        label: 'Analyse bereit',
-        description: 'Bericht öffnen, um den aktuellen Stand zu laden.',
+        label: healthLoading ? 'Analyse läuft' : 'Analyse bereit',
+        description: healthLoading
+            ? 'Tresorgesundheit wird lokal aus dem entsperrten Tresor berechnet.'
+            : 'Aktueller Zustand wird geladen, sobald Tresordaten verfügbar sind.',
         tone: 'warning',
     };
 }
@@ -320,6 +374,7 @@ export function VaultSidebar({
         decryptItem,
         isDuressMode,
         lastIntegrityResult,
+        getVaultHealthAnalysisItems,
         verifyIntegrity,
         vaultDataVersion,
         vaultMigrationStatus,
@@ -344,11 +399,14 @@ export function VaultSidebar({
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
     const [categoryDialogInitialAction, setCategoryDialogInitialAction] = useState<'delete' | undefined>(undefined);
     const [dropTargetCategoryId, setDropTargetCategoryId] = useState<string | null>(null);
-    const vaultStatusSummary = getVaultStatusSummary(lastIntegrityResult);
+    const [vaultHealthSummary, setVaultHealthSummary] = useState<VaultHealthSidebarSummary | null>(null);
+    const [vaultHealthLoading, setVaultHealthLoading] = useState(false);
+    const vaultStatusSummary = getVaultStatusSummary(lastIntegrityResult, vaultHealthSummary, vaultHealthLoading);
     const vaultStatusToneClasses = getVaultStatusToneClasses(vaultStatusSummary.tone);
     const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
     const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
     const fetchRequestIdRef = useRef(0);
+    const vaultHealthRequestIdRef = useRef(0);
     const fetchingCategoriesRef = useRef(false);
     const suppressedCategorySelectRef = useRef<{ categoryId: string; until: number } | null>(null);
     const decryptDataRef = useRef(decryptData);
@@ -370,6 +428,58 @@ export function VaultSidebar({
     useEffect(() => {
         quarantinedItemIdsRef.current = new Set((lastIntegrityResult?.quarantinedItems ?? []).map((item) => item.id));
     }, [lastIntegrityResult]);
+
+    useEffect(() => {
+        const requestId = vaultHealthRequestIdRef.current + 1;
+        vaultHealthRequestIdRef.current = requestId;
+
+        if (!vaultHealthAccess.allowed || !userId) {
+            setVaultHealthSummary(null);
+            setVaultHealthLoading(false);
+            return;
+        }
+
+        if (lastIntegrityResult?.mode === 'blocked' || lastIntegrityResult?.mode === 'quarantine') {
+            setVaultHealthSummary(null);
+            setVaultHealthLoading(false);
+            return;
+        }
+
+        const analyzeVaultHealthSummary = getServiceHooks().analyzeVaultHealthSummary;
+        if (!analyzeVaultHealthSummary) {
+            setVaultHealthSummary(null);
+            setVaultHealthLoading(false);
+            return;
+        }
+
+        setVaultHealthLoading(true);
+        void (async () => {
+            try {
+                const healthItems = await getVaultHealthAnalysisItems();
+                if (vaultHealthRequestIdRef.current === requestId) {
+                    setVaultHealthSummary(analyzeVaultHealthSummary(healthItems));
+                }
+            } catch {
+                if (vaultHealthRequestIdRef.current === requestId) {
+                    setVaultHealthSummary(null);
+                }
+                console.error('Vault health sidebar analysis failed.');
+            } finally {
+                if (vaultHealthRequestIdRef.current === requestId) {
+                    setVaultHealthLoading(false);
+                }
+            }
+        })();
+    }, [
+        lastIntegrityResult?.mode,
+        lastIntegrityResult?.quarantinedItems?.length,
+        getVaultHealthAnalysisItems,
+        opLogLocalVaultState,
+        useOpLogVerifiedRuntime,
+        userId,
+        vaultDataVersion,
+        vaultHealthAccess.allowed,
+    ]);
 
     // Fetch categories
     const fetchCategories = useCallback(async () => {

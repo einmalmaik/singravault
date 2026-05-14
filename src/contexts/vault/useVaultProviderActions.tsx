@@ -52,6 +52,7 @@ import { useVaultOpLogUiState } from './useVaultOpLogUiState';
 import { useVaultRevokedDeviceAutoLock } from './useVaultRevokedDeviceAutoLock';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
 import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+import { loadVaultHealthAnalysisItems } from '@/services/vaultHealthAnalysisItemsService';
 
 function clearLegacyIntegrityStateAfterOpLogGate(
   state: ReturnType<typeof useVaultProviderState>,
@@ -647,6 +648,19 @@ export function useVaultProviderActions(): VaultContextType {
     decryptTrustedRecoverySnapshotItem,
   } = useVaultCryptoActions(state, user);
   const opLogUiState = useVaultOpLogUiState(state, user?.id ?? null);
+  const getVaultHealthAnalysisItems = useCallback(() => {
+    if (!user) {
+      return Promise.resolve([]);
+    }
+
+    return loadVaultHealthAnalysisItems({
+      userId: user.id,
+      vaultMigrationStatus: state.vaultMigrationStatus,
+      opLogLocalVaultState: opLogUiState.localVaultState,
+      decryptItem,
+      verifyIntegrity,
+    });
+  }, [decryptItem, opLogUiState.localVaultState, state.vaultMigrationStatus, user, verifyIntegrity]);
   useVaultRevokedDeviceAutoLock({
     isLocked: state.isLocked,
     localVaultState: opLogUiState.localVaultState,
@@ -691,6 +705,7 @@ export function useVaultProviderActions(): VaultContextType {
     enterSafeMode,
     exitSafeMode,
     resetVaultAfterIntegrityFailure,
+    getVaultHealthAnalysisItems,
     startVaultMigration,
     retryVaultMigration,
     ...opLogActions,

@@ -5,6 +5,12 @@ import { MemoryRouter } from 'react-router-dom';
 import { VaultSidebar } from '../VaultSidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
+const mockFeatureGate = vi.hoisted(() => ({
+  allowed: true,
+}));
+
+const mockAnalyzeVaultHealthSummary = vi.hoisted(() => vi.fn());
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: string | { defaultValue?: string }) => (
@@ -14,11 +20,14 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('@/hooks/useFeatureGate', () => ({
-  useFeatureGate: () => ({ allowed: true }),
+  useFeatureGate: () => ({ allowed: mockFeatureGate.allowed }),
 }));
 
 vi.mock('@/extensions/registry', () => ({
   isPremiumActive: () => true,
+  getServiceHooks: () => ({
+    analyzeVaultHealthSummary: mockAnalyzeVaultHealthSummary,
+  }),
 }));
 
 vi.mock('@/services/offlineVaultService', () => ({
@@ -34,7 +43,8 @@ const mockVaultContext = {
   decryptData: vi.fn(),
   decryptItem: vi.fn(),
   isDuressMode: false,
-  lastIntegrityResult: null,
+  lastIntegrityResult: null as null | { mode: string; quarantinedItems: Array<{ id: string }> },
+  getVaultHealthAnalysisItems: vi.fn(),
   verifyIntegrity: vi.fn(),
   vaultDataVersion: 0,
   vaultMigrationStatus: 'verified' as const,
@@ -82,6 +92,41 @@ describe('VaultSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockVaultContext.opLogUpdateItem.mockResolvedValue({ error: null });
+    mockVaultContext.getVaultHealthAnalysisItems.mockResolvedValue([
+      {
+        id: 'loose-item',
+        title: 'Loose Item',
+        password: 'loose-password',
+        itemType: 'password',
+        username: 'loose-user',
+        updatedAt: '2026-02-18T12:00:00.000Z',
+      },
+      {
+        id: 'categorized-item',
+        title: 'Categorized Item',
+        password: 'categorized-password',
+        itemType: 'password',
+        username: 'categorized-user',
+        updatedAt: '2026-02-18T12:00:00.000Z',
+      },
+    ]);
+    mockVaultContext.lastIntegrityResult = { mode: 'healthy', quarantinedItems: [] };
+    mockFeatureGate.allowed = true;
+    mockAnalyzeVaultHealthSummary.mockReturnValue({
+      status: 'healthy',
+      score: 100,
+      passwordItems: 2,
+      affectedItems: 0,
+      criticalItems: 0,
+      warningItems: 0,
+      stats: {
+        weak: 0,
+        duplicate: 0,
+        old: 0,
+        reused: 0,
+        strong: 2,
+      },
+    });
     const category = makeVerifiedRecord('category-work', 'category', { name: 'Arbeit' });
     const item = makeVerifiedRecord('loose-item', 'item', {
       title: 'Loose Item',
@@ -193,5 +238,65 @@ describe('VaultSidebar', () => {
     expect(mockVaultContext.opLogUpdateItem).not.toHaveBeenCalled();
     expect(onSelectCategory).not.toHaveBeenCalled();
     expect(onActionComplete).not.toHaveBeenCalled();
+  });
+
+  it('shows a live rough vault health summary in the status card', async () => {
+    mockAnalyzeVaultHealthSummary.mockReturnValue({
+      status: 'review',
+      score: 72,
+      passwordItems: 3,
+      affectedItems: 2,
+      criticalItems: 0,
+      warningItems: 2,
+      stats: {
+        weak: 0,
+        duplicate: 1,
+        old: 1,
+        reused: 0,
+        strong: 3,
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/vault']}>
+        <TooltipProvider>
+          <VaultSidebar
+            selectedCategory={null}
+            onSelectCategory={vi.fn()}
+          />
+        </TooltipProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Bitte prüfen')).toBeInTheDocument();
+    expect(screen.getByText(/Bitte Tresor überprüfen: 2 Einträge/)).toBeInTheDocument();
+    expect(screen.getByText(/1 doppelt · 1 alt · 3 stark/)).toBeInTheDocument();
+    expect(mockAnalyzeVaultHealthSummary).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'loose-item', itemType: 'password' }),
+        expect.objectContaining({ id: 'categorized-item', itemType: 'password' }),
+      ]),
+    );
+    expect(mockVaultContext.getVaultHealthAnalysisItems).toHaveBeenCalled();
+  });
+
+  it('keeps the vault health status card hidden without feature access', async () => {
+    mockFeatureGate.allowed = false;
+
+    render(
+      <MemoryRouter initialEntries={['/vault']}>
+        <TooltipProvider>
+          <VaultSidebar
+            selectedCategory={null}
+            onSelectCategory={vi.fn()}
+          />
+        </TooltipProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Arbeit');
+
+    expect(screen.queryByText('Tresor-Status')).not.toBeInTheDocument();
+    expect(mockAnalyzeVaultHealthSummary).not.toHaveBeenCalled();
   });
 });
