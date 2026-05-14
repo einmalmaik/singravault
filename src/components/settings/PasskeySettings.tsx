@@ -85,13 +85,16 @@ export function PasskeySettings() {
             return;
         }
 
-        console.debug('[PasskeySettings] authReady is true, fetching passkeys...');
         setLoading(true);
         try {
             const creds = await listPasskeys();
             setPasskeys(creds);
             await refreshPasskeyUnlockStatus();
         } catch (error) {
+            if (isEdgeFunctionServiceError(error) && error.status === 401) {
+                setPasskeys([]);
+                return;
+            }
             toast({
                 variant: 'destructive',
                 title: t('common.error'),

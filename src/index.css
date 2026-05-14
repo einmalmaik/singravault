@@ -937,12 +937,16 @@
 }
 
 .sv-password-input::-ms-reveal,
-.sv-password-input::-ms-clear {
+input[type="password"]::-ms-reveal,
+.sv-password-input::-ms-clear,
+input[type="password"]::-ms-clear {
   display: none;
 }
 
 .sv-password-input::-webkit-credentials-auto-fill-button,
-.sv-password-input::-webkit-caps-lock-indicator {
+input[type="password"]::-webkit-credentials-auto-fill-button,
+.sv-password-input::-webkit-caps-lock-indicator,
+input[type="password"]::-webkit-caps-lock-indicator {
   visibility: hidden;
   pointer-events: none;
 }

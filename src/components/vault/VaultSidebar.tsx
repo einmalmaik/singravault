@@ -24,6 +24,7 @@ import {
     Shield,
     User,
     ChevronDown,
+    Trash2,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -65,6 +66,7 @@ import { migrateLegacyVaultItemMetadata } from '@/services/legacyVaultMetadataMi
 import { isPremiumActive } from '@/extensions/registry';
 import { buildReturnState } from '@/services/returnNavigationState';
 import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
+import type { ItemPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
 
 interface Category {
     id: string;
@@ -82,6 +84,7 @@ interface VaultSidebarProps {
 }
 
 const ENCRYPTED_CATEGORY_PREFIX = 'enc:cat:v1:';
+const VAULT_ITEM_DRAG_MIME = 'application/x-singra-vault-item-id';
 
 function getAccountLabel(email: string | undefined): string {
     return email || 'Singra Vault';
@@ -94,6 +97,10 @@ function getAccountInitials(email: string | undefined): string {
     }
     const [name, domain] = label.split('@');
     return `${name.charAt(0)}${domain.charAt(0)}`.toUpperCase();
+}
+
+function getDraggedVaultItemId(event: React.DragEvent): string {
+    return event.dataTransfer.getData(VAULT_ITEM_DRAG_MIME) || event.dataTransfer.getData('text/plain');
 }
 
 function getVaultStatusSummary(result: { mode?: string; quarantinedItems?: unknown[] } | null | undefined): {
@@ -197,6 +204,87 @@ function getVerifiedItemCategoryId(record: LocalVerifiedRecord): string | null {
     return typeof categoryRecordId === 'string' ? categoryRecordId : null;
 }
 
+function readOptionalNumber(value: unknown): number | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readCustomFields(value: unknown): Record<string, string> | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+    const parsed: Record<string, string> = {};
+    for (const [key, fieldValue] of Object.entries(value)) {
+        if (typeof fieldValue !== 'string') {
+            return undefined;
+        }
+        parsed[key] = fieldValue;
+    }
+    return parsed;
+}
+
+function hasPlaintextField(plaintext: Record<string, unknown>, field: string): boolean {
+    return Object.prototype.hasOwnProperty.call(plaintext, field);
+}
+
+function mapVerifiedItemRecordToPlaintext(
+    record: LocalVerifiedRecord | null | undefined,
+    nextCategoryRecordId: string | null,
+): ItemPlaintext | null {
+    if (!record || record.record.recordType !== 'item') {
+        return null;
+    }
+
+    const plaintext = parseVerifiedRecordPlaintext(record);
+    if (!plaintext) {
+        return null;
+    }
+    const title = plaintext.title;
+    const itemType = plaintext.itemType === 'note'
+        ? 'note'
+        : plaintext.itemType === 'totp'
+            ? 'totp'
+            : plaintext.itemType === 'card'
+                ? 'card'
+                : plaintext.itemType === 'password'
+                    ? 'password'
+                    : null;
+    const sortOrder = readOptionalNumber(plaintext.sortOrder);
+    const customFields = readCustomFields(plaintext.customFields);
+
+    if (
+        typeof title !== 'string'
+        || !itemType
+        || (hasPlaintextField(plaintext, 'sortOrder') && sortOrder === undefined)
+        || (hasPlaintextField(plaintext, 'customFields') && customFields === undefined)
+    ) {
+        return null;
+    }
+
+    return {
+        title,
+        websiteUrl: typeof plaintext.websiteUrl === 'string' ? plaintext.websiteUrl : null,
+        username: typeof plaintext.username === 'string' ? plaintext.username : null,
+        password: typeof plaintext.password === 'string' ? plaintext.password : null,
+        notes: typeof plaintext.notes === 'string' ? plaintext.notes : null,
+        itemType,
+        categoryRecordId: nextCategoryRecordId,
+        isFavorite: typeof plaintext.isFavorite === 'boolean' ? plaintext.isFavorite : false,
+        sortOrder: sortOrder ?? null,
+        totpSecret: typeof plaintext.totpSecret === 'string' ? plaintext.totpSecret : null,
+        totpIssuer: typeof plaintext.totpIssuer === 'string' ? plaintext.totpIssuer : null,
+        totpLabel: typeof plaintext.totpLabel === 'string' ? plaintext.totpLabel : null,
+        totpAlgorithm: plaintext.totpAlgorithm === 'SHA1' || plaintext.totpAlgorithm === 'SHA256' || plaintext.totpAlgorithm === 'SHA512'
+            ? plaintext.totpAlgorithm
+            : null,
+        totpDigits: plaintext.totpDigits === 6 || plaintext.totpDigits === 8 ? plaintext.totpDigits : null,
+        totpPeriod: typeof plaintext.totpPeriod === 'number' ? plaintext.totpPeriod : null,
+        customFields: customFields ?? null,
+    };
+}
+
 function mapVerifiedCategoryRecord(record: LocalVerifiedRecord, count: number): Category | null {
     if (record.record.recordType !== 'category') {
         return null;
@@ -236,6 +324,7 @@ export function VaultSidebar({
         vaultDataVersion,
         vaultMigrationStatus,
         opLogLocalVaultState,
+        opLogUpdateItem,
     } = useVault();
     const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
     const vaultHealthAccess = useFeatureGate('vault_health_reports');
@@ -253,6 +342,8 @@ export function VaultSidebar({
     // Dialog state
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+    const [categoryDialogInitialAction, setCategoryDialogInitialAction] = useState<'delete' | undefined>(undefined);
+    const [dropTargetCategoryId, setDropTargetCategoryId] = useState<string | null>(null);
     const vaultStatusSummary = getVaultStatusSummary(lastIntegrityResult);
     const vaultStatusToneClasses = getVaultStatusToneClasses(vaultStatusSummary.tone);
     const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
@@ -471,11 +562,19 @@ export function VaultSidebar({
 
     const handleAddCategory = () => {
         setEditingCategory(null);
+        setCategoryDialogInitialAction(undefined);
         setDialogOpen(true);
     };
 
     const handleEditCategory = (category: Category) => {
         setEditingCategory(category);
+        setCategoryDialogInitialAction(undefined);
+        setDialogOpen(true);
+    };
+
+    const handleDeleteCategoryFromMenu = (category: Category) => {
+        setEditingCategory(category);
+        setCategoryDialogInitialAction('delete');
         setDialogOpen(true);
     };
 
@@ -484,6 +583,31 @@ export function VaultSidebar({
             onSelectCategory(null);
         }
         fetchCategories();
+    };
+
+    const handleCategoryDrop = async (categoryId: string, event: React.DragEvent) => {
+        event.preventDefault();
+        setDropTargetCategoryId(null);
+
+        const itemId = getDraggedVaultItemId(event);
+        if (!itemId || !opLogLocalVaultState) {
+            return;
+        }
+
+        const plaintext = mapVerifiedItemRecordToPlaintext(
+            opLogLocalVaultState.recordsById.get(itemId),
+            categoryId,
+        );
+        if (!plaintext) {
+            return;
+        }
+
+        const result = await opLogUpdateItem(itemId, plaintext);
+        if (!result.error) {
+            onSelectCategory(categoryId);
+            onActionComplete?.();
+            await fetchCategories();
+        }
     };
 
     return (
@@ -607,7 +731,29 @@ export function VaultSidebar({
                             )
                         ) : (
                             categories.map((category) => (
-                                <div key={category.id} className="group relative">
+                                <div
+                                    key={category.id}
+                                    className={cn(
+                                        'group relative rounded-lg',
+                                        dropTargetCategoryId === category.id && 'ring-2 ring-primary/55',
+                                    )}
+                                    onDragEnter={(event) => {
+                                        event.preventDefault();
+                                        event.dataTransfer.dropEffect = 'move';
+                                        setDropTargetCategoryId(category.id);
+                                    }}
+                                    onDragOver={(event) => {
+                                        event.preventDefault();
+                                        event.dataTransfer.dropEffect = 'move';
+                                        setDropTargetCategoryId(category.id);
+                                    }}
+                                    onDragLeave={() => setDropTargetCategoryId((current) => (
+                                        current === category.id ? null : current
+                                    ))}
+                                    onDrop={(event) => {
+                                        void handleCategoryDrop(category.id, event);
+                                    }}
+                                >
                                     <SidebarItem
                                         icon={
                                             collapsed ? (
@@ -640,6 +786,13 @@ export function VaultSidebar({
                                                     <DropdownMenuItem onClick={() => handleEditCategory(category)}>
                                                         <Pencil className="w-4 h-4 mr-2" />
                                                         {t('common.edit')}
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem
+                                                        className="text-destructive focus:text-destructive"
+                                                        onClick={() => handleDeleteCategoryFromMenu(category)}
+                                                    >
+                                                        <Trash2 className="w-4 h-4 mr-2" />
+                                                        {t('common.delete')}
                                                     </DropdownMenuItem>
                                                 </DropdownMenuContent>
                                             </DropdownMenu>
@@ -778,8 +931,14 @@ export function VaultSidebar({
             {/* Category Dialog */}
             <CategoryDialog
                 open={dialogOpen}
-                onOpenChange={setDialogOpen}
+                onOpenChange={(open) => {
+                    setDialogOpen(open);
+                    if (!open) {
+                        setCategoryDialogInitialAction(undefined);
+                    }
+                }}
                 category={editingCategory}
+                initialAction={categoryDialogInitialAction}
                 onSave={handleCategoryChange}
             />
         </>

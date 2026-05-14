@@ -68,6 +68,7 @@ interface CategoryDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     category: Category | null; // null = create new
+    initialAction?: 'delete';
     onSave?: (event?: CategoryChangeEvent) => void;
 }
 
@@ -101,7 +102,7 @@ function parseVerifiedOpLogItemCategoryId(record: LocalVerifiedRecord): string |
     }
 }
 
-export function CategoryDialog({ open, onOpenChange, category, onSave }: CategoryDialogProps) {
+export function CategoryDialog({ open, onOpenChange, category, initialAction, onSave }: CategoryDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
@@ -136,6 +137,12 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             setColor('#3b82f6');
         }
     }, [category, open]);
+
+    useEffect(() => {
+        if (open && category && initialAction === 'delete') {
+            setShowDeleteConfirm(true);
+        }
+    }, [category, initialAction, open]);
 
     const handleSave = async () => {
         if (!user || !name.trim()) return;
@@ -318,7 +325,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         {/* Icon Selection */}
                         <div className="space-y-2">
                             <Label>{t('categories.icon')}</Label>
-                            <div className="grid grid-cols-8 gap-1">
+                            <div className="max-h-[11.5rem] overflow-y-auto rounded-lg border border-border/45 bg-background/35 p-2">
+                            <div className="grid grid-cols-5 gap-1 sm:grid-cols-8">
                                 <button
                                     type="button"
                                     onClick={() => setIcon('')}
@@ -345,6 +353,7 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                                     </button>
                                     );
                                 })}
+                            </div>
                             </div>
                         </div>
 

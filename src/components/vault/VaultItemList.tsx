@@ -10,7 +10,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Clock3, Cloud, Eye, KeyRound, Loader2, Pin, Plus, RefreshCw, Shield, ShieldCheck, TriangleAlert } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  Cloud,
+  Copy,
+  Edit,
+  Eye,
+  GripVertical,
+  KeyRound,
+  Loader2,
+  Pin,
+  Plus,
+  RefreshCw,
+  Shield,
+  ShieldCheck,
+  Star,
+  TriangleAlert,
+} from 'lucide-react';
 
 import {
   AlertDialog,
@@ -29,6 +47,7 @@ import { getServiceHooks } from '@/extensions/registry';
 import { cn } from '@/lib/utils';
 import { ItemFilter, ViewMode } from '@/pages/VaultPage';
 import { VaultItemData } from '@/services/cryptoService';
+import { writeClipboard } from '@/services/clipboardService';
 import { isVaultItemEnvelopeV2 } from '@/services/vaultIntegrityV2/itemEnvelopeCrypto';
 import {
   isAppOnline,
@@ -42,8 +61,11 @@ import {
 import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
 import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
 import { getVerifiedRecordIdsForEgress } from '@/services/vaultOpLog';
+import type { ItemPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
 import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
+import { useToast } from '@/hooks/use-toast';
 import { VaultItemCard } from './VaultItemCard';
+import { VaultIcon } from '@/components/icons/VaultIcon';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
 import {
@@ -51,11 +73,12 @@ import {
   type VaultQuarantineRestoreProgressStatus,
 } from './VaultQuarantineRestoreProgressDialog';
 
+const VAULT_ITEM_DRAG_MIME = 'application/x-singra-vault-item-id';
 const DECRYPT_BATCH_SIZE = 25;
 const QUARANTINE_SUMMARY_THRESHOLD = 2;
 const CLOUD_SYNC_REFRESH_INTERVAL_MS = 60_000;
 const CLOUD_SYNC_MIN_REQUEST_GAP_MS = 25_000;
-const RECENT_SECTION_LIMIT = 5;
+const RECENT_SECTION_LIMIT = 8;
 
 interface VaultItem {
   id: string;
@@ -78,6 +101,7 @@ interface VaultItemListProps {
   viewMode: ViewMode;
   onEditItem: (itemId: string) => void;
   refreshKey?: number;
+  securityStatusLoading?: boolean;
 }
 
 type RenderableVaultListEntry =
@@ -98,6 +122,11 @@ interface VaultItemListIntegrityGate {
   readonly mode?: string;
   readonly quarantinedItems: QuarantinedVaultItem[];
   readonly isFirstCheck?: boolean;
+}
+
+interface CategorySummary {
+  readonly id: string;
+  readonly name: string;
 }
 
 function canDecryptFromIntegrityResult(
@@ -167,6 +196,52 @@ function parseOpLogItemPlaintext(record: LocalVerifiedRecord): VaultItemData | n
   }
 }
 
+function parseOpLogCategoryPlaintext(record: LocalVerifiedRecord): CategorySummary | null {
+  if (
+    (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
+    || record.record.recordType !== 'category'
+    || !record.plaintext
+  ) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(record.plaintext)) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const value = parsed as Record<string, unknown>;
+    return {
+      id: record.record.recordId,
+      name: typeof value.name === 'string' && value.name.trim() ? value.name : 'Kategorie',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseVerifiedPlaintextObject(record: LocalVerifiedRecord | null | undefined): Record<string, unknown> | null {
+  if (!record?.plaintext) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(record.plaintext)) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readOptionalSortOrder(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function mapOpLogRecordToVaultItem(record: LocalVerifiedRecord): VaultItem | null {
   const decryptedData = parseOpLogItemPlaintext(record);
   if (!decryptedData) {
@@ -186,6 +261,94 @@ function mapOpLogRecordToVaultItem(record: LocalVerifiedRecord): VaultItem | nul
     updated_at: record.record.updatedAt,
     decryptedData,
   };
+}
+
+function itemPlaintextFromVaultItem(
+  item: VaultItem,
+  overrides: Partial<Pick<ItemPlaintext, 'categoryRecordId' | 'isFavorite'>>,
+  sourcePlaintext?: Record<string, unknown> | null,
+): ItemPlaintext | null {
+  const data = item.decryptedData;
+  if (!data) {
+    return null;
+  }
+  const sourceCustomFields = sourcePlaintext?.customFields;
+
+  return {
+    title: data.title ?? item.title ?? '',
+    websiteUrl: data.websiteUrl ?? item.website_url ?? null,
+    username: data.username ?? null,
+    password: data.password ?? null,
+    notes: data.notes ?? null,
+    itemType: data.itemType === 'note'
+      ? 'note'
+      : data.itemType === 'totp'
+        ? 'totp'
+        : data.itemType === 'card'
+          ? 'card'
+          : 'password',
+    categoryRecordId: overrides.categoryRecordId ?? data.categoryId ?? item.category_id ?? null,
+    isFavorite: overrides.isFavorite ?? data.isFavorite ?? item.is_favorite ?? false,
+    sortOrder: readOptionalSortOrder(sourcePlaintext?.sortOrder),
+    totpSecret: data.totpSecret ?? null,
+    totpIssuer: data.totpIssuer ?? null,
+    totpLabel: data.totpLabel ?? null,
+    totpAlgorithm: data.totpAlgorithm ?? null,
+    totpDigits: data.totpDigits ?? null,
+    totpPeriod: data.totpPeriod ?? null,
+    customFields: data.customFields ?? (sourceCustomFields === null
+      ? null
+      : isStringRecord(sourceCustomFields)
+        ? sourceCustomFields
+        : null),
+  };
+}
+
+function getItemTitle(item: VaultItem): string {
+  return item.decryptedData?.title || item.title || 'Ohne Titel';
+}
+
+function getItemWebsiteUrl(item: VaultItem): string | null {
+  return item.decryptedData?.websiteUrl || item.website_url || null;
+}
+
+function getItemUsername(item: VaultItem): string | null {
+  return item.decryptedData?.username || null;
+}
+
+function getItemCategoryId(item: VaultItem): string | null {
+  return item.decryptedData?.categoryId ?? item.category_id ?? null;
+}
+
+function isItemFavorite(item: VaultItem): boolean {
+  return typeof item.decryptedData?.isFavorite === 'boolean'
+    ? item.decryptedData.isFavorite
+    : !!item.is_favorite;
+}
+
+function formatRelativeUpdatedAt(value: string): string {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) {
+    return 'kürzlich';
+  }
+
+  const diffMs = Date.now() - timestamp;
+  const minuteMs = 60_000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+
+  if (diffMs < minuteMs) return 'gerade eben';
+  if (diffMs < hourMs) {
+    const minutes = Math.max(1, Math.round(diffMs / minuteMs));
+    return `vor ${minutes} Min`;
+  }
+  if (diffMs < dayMs) {
+    const hours = Math.max(1, Math.round(diffMs / hourMs));
+    return `vor ${hours} Std`;
+  }
+
+  const days = Math.max(1, Math.round(diffMs / dayMs));
+  return `vor ${days} Tag${days === 1 ? '' : 'en'}`;
 }
 
 function isVaultItemType(value: unknown): value is VaultItem['item_type'] {
@@ -235,8 +398,10 @@ export function VaultItemList({
   viewMode,
   onEditItem,
   refreshKey,
+  securityStatusLoading = false,
 }: VaultItemListProps) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const {
@@ -253,6 +418,7 @@ export function VaultItemList({
     vaultDataVersion,
     vaultMigrationStatus,
     opLogLocalVaultState,
+    opLogUpdateItem,
     opLogUiRefresh,
     opLogUiView,
   } = useVault();
@@ -278,6 +444,8 @@ export function VaultItemList({
   const [lastCloudSyncAt, setLastCloudSyncAt] = useState<Date | null>(null);
   const [cloudSyncTick, setCloudSyncTick] = useState(0);
   const [recentlyCopiedItemIds, setRecentlyCopiedItemIds] = useState<string[]>([]);
+  const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(() => new Set());
+  const [dropTargetCategoryId, setDropTargetCategoryId] = useState<string | null>(null);
   const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
   const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
   const revalidationRequestIdRef = useRef(0);
@@ -778,6 +946,163 @@ reportUnreadableItemsRef.current([]);
     ].slice(0, 20));
   }, []);
 
+  const categorySummaries = useMemo(() => {
+    if (!opLogLocalVaultState) {
+      return [] as CategorySummary[];
+    }
+
+    return Array.from(opLogLocalVaultState.recordsById.values())
+      .map(parseOpLogCategoryPlaintext)
+      .filter((category): category is CategorySummary => !!category)
+      .sort((left, right) => left.name.localeCompare(right.name, 'de'));
+  }, [opLogLocalVaultState]);
+
+  const categoryNameById = useMemo(
+    () => new Map(categorySummaries.map((category) => [category.id, category.name])),
+    [categorySummaries],
+  );
+
+  const moveItemToCategory = useCallback(async (itemId: string, nextCategoryId: string | null) => {
+    const item = items.find((candidate) => candidate.id === itemId);
+    const sourcePlaintext = parseVerifiedPlaintextObject(opLogLocalVaultState?.recordsById.get(itemId) as LocalVerifiedRecord | undefined);
+    const plaintext = item ? itemPlaintextFromVaultItem(item, { categoryRecordId: nextCategoryId }, sourcePlaintext) : null;
+    if (!item || !plaintext) {
+      return;
+    }
+
+    const previousCategoryId = getItemCategoryId(item);
+    setItems((current) => current.map((currentItem) => {
+      if (currentItem.id !== item.id) {
+        return currentItem;
+      }
+      return {
+        ...currentItem,
+        category_id: nextCategoryId,
+        decryptedData: currentItem.decryptedData
+          ? { ...currentItem.decryptedData, categoryId: nextCategoryId }
+          : currentItem.decryptedData,
+      };
+    }));
+    markItemRecentlyUsed(item.id);
+
+    const result = await opLogUpdateItem(item.id, plaintext);
+    if (!result.error) {
+      return;
+    }
+
+    setItems((current) => current.map((currentItem) => {
+      if (currentItem.id !== item.id) {
+        return currentItem;
+      }
+      return {
+        ...currentItem,
+        category_id: previousCategoryId,
+        decryptedData: currentItem.decryptedData
+          ? { ...currentItem.decryptedData, categoryId: previousCategoryId }
+          : currentItem.decryptedData,
+      };
+    }));
+    toast({
+      variant: 'destructive',
+      title: t('common.error'),
+      description: result.error.message,
+    });
+  }, [items, markItemRecentlyUsed, opLogLocalVaultState, opLogUpdateItem, t, toast]);
+
+  const toggleItemFavorite = useCallback(async (item: VaultItem) => {
+    const nextFavorite = !isItemFavorite(item);
+    const sourcePlaintext = parseVerifiedPlaintextObject(opLogLocalVaultState?.recordsById.get(item.id) as LocalVerifiedRecord | undefined);
+    const plaintext = itemPlaintextFromVaultItem(item, { isFavorite: nextFavorite }, sourcePlaintext);
+    if (!plaintext) {
+      return;
+    }
+
+    setItems((current) => current.map((currentItem) => {
+      if (currentItem.id !== item.id) {
+        return currentItem;
+      }
+      return {
+        ...currentItem,
+        is_favorite: nextFavorite,
+        decryptedData: currentItem.decryptedData
+          ? { ...currentItem.decryptedData, isFavorite: nextFavorite }
+          : currentItem.decryptedData,
+      };
+    }));
+    markItemRecentlyUsed(item.id);
+
+    const result = await opLogUpdateItem(item.id, plaintext);
+    if (!result.error) {
+      return;
+    }
+
+    setItems((current) => current.map((currentItem) => {
+      if (currentItem.id !== item.id) {
+        return currentItem;
+      }
+      return {
+        ...currentItem,
+        is_favorite: !nextFavorite,
+        decryptedData: currentItem.decryptedData
+          ? { ...currentItem.decryptedData, isFavorite: !nextFavorite }
+          : currentItem.decryptedData,
+      };
+    }));
+    toast({
+      variant: 'destructive',
+      title: t('common.error'),
+      description: result.error.message,
+    });
+  }, [markItemRecentlyUsed, opLogLocalVaultState, opLogUpdateItem, t, toast]);
+
+  const copySecretFromRow = useCallback(async (item: VaultItem, value: string | null | undefined, type: 'Username' | 'Password') => {
+    if (!value || (opLogVerifiedItemIds !== null && !opLogVerifiedItemIds.has(item.id))) {
+      return;
+    }
+
+    try {
+      await writeClipboard(value);
+      markItemRecentlyUsed(item.id);
+      toast({
+        title: t('vault.copied'),
+        description: `${t(`vault.copied${type}`)} ${t('vault.clipboardAutoClear')}`,
+      });
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: t('vault.copyFailed'),
+      });
+    }
+  }, [markItemRecentlyUsed, opLogVerifiedItemIds, t, toast]);
+
+  const toggleCategoryCollapsed = useCallback((categoryId: string) => {
+    setCollapsedCategoryIds((current) => {
+      const next = new Set(current);
+      if (next.has(categoryId)) {
+        next.delete(categoryId);
+      } else {
+        next.add(categoryId);
+      }
+      return next;
+    });
+  }, []);
+
+  const getDraggedVaultItemId = useCallback((event: React.DragEvent): string => (
+    event.dataTransfer.getData(VAULT_ITEM_DRAG_MIME)
+    || event.dataTransfer.getData('text/plain')
+  ), []);
+
+  const handleCategoryDrop = useCallback((categoryId: string, event: React.DragEvent) => {
+    event.preventDefault();
+    setDropTargetCategoryId(null);
+    const itemId = getDraggedVaultItemId(event);
+    if (!itemId) {
+      return;
+    }
+    void moveItemToCategory(itemId, categoryId);
+  }, [getDraggedVaultItemId, moveItemToCategory]);
+
   const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
     return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
       const quarantine = quarantinedItemsById.get(item.id);
@@ -879,44 +1204,59 @@ reportUnreadableItemsRef.current([]);
     [visibleItemEntries],
   );
 
-  const favoriteItemIds = useMemo(
-    () => new Set(favoriteEntries.map((entry) => entry.item.id)),
-    [favoriteEntries],
-  );
-
   const recentlyUsedEntries = useMemo(() => {
     const byId = new Map(visibleItemEntries.map((entry) => [entry.item.id, entry]));
-    const copiedEntries = recentlyCopiedItemIds
+    const explicitRecentEntries = recentlyCopiedItemIds
       .map((id) => byId.get(id))
-      .filter((entry): entry is Extract<RenderableVaultListEntry, { kind: 'item' }> => !!entry)
-      .filter((entry) => !favoriteItemIds.has(entry.item.id));
+      .filter((entry): entry is Extract<RenderableVaultListEntry, { kind: 'item' }> => !!entry);
+    const explicitRecentIds = new Set(explicitRecentEntries.map((entry) => entry.item.id));
 
-    if (copiedEntries.length > 0) {
-      return copiedEntries.slice(0, RECENT_SECTION_LIMIT);
-    }
-
-    return [...visibleItemEntries]
-      .filter((entry) => !favoriteItemIds.has(entry.item.id))
+    const fallbackEntries = [...visibleItemEntries]
+      .filter((entry) => !explicitRecentIds.has(entry.item.id))
       .sort((left, right) => right.item.updated_at.localeCompare(left.item.updated_at))
-      .slice(0, RECENT_SECTION_LIMIT);
-  }, [favoriteItemIds, recentlyCopiedItemIds, visibleItemEntries]);
+      .slice(0, RECENT_SECTION_LIMIT - explicitRecentEntries.length);
+
+    return [...explicitRecentEntries, ...fallbackEntries].slice(0, RECENT_SECTION_LIMIT);
+  }, [recentlyCopiedItemIds, visibleItemEntries]);
+
+  const groupedCategorySections = useMemo(() => (
+    categorySummaries
+      .map((category) => ({
+        category,
+        entries: visibleItemEntries.filter((entry) => getItemCategoryId(entry.item) === category.id),
+      }))
+      .filter((section) => section.entries.length > 0)
+  ), [categorySummaries, visibleItemEntries]);
+
+  const uncategorizedEntries = useMemo(() => (
+    visibleItemEntries.filter((entry) => !getItemCategoryId(entry.item))
+  ), [visibleItemEntries]);
 
   const renderItemCard = useCallback((
     entry: Extract<RenderableVaultListEntry, { kind: 'item' }>,
   ) => (
-    <VaultItemCard
+    <div
       key={entry.item.id}
-      item={entry.item}
-      viewMode={viewMode}
-      onEdit={() => {
-        markItemRecentlyUsed(entry.item.id);
-        onEditItem(entry.item.id);
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData(VAULT_ITEM_DRAG_MIME, entry.item.id);
+        event.dataTransfer.setData('text/plain', entry.item.id);
       }}
-      onSecretCopied={markItemRecentlyUsed}
-      canCopySecrets={
-        opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(entry.item.id)
-      }
-    />
+    >
+      <VaultItemCard
+        item={entry.item}
+        viewMode={viewMode}
+        onEdit={() => {
+          markItemRecentlyUsed(entry.item.id);
+          onEditItem(entry.item.id);
+        }}
+        onSecretCopied={markItemRecentlyUsed}
+        canCopySecrets={
+          opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(entry.item.id)
+        }
+      />
+    </div>
   ), [markItemRecentlyUsed, onEditItem, opLogVerifiedItemIds, viewMode]);
 
   const renderVaultSection = useCallback((
@@ -955,6 +1295,285 @@ reportUnreadableItemsRef.current([]);
       </section>
     );
   }, [renderItemCard]);
+
+  const renderTableRow = useCallback((
+    entry: Extract<RenderableVaultListEntry, { kind: 'item' }>,
+    options?: { showCategory?: boolean },
+  ) => {
+    const { item } = entry;
+    const title = getItemTitle(item);
+    const websiteUrl = getItemWebsiteUrl(item);
+    const username = getItemUsername(item);
+    const password = item.decryptedData?.password ?? null;
+    const favorite = isItemFavorite(item);
+    const resolvedCategoryId = getItemCategoryId(item);
+    const canCopy = opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(item.id);
+
+    return (
+      <div
+        key={item.id}
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData(VAULT_ITEM_DRAG_MIME, item.id);
+          event.dataTransfer.setData('text/plain', item.id);
+        }}
+        className="group grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-[hsl(var(--border)/0.22)] px-3 py-2.5 transition-all duration-200 ease-out hover:bg-white/[0.035] md:grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px]"
+      >
+        <div className="flex min-w-0 items-center gap-2.5">
+          <GripVertical className="hidden h-4 w-4 shrink-0 text-muted-foreground/45 group-hover:text-muted-foreground sm:block" aria-hidden="true" />
+          <VaultIcon title={title} websiteUrl={websiteUrl} className="h-7 w-7 shrink-0" />
+          <div className="min-w-0">
+            <button
+              type="button"
+              className="block max-w-full truncate text-left text-sm font-medium text-foreground hover:text-primary"
+              onClick={() => {
+                markItemRecentlyUsed(item.id);
+                onEditItem(item.id);
+              }}
+            >
+              {title}
+            </button>
+            {options?.showCategory && resolvedCategoryId && (
+              <p className="mt-0.5 truncate text-[11px] text-muted-foreground md:hidden">
+                {categoryNameById.get(resolvedCategoryId) ?? t('categories.category', { defaultValue: 'Kategorie' })}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <span className="hidden min-w-0 truncate text-sm text-muted-foreground md:block">
+          {username || '—'}
+        </span>
+        <span className="hidden font-mono text-sm tracking-[0.18em] text-muted-foreground md:block">
+          {password ? '••••••••••' : '—'}
+        </span>
+        <span className="hidden min-w-0 text-sm text-muted-foreground md:block">
+          {options?.showCategory && resolvedCategoryId
+            ? categoryNameById.get(resolvedCategoryId) ?? '—'
+            : formatRelativeUpdatedAt(item.updated_at)}
+        </span>
+
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(
+              'h-8 w-8 text-muted-foreground hover:text-amber-300',
+              favorite && 'text-amber-400',
+            )}
+            aria-label={favorite
+              ? t('vault.actions.removeFavorite', { defaultValue: 'Favorit entfernen' })
+              : t('vault.actions.addFavorite', { defaultValue: 'Als Favorit markieren' })}
+            onClick={() => void toggleItemFavorite(item)}
+          >
+            <Star className={cn('h-4 w-4', favorite && 'fill-current')} />
+          </Button>
+          {username && canCopy && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-primary"
+              aria-label={t('vault.actions.copyUsername')}
+              onClick={() => void copySecretFromRow(item, username, 'Username')}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+          )}
+          {password && canCopy && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-primary"
+              aria-label={t('vault.actions.copyPassword')}
+              onClick={() => void copySecretFromRow(item, password, 'Password')}
+            >
+              <KeyRound className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-primary"
+            aria-label={t('common.edit')}
+            onClick={() => {
+              markItemRecentlyUsed(item.id);
+              onEditItem(item.id);
+            }}
+          >
+            <Edit className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  }, [
+    categoryNameById,
+    copySecretFromRow,
+    markItemRecentlyUsed,
+    onEditItem,
+    opLogVerifiedItemIds,
+    t,
+    toggleItemFavorite,
+  ]);
+
+  const renderTableHeader = useCallback((options?: { fourthColumn?: string }) => (
+    <div className="hidden grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px] gap-3 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground md:grid">
+      <span>{t('vault.table.name', { defaultValue: 'Name' })}</span>
+      <span>{t('vault.table.username', { defaultValue: 'Benutzername' })}</span>
+      <span>{t('vault.table.password', { defaultValue: 'Passwort' })}</span>
+      <span>{options?.fourthColumn ?? t('vault.table.lastUsed', { defaultValue: 'Zuletzt verwendet' })}</span>
+      <span className="text-right">{t('vault.table.actions', { defaultValue: 'Aktionen' })}</span>
+    </div>
+  ), [t]);
+
+  const renderVaultTable = useCallback((
+    entries: Extract<RenderableVaultListEntry, { kind: 'item' }>[],
+    options?: { showHeader?: boolean; showCategory?: boolean; fourthColumn?: string },
+  ) => (
+    <div className="overflow-hidden rounded-xl border border-[hsl(var(--border)/0.32)] bg-[hsl(var(--el-1)/0.72)] shadow-[0_18px_48px_hsl(0_0%_0%/0.24)] backdrop-blur transition-all duration-200 ease-out">
+      {options?.showHeader && renderTableHeader({ fourthColumn: options.fourthColumn })}
+      {entries.map((entry) => renderTableRow(entry, { showCategory: options?.showCategory }))}
+    </div>
+  ), [renderTableHeader, renderTableRow]);
+
+  const renderRecentSection = useCallback(() => {
+    if (recentlyUsedEntries.length === 0) {
+      return null;
+    }
+
+    const columns = [
+      recentlyUsedEntries.slice(0, 4),
+      recentlyUsedEntries.slice(4, 8),
+    ].filter((column) => column.length > 0);
+
+    return (
+      <section className={cn('space-y-3', favoriteEntries.length > 0 && 'border-t border-border/35 pt-5')}>
+        <div className="flex items-center gap-2 px-1 text-sm font-semibold text-foreground">
+          <Clock3 className="h-4 w-4 text-primary" aria-hidden="true" />
+          <span>{t('vault.sections.recentlyUsed', { defaultValue: 'Zuletzt verwendet' })}</span>
+        </div>
+        <div className={cn('grid gap-3', columns.length > 1 && 'xl:grid-cols-2')}>
+          {columns.map((column, index) => (
+            <div key={`recent-${index}`}>
+              {renderVaultTable(column)}
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }, [favoriteEntries.length, recentlyUsedEntries, renderVaultTable, t]);
+
+  const renderGroupedAllEntries = useCallback(() => {
+    const hasCategorizedEntries = groupedCategorySections.length > 0;
+    const hasUncategorizedEntries = uncategorizedEntries.length > 0;
+
+    if (!hasCategorizedEntries && !hasUncategorizedEntries) {
+      return null;
+    }
+
+    return (
+      <section className={cn(
+        'space-y-4',
+        (favoriteEntries.length > 0 || recentlyUsedEntries.length > 0) && 'border-t border-border/35 pt-5',
+      )}>
+        <div className="flex items-center justify-between gap-3 px-1">
+          <h2 className="text-sm font-semibold text-foreground">
+            {t('vault.sections.allEntries', { defaultValue: 'Alle Einträge' })}
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            {t('vault.sections.entryCount', {
+              defaultValue: '{{count}} Einträge',
+              count: visibleItemEntries.length,
+            })}
+          </span>
+        </div>
+
+        {groupedCategorySections.map(({ category, entries }) => {
+          const collapsed = collapsedCategoryIds.has(category.id);
+          const isDropTarget = dropTargetCategoryId === category.id;
+
+          return (
+            <div
+              key={category.id}
+              className={cn(
+                'overflow-hidden rounded-xl border border-[hsl(var(--border)/0.32)] bg-[hsl(var(--el-1)/0.72)] backdrop-blur transition-colors',
+                isDropTarget && 'border-primary/70 ring-2 ring-primary/30',
+              )}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                setDropTargetCategoryId(category.id);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                setDropTargetCategoryId(category.id);
+              }}
+              onDragLeave={() => setDropTargetCategoryId((current) => (
+                current === category.id ? null : current
+              ))}
+              onDrop={(event) => handleCategoryDrop(category.id, event)}
+            >
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left transition-colors hover:bg-white/[0.035]"
+                onClick={() => toggleCategoryCollapsed(category.id)}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  {collapsed ? <ChevronRight className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                  <span className="truncate text-sm font-semibold text-foreground">{category.name}</span>
+                  <span className="rounded-md border border-primary/35 bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
+                    {entries.length}
+                  </span>
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {t('vault.dragDrop.dropHint', { defaultValue: 'Einträge hier ablegen' })}
+                </span>
+              </button>
+              {!collapsed && (
+                <>
+                  {renderTableHeader()}
+                  {entries.map((entry) => renderTableRow(entry))}
+                </>
+              )}
+            </div>
+          );
+        })}
+
+        {uncategorizedEntries.length > 0 && (
+          <div className="space-y-3">
+            {(hasCategorizedEntries || favoriteEntries.length > 0 || recentlyUsedEntries.length > 0) && (
+              <div className="px-1 text-sm font-semibold text-foreground">
+                {t('vault.sections.uncategorized', { defaultValue: 'Ohne Kategorie' })}
+              </div>
+            )}
+            {renderVaultTable(uncategorizedEntries, {
+              showHeader: hasCategorizedEntries,
+              showCategory: false,
+            })}
+          </div>
+        )}
+      </section>
+    );
+  }, [
+    collapsedCategoryIds,
+    dropTargetCategoryId,
+    favoriteEntries.length,
+    groupedCategorySections,
+    handleCategoryDrop,
+    recentlyUsedEntries.length,
+    renderTableHeader,
+    renderTableRow,
+    renderVaultTable,
+    t,
+    toggleCategoryCollapsed,
+    uncategorizedEntries,
+    visibleItemEntries.length,
+  ]);
 
   const inlineQuarantinedIds = useMemo(
     () => new Set(
@@ -1096,11 +1715,12 @@ reportUnreadableItemsRef.current([]);
   }
 
   return (
-    <div className="space-y-4">
-      {(backgroundSyncing || lastCloudSyncAt) && (
-        <div className="flex items-center justify-end">
+    <div className="relative space-y-4">
+      {(backgroundSyncing || lastCloudSyncAt || securityStatusLoading || (canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating))) && (
+        <div className="pointer-events-none absolute right-0 top-0 z-10 flex items-center justify-end gap-2">
+          {(backgroundSyncing || lastCloudSyncAt) && (
           <span
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-primary shadow-[0_0_24px_hsl(var(--primary)/0.08)]"
+            className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-primary shadow-[0_0_24px_hsl(var(--primary)/0.08)]"
             title={backgroundSyncing
               ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
               : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
@@ -1109,17 +1729,31 @@ reportUnreadableItemsRef.current([]);
               : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
           >
             <Cloud className={cn('h-4 w-4', backgroundSyncing && 'animate-pulse')} />
+            <span className="sr-only">
+              {backgroundSyncing
+                ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
+                : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
+            </span>
           </span>
-        </div>
-      )}
-
-      {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
-        <div className="flex items-center justify-end">
+          )}
+          {securityStatusLoading && (
+            <span
+              className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-300/25 bg-[hsl(var(--el-1)/0.78)] text-emerald-300 shadow-[0_0_24px_hsl(var(--success)/0.08)]"
+              title={t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
+              aria-label={t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
+            >
+              <ShieldCheck className="h-4 w-4 animate-pulse" />
+              <span className="sr-only">
+                {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
+              </span>
+            </span>
+          )}
+          {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
           <button
             type="button"
             disabled={revalidating}
             onClick={() => void revalidateRemoteIntegrity()}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-emerald-300 shadow-[0_0_24px_hsl(var(--success)/0.08)] transition-colors hover:border-emerald-300/40 hover:bg-emerald-400/10 disabled:cursor-wait"
+            className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-emerald-300 shadow-[0_0_24px_hsl(var(--success)/0.08)] transition-colors hover:border-emerald-300/40 hover:bg-emerald-400/10 disabled:cursor-wait"
             title={revalidating
               ? t('vault.integrity.revalidatingEntries', { defaultValue: 'Prüfe Einträge...' })
               : t('vault.integrity.revalidationHint', { defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.' })}
@@ -1129,6 +1763,7 @@ reportUnreadableItemsRef.current([]);
           >
             <ShieldCheck className={cn('h-4 w-4', revalidating && 'animate-pulse')} />
           </button>
+          )}
         </div>
       )}
 
@@ -1210,32 +1845,8 @@ reportUnreadableItemsRef.current([]);
             false,
             true,
           )}
-          {renderVaultSection(
-            t('vault.sections.recentlyUsed', { defaultValue: 'Zuletzt verwendet' }),
-            <Clock3 className="h-4 w-4 text-primary" aria-hidden="true" />,
-            recentlyUsedEntries,
-            favoriteEntries.length > 0,
-            true,
-          )}
-          <section className={cn(
-            'space-y-3',
-            (favoriteEntries.length > 0 || recentlyUsedEntries.length > 0) && 'border-t border-border/35 pt-5',
-          )}>
-            <div className="flex items-center justify-between gap-3 px-1">
-              <h2 className="text-sm font-semibold text-foreground">
-                {t('vault.sections.allEntries', { defaultValue: 'Alle Einträge' })}
-              </h2>
-              <span className="text-xs text-muted-foreground">
-                {t('vault.sections.entryCount', {
-                  defaultValue: '{{count}} Einträge',
-                  count: visibleItemEntries.length,
-                })}
-              </span>
-            </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {visibleItemEntries.map(renderItemCard)}
-            </div>
-          </section>
+          {renderRecentSection()}
+          {renderGroupedAllEntries()}
         </div>
       ) : (
         <div

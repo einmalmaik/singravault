@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { VaultItemList } from '../VaultItemList';
 import { loadVaultSnapshot } from '@/services/offlineVaultService';
@@ -88,6 +88,7 @@ const mockVaultContext = {
     restoredItemIds: string[];
   },
   opLogUiRefresh: vi.fn(),
+  opLogUpdateItem: vi.fn(),
   quarantineResolutionById: {} as Record<string, {
     canRestore: boolean;
     canDelete: boolean;
@@ -239,7 +240,33 @@ function makeVerifiedOpLogItem(recordId: string, plaintext: Record<string, unkno
   };
 }
 
-function makeOpLogState(records: Array<ReturnType<typeof makeVerifiedOpLogItem>>) {
+function makeVerifiedOpLogCategory(recordId: string, plaintext: Record<string, unknown>) {
+  return {
+    record: {
+      vaultId: 'vault-1',
+      recordId,
+      recordType: 'category',
+      recordVersion: 1,
+      keyVersion: 1,
+      aadHash: 'aad',
+      ciphertextHash: 'ciphertext-hash',
+      nonce: 'nonce',
+      ciphertext: 'ciphertext',
+      lastOpId: 'op-1',
+      lastOpHash: 'op-hash',
+      isTombstone: false,
+      createdAt: '2026-02-18T10:00:00.000Z',
+      updatedAt: '2026-02-18T12:00:00.000Z',
+    },
+    recordState: 'verified',
+    plaintext: new TextEncoder().encode(JSON.stringify(plaintext)),
+    lastOperation: {
+      opId: 'op-1',
+    },
+  };
+}
+
+function makeOpLogState(records: Array<ReturnType<typeof makeVerifiedOpLogItem> | ReturnType<typeof makeVerifiedOpLogCategory>>) {
   return {
     recordsById: new Map(records.map((record) => [record.record.recordId, record])),
     quarantinedRecordsById: new Map(),
@@ -267,6 +294,8 @@ describe.sequential('VaultItemList', () => {
     mockVaultContext.opLogUiView = null;
     mockVaultContext.opLogUiRefresh.mockResolvedValue(undefined);
     mockVaultContext.opLogUiRefresh.mockClear();
+    mockVaultContext.opLogUpdateItem.mockResolvedValue({ error: null });
+    mockVaultContext.opLogUpdateItem.mockClear();
     mockVaultContext.quarantineResolutionById = {};
     mockVaultContext.opLogRestoreRecord.mockResolvedValue({ error: null });
     mockVaultContext.opLogDeleteUntrustedRecord.mockResolvedValue({ error: null });
@@ -409,6 +438,160 @@ describe.sequential('VaultItemList', () => {
     expect(loadVaultSnapshot).not.toHaveBeenCalled();
     expect(mockVerifyIntegrity).not.toHaveBeenCalled();
     expect(mockRefreshIntegrityBaseline).not.toHaveBeenCalled();
+  });
+
+  it('keeps the recent table filled after a row is used', async () => {
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    const records = Array.from({ length: 9 }, (_, index) => makeVerifiedOpLogItem(`recent-item-${index + 1}`, {
+      title: `Recent Item ${index + 1}`,
+      itemType: 'password',
+      isFavorite: false,
+      categoryRecordId: null,
+      username: `user-${index + 1}`,
+      password: `password-${index + 1}`,
+    }));
+    mockVaultContext.opLogLocalVaultState = makeOpLogState(records);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: records.map((record) => ({
+        recordId: record.record.recordId,
+        recordType: 'item',
+        recordVersion: 1,
+      })),
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    const onEditItem = vi.fn();
+    render(
+      <VaultItemList
+        searchQuery=""
+        filter="all"
+        categoryId={null}
+        viewMode="grid"
+        onEditItem={onEditItem}
+      />,
+    );
+
+    const recentSection = (await screen.findByText('Zuletzt verwendet')).closest('section');
+    expect(recentSection).not.toBeNull();
+    expect(within(recentSection!).getByText('Recent Item 8')).toBeInTheDocument();
+    expect(within(recentSection!).queryByText('Recent Item 9')).not.toBeInTheDocument();
+
+    fireEvent.click(within(recentSection!).getByText('Recent Item 3'));
+
+    expect(onEditItem).toHaveBeenCalledWith('recent-item-3');
+    expect(within(recentSection!).getByText('Recent Item 3')).toBeInTheDocument();
+    expect(within(recentSection!).getByText('Recent Item 8')).toBeInTheDocument();
+    expect(within(recentSection!).queryByText('Recent Item 9')).not.toBeInTheDocument();
+  });
+
+  it('groups entries by category and submits a signed update when an item is dropped into a category', async () => {
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    const category = makeVerifiedOpLogCategory('category-work', { name: 'Arbeit' });
+    const categorizedItem = makeVerifiedOpLogItem('work-item', {
+      title: 'Work Item',
+      itemType: 'password',
+      isFavorite: false,
+      categoryRecordId: 'category-work',
+      username: 'work-user',
+      password: 'work-password',
+    });
+    const looseItem = makeVerifiedOpLogItem('loose-item', {
+      title: 'Loose Item',
+      itemType: 'password',
+      isFavorite: false,
+      categoryRecordId: null,
+      username: 'loose-user',
+      password: 'loose-password',
+    });
+    mockVaultContext.opLogLocalVaultState = makeOpLogState([category, categorizedItem, looseItem]);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: [
+        { recordId: 'work-item', recordType: 'item', recordVersion: 1 },
+        { recordId: 'loose-item', recordType: 'item', recordVersion: 1 },
+      ],
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    const categoryHeader = await screen.findByText('Arbeit');
+    const dataTransfer = {
+      types: ['application/x-singra-vault-item-id'],
+      getData: vi.fn((type: string) => (type === 'application/x-singra-vault-item-id' ? 'loose-item' : '')),
+      setData: vi.fn(),
+      effectAllowed: '',
+      dropEffect: '',
+    };
+
+    fireEvent.dragOver(categoryHeader, { dataTransfer });
+    fireEvent.drop(categoryHeader, { dataTransfer });
+
+    await waitFor(() => {
+      expect(mockVaultContext.opLogUpdateItem).toHaveBeenCalledWith(
+        'loose-item',
+        expect.objectContaining({ categoryRecordId: 'category-work' }),
+      );
+    });
+  });
+
+  it('submits a signed update when a table favorite star is toggled', async () => {
+    mockVaultContext.vaultMigrationStatus = 'verified';
+    const records = [
+      makeVerifiedOpLogItem('favorite-item', {
+        title: 'Favorite Candidate',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+        username: 'fav-user',
+        password: 'fav-password',
+      }),
+      makeVerifiedOpLogItem('other-item', {
+        title: 'Other Item',
+        itemType: 'password',
+        isFavorite: false,
+        categoryRecordId: null,
+        username: 'other-user',
+        password: 'other-password',
+      }),
+    ];
+    mockVaultContext.opLogLocalVaultState = makeOpLogState(records);
+    mockVaultContext.opLogUiView = {
+      vaultSecurityMode: 'normal',
+      verifiedItems: records.map((record) => ({
+        recordId: record.record.recordId,
+        recordType: 'item',
+        recordVersion: 1,
+      })),
+      quarantinedItems: [],
+      conflictedItems: [],
+      deletedItemIds: [],
+      restoredItemIds: [],
+    };
+
+    renderList();
+
+    const favoriteTitle = (await screen.findAllByText('Favorite Candidate'))[0];
+    const favoriteRow = favoriteTitle.closest('[draggable="true"]');
+
+    expect(favoriteRow).not.toBeNull();
+
+    const favoriteButton = within(favoriteRow as HTMLElement).getByLabelText('Als Favorit markieren');
+    fireEvent.click(favoriteButton);
+
+    await waitFor(() => {
+      expect(mockVaultContext.opLogUpdateItem).toHaveBeenCalledWith(
+        'favorite-item',
+        expect.objectContaining({ isFavorite: true }),
+      );
+    });
   });
 
   it('keeps an empty verified OpLog vault on the empty state during background refresh', async () => {

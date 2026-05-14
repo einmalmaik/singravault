@@ -38,7 +38,7 @@ import type {
     RegistrationResponseJSON,
     AuthenticationResponseJSON,
 } from '@simplewebauthn/browser';
-import { invokeAuthedFunction } from '@/services/edgeFunctionService';
+import { invokeAuthedFunction, isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
 import { importMasterKey, unwrapUserKeyBytes } from '@/services/cryptoService';
 import { buildAuthenticationPrfExtension } from '@/services/passkeyPrf';
 
@@ -635,7 +635,9 @@ export async function listPasskeys(): Promise<PasskeyCredential[]> {
     });
 
     if (error) {
-        console.error('Failed to list passkeys:', error);
+        if (!isEdgeFunctionServiceError(error) || error.status !== 401) {
+            console.error('Failed to list passkeys:', error);
+        }
         throw error;
     }
 
