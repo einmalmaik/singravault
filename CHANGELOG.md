@@ -2,24 +2,47 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
-## 0.4.8 - Unreleased
+## 0.4.8 - 2026-05-15
 
-### Behoben
+### Verbesserungen
+
+- Neues Designsystem nach Maunting Design-DNA: dunkles Premium-Vault-UI, Glassmorphism und eine durchgaengig responsive App-Shell. Login, Landing, rechtliche Unterseiten und die Vault-Oberflaeche sind visuell an das neue Premium-Dark-Design angeglichen.
+- Vault-Liste komplett ueberarbeitet: neuer Item-Vorschau-Bereich mit Schnellaktionen (Benutzername/Passwort kopieren, Favorit umschalten, bearbeiten, loeschen) sowie sichtbare Metadaten zum Eintrag.
+- Eintraege koennen jetzt per Drag-and-Drop zwischen Kategorien verschoben werden, sowohl mit Maus als auch per Touch (langes Druecken zum Aktivieren). Auch Kategorien lassen sich per Drag-and-Drop neu sortieren.
+- Neue Tabellenansicht fuer Vault-Eintraege mit zeilenweisem Kopieren, Favoriten-Toggle und Bearbeiten direkt aus der Liste; gruppierte Kategorie-Abschnitte sind klappbar.
+- Beim Springen zu einem bestimmten Eintrag (z. B. ueber Suche/Hinweise) wird der Eintrag jetzt scrolled-into-view und kurzzeitig hervorgehoben, damit klar ist, welcher Eintrag gemeint ist.
+- Sidebar zeigt eine Tresor-Gesundheitszusammenfassung an: schwache, pwned, doppelt verwendete, alte, wiederverwendete und starke Passwoerter werden lokal ausgewertet und je nach Status (gesund / Pruefen / kritisch) angezeigt.
+- "Have I Been Pwned"-Pruefung erfolgt mit k-Anonymity ueber den SHA-1-Praefix; vollstaendige Passwoerter verlassen das Geraet nicht. Ergebnisse werden waehrend der Sitzung zwischengespeichert, damit dieselben Hashes nicht wiederholt nachgefragt werden.
+- Passwort-Staerke-Bewertung beruecksichtigt jetzt zusaetzlichen Nutzerkontext (z. B. Titel, Benutzername, URL), damit naheliegende Varianten wie "github-meinname" korrekt schwaecher bewertet werden.
+- Toast-Benachrichtigungen lassen sich per Klick in die Zwischenablage kopieren, was das Teilen von Fehlerdetails vereinfacht.
+- Mobile- und Touch-Verbesserungen: groessere Tap-Ziele fuer Icon-Buttons, kompakte Bottom-Navigation mit Safe-Area-Abstand, dialoge nutzen die volle dynamische Viewport-Hoehe, Tabs mit horizontalem Scroll erhalten einen Fade-Hinweis, Favoriten erscheinen auf Mobil/Tablet als vertikales Grid und auf Desktop als horizontaler Karussell.
+- Provider-Icons fuer viele bekannte Anbieter (z. B. Gmail, Google, GitHub, AWS, Stripe, Proton, Binance) werden zentral auf interne Icon-IDs gemappt; Kategorie-Icons verwenden kontrollierte Registry-IDs statt sichtbarer Emoji-Icons.
+- Kategorie-Dialog: aufgeraeumtere Icon-Auswahl und sauberer geleiteter Loeschvorgang.
+- Item-Dialog: polishierte Layouts und Detail-Korrekturen.
+
+### Fehlerbehebungen
 
 - Leere Tresore zeigen beim ersten Laden nicht mehr faelschlich "Entschluessele Eintraege..." an, wenn keine Eintraege vorhanden sind.
 - Frisch erstellte Social-Login-Accounts erhalten beim Masterpasswort-Setup direkt einen initialen OpLog-Trust-State mit lokalem Device-Signing-Key, sodass neue Eintraege nicht mehr wegen fehlender OpLog-Device-Identitaet blockieren.
 - Frische, leere OpLog-Tresore werden nach lokaler Working-Set-Verifikation als verifiziert behandelt, statt faelschlich in alte Manifest-/Safe-Mode-Pfade zu fallen.
-- Der OpLog-UI-Refresh zeigt den Sicherheitsstatus nicht mehr bei jedem Hintergrund-Refresh als Ladezustand an; Realtime bleibt aktiv, Polling ist nur noch Fallback.
-- Routine-Integrity-Checks im gesunden Zustand schreiben keine dauerhaften `VaultRuntime`-Info-Logs mehr in die Konsole.
-- Passkey-Registrierung: Deployment-Drift bei der `webauthn` Edge Function identifiziert. Der lokale Function-Code enthaelt den Fix fuer die Challenge-ID-Verifikation; die Function muss neu deployt werden, damit die produktive Version nicht mehr mit 500 bei `verify-registration` antwortet.
+- Der Sicherheitsstatus in der Sidebar flackert nicht mehr bei jedem Hintergrund-Refresh als Ladezustand; Realtime bleibt der Hauptpfad, Polling ist nur noch Fallback.
+- Routine-Pruefungen im gesunden Zustand schreiben keine dauerhaften `VaultRuntime`-Info-Logs mehr in die Konsole.
+- Passkey-Einstellungen: ein harmloser 401 waehrend des Session-Warmups zeigt keinen Fehler-Toast mehr.
+- Kategorie-Dialog: ein direkter Loeschwunsch oeffnet nicht mehr versehentlich erst den Bearbeiten-Dialog, und ein abgebrochener Bestaetigungsdialog schliesst auch den umgebenden Dialog sauber.
 
-### In Arbeit
+### Stabilitaet & Sicherheit
 
-- Neues Designsystem nach Maunting Design-DNA: dunkles Premium-Vault-UI, Glassmorphism, kontrollierte Icon-Registries und bessere responsive App-Shell.
-- Login, Landing, rechtliche Unterseiten und Vault-Shell sind visuell an das neue Premium-Dark-Design angeglichen.
-- Provider-Matching fuer Vault- und Authenticator-Oberflaechen vorbereitet: Gmail/Google Maps/Google/GitHub/AWS/Stripe/Proton/Binance und weitere Anbieter werden zentral auf interne Icon-IDs gemappt.
-- Kategorie-Icons verwenden nun kontrollierte Registry-IDs statt sichtbarer Emoji-Icons; alte Emoji-Werte werden nur auf interne Icons gemappt.
-- Mobile Vault-Navigation erhaelt eine kompakte Bottom-Bar mit Safe-Area-Abstand.
+- Vault-CRUD-Aktionen werden ueber eine interne Aktions-Warteschlange serialisiert: signierte Operationen laufen sequenziell ab, sodass schnelle Folge-Aktionen auf langsamen Verbindungen nicht mehr in OpLog-Konflikte laufen.
+- Die Tresor-Gesundheits-Eingaben werden vor Uebergabe an Erweiterungs-Hooks bereinigt; Klartext-Passwoerter verlassen den lokalen Auswerter nicht.
+- HIBP-Cache vermeidet wiederholte Anfragen fuer denselben Passwort-Hash innerhalb einer Sitzung; bei Netzwerkfehlern werden Eintraege nicht zwischengespeichert.
+- Erweiterte Tests fuer die zentrale Crypto-Grenze (`cryptoService`): AES-GCM-Roundtrip fuer Text und binaere Payloads, IV-Eindeutigkeit, Manipulationsablehnung, AAD-Bindung, Envelope-Versionierung, KDF-Parameter-Stabilitaet und UserKey-/Private-Key-Wrapping. Sicherheitsversprechen aendern sich dadurch nicht; bestehende Eigenschaften sind jetzt vertraglich abgesichert.
+
+### Hinweise
+
+- Singra Vault bleibt ein experimenteller Prototyp. Bitte keine echten Passwoerter, produktiven Secrets oder Recovery-Daten speichern.
+- Die Tresor-Gesundheits-Auswertung ist ein Premium-Feature; ohne aktive Premium-Lizenz wird in der Sidebar ein Feature-Hinweis angezeigt.
+- Wenn alle vertrauenswuerdigen Geraete und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass fuer den Tresorzugriff.
+- Externe Hinweise: Die `webauthn` Edge Function muss deployt sein, damit Passkey-Registrierung in der gehosteten Singra-Instanz weiterhin zuverlaessig funktioniert. Diese externe Komponente ist nicht Teil des Desktop-Builds.
 
 ## 0.4.7 - 2026-05-13
 
