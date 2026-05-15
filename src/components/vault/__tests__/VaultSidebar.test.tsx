@@ -10,6 +10,16 @@ const mockFeatureGate = vi.hoisted(() => ({
 }));
 
 const mockAnalyzeVaultHealthSummary = vi.hoisted(() => vi.fn());
+const mockCheckPasswordStrength = vi.hoisted(() => vi.fn(async (password: string) => ({
+  score: password.includes('weak') ? 1 : 4,
+  isStrong: !password.includes('weak'),
+  feedback: [],
+  crackTimeDisplay: 'synthetic-test-display',
+})));
+const mockCheckPasswordPwned = vi.hoisted(() => vi.fn(async () => ({
+  isPwned: false,
+  pwnedCount: 0,
+})));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -36,6 +46,11 @@ vi.mock('@/services/offlineVaultService', () => ({
 
 vi.mock('@/services/legacyVaultMetadataMigrationService', () => ({
   migrateLegacyVaultItemMetadata: vi.fn(),
+}));
+
+vi.mock('@/services/passwordStrengthService', () => ({
+  checkPasswordStrength: mockCheckPasswordStrength,
+  checkPasswordPwned: mockCheckPasswordPwned,
 }));
 
 const mockVaultContext = {
@@ -121,6 +136,7 @@ describe('VaultSidebar', () => {
       warningItems: 0,
       stats: {
         weak: 0,
+        pwned: 0,
         duplicate: 0,
         old: 0,
         reused: 0,
@@ -250,6 +266,7 @@ describe('VaultSidebar', () => {
       warningItems: 2,
       stats: {
         weak: 0,
+        pwned: 0,
         duplicate: 1,
         old: 1,
         reused: 0,
@@ -274,7 +291,7 @@ describe('VaultSidebar', () => {
     expect(mockAnalyzeVaultHealthSummary).toHaveBeenCalledWith(
       expect.objectContaining({
         passwordItems: 2,
-        stats: expect.objectContaining({ weak: 0, duplicate: 0, strong: 2 }),
+        stats: expect.objectContaining({ weak: 0, pwned: 0, duplicate: 0, strong: 2 }),
       }),
     );
     expect(JSON.stringify(mockAnalyzeVaultHealthSummary.mock.calls[0][0])).not.toContain('loose-secret-with-more-entropy-2026');

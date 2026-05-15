@@ -3,6 +3,12 @@ import {
   loadVaultSnapshot,
   type OfflineVaultSnapshot,
 } from '@/services/offlineVaultService';
+import {
+  checkPasswordPwned,
+  checkPasswordStrength,
+  type PwnedResult,
+  type StrengthResult,
+} from '@/services/passwordStrengthService';
 import type { VaultIntegrityVerificationResult } from '@/services/vaultIntegrityService';
 import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
 import type { VaultHealthAnalysisItem, VaultHealthSidebarSummaryInput } from '@/extensions/types';
@@ -27,52 +33,59 @@ function isPasswordItemType(value: unknown): value is 'password' {
   return value === undefined || value === null || value === 'password';
 }
 
-function calculatePasswordEntropy(password: string): number {
-  const charsetSizes: { regex: RegExp; size: number }[] = [
-    { regex: /[a-z]/, size: 26 },
-    { regex: /[A-Z]/, size: 26 },
-    { regex: /[0-9]/, size: 10 },
-    { regex: /[^a-zA-Z0-9]/, size: 32 },
-  ];
-  const charsetSize = charsetSizes.reduce((total, { regex, size }) => (
-    regex.test(password) ? total + size : total
-  ), 0);
-  return charsetSize === 0 ? 0 : Math.floor(password.length * Math.log2(charsetSize));
-}
-
-function classifyWeakPassword(password: string): { weak: boolean; critical: boolean } {
-  if (password.length < 8) {
-    return { weak: true, critical: true };
-  }
-
-  if (calculatePasswordEntropy(password) < 28) {
-    return { weak: true, critical: false };
-  }
-
-  const hasCommonPattern = [
-    /^[a-z]+$/i,
-    /^[0-9]+$/,
-    /^(.)\1+$/,
-    /^(012|123|234|345|456|567|678|789)/,
-    /^(abc|bcd|cde|def|efg)/i,
-    /password/i,
-    /qwerty/i,
-    /letmein/i,
-    /welcome/i,
-    /admin/i,
-  ].some((pattern) => pattern.test(password));
-  if (hasCommonPattern) {
-    return { weak: true, critical: true };
-  }
-
-  return password.length < 12 && calculatePasswordEntropy(password) < 40
-    ? { weak: true, critical: false }
-    : { weak: false, critical: false };
-}
-
 function isOldPassword(updatedAt: string): boolean {
   const ageMs = Date.now() - new Date(updatedAt).getTime();
   return ageMs / (1000 * 60 * 60 * 24) > 90;
+}
+
+function getHostname(url: string | undefined): string | null {
+  if (!url) {
+    return null;
+  }
+
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function buildPasswordStrengthContext(item: VaultHealthAnalysisItem): string[] {
+  const hostname = getHostname(item.websiteUrl);
+  return [item.title, item.username, hostname].filter((value): value is string => (
+    typeof value === 'string' && value.trim().length > 0
+  ));
+}
+
+interface PasswordHealthCheck {
+  item: VaultHealthAnalysisItem;
+  strength: StrengthResult;
+  pwned: PwnedResult;
+}
+
+async function analyzePasswordHealthChecks(
+  items: VaultHealthAnalysisItem[],
+): Promise<PasswordHealthCheck[]> {
+  const pwnedChecksBySecret = new Map<string, Promise<PwnedResult>>();
+
+  try {
+    return await Promise.all(items.map(async (item) => {
+      let pwnedCheck = pwnedChecksBySecret.get(item.password);
+      if (!pwnedCheck) {
+        pwnedCheck = checkPasswordPwned(item.password);
+        pwnedChecksBySecret.set(item.password, pwnedCheck);
+      }
+
+      const [strength, pwned] = await Promise.all([
+        checkPasswordStrength(item.password, { userInputs: buildPasswordStrengthContext(item) }),
+        pwnedCheck,
+      ]);
+
+      return { item, strength, pwned };
+    }));
+  } finally {
+    pwnedChecksBySecret.clear();
+  }
 }
 
 function parseVerifiedRecordPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
@@ -119,9 +132,9 @@ export function getVaultHealthAnalysisItemsFromOpLog(
   });
 }
 
-export function buildVaultHealthSidebarSummaryInput(
+export async function buildVaultHealthSidebarSummaryInput(
   items: VaultHealthAnalysisItem[],
-): VaultHealthSidebarSummaryInput {
+): Promise<VaultHealthSidebarSummaryInput> {
   const passwordItems = items.filter((item) => item.itemType !== 'totp' && Boolean(item.password));
   const affectedItemIds = new Set<string>();
   const criticalItemIds = new Set<string>();
@@ -129,16 +142,28 @@ export function buildVaultHealthSidebarSummaryInput(
   const passwordIdsBySecret = new Map<string, string[]>();
   const passwordDomainsBySecret = new Map<string, Set<string>>();
   let weak = 0;
+  let pwned = 0;
   let duplicate = 0;
   let old = 0;
   let reused = 0;
+  let strong = 0;
+  const checkedItems = await analyzePasswordHealthChecks(passwordItems);
 
-  for (const item of passwordItems) {
-    const weakness = classifyWeakPassword(item.password);
-    if (weakness.weak) {
+  for (const { item, strength, pwned: pwnedResult } of checkedItems) {
+    if (strength.score <= 2) {
       weak += 1;
       affectedItemIds.add(item.id);
-      (weakness.critical ? criticalItemIds : warningItemIds).add(item.id);
+      (strength.score <= 1 ? criticalItemIds : warningItemIds).add(item.id);
+    }
+
+    if (pwnedResult.isPwned) {
+      pwned += 1;
+      affectedItemIds.add(item.id);
+      criticalItemIds.add(item.id);
+    }
+
+    if (strength.score >= 3 && !pwnedResult.isPwned) {
+      strong += 1;
     }
 
     if (isOldPassword(item.updatedAt)) {
@@ -151,15 +176,11 @@ export function buildVaultHealthSidebarSummaryInput(
       item.id,
     ]);
 
-    if (item.websiteUrl) {
-      try {
-        const domain = new URL(item.websiteUrl).hostname;
-        const domains = passwordDomainsBySecret.get(item.password) ?? new Set<string>();
-        domains.add(domain);
-        passwordDomainsBySecret.set(item.password, domains);
-      } catch {
-        continue;
-      }
+    const domain = getHostname(item.websiteUrl);
+    if (domain) {
+      const domains = passwordDomainsBySecret.get(item.password) ?? new Set<string>();
+      domains.add(domain);
+      passwordDomainsBySecret.set(item.password, domains);
     }
   }
 
@@ -185,10 +206,14 @@ export function buildVaultHealthSidebarSummaryInput(
     : Math.max(0, Math.round(
       100
       - (weak / totalPasswords) * 40
+      - (pwned / totalPasswords) * 40
       - (duplicate / totalPasswords) * 30
       - (old / totalPasswords) * 15
       - Math.min((reused / totalPasswords) * 15, 15),
     ));
+
+  passwordIdsBySecret.clear();
+  passwordDomainsBySecret.clear();
 
   return {
     score,
@@ -198,10 +223,11 @@ export function buildVaultHealthSidebarSummaryInput(
     warningItems: warningItemIds.size,
     stats: {
       weak,
+      pwned,
       duplicate,
       old,
       reused,
-      strong: Math.max(totalPasswords - weak, 0),
+      strong,
     },
   };
 }

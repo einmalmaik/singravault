@@ -9,10 +9,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ============ Mocks ============
 
 // Mock zxcvbn-ts dynamic imports
-vi.mock('@zxcvbn-ts/core', () => ({
-    zxcvbn: (password: string) => {
+const mockZxcvbn = vi.hoisted(() => vi.fn((password: string, userInputs?: string[]) => {
         const len = password.length;
-        const score = len < 6 ? 0 : len < 10 ? 1 : len < 14 ? 2 : len < 20 ? 3 : 4;
+        const matchesContext = userInputs?.some((input) => (
+            input.length > 0 && password.toLowerCase().includes(input.toLowerCase())
+        ));
+        const score = matchesContext ? 1 : len < 6 ? 0 : len < 10 ? 1 : len < 14 ? 2 : len < 20 ? 3 : 4;
         return {
             score,
             feedback: {
@@ -23,7 +25,10 @@ vi.mock('@zxcvbn-ts/core', () => ({
                 offlineSlowHashing1e4PerSecond: score < 2 ? '3 hours' : 'centuries',
             },
         };
-    },
+    }));
+
+vi.mock('@zxcvbn-ts/core', () => ({
+    zxcvbn: mockZxcvbn,
     zxcvbnOptions: {
         setOptions: vi.fn(),
     },
@@ -69,6 +74,17 @@ describe('passwordStrengthService', () => {
             const result = await checkPasswordStrength('Xy9!kL#mP2qR@wZv8nBjAbCd');
             expect(result.score).toBeGreaterThanOrEqual(3);
             expect(result.isStrong).toBe(true);
+        });
+
+        it('should pass user input context to zxcvbn without changing the public result shape', async () => {
+            const { checkPasswordStrength } = await import('./passwordStrengthService');
+            const result = await checkPasswordStrength('ExampleService2026!', {
+                userInputs: ['ExampleService', ''],
+            });
+
+            expect(mockZxcvbn).toHaveBeenCalledWith('ExampleService2026!', ['ExampleService']);
+            expect(result.score).toBe(1);
+            expect(result.isStrong).toBe(false);
         });
     });
 

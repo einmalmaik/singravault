@@ -10,6 +10,28 @@ import type { LocalVaultState, LocalVerifiedRecord } from '@/services/vaultOpLog
 import type { OfflineVaultSnapshot } from '@/services/offlineVaultService';
 import type { VaultIntegrityVerificationResult } from '@/services/vaultIntegrityService';
 
+const mockCheckPasswordStrength = vi.hoisted(() => vi.fn(async (password: string) => ({
+  score: password === '1234567' || password === 'abcdefg'
+    ? 0
+    : password.includes('Moderate')
+      ? 2
+      : 4,
+  isStrong: password !== '1234567' && password !== 'abcdefg' && !password.includes('Moderate'),
+  feedback: [],
+  crackTimeDisplay: 'synthetic-test-display',
+})));
+
+const mockCheckPasswordPwned = vi.hoisted(() => vi.fn(async (password: string) => (
+  password.includes('Leaked')
+    ? { isPwned: true, pwnedCount: 42 }
+    : { isPwned: false, pwnedCount: 0 }
+)));
+
+vi.mock('@/services/passwordStrengthService', () => ({
+  checkPasswordStrength: mockCheckPasswordStrength,
+  checkPasswordPwned: mockCheckPasswordPwned,
+}));
+
 function makeRecord(
   recordId: string,
   recordType: 'item' | 'category',
@@ -137,7 +159,7 @@ describe('vaultHealthAnalysisItemsService', () => {
     expect(verifyIntegrity).not.toHaveBeenCalled();
   });
 
-  it('reflects edited OpLog item plaintext when building sidebar health input', () => {
+  it('reflects edited OpLog item plaintext when building sidebar health input', async () => {
     const beforeEditState = makeState([
       makeRecord('login-1', 'item', {
         title: 'First Login',
@@ -163,10 +185,10 @@ describe('vaultHealthAnalysisItemsService', () => {
       }),
     ]);
 
-    const beforeEditInput = buildVaultHealthSidebarSummaryInput(
+    const beforeEditInput = await buildVaultHealthSidebarSummaryInput(
       getVaultHealthAnalysisItemsFromOpLog(beforeEditState),
     );
-    const afterEditInput = buildVaultHealthSidebarSummaryInput(
+    const afterEditInput = await buildVaultHealthSidebarSummaryInput(
       getVaultHealthAnalysisItemsFromOpLog(afterEditState),
     );
 
@@ -178,8 +200,8 @@ describe('vaultHealthAnalysisItemsService', () => {
     expect(JSON.stringify(afterEditInput)).not.toContain('1234567');
   });
 
-  it('builds sidebar health input without exposing plaintext passwords', () => {
-    const input = buildVaultHealthSidebarSummaryInput([
+  it('builds sidebar health input without exposing plaintext passwords', async () => {
+    const input = await buildVaultHealthSidebarSummaryInput([
       {
         id: 'weak-1',
         title: 'Weak Login',
@@ -212,6 +234,7 @@ describe('vaultHealthAnalysisItemsService', () => {
       warningItems: 2,
       stats: expect.objectContaining({
         weak: 2,
+        pwned: 0,
         duplicate: 2,
         old: 2,
         strong: 1,
@@ -219,6 +242,24 @@ describe('vaultHealthAnalysisItemsService', () => {
     }));
     expect(JSON.stringify(input)).not.toContain('1234567');
     expect(JSON.stringify(input)).not.toContain('Zy9!Rk4#Lm2@Qv8$Tn6%Wp3&Xd');
+  });
+
+  it('adds pwned HIBP findings to sanitized sidebar health input', async () => {
+    const input = await buildVaultHealthSidebarSummaryInput([
+      {
+        id: 'leaked-1',
+        title: 'Synthetic Leaked Login',
+        password: 'SyntheticLeakedSecret#2026',
+        itemType: 'password',
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    expect(input.affectedItems).toBe(1);
+    expect(input.criticalItems).toBe(1);
+    expect(input.stats.pwned).toBe(1);
+    expect(input.stats.strong).toBe(0);
+    expect(JSON.stringify(input)).not.toContain('SyntheticLeakedSecret#2026');
   });
 
   it('decrypts only integrity-allowed legacy snapshot items', async () => {

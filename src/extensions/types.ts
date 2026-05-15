@@ -161,6 +161,7 @@ export interface VaultHealthSidebarSummary {
     warningItems: number;
     stats: {
         weak: number;
+        pwned: number;
         duplicate: number;
         old: number;
         reused: number;

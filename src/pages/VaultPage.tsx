@@ -7,7 +7,7 @@
  * secure notes, and TOTP entries.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -133,6 +133,10 @@ export default function VaultPage() {
     const [isOnline, setIsOnline] = useState(() => navigator.onLine);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isRecheckingIntegrity, setIsRecheckingIntegrity] = useState(false);
+    const focusItemId = useMemo(() => {
+        const itemId = new URLSearchParams(location.search).get('item');
+        return itemId && itemId.trim().length > 0 ? itemId : null;
+    }, [location.search]);
 
     const showWebsiteChrome = shouldShowWebsiteChrome();
     const adminEntryPath = getAdminEntryPath();
@@ -163,6 +167,16 @@ export default function VaultPage() {
             window.removeEventListener('offline', goOffline);
         };
     }, []);
+
+    useEffect(() => {
+        if (!focusItemId) {
+            return;
+        }
+
+        setSearchQuery('');
+        setActiveFilter('all');
+        setSelectedCategory(null);
+    }, [focusItemId]);
 
     useEffect(() => {
         if (!user || isLocked || isSetupRequired || !isOnline) return;
@@ -552,6 +566,7 @@ export default function VaultPage() {
                         onEditItem={handleEditItem}
                         refreshKey={refreshKey}
                         securityStatusLoading={opLogUiLoading}
+                        focusItemId={focusItemId}
                     />
                 </main>
 
@@ -638,4 +653,3 @@ export default function VaultPage() {
         </div>
     );
 }
-

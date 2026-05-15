@@ -107,6 +107,7 @@ function getDraggedVaultItemId(event: React.DragEvent): string {
 
 function formatHealthCountParts(stats: VaultHealthSidebarSummary['stats']): string {
     const parts = [
+        stats.pwned > 0 ? `${stats.pwned} geleakt` : null,
         stats.weak > 0 ? `${stats.weak} schwach` : null,
         stats.duplicate > 0 ? `${stats.duplicate} doppelt` : null,
         stats.old > 0 ? `${stats.old} alt` : null,
@@ -457,8 +458,9 @@ export function VaultSidebar({
         void (async () => {
             try {
                 const healthItems = await getVaultHealthAnalysisItems();
+                const summaryInput = await buildVaultHealthSidebarSummaryInput(healthItems);
                 if (vaultHealthRequestIdRef.current === requestId) {
-                    setVaultHealthSummary(analyzeVaultHealthSummary(buildVaultHealthSidebarSummaryInput(healthItems)));
+                    setVaultHealthSummary(analyzeVaultHealthSummary(summaryInput));
                 }
             } catch {
                 if (vaultHealthRequestIdRef.current === requestId) {

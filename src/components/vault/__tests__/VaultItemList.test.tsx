@@ -278,6 +278,7 @@ function makeOpLogState(records: Array<ReturnType<typeof makeVerifiedOpLogItem> 
 
 describe.sequential('VaultItemList', () => {
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
   });
 
@@ -368,6 +369,57 @@ describe.sequential('VaultItemList', () => {
 
     expect(screen.queryByText('1 betroffene Einträge wurden zusammengefasst.')).not.toBeInTheDocument();
     expect(mockReportUnreadableItems).toHaveBeenCalledWith([]);
+  });
+
+  it('opens the preview and clears the temporary glow for a focused vault health item', async () => {
+    vi.useFakeTimers();
+    const scrollIntoView = vi.fn();
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    }) as typeof window.requestAnimationFrame;
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    try {
+      const { container } = render(
+        <VaultItemList
+          searchQuery=""
+          filter="all"
+          categoryId={null}
+          viewMode="grid"
+          onEditItem={vi.fn()}
+          focusItemId="item-ok"
+        />,
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const focusedElement = container.querySelector('[data-vault-item-id="item-ok"]');
+      expect(focusedElement).not.toBeNull();
+      expect(focusedElement?.className).toContain('ring-2');
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(screen.getByText('Eintrag bearbeiten')).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(10_000);
+      });
+
+      expect(focusedElement?.className).not.toContain('ring-2');
+    } finally {
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    }
   });
 
   it('does not decrypt when fresh integrity result is revalidation_failed even if previous context was healthy', async () => {

@@ -32,9 +32,17 @@ export interface PwnedResult {
     pwnedCount: number;
 }
 
+export interface PasswordStrengthOptions {
+    /**
+     * Context terms passed to zxcvbn so item-specific data like title,
+     * username, or domain can lower the score when reused in the password.
+     */
+    userInputs?: string[];
+}
+
 // ============ Lazy-Loaded zxcvbn Module ============
 
-let zxcvbnModule: { zxcvbn: (password: string) => ZxcvbnResult } | null = null;
+let zxcvbnModule: { zxcvbn: (password: string, userInputs?: string[]) => ZxcvbnResult } | null = null;
 let loadPromise: Promise<typeof zxcvbnModule> | null = null;
 
 /**
@@ -96,7 +104,10 @@ export async function preloadZxcvbn(): Promise<void> {
  * @param password - The password to check
  * @returns Strength result with score, feedback, and crack time
  */
-export async function checkPasswordStrength(password: string): Promise<StrengthResult> {
+export async function checkPasswordStrength(
+    password: string,
+    options?: PasswordStrengthOptions,
+): Promise<StrengthResult> {
     if (!password) {
         return { score: 0, isStrong: false, feedback: [], crackTimeDisplay: '' };
     }
@@ -106,7 +117,8 @@ export async function checkPasswordStrength(password: string): Promise<StrengthR
         return { score: 0, isStrong: false, feedback: [], crackTimeDisplay: '' };
     }
 
-    const result = mod.zxcvbn(password);
+    const userInputs = options?.userInputs?.filter((input) => input.trim().length > 0);
+    const result = mod.zxcvbn(password, userInputs && userInputs.length > 0 ? userInputs : undefined);
 
     const feedback: string[] = [];
     if (result.feedback.warning) {
@@ -185,9 +197,12 @@ export async function checkPasswordPwned(password: string): Promise<PwnedResult>
  * @param password - The password to check
  * @returns Full check result including acceptability
  */
-export async function checkPassword(password: string): Promise<PasswordCheckResult> {
+export async function checkPassword(
+    password: string,
+    options?: PasswordStrengthOptions,
+): Promise<PasswordCheckResult> {
     const [strengthResult, pwnedResult] = await Promise.all([
-        checkPasswordStrength(password),
+        checkPasswordStrength(password, options),
         checkPasswordPwned(password),
     ]);
 

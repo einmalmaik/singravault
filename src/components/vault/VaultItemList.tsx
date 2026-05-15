@@ -69,6 +69,7 @@ import { useToast } from '@/hooks/use-toast';
 import { VaultItemCard } from './VaultItemCard';
 import { VaultIcon } from '@/components/icons/VaultIcon';
 import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
+import { VaultItemPreviewPanel } from './VaultItemPreviewPanel';
 import { VaultQuarantinePanel } from './VaultQuarantinePanel';
 import {
   VaultQuarantineRestoreProgressDialog,
@@ -88,6 +89,7 @@ const DRAG_SCROLL_STEP_PX = 28;
 const FAVORITE_ACTION_COOLDOWN_MS = 3_000;
 const FAVORITE_COLLAPSED_LIMIT_MOBILE = 4;
 const FAVORITE_COLLAPSED_LIMIT_DESKTOP = 6;
+const FOCUS_HIGHLIGHT_MS = 10_000;
 
 interface VaultItem {
   id: string;
@@ -111,6 +113,7 @@ interface VaultItemListProps {
   onEditItem: (itemId: string) => void;
   refreshKey?: number;
   securityStatusLoading?: boolean;
+  focusItemId?: string | null;
 }
 
 type RenderableVaultListEntry =
@@ -457,6 +460,7 @@ export function VaultItemList({
   onEditItem,
   refreshKey,
   securityStatusLoading = false,
+  focusItemId = null,
 }: VaultItemListProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -512,9 +516,13 @@ export function VaultItemList({
   const [previewItemId, setPreviewItemId] = useState<string | null>(null);
   const [deletePreviewItemId, setDeletePreviewItemId] = useState<string | null>(null);
   const [deletingPreviewItem, setDeletingPreviewItem] = useState(false);
+  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
   const pointerDragRef = useRef<PointerDragState | null>(null);
   const pointerDragTimerRef = useRef<number | null>(null);
   const favoriteScrollerRef = useRef<HTMLDivElement | null>(null);
+  const itemElementRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const focusHighlightTimerRef = useRef<number | null>(null);
+  const lastHandledFocusItemIdRef = useRef<string | null>(null);
   const favoriteScrollDragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -547,6 +555,12 @@ export function VaultItemList({
     verifyIntegrityRef.current = verifyIntegrity;
     refreshIntegrityBaselineRef.current = refreshIntegrityBaseline;
   }, [decryptItem, decryptItemForLegacyMigration, encryptItem, refreshIntegrityBaseline, reportUnreadableItems, verifyIntegrity]);
+
+  useEffect(() => () => {
+    if (focusHighlightTimerRef.current !== null) {
+      window.clearTimeout(focusHighlightTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     failedDecryptPayloadByItemIdRef.current.clear();
@@ -1126,6 +1140,14 @@ reportUnreadableItemsRef.current([]);
     setPreviewItemId(item.id);
   }, [markItemRecentlyUsed]);
 
+  const setItemElementRef = useCallback((itemId: string, element: HTMLDivElement | null) => {
+    if (element) {
+      itemElementRefs.current.set(itemId, element);
+      return;
+    }
+    itemElementRefs.current.delete(itemId);
+  }, []);
+
   const editItemFromPreview = useCallback((itemId: string) => {
     markItemRecentlyUsed(itemId);
     setPreviewItemId(null);
@@ -1533,6 +1555,42 @@ reportUnreadableItemsRef.current([]);
     }
   }, [previewItemId, visibleItemEntries]);
 
+  useEffect(() => {
+    if (!focusItemId) {
+      lastHandledFocusItemIdRef.current = null;
+      return;
+    }
+
+    if (lastHandledFocusItemIdRef.current === focusItemId) {
+      return;
+    }
+
+    const focusedEntry = visibleItemEntries.find((entry) => entry.item.id === focusItemId);
+    if (!focusedEntry) {
+      return;
+    }
+
+    lastHandledFocusItemIdRef.current = focusItemId;
+    markItemRecentlyUsed(focusItemId);
+    setPreviewItemId(focusItemId);
+    setHighlightedItemId(focusItemId);
+
+    window.requestAnimationFrame(() => {
+      itemElementRefs.current.get(focusItemId)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+    });
+
+    if (focusHighlightTimerRef.current !== null) {
+      window.clearTimeout(focusHighlightTimerRef.current);
+    }
+    focusHighlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedItemId((current) => (current === focusItemId ? null : current));
+      focusHighlightTimerRef.current = null;
+    }, FOCUS_HIGHLIGHT_MS);
+  }, [focusItemId, markItemRecentlyUsed, visibleItemEntries]);
+
   const confirmDeletePreviewItem = useCallback(async () => {
     if (!deletePreviewItem) {
       return;
@@ -1631,7 +1689,12 @@ reportUnreadableItemsRef.current([]);
   ) => (
     <div
       key={entry.item.id}
-      className="group/drag relative"
+      ref={(element) => setItemElementRef(entry.item.id, element)}
+      data-vault-item-id={entry.item.id}
+      className={cn(
+        'group/drag relative rounded-2xl transition-[box-shadow,transform] duration-500',
+        highlightedItemId === entry.item.id && 'ring-2 ring-primary/70 shadow-[0_0_0_1px_hsl(var(--primary)/0.24),0_0_32px_hsl(var(--primary)/0.28)]',
+      )}
       draggable={options?.draggable ?? true}
       onDragStart={(event) => {
         if (options?.draggable === false) {
@@ -1659,7 +1722,15 @@ reportUnreadableItemsRef.current([]);
         }
       />
     </div>
-  ), [markItemRecentlyUsed, openItemPreview, opLogVerifiedItemIds, renderPointerDragHandle, viewMode]);
+  ), [
+    highlightedItemId,
+    markItemRecentlyUsed,
+    openItemPreview,
+    opLogVerifiedItemIds,
+    renderPointerDragHandle,
+    setItemElementRef,
+    viewMode,
+  ]);
 
   const renderTableRow = useCallback((
     entry: Extract<RenderableVaultListEntry, { kind: 'item' }>,
@@ -1677,6 +1748,8 @@ reportUnreadableItemsRef.current([]);
     return (
       <div
         key={item.id}
+        ref={(element) => setItemElementRef(item.id, element)}
+        data-vault-item-id={item.id}
         draggable
         onDragStart={(event) => {
           event.dataTransfer.effectAllowed = 'move';
@@ -1688,7 +1761,10 @@ reportUnreadableItemsRef.current([]);
           setNativeDraggingItemId(null);
           setDropTargetCategoryId(null);
         }}
-        className="group grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-[hsl(var(--border)/0.22)] px-3 py-2.5 transition-all duration-200 ease-out hover:bg-white/[0.035] md:grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px]"
+        className={cn(
+          'group grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-[hsl(var(--border)/0.22)] px-3 py-2.5 transition-all duration-500 ease-out hover:bg-white/[0.035] md:grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px]',
+          highlightedItemId === item.id && 'relative z-10 bg-[hsl(var(--primary)/0.08)] ring-2 ring-primary/70 shadow-[0_0_0_1px_hsl(var(--primary)/0.24),0_0_32px_hsl(var(--primary)/0.28)]',
+        )}
         onClick={() => openItemPreview(item)}
       >
         <div className="flex min-w-0 items-center gap-2.5">
@@ -1794,9 +1870,11 @@ reportUnreadableItemsRef.current([]);
     categoryNameById,
     copySecretFromRow,
     editItemFromPreview,
+    highlightedItemId,
     openItemPreview,
     opLogVerifiedItemIds,
     renderPointerDragHandle,
+    setItemElementRef,
     t,
     toggleItemFavorite,
   ]);
@@ -2399,8 +2477,7 @@ reportUnreadableItemsRef.current([]);
       )}
 
       {previewItem && (
-        <aside className="fixed inset-x-0 bottom-0 z-50 max-h-[86vh] overflow-y-auto border-t border-border/55 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.08),transparent_34%),linear-gradient(180deg,hsl(var(--el-2)/0.98),hsl(var(--background)/0.98))] p-4 shadow-[0_-20px_56px_hsl(0_0%_0%/0.48)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-8 duration-300 lg:inset-x-auto lg:bottom-auto lg:right-0 lg:top-0 lg:h-screen lg:w-[22rem] lg:max-h-none lg:border-l lg:border-t-0 lg:p-5 lg:slide-in-from-right-8">
-          <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent" />
+        <VaultItemPreviewPanel>
           <div className="flex items-start justify-between gap-3 rounded-2xl border border-border/30 bg-white/[0.015] p-3 shadow-[0_14px_34px_hsl(0_0%_0%/0.18)]">
             <div className="flex min-w-0 items-center gap-3">
               <VaultIcon
@@ -2487,7 +2564,7 @@ reportUnreadableItemsRef.current([]);
               </dl>
             </details>
           </div>
-        </aside>
+        </VaultItemPreviewPanel>
       )}
 
       <AlertDialog
