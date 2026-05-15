@@ -4,6 +4,7 @@ import {
   createVerificationHash,
   deriveRawKey,
   generateSalt,
+  unwrapUserKeyBytes,
 } from '@/services/cryptoService';
 import { VAULT_PROTECTION_MODE_MASTER_ONLY } from '@/services/deviceKeyProtectionPolicy';
 import { getOfflineCredentials, saveOfflineCredentials } from '@/services/offlineVaultService';
@@ -11,12 +12,15 @@ import type { VaultRuntimeCredentials } from '@/services/offlineVaultRuntimeServ
 import { ensureTauriDevVaultSnapshot, loadCachedVaultCredentials } from '@/services/offlineVaultRuntimeService';
 import { supabase } from '@/integrations/supabase/client';
 import { isTauriDevUserId } from '@/platform/tauriDevMode';
+import { ensureInitialVaultOpLogTrust } from '@/services/vaultOpLog/vaultOpLogInitialTrustService';
+import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
 
 export interface VaultSetupResult {
   error: Error | null;
   credentials?: VaultRuntimeCredentials;
   existingProfileSalt?: string;
   activeUserKey?: CryptoKey;
+  vaultEncryptionKey?: Uint8Array;
 }
 
 export async function setupInitialVault(input: {
@@ -72,23 +76,71 @@ async function createInitialVault(input: {
   const newSalt = generateSalt();
   const kdfOutputBytes = await deriveRawKey(masterPassword, newSalt, CURRENT_KDF_VERSION);
   let userKeyBundle: Awaited<ReturnType<typeof createEncryptedUserKey>>;
+  let vaultEncryptionKey: Uint8Array | null = null;
 
   try {
     userKeyBundle = await createEncryptedUserKey(kdfOutputBytes);
+    vaultEncryptionKey = await unwrapUserKeyBytes(userKeyBundle.encryptedUserKey, kdfOutputBytes);
   } finally {
     kdfOutputBytes.fill(0);
   }
 
-  const verificationHash = await createVerificationHash(userKeyBundle.userKey);
-  const credentials: VaultRuntimeCredentials = {
-    salt: newSalt,
-    verificationHash,
-    kdfVersion: CURRENT_KDF_VERSION,
-    encryptedUserKey: userKeyBundle.encryptedUserKey,
-    vaultProtectionMode: VAULT_PROTECTION_MODE_MASTER_ONLY,
-  };
+  try {
+    const verificationHash = await createVerificationHash(userKeyBundle.userKey);
+    const credentials: VaultRuntimeCredentials = {
+      salt: newSalt,
+      verificationHash,
+      kdfVersion: CURRENT_KDF_VERSION,
+      encryptedUserKey: userKeyBundle.encryptedUserKey,
+      vaultProtectionMode: VAULT_PROTECTION_MODE_MASTER_ONLY,
+    };
 
-  if (isTauriDevUserId(userId)) {
+    if (isTauriDevUserId(userId)) {
+      await saveOfflineCredentials(
+        userId,
+        newSalt,
+        verificationHash,
+        CURRENT_KDF_VERSION,
+        userKeyBundle.encryptedUserKey,
+        VAULT_PROTECTION_MODE_MASTER_ONLY,
+      );
+      await ensureTauriDevVaultSnapshot(userId);
+      return {
+        error: null,
+        credentials,
+        activeUserKey: userKeyBundle.userKey,
+        vaultEncryptionKey: vaultEncryptionKey ?? undefined,
+      };
+    }
+
+    const vaultId = await ensureDefaultVaultId(userId);
+    if (isSupabaseRpcClient(supabase)) {
+      await ensureInitialVaultOpLogTrust({
+        userId,
+        vaultId,
+        rpcClient: supabase,
+      });
+    }
+
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({
+        encryption_salt: newSalt,
+        master_password_verifier: verificationHash,
+        kdf_version: CURRENT_KDF_VERSION,
+        encrypted_user_key: userKeyBundle.encryptedUserKey,
+        vault_protection_mode: VAULT_PROTECTION_MODE_MASTER_ONLY,
+        device_key_version: null,
+        device_key_enabled_at: null,
+        device_key_backup_acknowledged_at: null,
+      } as Record<string, unknown>)
+      .eq('user_id', userId);
+
+    if (updateError) {
+      vaultEncryptionKey?.fill(0);
+      return { error: new Error(updateError.message) };
+    }
+
     await saveOfflineCredentials(
       userId,
       newSalt,
@@ -97,59 +149,56 @@ async function createInitialVault(input: {
       userKeyBundle.encryptedUserKey,
       VAULT_PROTECTION_MODE_MASTER_ONLY,
     );
-    await ensureTauriDevVaultSnapshot(userId);
+
     return {
       error: null,
       credentials,
       activeUserKey: userKeyBundle.userKey,
+      vaultEncryptionKey: vaultEncryptionKey ?? undefined,
     };
+  } catch (error) {
+    vaultEncryptionKey?.fill(0);
+    throw error;
   }
+}
 
-  const { data: existingVault } = await supabase
+async function ensureDefaultVaultId(userId: string): Promise<string> {
+  const { data: existingVault, error: existingVaultError } = await supabase
     .from('vaults')
     .select('id')
     .eq('user_id', userId)
     .eq('is_default', true)
-    .single();
+    .maybeSingle() as { data: { id: string } | null; error: { message: string } | null };
+
+  if (existingVaultError) {
+    throw new Error(existingVaultError.message);
+  }
 
   if (!existingVault) {
-    await supabase.from('vaults').insert({
-      user_id: userId,
-      name: 'Encrypted Vault',
-      is_default: true,
-    });
+    const createdVaultId = crypto.randomUUID();
+    const { error: createVaultError } = await supabase
+      .from('vaults')
+      .insert({
+        id: createdVaultId,
+        user_id: userId,
+        name: 'Encrypted Vault',
+        is_default: true,
+      }) as { error: { message: string } | null };
+
+    if (createVaultError) {
+      throw new Error(createVaultError.message);
+    }
+
+    return createdVaultId;
   }
 
-  const { error: updateError } = await supabase
-    .from('profiles')
-    .update({
-      encryption_salt: newSalt,
-      master_password_verifier: verificationHash,
-      kdf_version: CURRENT_KDF_VERSION,
-      encrypted_user_key: userKeyBundle.encryptedUserKey,
-      vault_protection_mode: VAULT_PROTECTION_MODE_MASTER_ONLY,
-      device_key_version: null,
-      device_key_enabled_at: null,
-      device_key_backup_acknowledged_at: null,
-    } as Record<string, unknown>)
-    .eq('user_id', userId);
+  return existingVault.id;
+}
 
-  if (updateError) {
-    return { error: new Error(updateError.message) };
-  }
-
-  await saveOfflineCredentials(
-    userId,
-    newSalt,
-    verificationHash,
-    CURRENT_KDF_VERSION,
-    userKeyBundle.encryptedUserKey,
-    VAULT_PROTECTION_MODE_MASTER_ONLY,
+function isSupabaseRpcClient(value: unknown): value is SupabaseRpcClient {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && typeof (value as { rpc?: unknown }).rpc === 'function',
   );
-
-  return {
-    error: null,
-    credentials,
-    activeUserKey: userKeyBundle.userKey,
-  };
 }

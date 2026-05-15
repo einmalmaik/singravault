@@ -7,8 +7,8 @@
  * Legacy SVG/text payloads are intentionally ignored for security hardening.
  */
 
-import { Folder } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getCategoryIconDefinition } from '@/lib/icons/categoryIconRegistry';
 import { normalizeCategoryIcon } from './categoryIconPolicy';
 
 interface CategoryIconProps {
@@ -19,13 +19,15 @@ interface CategoryIconProps {
 
 export function CategoryIcon({ icon, className, fallbackSize = 4 }: CategoryIconProps) {
     const normalizedIcon = normalizeCategoryIcon(icon);
-    if (!normalizedIcon) {
-        return <Folder className={cn(`w-${fallbackSize} h-${fallbackSize}`, className)} />;
-    }
+    const definition = getCategoryIconDefinition(normalizedIcon);
+    const Icon = definition.Icon;
 
     return (
-        <span className={cn('text-base leading-none', className)}>
-            {normalizedIcon}
+        <span
+            className={cn('inline-flex items-center justify-center text-current', className)}
+            aria-hidden="true"
+        >
+            <Icon className={cn(`w-${fallbackSize} h-${fallbackSize}`)} />
         </span>
     );
 }

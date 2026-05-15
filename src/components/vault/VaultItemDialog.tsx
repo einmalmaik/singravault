@@ -698,27 +698,46 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         }
         onOpenChange(nextOpen);
     };
+    const ItemTypeIcon = itemType === 'note' ? FileText : itemType === 'totp' ? Shield : Key;
 
     return (
         <>
             <Dialog open={open} onOpenChange={handleDialogOpenChange}>
                 <DialogContent
-                    className="max-w-lg max-h-[90vh] overflow-y-auto"
+                    className="max-h-[calc(100dvh_-_1rem)] w-[calc(100vw_-_1rem)] overflow-hidden border border-border/60 bg-[linear-gradient(135deg,hsl(var(--card)/0.96),hsl(var(--el-1)/0.92))] p-0 shadow-[0_24px_70px_hsl(0_0%_0%/0.48)] backdrop-blur-2xl sm:w-[calc(100vw_-_1.5rem)] sm:max-w-2xl lg:max-h-[88dvh] lg:max-w-4xl"
                     onOpenAutoFocus={(event) => {
                         // On mobile, Radix focusing the first input opens the keyboard immediately.
                         // Let the user decide whether they want to edit text or only adjust metadata.
                         event.preventDefault();
                     }}
                 >
-                    <DialogHeader>
-                        <DialogTitle>
-                            {isEditing ? t('vault.editItem') : t('vault.newItem')}
-                        </DialogTitle>
-                    </DialogHeader>
+                    <div className="max-h-[calc(100dvh_-_1rem)] overflow-y-auto lg:max-h-[88dvh]">
+                        <DialogHeader className="border-b border-border/45 px-5 py-4 sm:px-6">
+                            <div className="flex items-start gap-3">
+                                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-primary/30 bg-primary/10 text-primary">
+                                    <ItemTypeIcon className="h-5 w-5" aria-hidden="true" />
+                                </div>
+                                <div className="min-w-0">
+                                    <DialogTitle className="text-xl">
+                                        {isEditing ? t('vault.editItem') : t('vault.newItem')}
+                                    </DialogTitle>
+                                    <p className="mt-1 text-sm text-muted-foreground">
+                                        {isEditing
+                                            ? t('vault.form.entryDialogEditDescription', {
+                                                defaultValue: 'Aktualisiere nur die Felder, die sich wirklich geändert haben.',
+                                            })
+                                            : t('vault.form.entryDialogCreateDescription', {
+                                                defaultValue: 'Lege einen neuen Tresor-Eintrag mit klarer Kategorie und sicheren Metadaten an.',
+                                            })}
+                                    </p>
+                                </div>
+                            </div>
+                        </DialogHeader>
 
                     {/* Item Type Tabs */}
                     {!isEditing && (
                         <Tabs
+                            className="px-5 pt-5 sm:px-6"
                             value={itemType}
                             onValueChange={(v) => {
                                 if (v === 'totp' && !canUseTotp) {
@@ -739,7 +758,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                 setItemType(nextType);
                             }}
                         >
-                            <TabsList className="w-full">
+                            <TabsList className="grid h-auto w-full grid-cols-2 rounded-lg border border-border/45 bg-background/45 p-1 sm:grid-cols-3">
                                 <TabsTrigger value="password" className="flex-1">
                                     <Key className="w-4 h-4 mr-2" />
                                     {t('vault.itemTypes.password')}
@@ -762,7 +781,19 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                     )}
 
                     <Form {...form}>
-                        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" autoComplete="off">
+                        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 px-5 py-5 sm:px-6" autoComplete="off">
+                            <div className="grid gap-5 lg:grid-cols-[minmax(0,1.08fr)_minmax(300px,0.82fr)]">
+                                <div className="space-y-4 rounded-xl border border-border/45 bg-background/30 p-4 shadow-[inset_0_1px_0_hsl(var(--foreground)/0.04)]">
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-foreground">
+                                            {t('vault.form.primaryDetails', { defaultValue: 'Zugangsdaten' })}
+                                        </h3>
+                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                            {t('vault.form.primaryDetailsDescription', {
+                                                defaultValue: 'Titel, Adresse und geheime Felder bleiben lokal entschlüsselt und werden erst beim Speichern signiert.',
+                                            })}
+                                        </p>
+                                    </div>
                             {/* Title */}
                             <FormField
                                 control={form.control}
@@ -865,7 +896,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                                             type="button"
                                                             variant="ghost"
                                                             size="icon"
-                                                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                                                            className="absolute right-1 top-1/2 h-10 w-10 -translate-y-1/2 sm:h-7 sm:w-7"
                                                             onClick={() => setShowPassword(!showPassword)}
                                                         >
                                                             {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -901,7 +932,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                             {/* Password Generator */}
                             <Collapsible open={showGenerator} onOpenChange={setShowGenerator}>
                                 <CollapsibleContent className="mt-2">
-                                    <div className="p-4 border rounded-lg bg-muted/50">
+                                    <div className="rounded-xl border border-primary/20 bg-[linear-gradient(135deg,hsl(var(--primary)/0.08),hsl(var(--el-2)/0.74))] p-4 shadow-[inset_0_1px_0_hsl(var(--foreground)/0.05)]">
                                         <PasswordGenerator onSelect={handleGeneratedPassword} />
                                     </div>
                                 </CollapsibleContent>
@@ -960,6 +991,18 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                 ) : null;
                             })()}
 
+                                </div>
+                                <div className="space-y-4 rounded-xl border border-border/45 bg-background/30 p-4 shadow-[inset_0_1px_0_hsl(var(--foreground)/0.04)]">
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-foreground">
+                                            {t('vault.form.organization', { defaultValue: 'Organisation' })}
+                                        </h3>
+                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                            {t('vault.form.organizationDescription', {
+                                                defaultValue: 'Notizen, Kategorie und Favorit steuern, wie der Eintrag im Tresor erscheint.',
+                                            })}
+                                        </p>
+                                    </div>
                             {/* Notes */}
                             <FormField
                                 control={form.control}
@@ -1029,11 +1072,18 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                 control={form.control}
                                 name="isFavorite"
                                 render={({ field }) => (
-                                    <FormItem className="flex items-center justify-between">
-                                        <FormLabel className="flex items-center gap-2">
-                                            <Star className={cn('w-4 h-4', field.value && 'text-amber-500 fill-amber-500')} />
-                                            {t('vault.fields.favorite')}
-                                        </FormLabel>
+                                    <FormItem className="flex items-center justify-between rounded-lg border border-border/35 bg-background/35 px-3 py-2.5">
+                                        <div className="min-w-0">
+                                            <FormLabel className="flex items-center gap-2">
+                                                <Star className={cn('w-4 h-4', field.value && 'text-amber-500 fill-amber-500')} />
+                                                {t('vault.fields.favorite')}
+                                            </FormLabel>
+                                            <p className="mt-0.5 text-xs text-muted-foreground">
+                                                {t('vault.form.favoriteDescription', {
+                                                    defaultValue: 'Markierte Einträge erscheinen schneller in der Übersicht.',
+                                                })}
+                                            </p>
+                                        </div>
                                         <FormControl>
                                             <Switch
                                                 checked={field.value}
@@ -1044,38 +1094,45 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                 )}
                             />
 
+                                </div>
+                            </div>
+
                             {/* Actions */}
-                            <div className="flex gap-2 pt-4 border-t">
+                            <div className="-mx-5 sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-border/45 bg-background/85 px-5 pt-4 backdrop-blur-xl sm:-mx-6 sm:px-6">
                                 {isEditing && (
                                     <Button
                                         type="button"
                                         variant="destructive"
+                                        className="min-w-28"
                                         onClick={handleDelete}
                                         disabled={loading || deleting}
                                     >
                                         {deleting ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                         ) : (
-                                            <Trash2 className="w-4 h-4" />
+                                            <Trash2 className="mr-2 h-4 w-4" />
                                         )}
+                                        {t('common.delete')}
                                     </Button>
                                 )}
                                 <div className="flex-1" />
                                 <Button
                                     type="button"
                                     variant="outline"
+                                    className="min-w-28"
                                     onClick={() => onOpenChange(false)}
                                     disabled={loading}
                                 >
                                     {t('common.cancel')}
                                 </Button>
-                                <Button type="submit" disabled={loading}>
+                                <Button type="submit" className="min-w-32 ms-header-primary-button" disabled={loading}>
                                     {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                                     {isEditing ? t('common.save') : t('common.create')}
                                 </Button>
                             </div>
                         </form>
                     </Form>
+                    </div>
                 </DialogContent>
             </Dialog>
 
@@ -1134,6 +1191,3 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         </>
     );
 }
-
-
-

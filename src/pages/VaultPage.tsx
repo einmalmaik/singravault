@@ -7,7 +7,7 @@
  * secure notes, and TOTP entries.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -25,6 +25,8 @@ import {
     WifiOff,
     RefreshCw,
     Wrench,
+    Settings,
+    QrCode,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -52,6 +54,7 @@ import { VaultMigrationRequiredPanel } from '@/components/vault/VaultMigrationRe
 import { getAdminEntryPath, shouldShowWebsiteChrome } from '@/platform/appShell';
 import { buildReturnState } from '@/services/returnNavigationState';
 import { useAdminPanelAccess } from '@/hooks/use-admin-panel-access';
+import { useFeatureGate } from '@/hooks/useFeatureGate';
 import { getBrowserDeviceTrustStatus } from '@/services/vaultOpLog/addDeviceFlowService';
 import type { VaultIntegrityMode, VaultIntegrityNonTamperReason } from '@/services/vaultIntegrityService';
 
@@ -130,12 +133,17 @@ export default function VaultPage() {
     const [isOnline, setIsOnline] = useState(() => navigator.onLine);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isRecheckingIntegrity, setIsRecheckingIntegrity] = useState(false);
+    const focusItemId = useMemo(() => {
+        const itemId = new URLSearchParams(location.search).get('item');
+        return itemId && itemId.trim().length > 0 ? itemId : null;
+    }, [location.search]);
 
     const showWebsiteChrome = shouldShowWebsiteChrome();
     const adminEntryPath = getAdminEntryPath();
     const { showAdminButton } = useAdminPanelAccess({
         enabled: isPremiumActive() && !isOfflineSession && !isLocked && !isSetupRequired,
     });
+    const authenticatorAccess = useFeatureGate('builtin_authenticator');
     const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
     const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime
         && NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode);
@@ -159,6 +167,25 @@ export default function VaultPage() {
             window.removeEventListener('offline', goOffline);
         };
     }, []);
+
+    // Expose mobile nav height as CSS variable so floating elements (e.g. Support Widget) can avoid it.
+    useEffect(() => {
+        if (!isMobile) return;
+        document.documentElement.style.setProperty('--vault-mobile-nav-offset', '3.5rem');
+        return () => {
+            document.documentElement.style.removeProperty('--vault-mobile-nav-offset');
+        };
+    }, [isMobile]);
+
+    useEffect(() => {
+        if (!focusItemId) {
+            return;
+        }
+
+        setSearchQuery('');
+        setActiveFilter('all');
+        setSelectedCategory(null);
+    }, [focusItemId]);
 
     useEffect(() => {
         if (!user || isLocked || isSetupRequired || !isOnline) return;
@@ -382,7 +409,7 @@ export default function VaultPage() {
     };
 
     return (
-        <div className="min-h-screen flex overflow-hidden bg-background">
+        <div className="sv-app-shell min-h-screen flex overflow-hidden bg-background text-foreground">
             {!isMobile && (
                 <VaultSidebar
                     selectedCategory={selectedCategory}
@@ -405,7 +432,7 @@ export default function VaultPage() {
             )}
 
             <div className="flex-1 flex flex-col min-w-0">
-                <header className="sticky top-0 z-10 border-b border-border/55 bg-background/90 backdrop-blur-xl px-4 lg:px-6 py-4">
+                <header className="sv-vault-topbar ms-glass-header sticky top-0 z-10 px-4 py-4 lg:px-6">
                     <div className="flex flex-col gap-3 sm:flex-row sm:gap-4 items-start sm:items-center justify-between">
                         <div className="relative w-full sm:max-w-md min-w-0">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -413,7 +440,7 @@ export default function VaultPage() {
                                 placeholder={t('vault.search.placeholder')}
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="pl-10"
+                                className="ms-glass-input h-12 pl-10"
                             />
                         </div>
 
@@ -422,6 +449,7 @@ export default function VaultPage() {
                                 <Button
                                     variant="outline"
                                     size="icon"
+                                    className="ms-header-utility-button"
                                     onClick={() => setSidebarOpen(true)}
                                     aria-label={t('vault.sidebar.title')}
                                 >
@@ -430,7 +458,7 @@ export default function VaultPage() {
                             )}
 
                             {showWebsiteChrome && (
-                                <Button asChild variant="outline">
+                                <Button asChild variant="outline" className="ms-header-secondary-button">
                                     <Link to="/">{t('nav.home')}</Link>
                                 </Button>
                             )}
@@ -439,14 +467,14 @@ export default function VaultPage() {
                                 <Button
                                     variant="outline"
                                     onClick={() => navigate(adminEntryPath, { state: buildReturnState(location) })}
-                                    className="flex items-center gap-2"
+                                    className="ms-header-secondary-button flex items-center gap-2"
                                 >
                                     <Wrench className="w-4 h-4" />
                                     <span className="hidden md:inline">{t('admin.title')}</span>
                                 </Button>
                             )}
 
-                            <div className="hidden sm:flex border rounded-lg p-0.5">
+                            <div className="hidden rounded-lg border border-border/55 bg-[hsl(var(--el-1)/0.72)] p-0.5 sm:flex">
                                 <Button
                                     variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
                                     size="icon"
@@ -465,7 +493,7 @@ export default function VaultPage() {
                                 </Button>
                             </div>
 
-                            <Button onClick={handleOpenNewItem} className="ml-auto sm:ml-0">
+                            <Button onClick={handleOpenNewItem} className="ms-header-primary-button ml-auto sm:ml-0">
                                 <Plus className="w-4 h-4 mr-2" />
                                 {t('vault.actions.add')}
                             </Button>
@@ -473,7 +501,7 @@ export default function VaultPage() {
                     </div>
 
                     <Tabs value={activeFilter} onValueChange={(v) => setActiveFilter(v as ItemFilter)} className="mt-4">
-                        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+                        <div className="-mx-1 overflow-x-auto px-1 pb-1 [mask-image:linear-gradient(to_right,transparent,black_0.75rem,black_calc(100%_-_0.75rem),transparent)] sm:[mask-image:none]">
                             <TabsList className="inline-flex w-max min-w-full sm:min-w-0">
                                 <TabsTrigger value="all" className="flex items-center gap-1.5 whitespace-nowrap">
                                     <Shield className="w-4 h-4" />
@@ -515,7 +543,7 @@ export default function VaultPage() {
                     </div>
                 </header>
 
-                <main className="flex-1 p-3 sm:p-4 lg:p-6 min-w-0 space-y-4">
+                <main className="sv-vault-main min-w-0 flex-1 space-y-4 p-3 pt-1 pb-[calc(5.5rem+var(--safe-area-bottom))] sm:p-4 sm:pt-2 sm:pb-4 lg:p-4 lg:pt-1">
                     {opLogUiView && (
                         <>
                             {opLogUiView.vaultSecurityMode !== 'normal' && (
@@ -523,13 +551,6 @@ export default function VaultPage() {
                             )}
                             <VaultAddDeviceBanner />
                             <VaultPendingDevicesPanel />
-                            <div className="min-h-5" aria-live="polite">
-                                {opLogUiLoading && (
-                                    <p className="text-xs text-muted-foreground animate-pulse">
-                                        {t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
-                                    </p>
-                                )}
-                            </div>
                             {opLogUiError && (
                                 <p className="text-xs text-destructive">
                                     {opLogUiError}
@@ -553,6 +574,8 @@ export default function VaultPage() {
                         viewMode={viewMode}
                         onEditItem={handleEditItem}
                         refreshKey={refreshKey}
+                        securityStatusLoading={opLogUiLoading}
+                        focusItemId={focusItemId}
                     />
                 </main>
 
@@ -577,6 +600,59 @@ export default function VaultPage() {
                 )}
             </div>
 
+            {isMobile && (
+                <nav
+                    className="sv-mobile-nav fixed inset-x-0 bottom-0 z-30 border-t border-border/55 bg-[hsl(var(--background)/0.92)] px-[calc(0.75rem+var(--safe-area-left))] pb-[calc(0.75rem+var(--safe-area-bottom))] pt-2 backdrop-blur-xl"
+                    aria-label={t('vault.mobileNavigation', { defaultValue: 'Tresor Navigation' })}
+                >
+                    <div className="mx-auto grid max-w-md grid-cols-4 gap-2">
+                        <Button
+                            variant="ghost"
+                            className="h-14 flex-col gap-1 rounded-lg px-1 text-xs"
+                            onClick={() => navigate('/vault')}
+                        >
+                            <Shield className="h-4 w-4" />
+                            {t('vault.sidebar.allItems')}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            className="h-14 flex-col gap-1 rounded-lg px-1 text-xs"
+                            onClick={() => setSidebarOpen(true)}
+                        >
+                            <Grid3X3 className="h-4 w-4" />
+                            {t('vault.sidebar.categories')}
+                        </Button>
+                        <Button
+                            className="h-14 flex-col gap-1 rounded-lg px-1 text-xs"
+                            onClick={handleOpenNewItem}
+                        >
+                            <Plus className="h-4 w-4" />
+                            {t('vault.actions.add')}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            className="h-14 flex-col gap-1 rounded-lg px-1 text-xs"
+                            aria-disabled={isPremiumActive() && !authenticatorAccess.allowed}
+                            title={isPremiumActive() && !authenticatorAccess.allowed ? t('subscription.premiumFeatureLockedDescription') : undefined}
+                            onClick={() => {
+                                if (isPremiumActive() && authenticatorAccess.allowed) {
+                                    navigate('/authenticator');
+                                    return;
+                                }
+                                navigate('/vault/settings', { state: buildReturnState(location) });
+                            }}
+                        >
+                            {isPremiumActive() ? <QrCode className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
+                            {isPremiumActive()
+                                ? authenticatorAccess.allowed
+                                    ? t('authenticator.title')
+                                    : t('subscription.premiumFeatureLockedShort')
+                                : t('settings.vaultPage.title')}
+                        </Button>
+                    </div>
+                </nav>
+            )}
+
             <VaultItemDialog
                 open={dialogOpen}
                 onOpenChange={setDialogOpen}
@@ -586,4 +662,3 @@ export default function VaultPage() {
         </div>
     );
 }
-

@@ -576,7 +576,10 @@
       "deviceKeyRequiredTitle": "Device Key required",
       "deviceKeyRequiredDescription": "This vault is protected with a Device Key. Import the key from a trusted device before unlocking this vault here.",
       "accountSettings": "Account Settings",
-      "importDeviceKey": "Import Device Key"
+      "importDeviceKey": "Import Device Key",
+      "accountUnknown": "Signed-in account",
+      "currentAccount": "Current account",
+      "zeroKnowledgeHint": "Zero-knowledge protected. Your data is only decrypted on your devices."
     },
     "providers": {
       "google": "Google",
@@ -667,6 +670,12 @@
       "notes": "Notes",
       "totp": "2FA Codes",
       "favorites": "Favorites"
+    },
+    "sections": {
+      "favorites": "Favorites",
+      "recentlyUsed": "Recently used",
+      "allEntries": "All entries",
+      "entryCount": "{{count}} entries"
     },
     "categories": {
       "title": "Categories",
@@ -818,6 +827,8 @@
       "general": "General",
       "security": "Security",
       "billingSupport": "Billing & Support",
+      "billing": "Subscription",
+      "support": "Support",
       "data": "Data",
       "dataLegal": "Data & Legal",
       "sharingEmergency": "Sharing & Emergency"
@@ -1426,16 +1437,22 @@
     "scoreFair": "Fair security level",
     "scorePoor": "Poor security level",
     "weak": "Weak",
+    "pwned": "Leaked",
     "duplicate": "Duplicate",
     "old": "Old",
+    "reused": "Reused",
     "strong": "Strong",
     "issues": "Security issues",
     "allGood": "Great! Your vault looks healthy",
     "allGoodDesc": "No critical password issues were found.",
     "weakPassword": "Weak password",
+    "pwnedPassword": "This password was found in data breaches.",
     "duplicateWith": "Duplicate of {{items}}",
     "oldPassword": "Last changed {{days}} days ago",
     "reasons": {
+      "score_0": "Very weak password",
+      "score_1": "Weak password",
+      "score_2": "Password should be stronger",
       "too_short": "Password is too short",
       "no_uppercase": "Missing uppercase letters",
       "no_lowercase": "Missing lowercase letters",
@@ -1515,6 +1532,8 @@
     "select_plan": "Select Plan",
     "upgrade": "Upgrade",
     "upgrade_now": "Upgrade Now",
+    "premiumFeatureLockedShort": "Premium feature",
+    "premiumFeatureLockedDescription": "This feature requires Premium or Families.",
     "features": {
       "unlimited_passwords": "Unlimited Passwords",
       "device_sync": "Device Sync",
@@ -1531,6 +1550,7 @@
       "emergency_access": "Emergency Access",
       "vault_health": "Vault Health Reports",
       "passkey_unlock": "Passkey Vault Unlock (PRF)",
+      "vault_health_reports": "Vault Health Reports",
       "vault_integrity": "Vault Integrity Verification",
       "priority_support": "Priority Support",
       "six_accounts": "6 Premium Accounts",

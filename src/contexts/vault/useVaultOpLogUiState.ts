@@ -60,6 +60,8 @@ export function useVaultOpLogUiState(
   const [isLoading, setIsLoading] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const isRunningRef = useRef(false);
+  const rerunAfterCurrentRef = useRef(false);
+  const runningRefreshPromiseRef = useRef<Promise<void> | null>(null);
 
   const clearState = useCallback(() => {
     setVaultId(null);
@@ -68,76 +70,101 @@ export function useVaultOpLogUiState(
     setLastError(null);
   }, []);
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const runRefresh = useCallback(async (options?: {
+    readonly showLoading?: boolean;
+  }): Promise<void> => {
     if (!isEnabled) {
       clearState();
       return;
     }
 
     if (isRunningRef.current) {
+      rerunAfterCurrentRef.current = true;
+      await runningRefreshPromiseRef.current;
       return;
     }
 
-    const vaultEncryptionKey = vaultProviderState.vaultEncryptionKey;
-    if (!vaultEncryptionKey || !userId) {
-      clearState();
-      return;
-    }
+    const refreshPromise = (async () => {
+      isRunningRef.current = true;
+      let showLoading = options?.showLoading;
 
-    isRunningRef.current = true;
-    setIsLoading(true);
-    setLastError(null);
+      try {
+        do {
+          rerunAfterCurrentRef.current = false;
 
-    try {
-      const vaultId = vaultProviderState.vaultMigrationKeyContext?.vaultId
-        ?? await resolveVaultOpLogDefaultVaultId(userId);
-      if (!vaultId) {
-        setVaultId(null);
-        setUiView(null);
-        setLocalVaultState(null);
-        setLastError('vault_id_load_failed');
-        return;
+          const vaultEncryptionKey = vaultProviderState.vaultEncryptionKey;
+          if (!vaultEncryptionKey || !userId) {
+            clearState();
+            return;
+          }
+
+          if (showLoading !== false) {
+            setIsLoading(true);
+          }
+          setLastError(null);
+
+          try {
+            const vaultId = vaultProviderState.vaultMigrationKeyContext?.vaultId
+              ?? await resolveVaultOpLogDefaultVaultId(userId);
+            if (!vaultId) {
+              setVaultId(null);
+              setUiView(null);
+              setLocalVaultState(null);
+              setLastError('vault_id_load_failed');
+              return;
+            }
+            setVaultId(vaultId);
+
+            const deviceIdentity = await loadVerifiedLocalDeviceIdentity(userId, vaultId);
+
+            if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+              await syncPendingVaultOpLogOperations({
+                rpcClient: supabase as unknown as SupabaseRpcClient,
+                trustClient: supabase as unknown as VaultOpLogTrustReadClient,
+                vaultId,
+                authorDeviceId: deviceIdentity?.deviceId,
+              }).catch(() => undefined);
+            }
+
+            const result = await loadVaultOpLogUiState({
+              rpcClient: supabase as unknown as SupabaseRpcClient,
+              trustClient: supabase as unknown as VaultOpLogTrustReadClient,
+              userId,
+              vaultId,
+              deviceId: deviceIdentity?.deviceId,
+              publicSigningKeyB64Url: deviceIdentity?.publicSigningKeyB64Url,
+              vaultEncryptionKey,
+              requireLocalDeviceTrust: true,
+            });
+
+            if (result.error) {
+              setLastError(result.error);
+              setUiView(null);
+              setLocalVaultState(null);
+            } else {
+              setUiView(result.uiView);
+              setLocalVaultState(result.localVaultState);
+            }
+          } catch (err) {
+            setLastError(err instanceof Error ? err.message : 'unknown_ui_state_error');
+            setUiView(null);
+            setLocalVaultState(null);
+          } finally {
+            if (showLoading !== false) {
+              setIsLoading(false);
+            }
+          }
+
+          showLoading = false;
+        } while (rerunAfterCurrentRef.current);
+      } finally {
+        isRunningRef.current = false;
+        runningRefreshPromiseRef.current = null;
       }
-      setVaultId(vaultId);
+    })();
 
-      const deviceIdentity = await loadVerifiedLocalDeviceIdentity(userId, vaultId);
-
-      if (typeof navigator === 'undefined' || navigator.onLine !== false) {
-        await syncPendingVaultOpLogOperations({
-          rpcClient: supabase as unknown as SupabaseRpcClient,
-          trustClient: supabase as unknown as VaultOpLogTrustReadClient,
-          vaultId,
-          authorDeviceId: deviceIdentity?.deviceId,
-        }).catch(() => undefined);
-      }
-
-      const result = await loadVaultOpLogUiState({
-        rpcClient: supabase as unknown as SupabaseRpcClient,
-        trustClient: supabase as unknown as VaultOpLogTrustReadClient,
-        userId,
-        vaultId,
-        deviceId: deviceIdentity?.deviceId,
-        publicSigningKeyB64Url: deviceIdentity?.publicSigningKeyB64Url,
-        vaultEncryptionKey,
-        requireLocalDeviceTrust: true,
-      });
-
-      if (result.error) {
-        setLastError(result.error);
-        setUiView(null);
-        setLocalVaultState(null);
-      } else {
-        setUiView(result.uiView);
-        setLocalVaultState(result.localVaultState);
-      }
-    } catch (err) {
-      setLastError(err instanceof Error ? err.message : 'unknown_ui_state_error');
-      setUiView(null);
-      setLocalVaultState(null);
-    } finally {
-      setIsLoading(false);
-      isRunningRef.current = false;
-    }
+    runningRefreshPromiseRef.current = refreshPromise;
+    await refreshPromise;
   }, [
     clearState,
     isEnabled,
@@ -145,6 +172,10 @@ export function useVaultOpLogUiState(
     vaultProviderState.vaultMigrationKeyContext?.vaultId,
     userId,
   ]);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    await runRefresh({ showLoading: true });
+  }, [runRefresh]);
 
   useEffect(() => {
     if (!isEnabled) {
@@ -188,7 +219,7 @@ export function useVaultOpLogUiState(
       }
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-        void refresh();
+        void runRefresh({ showLoading: false });
       }, 250);
     };
 
@@ -216,7 +247,7 @@ export function useVaultOpLogUiState(
       )
       .subscribe();
 
-    const pollingTimer = window.setInterval(scheduleRefresh, 5000);
+    const pollingTimer = window.setInterval(scheduleRefresh, 120000);
 
     return () => {
       if (debounceTimer) {
@@ -232,6 +263,7 @@ export function useVaultOpLogUiState(
     vaultId,
     vaultProviderState.isLocked,
     vaultProviderState.vaultEncryptionKey,
+    runRefresh,
   ]);
 
   return {

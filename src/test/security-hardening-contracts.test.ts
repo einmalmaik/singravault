@@ -20,6 +20,14 @@ describe("security hardening contracts", () => {
     expect(vite).toContain("https://api.pwnedpasswords.com");
   });
 
+  it("keeps Tauri native file-drop interception disabled for internal vault drag and drop", () => {
+    const tauriConfig = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf-8")) as {
+      app?: { windows?: Array<{ dragDropEnabled?: boolean }> };
+    };
+
+    expect(tauriConfig.app?.windows?.[0]?.dragDropEnabled).toBe(false);
+  });
+
   it("binds WebAuthn verification to the exact stored challenge id", () => {
     const source = readFileSync("supabase/functions/webauthn/index.ts", "utf-8");
 
@@ -408,13 +416,23 @@ describe("security hardening contracts", () => {
   it("keeps legacy manifest recovery UI inactive after OpLog verification", () => {
     const vaultPage = readFileSync("src/pages/VaultPage.tsx", "utf-8");
     const vaultSidebar = readFileSync("src/components/vault/VaultSidebar.tsx", "utf-8");
+    // VaultSidebar delegates the runtime branching to a focused hook; the
+    // `useOpLogVerifiedRuntime` gate and `mapVerifiedCategoryRecord` mapper
+    // live in `vaultSidebar/useVaultSidebarCategories.ts` after the
+    // 2026-Q2 sidebar refactor. The security invariant (no legacy fallback
+    // when OpLog is verified) is enforced there.
+    const sidebarCategoriesHook = readFileSync(
+      "src/components/vault/vaultSidebar/useVaultSidebarCategories.ts",
+      "utf-8",
+    );
 
     expect(vaultPage).toContain("const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified'");
     expect(vaultPage).toContain("const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime");
     expect(vaultPage).toContain("if (!useOpLogVerifiedRuntime && (integrityMode === 'blocked' || integrityMode === 'safe'))");
     expect(vaultPage).toContain("if (shouldShowLegacyIntegrityRecovery)");
-    expect(vaultSidebar).toContain("if (useOpLogVerifiedRuntime)");
-    expect(vaultSidebar).toContain("mapVerifiedCategoryRecord");
+    expect(vaultSidebar).toContain("const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified'");
+    expect(sidebarCategoriesHook).toContain("if (useOpLogVerifiedRuntime)");
+    expect(sidebarCategoriesHook).toContain("mapVerifiedCategoryRecord");
   });
 
   it("requires a verified OpLog allowlist before export decrypts legacy vault rows", () => {

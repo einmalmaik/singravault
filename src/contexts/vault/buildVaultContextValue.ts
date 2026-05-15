@@ -34,6 +34,7 @@ export interface VaultProviderActionBindings {
   enterSafeMode: () => Promise<{ error: Error | null }>;
   exitSafeMode: () => void;
   resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+  getVaultHealthAnalysisItems: VaultContextType['getVaultHealthAnalysisItems'];
   startVaultMigration: () => Promise<{ error: Error | null }>;
   retryVaultMigration: () => Promise<{ error: Error | null }>;
 
@@ -109,6 +110,7 @@ export function buildVaultContextValue(
     enterSafeMode: actions.enterSafeMode,
     exitSafeMode: actions.exitSafeMode,
     resetVaultAfterIntegrityFailure: actions.resetVaultAfterIntegrityFailure,
+    getVaultHealthAnalysisItems: actions.getVaultHealthAnalysisItems,
 
     // Phase 9 — OpLog UI state
     opLogVaultId: opLogUiState.vaultId,

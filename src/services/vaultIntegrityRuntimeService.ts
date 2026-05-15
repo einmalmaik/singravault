@@ -36,6 +36,17 @@ function logIntegrityRuntimeDecision(
     source?: 'remote' | 'cache' | 'empty';
   },
 ): void {
+  const isRoutineHealthyRefresh =
+    stage === 'verify:v2'
+    && input.result.mode === 'healthy'
+    && input.result.quarantinedItems.length === 0
+    && !input.result.nonTamperReason
+    && !input.result.blockedReason;
+
+  if (isRoutineHealthyRefresh) {
+    return;
+  }
+
   console.info('[VaultRuntime] Integrity decision.', {
     stage,
     source: input.source ?? 'unknown',

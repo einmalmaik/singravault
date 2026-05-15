@@ -2,6 +2,25 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
+## 0.4.8 - Unreleased
+
+### Behoben
+
+- Leere Tresore zeigen beim ersten Laden nicht mehr faelschlich "Entschluessele Eintraege..." an, wenn keine Eintraege vorhanden sind.
+- Frisch erstellte Social-Login-Accounts erhalten beim Masterpasswort-Setup direkt einen initialen OpLog-Trust-State mit lokalem Device-Signing-Key, sodass neue Eintraege nicht mehr wegen fehlender OpLog-Device-Identitaet blockieren.
+- Frische, leere OpLog-Tresore werden nach lokaler Working-Set-Verifikation als verifiziert behandelt, statt faelschlich in alte Manifest-/Safe-Mode-Pfade zu fallen.
+- Der OpLog-UI-Refresh zeigt den Sicherheitsstatus nicht mehr bei jedem Hintergrund-Refresh als Ladezustand an; Realtime bleibt aktiv, Polling ist nur noch Fallback.
+- Routine-Integrity-Checks im gesunden Zustand schreiben keine dauerhaften `VaultRuntime`-Info-Logs mehr in die Konsole.
+- Passkey-Registrierung: Deployment-Drift bei der `webauthn` Edge Function identifiziert. Der lokale Function-Code enthaelt den Fix fuer die Challenge-ID-Verifikation; die Function muss neu deployt werden, damit die produktive Version nicht mehr mit 500 bei `verify-registration` antwortet.
+
+### In Arbeit
+
+- Neues Designsystem nach Maunting Design-DNA: dunkles Premium-Vault-UI, Glassmorphism, kontrollierte Icon-Registries und bessere responsive App-Shell.
+- Login, Landing, rechtliche Unterseiten und Vault-Shell sind visuell an das neue Premium-Dark-Design angeglichen.
+- Provider-Matching fuer Vault- und Authenticator-Oberflaechen vorbereitet: Gmail/Google Maps/Google/GitHub/AWS/Stripe/Proton/Binance und weitere Anbieter werden zentral auf interne Icon-IDs gemappt.
+- Kategorie-Icons verwenden nun kontrollierte Registry-IDs statt sichtbarer Emoji-Icons; alte Emoji-Werte werden nur auf interne Icons gemappt.
+- Mobile Vault-Navigation erhaelt eine kompakte Bottom-Bar mit Safe-Area-Abstand.
+
 ## 0.4.7 - 2026-05-13
 
 ### Highlights

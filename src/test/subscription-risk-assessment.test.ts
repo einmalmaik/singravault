@@ -4,6 +4,17 @@ import { readFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 
+async function readFileIfExists(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+}
+
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey =
   process.env.VITE_SUPABASE_ANON_KEY ||
@@ -87,17 +98,26 @@ describeIfSupabase("Subscription risk assessment", () => {
   }, 30000);
 
   it("has no dedicated webhook event dedupe persistence in code/migrations (idempotency gap)", async () => {
+    // The Stripe webhook Edge Function source lives outside the open-source
+    // core repo (it was moved to the closed-source premium repo as part of the
+    // OpenSource split). When the source file is not present locally we cannot
+    // statically assert the gap from this repo — the migration on its own
+    // still documents the absence of dedupe persistence.
     const [webhookSource, migrationSource] = await Promise.all([
-      readFile("supabase/functions/stripe-webhook/index.ts", "utf8"),
-      readFile("supabase/migrations/20260210180000_subscription_system.sql", "utf8"),
+      readFileIfExists("supabase/functions/stripe-webhook/index.ts"),
+      readFileIfExists("supabase/migrations/20260210180000_subscription_system.sql"),
     ]);
 
-    expect(webhookSource).not.toMatch(/processed_webhook_events/i);
-    expect(webhookSource).not.toMatch(/webhook_events/i);
-    expect(webhookSource).not.toMatch(/ON CONFLICT .*event/i);
+    if (webhookSource !== null) {
+      expect(webhookSource).not.toMatch(/processed_webhook_events/i);
+      expect(webhookSource).not.toMatch(/webhook_events/i);
+      expect(webhookSource).not.toMatch(/ON CONFLICT .*event/i);
+    }
 
-    expect(migrationSource).not.toMatch(/processed_webhook_events/i);
-    expect(migrationSource).not.toMatch(/webhook_events/i);
-    expect(migrationSource).not.toMatch(/unique .*event_id/i);
+    // The subscription-system migration must always be present in this repo.
+    expect(migrationSource).not.toBeNull();
+    expect(migrationSource!).not.toMatch(/processed_webhook_events/i);
+    expect(migrationSource!).not.toMatch(/webhook_events/i);
+    expect(migrationSource!).not.toMatch(/unique .*event_id/i);
   });
 });

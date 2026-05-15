@@ -14,6 +14,7 @@ import { decodeBase64Url } from '@/services/vaultOpLog/canonicalJson';
 import { loadVerifiedVaultOpLogDeviceContext } from '@/services/vaultOpLog/vaultOpLogDeviceIdentityRecovery';
 import { loadVaultOpLogDeviceSigningKey } from '@/services/vaultOpLog/vaultOpLogDeviceSigningKeyStore';
 import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
+import { ensureInitialVaultOpLogTrust } from '@/services/vaultOpLog/vaultOpLogInitialTrustService';
 import {
   getCollectionKeyEnvelope,
 } from '@/services/collectionOpLog/repository';
@@ -107,11 +108,25 @@ export function useCollectionOpLogActions(
       throw new Error('Vault-ID konnte nicht verifiziert geladen werden.');
     }
 
-    const deviceContext = await loadVerifiedVaultOpLogDeviceContext({
+    let deviceContext = await loadVerifiedVaultOpLogDeviceContext({
       userId: user.id,
       vaultId,
       trustClient: supabase,
     });
+    if (!deviceContext) {
+      const bootstrapResult = await ensureInitialVaultOpLogTrust({
+        userId: user.id,
+        vaultId,
+        rpcClient: supabase as unknown as SupabaseRpcClient,
+      });
+      if (bootstrapResult.kind === 'bootstrapped') {
+        deviceContext = await loadVerifiedVaultOpLogDeviceContext({
+          userId: user.id,
+          vaultId,
+          trustClient: supabase,
+        });
+      }
+    }
     const identity = deviceContext?.identity ?? null;
     if (!identity) {
       throw new Error('OpLog-Device-Identitaet fehlt oder ist auf diesem Geraet nicht verfuegbar.');
@@ -154,8 +169,16 @@ export function useCollectionOpLogActions(
 
   const listSharedCollections = useCallback(async () => {
     try {
+      if (!user) {
+        throw new Error('Keine aktive Sitzung.');
+      }
+
+      const memberships = await loadActiveCollectionMemberships(user.id);
+      if (memberships.length === 0) {
+        return { error: null, collections: [] };
+      }
+
       const base = await loadRuntimeBase();
-      const memberships = await loadActiveCollectionMemberships(base.userId);
       const collections: SharedCollectionSummary[] = [];
 
       for (const membership of memberships) {
@@ -182,7 +205,7 @@ export function useCollectionOpLogActions(
     } catch (error) {
       return { error: error instanceof Error ? error : new Error('Shared Collections konnten nicht geladen werden.'), collections: [] };
     }
-  }, [loadRuntimeBase, makeDeps]);
+  }, [loadRuntimeBase, makeDeps, user]);
 
   const createSharedCollection = useCallback(async (input: CreateSharedCollectionInput) => {
     const collectionId = crypto.randomUUID();

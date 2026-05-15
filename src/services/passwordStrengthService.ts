@@ -32,9 +32,17 @@ export interface PwnedResult {
     pwnedCount: number;
 }
 
+export interface PasswordStrengthOptions {
+    /**
+     * Context terms passed to zxcvbn so item-specific data like title,
+     * username, or domain can lower the score when reused in the password.
+     */
+    userInputs?: string[];
+}
+
 // ============ Lazy-Loaded zxcvbn Module ============
 
-let zxcvbnModule: { zxcvbn: (password: string) => ZxcvbnResult } | null = null;
+let zxcvbnModule: { zxcvbn: (password: string, userInputs?: string[]) => ZxcvbnResult } | null = null;
 let loadPromise: Promise<typeof zxcvbnModule> | null = null;
 
 /**
@@ -79,6 +87,39 @@ async function loadZxcvbn(): Promise<typeof zxcvbnModule> {
     return loadPromise;
 }
 
+// ============ HIBP Pwned-Cache (in-memory, session-scoped) ============
+
+/**
+ * In-memory cache for HIBP pwned-checks. The key is the full SHA-1 hash of the
+ * password (hex, uppercase). Caching only the pwned-status keeps repeated vault
+ * health analyses from issuing one HIBP request per item per render, which
+ * caused O(items) outbound requests on every vault data version bump.
+ *
+ * The cache is intentionally not a security boundary: it holds SHA-1 password
+ * hashes that already exist transiently in the unlocked-vault runtime. It is
+ * bounded so a runaway caller cannot inflate it; eviction is FIFO.
+ */
+const PWNED_CACHE_LIMIT = 1000;
+const pwnedCache = new Map<string, Promise<PwnedResult>>();
+
+function rememberPwnedResult(hashHex: string, result: Promise<PwnedResult>): void {
+    if (pwnedCache.size >= PWNED_CACHE_LIMIT) {
+        const oldestKey = pwnedCache.keys().next().value;
+        if (oldestKey !== undefined) {
+            pwnedCache.delete(oldestKey);
+        }
+    }
+    pwnedCache.set(hashHex, result);
+}
+
+/**
+ * Clears the in-memory pwned cache. Intended for tests and for callers that
+ * want to drop cached results on vault lock.
+ */
+export function clearPwnedCacheForTesting(): void {
+    pwnedCache.clear();
+}
+
 // ============ Public API ============
 
 /**
@@ -96,7 +137,10 @@ export async function preloadZxcvbn(): Promise<void> {
  * @param password - The password to check
  * @returns Strength result with score, feedback, and crack time
  */
-export async function checkPasswordStrength(password: string): Promise<StrengthResult> {
+export async function checkPasswordStrength(
+    password: string,
+    options?: PasswordStrengthOptions,
+): Promise<StrengthResult> {
     if (!password) {
         return { score: 0, isStrong: false, feedback: [], crackTimeDisplay: '' };
     }
@@ -106,7 +150,8 @@ export async function checkPasswordStrength(password: string): Promise<StrengthR
         return { score: 0, isStrong: false, feedback: [], crackTimeDisplay: '' };
     }
 
-    const result = mod.zxcvbn(password);
+    const userInputs = options?.userInputs?.filter((input) => input.trim().length > 0);
+    const result = mod.zxcvbn(password, userInputs && userInputs.length > 0 ? userInputs : undefined);
 
     const feedback: string[] = [];
     if (result.feedback.warning) {
@@ -134,49 +179,62 @@ export async function checkPasswordPwned(password: string): Promise<PwnedResult>
         return { isPwned: false, pwnedCount: 0 };
     }
 
-    try {
-        // SHA-1 hash
-        const encoder = new TextEncoder();
-        const data = encoder.encode(password);
-        const hashBuffer = await crypto.subtle.digest('SHA-1', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+    // SHA-1 hash (also used as cache key)
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
 
-        const prefix = hashHex.slice(0, 5);
-        const suffix = hashHex.slice(5);
+    const cached = pwnedCache.get(hashHex);
+    if (cached) {
+        return cached;
+    }
 
-        // k-Anonymity: only send 5-char prefix
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const lookup = (async (): Promise<PwnedResult> => {
+        try {
+            const prefix = hashHex.slice(0, 5);
+            const suffix = hashHex.slice(5);
 
-        const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
-            signal: controller.signal,
-            headers: {
-                'User-Agent': 'Singra-Vault/1.0 Password-Safety-Check',
-            },
-        });
+            // k-Anonymity: only send 5-char prefix
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-        clearTimeout(timeoutId);
+            const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
+                signal: controller.signal,
+                headers: {
+                    'User-Agent': 'Singra-Vault/1.0 Password-Safety-Check',
+                },
+            });
 
-        if (!response.ok) {
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                return { isPwned: false, pwnedCount: 0 };
+            }
+
+            const text = await response.text();
+            const lines = text.split('\n');
+
+            for (const line of lines) {
+                const [hashSuffix, count] = line.trim().split(':');
+                if (hashSuffix === suffix) {
+                    return { isPwned: true, pwnedCount: parseInt(count, 10) || 1 };
+                }
+            }
+
+            return { isPwned: false, pwnedCount: 0 };
+        } catch {
+            // Silent fail on network error — don't block the user. We also do
+            // not cache failures so a transient outage does not freeze the
+            // pwned-status for the rest of the session.
+            pwnedCache.delete(hashHex);
             return { isPwned: false, pwnedCount: 0 };
         }
+    })();
 
-        const text = await response.text();
-        const lines = text.split('\n');
-
-        for (const line of lines) {
-            const [hashSuffix, count] = line.trim().split(':');
-            if (hashSuffix === suffix) {
-                return { isPwned: true, pwnedCount: parseInt(count, 10) || 1 };
-            }
-        }
-
-        return { isPwned: false, pwnedCount: 0 };
-    } catch {
-        // Silent fail on network error — don't block the user
-        return { isPwned: false, pwnedCount: 0 };
-    }
+    rememberPwnedResult(hashHex, lookup);
+    return lookup;
 }
 
 /**
@@ -185,9 +243,12 @@ export async function checkPasswordPwned(password: string): Promise<PwnedResult>
  * @param password - The password to check
  * @returns Full check result including acceptability
  */
-export async function checkPassword(password: string): Promise<PasswordCheckResult> {
+export async function checkPassword(
+    password: string,
+    options?: PasswordStrengthOptions,
+): Promise<PasswordCheckResult> {
     const [strengthResult, pwnedResult] = await Promise.all([
-        checkPasswordStrength(password),
+        checkPasswordStrength(password, options),
         checkPasswordPwned(password),
     ]);
 

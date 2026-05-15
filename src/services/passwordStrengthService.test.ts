@@ -9,10 +9,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ============ Mocks ============
 
 // Mock zxcvbn-ts dynamic imports
-vi.mock('@zxcvbn-ts/core', () => ({
-    zxcvbn: (password: string) => {
+const mockZxcvbn = vi.hoisted(() => vi.fn((password: string, userInputs?: string[]) => {
         const len = password.length;
-        const score = len < 6 ? 0 : len < 10 ? 1 : len < 14 ? 2 : len < 20 ? 3 : 4;
+        const matchesContext = userInputs?.some((input) => (
+            input.length > 0 && password.toLowerCase().includes(input.toLowerCase())
+        ));
+        const score = matchesContext ? 1 : len < 6 ? 0 : len < 10 ? 1 : len < 14 ? 2 : len < 20 ? 3 : 4;
         return {
             score,
             feedback: {
@@ -23,7 +25,10 @@ vi.mock('@zxcvbn-ts/core', () => ({
                 offlineSlowHashing1e4PerSecond: score < 2 ? '3 hours' : 'centuries',
             },
         };
-    },
+    }));
+
+vi.mock('@zxcvbn-ts/core', () => ({
+    zxcvbn: mockZxcvbn,
     zxcvbnOptions: {
         setOptions: vi.fn(),
     },
@@ -70,6 +75,17 @@ describe('passwordStrengthService', () => {
             expect(result.score).toBeGreaterThanOrEqual(3);
             expect(result.isStrong).toBe(true);
         });
+
+        it('should pass user input context to zxcvbn without changing the public result shape', async () => {
+            const { checkPasswordStrength } = await import('./passwordStrengthService');
+            const result = await checkPasswordStrength('ExampleService2026!', {
+                userInputs: ['ExampleService', ''],
+            });
+
+            expect(mockZxcvbn).toHaveBeenCalledWith('ExampleService2026!', ['ExampleService']);
+            expect(result.score).toBe(1);
+            expect(result.isStrong).toBe(false);
+        });
     });
 
     describe('checkPasswordPwned', () => {
@@ -104,6 +120,43 @@ describe('passwordStrengthService', () => {
             const { checkPasswordPwned } = await import('./passwordStrengthService');
             const result = await checkPasswordPwned('');
             expect(result.isPwned).toBe(false);
+        });
+
+        it('reuses a cached result for the same password instead of hitting HIBP again', async () => {
+            const fetchMock = vi.fn().mockResolvedValue({
+                ok: true,
+                text: async () => '00A3B5E6D95E80F5E4E5C3C5:5\n',
+            });
+            global.fetch = fetchMock as unknown as typeof fetch;
+
+            const { checkPasswordPwned, clearPwnedCacheForTesting } = await import('./passwordStrengthService');
+            clearPwnedCacheForTesting();
+
+            await checkPasswordPwned('synthetic-fixture-password-not-real');
+            await checkPasswordPwned('synthetic-fixture-password-not-real');
+            await checkPasswordPwned('synthetic-fixture-password-not-real');
+
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not cache transient HIBP network errors', async () => {
+            const fetchMock = vi.fn()
+                .mockRejectedValueOnce(new Error('Network error'))
+                .mockResolvedValueOnce({
+                    ok: true,
+                    text: async () => '00A3B5E6D95E80F5E4E5C3C5:7\n',
+                });
+            global.fetch = fetchMock as unknown as typeof fetch;
+
+            const { checkPasswordPwned, clearPwnedCacheForTesting } = await import('./passwordStrengthService');
+            clearPwnedCacheForTesting();
+
+            const first = await checkPasswordPwned('another-synthetic-fixture-not-real');
+            expect(first.isPwned).toBe(false);
+
+            const second = await checkPasswordPwned('another-synthetic-fixture-not-real');
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(second.isPwned).toBe(false);
         });
     });
 

@@ -13,6 +13,9 @@
     --safe-area-left: env(safe-area-inset-left, 0px);
     --safe-area-right: env(safe-area-inset-right, 0px);
 
+    /* Vault mobile nav clearance — set to nav height (3.5rem) by VaultPage when mobile nav is visible */
+    --vault-mobile-nav-offset: 0px;
+
     /* ------ Core Palette (Maunting cool dark) ------------------------------------------------------------------ */
     --background: 206 31% 4%;
     --foreground: 188 29% 95%;

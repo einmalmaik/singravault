@@ -103,7 +103,7 @@ describe("PasskeySettings", () => {
     });
   });
 
-  it("shows a session error when passkey listing returns 401", async () => {
+  it("keeps passive passkey listing quiet when the session is not hydrated yet", async () => {
     const authError = Object.assign(new Error("Authentication required"), {
       name: "EdgeFunctionServiceError",
       status: 401,
@@ -114,13 +114,14 @@ describe("PasskeySettings", () => {
     render(<PasskeySettings />);
 
     await waitFor(() => {
-      expect(mockToast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          variant: "destructive",
-          description: "Your session has expired. Please sign in again.",
-        }),
-      );
+      expect(mockListPasskeys).toHaveBeenCalled();
     });
+    expect(mockToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        variant: "destructive",
+        description: "Your session has expired. Please sign in again.",
+      }),
+    );
   });
 
   it("does not load passkeys when no authenticated user exists", async () => {

@@ -16,7 +16,10 @@ async function resolveAppVersion(mode: string, packageVersion: string): Promise<
   }
 
   if (mode === "development") {
-    return { version: "dev build", source: "development-mode" };
+    return {
+      version: packageVersion || "dev build",
+      source: packageVersion ? "package-version-development" : "development-mode",
+    };
   }
 
   try {
@@ -289,7 +292,7 @@ export default defineConfig(async ({ mode }) => {
         injectRegister: "script",
         injectManifest: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest}"],
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         },
         devOptions: {
           enabled: false,

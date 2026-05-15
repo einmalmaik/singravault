@@ -6,9 +6,7 @@ import {
 } from '@/services/deviceKeyService';
 import { isNativeDeviceKeyBridgeRuntime } from '@/services/deviceKeyNativeBridge';
 import {
-  VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED,
   createUserKeyMigrationRequiredError,
-  normalizeVaultProtectionMode,
   requiresDeviceKey,
   type VaultProtectionMode,
 } from '@/services/deviceKeyProtectionPolicy';
@@ -20,7 +18,6 @@ import {
 } from '@/services/deviceKeyUnlockOrchestrator';
 import { enforceVaultTwoFactorBeforeKeyRelease as enforceVaultTwoFactorGate } from '@/services/vaultUnlockOrchestrator';
 import { markVaultSessionActive, clearVaultSessionMarkers } from '@/services/vaultRuntimeFacade';
-import { setupInitialVault } from '@/services/vaultSetupOrchestrator';
 import { activateDeviceKeyProtection } from '@/services/deviceKeyActivationService';
 import { deactivateDeviceKeyProtection } from '@/services/deviceKeyDeactivationService';
 import {
@@ -50,8 +47,10 @@ import { useVaultProviderState } from './useVaultProviderState';
 import { useVaultLifecycleEffects } from './useVaultLifecycleEffects';
 import { useVaultOpLogUiState } from './useVaultOpLogUiState';
 import { useVaultRevokedDeviceAutoLock } from './useVaultRevokedDeviceAutoLock';
+import { useVaultSetupActions } from './useVaultSetupActions';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
 import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
+import { loadVaultHealthAnalysisItems } from '@/services/vaultHealthAnalysisItemsService';
 
 function clearLegacyIntegrityStateAfterOpLogGate(
   state: ReturnType<typeof useVaultProviderState>,
@@ -345,33 +344,11 @@ export function useVaultProviderActions(): VaultContextType {
     markVaultSessionActive(sessionStorage);
     state.setPendingSessionRestore(false);
   }, [state]);
-  const setupMasterPassword = useCallback(async (
-    masterPassword: string,
-  ): Promise<{ error: Error | null }> => {
-    if (!user) {
-      return { error: new Error('No user logged in') };
-    }
-
-    const result = await setupInitialVault({ userId: user.id, masterPassword });
-    if (result.credentials) {
-      state.applyCredentialsToState(result.credentials);
-    }
-    if (result.existingProfileSalt) {
-      state.setIsSetupRequired(false);
-      state.setSalt(result.existingProfileSalt);
-    }
-    if (result.error) {
-      return { error: result.error };
-    }
-
-    state.setVaultProtectionMode(VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED === result.credentials?.vaultProtectionMode
-      ? VAULT_PROTECTION_MODE_DEVICE_KEY_REQUIRED
-      : normalizeVaultProtectionMode(result.credentials?.vaultProtectionMode));
-    state.setIsSetupRequired(false);
-    return result.activeUserKey
-      ? finalizeVaultUnlock(result.activeUserKey)
-      : { error: null };
-  }, [finalizeVaultUnlock, state, user]);
+  const setupMasterPassword = useVaultSetupActions({
+    finalizeVaultUnlock,
+    state,
+    userId: user?.id,
+  });
   const unlock = useCallback(async (
     masterPassword: string,
     options?: VaultUnlockOptions,
@@ -647,6 +624,19 @@ export function useVaultProviderActions(): VaultContextType {
     decryptTrustedRecoverySnapshotItem,
   } = useVaultCryptoActions(state, user);
   const opLogUiState = useVaultOpLogUiState(state, user?.id ?? null);
+  const getVaultHealthAnalysisItems = useCallback(() => {
+    if (!user) {
+      return Promise.resolve([]);
+    }
+
+    return loadVaultHealthAnalysisItems({
+      userId: user.id,
+      vaultMigrationStatus: state.vaultMigrationStatus,
+      opLogLocalVaultState: opLogUiState.localVaultState,
+      decryptItem,
+      verifyIntegrity,
+    });
+  }, [decryptItem, opLogUiState.localVaultState, state.vaultMigrationStatus, user, verifyIntegrity]);
   useVaultRevokedDeviceAutoLock({
     isLocked: state.isLocked,
     localVaultState: opLogUiState.localVaultState,
@@ -691,6 +681,7 @@ export function useVaultProviderActions(): VaultContextType {
     enterSafeMode,
     exitSafeMode,
     resetVaultAfterIntegrityFailure,
+    getVaultHealthAnalysisItems,
     startVaultMigration,
     retryVaultMigration,
     ...opLogActions,

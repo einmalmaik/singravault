@@ -7,7 +7,7 @@ import type {
     VaultIntegrityVerificationResult,
 } from '@/services/vaultIntegrityService';
 import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecoveryService';
-import type { VaultItemForIntegrity } from '@/extensions/types';
+import type { VaultHealthAnalysisItem, VaultItemForIntegrity } from '@/extensions/types';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
 import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
 import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
@@ -87,6 +87,7 @@ export interface VaultContextType {
     enterSafeMode: () => Promise<{ error: Error | null }>;
     exitSafeMode: () => void;
     resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+    getVaultHealthAnalysisItems: () => Promise<VaultHealthAnalysisItem[]>;
 
     // Phase 9 — OpLog UI state (behind feature flag)
     opLogVaultId: string | null;

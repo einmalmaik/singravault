@@ -3,70 +3,60 @@
 /**
  * @fileoverview Vault Item List Component
  *
- * Displays vault items in grid or list view with filtering,
- * search, and decryption.
+ * Composes the vault item list view:
+ *  - read pipeline (snapshot/OpLog decryption + cloud sync) — `useVaultItemListData`
+ *  - derived groupings (favorites, recent, per-category) — `useVisibleVaultEntries`
+ *  - write paths (move/favorite/delete) — `useVaultItemMutations`
+ *  - focus highlight scroll-to-row — `useVaultItemFocusHighlight`
+ *  - pointer-event drag, ignored quarantine, bulk restore — dedicated hooks
+ *  - user-facing chrome — small components under `./vaultItemList`
+ *
+ * This file is intentionally a thin composition: every non-trivial concern
+ * lives in a focused, individually testable module.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Eye, KeyRound, Loader2, Plus, RefreshCw, Shield, TriangleAlert } from 'lucide-react';
+import { Eye, TriangleAlert } from 'lucide-react';
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useVault } from '@/contexts/VaultContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { getServiceHooks } from '@/extensions/registry';
 import { cn } from '@/lib/utils';
 import { ItemFilter, ViewMode } from '@/pages/VaultPage';
-import { VaultItemData } from '@/services/cryptoService';
-import { isVaultItemEnvelopeV2 } from '@/services/vaultIntegrityV2/itemEnvelopeCrypto';
-import {
-  isAppOnline,
-  loadVaultSnapshot,
-} from '@/services/offlineVaultService';
-import {
-  LegacyVaultMetadataMigrationPersistenceError,
-  migrateLegacyVaultItemEncryptionAndMetadata,
-  migrateLegacyVaultItemMetadata,
-} from '@/services/legacyVaultMetadataMigrationService';
-import type { QuarantinedVaultItem } from '@/services/vaultIntegrityService';
-import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
+import { writeClipboard } from '@/services/clipboardService';
 import { getVerifiedRecordIdsForEgress } from '@/services/vaultOpLog';
-import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
-import { VaultItemCard } from './VaultItemCard';
-import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
-import { VaultQuarantinePanel } from './VaultQuarantinePanel';
+import { useToast } from '@/hooks/use-toast';
+
+import { VaultItemListSyncBar } from './vaultItemList/VaultItemListSyncBar';
 import {
-  VaultQuarantineRestoreProgressDialog,
-  type VaultQuarantineRestoreProgressStatus,
-} from './VaultQuarantineRestoreProgressDialog';
-
-const DECRYPT_BATCH_SIZE = 25;
-const QUARANTINE_SUMMARY_THRESHOLD = 2;
-const CLOUD_SYNC_REFRESH_INTERVAL_MS = 10_000;
-
-interface VaultItem {
-  id: string;
-  vault_id: string;
-  title: string;
-  website_url: string | null;
-  icon_url: string | null;
-  item_type: 'password' | 'note' | 'totp' | 'card';
-  is_favorite: boolean | null;
-  category_id: string | null;
-  created_at: string;
-  updated_at: string;
-  decryptedData?: VaultItemData;
-}
+  VaultItemListEmptyVault,
+  VaultItemListEmptyVisible,
+  VaultItemListLoadingState,
+  VaultItemListNoSearchResults,
+} from './vaultItemList/VaultItemListEmptyStates';
+import { VaultItemListCardRow } from './vaultItemList/VaultItemListCardRow';
+import { VaultItemListDashboard } from './vaultItemList/VaultItemListDashboard';
+import { VaultItemListPreviewPanel } from './vaultItemList/VaultItemListPreviewPanel';
+import { VaultItemListBulkRestoreDialogs } from './vaultItemList/VaultItemListBulkRestoreDialogs';
+import { useVaultItemListData } from './vaultItemList/useVaultItemListData';
+import { useVisibleVaultEntries } from './vaultItemList/useVisibleVaultEntries';
+import { useVaultIgnoredQuarantine } from './vaultItemList/useVaultIgnoredQuarantine';
+import {
+  scrollViewportForDrag,
+  useVaultItemPointerDrag,
+} from './vaultItemList/useVaultItemPointerDrag';
+import { useVaultItemMutations } from './vaultItemList/useVaultItemMutations';
+import { useVaultItemFocusHighlight } from './vaultItemList/useVaultItemFocusHighlight';
+import { useVaultBulkRestore } from './vaultItemList/useVaultBulkRestore';
+import type { VaultItemListRowApi } from './vaultItemList/vaultItemListRowApi';
+import type { VaultItem } from './vaultItemList/vaultItemModel';
+import {
+  parseOpLogCategoryPlaintext,
+  type CategorySummary,
+} from './vaultItemList/vaultItemPlaintextMapper';
+import { VaultQuarantinePanel } from './VaultQuarantinePanel';
+import { VaultQuarantinedItemCard } from './VaultQuarantinedItemCard';
 
 interface VaultItemListProps {
   searchQuery: string;
@@ -75,154 +65,8 @@ interface VaultItemListProps {
   viewMode: ViewMode;
   onEditItem: (itemId: string) => void;
   refreshKey?: number;
-}
-
-type RenderableVaultListEntry =
-  | { kind: 'item'; item: VaultItem }
-  | { kind: 'quarantined'; item: VaultItem; quarantine: QuarantinedVaultItem };
-
-interface BulkRestoreProgress {
-  open: boolean;
-  status: VaultQuarantineRestoreProgressStatus;
-  total: number;
-  completed: number;
-  failed: number;
-  currentItemId: string | null;
-  lastError: string | null;
-}
-
-interface VaultItemListIntegrityGate {
-  readonly mode?: string;
-  readonly quarantinedItems: QuarantinedVaultItem[];
-  readonly isFirstCheck?: boolean;
-}
-
-function canDecryptFromIntegrityResult(
-  result: VaultItemListIntegrityGate | null | undefined,
-  itemId: string,
-): boolean {
-  if (!result?.mode) {
-    return false;
-  }
-
-  if (
-    result.mode === 'quarantine'
-    && result.quarantinedItems.some((item) => item.id === itemId)
-  ) {
-    return false;
-  }
-
-  try {
-    assertItemDecryptable({
-      mode: result.mode,
-      quarantinedItems: result.quarantinedItems,
-      itemId,
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function parseOpLogItemPlaintext(record: LocalVerifiedRecord): VaultItemData | null {
-  if (
-    (record.recordState !== 'verified' && record.recordState !== 'restoredFromSnapshot')
-    || record.record.recordType !== 'item'
-    || !record.plaintext
-  ) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(record.plaintext)) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return null;
-    }
-    const value = parsed as Record<string, unknown>;
-    const title = typeof value.title === 'string' ? value.title : '';
-    const itemType = isVaultItemType(value.itemType) ? value.itemType : 'password';
-
-    return {
-      title,
-      websiteUrl: typeof value.websiteUrl === 'string' ? value.websiteUrl : undefined,
-      username: typeof value.username === 'string' ? value.username : undefined,
-      password: typeof value.password === 'string' ? value.password : undefined,
-      notes: typeof value.notes === 'string' ? value.notes : undefined,
-      itemType,
-      categoryId: typeof value.categoryRecordId === 'string' ? value.categoryRecordId : null,
-      isFavorite: typeof value.isFavorite === 'boolean' ? value.isFavorite : false,
-      totpSecret: typeof value.totpSecret === 'string' ? value.totpSecret : undefined,
-      totpIssuer: typeof value.totpIssuer === 'string' ? value.totpIssuer : undefined,
-      totpLabel: typeof value.totpLabel === 'string' ? value.totpLabel : undefined,
-      totpAlgorithm: isTotpAlgorithm(value.totpAlgorithm) ? value.totpAlgorithm : undefined,
-      totpDigits: value.totpDigits === 6 || value.totpDigits === 8 ? value.totpDigits : undefined,
-      totpPeriod: typeof value.totpPeriod === 'number' ? value.totpPeriod : undefined,
-      customFields: isStringRecord(value.customFields) ? value.customFields : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function mapOpLogRecordToVaultItem(record: LocalVerifiedRecord): VaultItem | null {
-  const decryptedData = parseOpLogItemPlaintext(record);
-  if (!decryptedData) {
-    return null;
-  }
-
-  return {
-    id: record.record.recordId,
-    vault_id: record.record.vaultId,
-    title: decryptedData.title ?? '',
-    website_url: decryptedData.websiteUrl ?? null,
-    icon_url: null,
-    item_type: decryptedData.itemType ?? 'password',
-    is_favorite: decryptedData.isFavorite ?? false,
-    category_id: decryptedData.categoryId ?? null,
-    created_at: record.record.createdAt,
-    updated_at: record.record.updatedAt,
-    decryptedData,
-  };
-}
-
-function isVaultItemType(value: unknown): value is VaultItem['item_type'] {
-  return value === 'password' || value === 'note' || value === 'totp' || value === 'card';
-}
-
-function isTotpAlgorithm(value: unknown): value is NonNullable<VaultItemData['totpAlgorithm']> {
-  return value === 'SHA1' || value === 'SHA256' || value === 'SHA512';
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return !!value
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Object.values(value).every((entry) => typeof entry === 'string');
-}
-
-function getQuarantineIgnoreToken(item: QuarantinedVaultItem): string {
-  return `${item.reason}:${item.updatedAt ?? ''}`;
-}
-
-async function mapInBatches<TInput, TOutput>(
-  items: TInput[],
-  batchSize: number,
-  mapper: (item: TInput) => Promise<TOutput>,
-): Promise<TOutput[]> {
-  const results: TOutput[] = [];
-
-  for (let start = 0; start < items.length; start += batchSize) {
-    const batch = items.slice(start, start + batchSize);
-    results.push(...await Promise.all(batch.map(mapper)));
-
-    if (start + batchSize < items.length) {
-      await new Promise<void>((resolve) => {
-        globalThis.setTimeout(resolve, 0);
-      });
-    }
-  }
-
-  return results;
+  securityStatusLoading?: boolean;
+  focusItemId?: string | null;
 }
 
 export function VaultItemList({
@@ -232,8 +76,11 @@ export function VaultItemList({
   viewMode,
   onEditItem,
   refreshKey,
+  securityStatusLoading = false,
+  focusItemId = null,
 }: VaultItemListProps) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const {
@@ -250,773 +97,347 @@ export function VaultItemList({
     vaultDataVersion,
     vaultMigrationStatus,
     opLogLocalVaultState,
+    opLogUpdateItem,
     opLogUiRefresh,
     opLogUiView,
+    opLogDeleteItem,
   } = useVault();
   const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
 
-  const [items, setItems] = useState<VaultItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [decrypting, setDecrypting] = useState(false);
-  const [ignoredQuarantineById, setIgnoredQuarantineById] = useState<Record<string, string>>({});
-  const [showIgnoredQuarantine, setShowIgnoredQuarantine] = useState(false);
-  const [bulkRestoreConfirmOpen, setBulkRestoreConfirmOpen] = useState(false);
-  const [bulkRestoreProgress, setBulkRestoreProgress] = useState<BulkRestoreProgress>({
-    open: false,
-    status: 'running',
-    total: 0,
-    completed: 0,
-    failed: 0,
-    currentItemId: null,
-    lastError: null,
+  const {
+    items,
+    setItems,
+    loading,
+    decrypting,
+    backgroundSyncing,
+    lastCloudSyncAt,
+    revalidating,
+    revalidateRemoteIntegrity,
+  } = useVaultItemListData({
+    userId,
+    isDuressMode,
+    useOpLogVerifiedRuntime,
+    opLogLocalVaultState,
+    refreshKey,
+    vaultDataVersion,
+    decryptItem,
+    decryptItemForLegacyMigration,
+    encryptItem,
+    reportUnreadableItems,
+    verifyIntegrity,
+    refreshIntegrityBaseline,
+    opLogUiRefresh,
   });
-  const [revalidating, setRevalidating] = useState(false);
-  const [backgroundSyncing, setBackgroundSyncing] = useState(false);
-  const [lastCloudSyncAt, setLastCloudSyncAt] = useState<Date | null>(null);
-  const [cloudSyncTick, setCloudSyncTick] = useState(0);
-  const failedDecryptPayloadByItemIdRef = useRef<Map<string, string>>(new Map());
-  const loggedDecryptFailuresRef = useRef<Set<string>>(new Set());
-  const revalidationRequestIdRef = useRef(0);
-  const revalidatingRef = useRef(false);
-  const opLogCloudSyncRef = useRef(false);
-  const fetchItemsRef = useRef(false);
-  const pendingFetchItemsRef = useRef(false);
-  const hasRenderedVaultContentRef = useRef(false);
-  const decryptItemRef = useRef(decryptItem);
-  const decryptItemForLegacyMigrationRef = useRef(decryptItemForLegacyMigration);
-  const encryptItemRef = useRef(encryptItem);
-  const reportUnreadableItemsRef = useRef(reportUnreadableItems);
-  const verifyIntegrityRef = useRef(verifyIntegrity);
-  const refreshIntegrityBaselineRef = useRef(refreshIntegrityBaseline);
 
-  useEffect(() => {
-    decryptItemRef.current = decryptItem;
-    decryptItemForLegacyMigrationRef.current = decryptItemForLegacyMigration;
-    encryptItemRef.current = encryptItem;
-    reportUnreadableItemsRef.current = reportUnreadableItems;
-    verifyIntegrityRef.current = verifyIntegrity;
-    refreshIntegrityBaselineRef.current = refreshIntegrityBaseline;
-  }, [decryptItem, decryptItemForLegacyMigration, encryptItem, refreshIntegrityBaseline, reportUnreadableItems, verifyIntegrity]);
+  // Local view state. Lives in the main component because more than one
+  // sub-tree consumes it (preview, sync indicators, drag state).
+  const [recentlyCopiedItemIds, setRecentlyCopiedItemIds] = useState<string[]>([]);
+  const [dropTargetCategoryId, setDropTargetCategoryId] = useState<string | null>(null);
+  const [nativeDraggingItemId, setNativeDraggingItemId] = useState<string | null>(null);
+  const [previewItemId, setPreviewItemId] = useState<string | null>(null);
+  const [deletePreviewItemId, setDeletePreviewItemId] = useState<string | null>(null);
+  const [deletingPreviewItem, setDeletingPreviewItem] = useState(false);
 
+  // Native HTML5 drag is global; wire the auto-scroll listener only while a
+  // drag is active so we do not run on every mouse move outside drag mode.
   useEffect(() => {
-    failedDecryptPayloadByItemIdRef.current.clear();
-    loggedDecryptFailuresRef.current.clear();
-    hasRenderedVaultContentRef.current = false;
-    setLastCloudSyncAt(null);
-    setBackgroundSyncing(false);
-  }, [userId, isDuressMode]);
-
-  useEffect(() => {
-    if (!userId) {
+    if (!nativeDraggingItemId) {
       return undefined;
     }
 
-    const requestCloudSync = () => {
-      if (!isAppOnline()) {
-        return;
-      }
-
-      setCloudSyncTick((tick) => tick + 1);
+    const handleDragOver = (event: DragEvent) => {
+      scrollViewportForDrag(event.clientY);
     };
 
-    const requestVisibleCloudSync = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-        return;
-      }
-
-      requestCloudSync();
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        requestCloudSync();
-      }
-    };
-
-    window.addEventListener('focus', requestVisibleCloudSync);
-    window.addEventListener('online', requestVisibleCloudSync);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    const intervalId = window.setInterval(requestVisibleCloudSync, CLOUD_SYNC_REFRESH_INTERVAL_MS);
-
-    return () => {
-      window.removeEventListener('focus', requestVisibleCloudSync);
-      window.removeEventListener('online', requestVisibleCloudSync);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.clearInterval(intervalId);
-    };
-  }, [userId]);
-
-  const revalidateRemoteIntegrity = useCallback(async () => {
-    if (!userId || revalidatingRef.current || useOpLogVerifiedRuntime) {
-      return;
-    }
-
-    const requestId = revalidationRequestIdRef.current + 1;
-    revalidationRequestIdRef.current = requestId;
-    revalidatingRef.current = true;
-    setRevalidating(true);
-    try {
-      await verifyIntegrityRef.current();
-    } finally {
-      if (revalidationRequestIdRef.current === requestId) {
-        revalidatingRef.current = false;
-        setRevalidating(false);
-      }
-    }
-  }, [useOpLogVerifiedRuntime, userId]);
-
-  useEffect(() => {
-    if (!useOpLogVerifiedRuntime || !userId || cloudSyncTick === 0 || !isAppOnline()) {
-      return;
-    }
-
-    if (opLogCloudSyncRef.current) {
-      return;
-    }
-
-    opLogCloudSyncRef.current = true;
-    setBackgroundSyncing(true);
-
-    void opLogUiRefresh()
-      .then(() => {
-        setLastCloudSyncAt(new Date());
-      })
-      .finally(() => {
-        opLogCloudSyncRef.current = false;
-        setBackgroundSyncing(false);
-      });
-  }, [cloudSyncTick, opLogUiRefresh, useOpLogVerifiedRuntime, userId]);
-
-  useEffect(() => {
-    async function fetchItems() {
-      if (!userId) return;
-      if (fetchItemsRef.current) {
-        pendingFetchItemsRef.current = true;
-        return;
-      }
-
-      const isBackgroundSync = hasRenderedVaultContentRef.current;
-      fetchItemsRef.current = true;
-      if (isBackgroundSync) {
-        setBackgroundSyncing(true);
-      } else {
-        setLoading(true);
-        setDecrypting(!useOpLogVerifiedRuntime);
-      }
-      try {
-        if (useOpLogVerifiedRuntime) {
-          const opLogItems = opLogLocalVaultState
-            ? Array.from(opLogLocalVaultState.recordsById.values())
-              .map(mapOpLogRecordToVaultItem)
-              .filter((item): item is VaultItem => item !== null)
-              .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-            : [];
-
-reportUnreadableItemsRef.current([]);
-          setItems(opLogItems);
-          hasRenderedVaultContentRef.current = true;
-          setLastCloudSyncAt(new Date());
-          fetchItemsRef.current = false;
-          setLoading(false);
-          setDecrypting(false);
-
-          if (pendingFetchItemsRef.current) {
-            pendingFetchItemsRef.current = false;
-            void fetchItems();
-          }
-
-          return;
-        }
-
-        const { snapshot, source } = await loadVaultSnapshot(userId);
-        const integrityResult: VaultItemListIntegrityGate | null = await verifyIntegrityRef.current(snapshot, { source });
-        const allowsAnyDecrypt = integrityResult?.mode === 'healthy' || integrityResult?.mode === 'quarantine';
-        if (!allowsAnyDecrypt) {
-          setItems([]);
-        } else {
-          const canPersistMigrations = !useOpLogVerifiedRuntime
-            && integrityResult?.mode === 'healthy'
-            && integrityResult.isFirstCheck
-            && source === 'remote'
-            && isAppOnline();
-          const canPersistLegacyEncryptionMigration = !useOpLogVerifiedRuntime
-            && source === 'remote'
-            && isAppOnline()
-            && (
-              integrityResult?.mode === 'healthy'
-              || (
-                integrityResult?.mode === 'quarantine'
-                && integrityResult.quarantinedItems.length > 0
-                && integrityResult.quarantinedItems.every((item) => item.reason === 'decrypt_failed')
-              )
-            );
-
-          const vaultItems = [...snapshot.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-          let integrityBaselineDirty = false;
-          const trustedItemIds = new Set<string>();
-          const decryptableItemIds = new Set<string>();
-          const unreadableItems: QuarantinedVaultItem[] = [];
-
-          const decryptedItems = await mapInBatches(
-            vaultItems,
-            DECRYPT_BATCH_SIZE,
-            async (item) => {
-              if (!canDecryptFromIntegrityResult(integrityResult, item.id)) {
-                return { ...item, decryptedData: undefined };
-              }
-
-              const cachedFailedPayload = failedDecryptPayloadByItemIdRef.current.get(item.id);
-              if (cachedFailedPayload === item.encrypted_data) {
-                return { ...item, decryptedData: undefined };
-              }
-
-              let decryptedData: VaultItemData | null = null;
-              try {
-                decryptedData = await decryptItemRef.current(item.encrypted_data, item.id);
-              } catch {
-                if (canPersistLegacyEncryptionMigration) {
-                  let legacyMigrationDecrypt: Awaited<ReturnType<typeof decryptItemForLegacyMigrationRef.current>> | null = null;
-                  try {
-                    legacyMigrationDecrypt = await decryptItemForLegacyMigrationRef.current(
-                      item.encrypted_data,
-                      item.id,
-                    );
-                    if (!legacyMigrationDecrypt.legacyNoAadFallbackUsed) {
-                      throw new Error('No legacy encryption migration required.');
-                    }
-                  } catch {
-                    legacyMigrationDecrypt = null;
-                  }
-
-                  if (legacyMigrationDecrypt) {
-                    try {
-                      const migration = await migrateLegacyVaultItemEncryptionAndMetadata({
-                        userId,
-                        vaultId: snapshot.vaultId,
-                        item,
-                        decryptedData: legacyMigrationDecrypt.data,
-                        canPersistRemote: true,
-                        encryptItem: encryptItemRef.current,
-                      });
-                      integrityBaselineDirty = true;
-                      trustedItemIds.add(item.id);
-                      decryptableItemIds.add(item.id);
-                      failedDecryptPayloadByItemIdRef.current.delete(item.id);
-
-                      return {
-                        ...migration.item,
-                        decryptedData: migration.decryptedData,
-                      };
-                    } catch (migrationError) {
-                      if (migrationError instanceof LegacyVaultMetadataMigrationPersistenceError) {
-                        console.warn('Legacy vault item encryption migration could not be persisted; will retry later.', item.id);
-                        decryptableItemIds.add(item.id);
-                        failedDecryptPayloadByItemIdRef.current.delete(item.id);
-                        return {
-                          ...item,
-                          decryptedData: legacyMigrationDecrypt.data,
-                        };
-                      }
-                      throw migrationError;
-                    }
-                  }
-                }
-
-                failedDecryptPayloadByItemIdRef.current.set(item.id, item.encrypted_data);
-                unreadableItems.push({
-                  id: item.id,
-                  reason: 'decrypt_failed',
-                  updatedAt: item.updated_at ?? null,
-                  itemType: item.item_type ?? null,
-                });
-                const logKey = `${item.id}:${item.updated_at}`;
-                if (!loggedDecryptFailuresRef.current.has(logKey)) {
-                  loggedDecryptFailuresRef.current.add(logKey);
-                  console.debug(
-                    isDuressMode
-                      ? 'Failed to decrypt item in Duress Mode (expected for Real items):'
-                      : 'Failed to decrypt item (key mismatch or corrupt):',
-                    item.id,
-                  );
-                }
-
-                return { ...item, decryptedData: undefined };
-              }
-              if (!decryptedData) {
-                throw new Error('Vault item decrypt returned no data.');
-              }
-
-              decryptableItemIds.add(item.id);
-              failedDecryptPayloadByItemIdRef.current.delete(item.id);
-
-              const migration = await migrateLegacyVaultItemMetadata({
-                userId,
-                vaultId: snapshot.vaultId,
-                item,
-                decryptedData,
-                canPersistRemote: canPersistMigrations,
-                encryptItem: encryptItemRef.current,
-              });
-              if (migration.migrated) {
-                integrityBaselineDirty = true;
-                trustedItemIds.add(item.id);
-              }
-
-              if (canPersistLegacyEncryptionMigration && !isVaultItemEnvelopeV2(migration.item.encrypted_data)) {
-                try {
-                  const encryptionMigration = await migrateLegacyVaultItemEncryptionAndMetadata({
-                    userId,
-                    vaultId: snapshot.vaultId,
-                    item: migration.item,
-                    decryptedData: migration.decryptedData,
-                    canPersistRemote: true,
-                    encryptItem: encryptItemRef.current,
-                  });
-                  integrityBaselineDirty = true;
-                  trustedItemIds.add(item.id);
-                  decryptableItemIds.add(item.id);
-                  failedDecryptPayloadByItemIdRef.current.delete(item.id);
-
-                  return {
-                    ...encryptionMigration.item,
-                    decryptedData: encryptionMigration.decryptedData,
-                  };
-                } catch (migrationError) {
-                  if (migrationError instanceof LegacyVaultMetadataMigrationPersistenceError) {
-                    console.warn('Legacy vault item encryption migration could not be persisted; will retry later.', item.id);
-                    return {
-                      ...migration.item,
-                      decryptedData: migration.decryptedData,
-                    };
-                  }
-                  throw migrationError;
-                }
-              }
-
-              return {
-                ...migration.item,
-                decryptedData: migration.decryptedData,
-              };
-            },
-          );
-
-          reportUnreadableItemsRef.current(unreadableItems);
-
-          const canPersistTrustedFirstBaseline = integrityResult?.mode === 'healthy'
-            && integrityResult.isFirstCheck
-            && source === 'remote'
-            && isAppOnline()
-            && unreadableItems.length === 0;
-
-          if (
-            (integrityBaselineDirty && (canPersistMigrations || canPersistLegacyEncryptionMigration))
-            || canPersistTrustedFirstBaseline
-          ) {
-            await refreshIntegrityBaselineRef.current();
-          }
-
-          setItems(decryptedItems as VaultItem[]);
-          hasRenderedVaultContentRef.current = decryptedItems.length > 0
-            || (integrityResult?.mode === 'quarantine' && integrityResult.quarantinedItems.length > 0);
-          setLastCloudSyncAt(new Date());
-
-          // Cached snapshots keep the vault usable offline and while local writes
-          // are pending. A lightweight remote revalidation follows so DB-side
-          // tampering can move items into quarantine without waiting for edit/open.
-          if (!useOpLogVerifiedRuntime && source !== 'remote' && isAppOnline()) {
-            void revalidateRemoteIntegrity();
-          }
-        }
-      } catch (err) {
-        console.error('Error fetching vault items:', err);
-      } finally {
-        fetchItemsRef.current = false;
-      }
-
-      if (pendingFetchItemsRef.current) {
-        pendingFetchItemsRef.current = false;
-        void fetchItems();
-      } else {
-        setLoading(false);
-        setDecrypting(false);
-        setBackgroundSyncing(false);
-      }
-    }
-
-    void fetchItems();
-  }, [
-    refreshKey,
-    cloudSyncTick,
-    isDuressMode,
-    revalidateRemoteIntegrity,
-    opLogLocalVaultState,
-    useOpLogVerifiedRuntime,
-    userId,
-    vaultDataVersion,
-  ]);
+    window.addEventListener('dragover', handleDragOver);
+    return () => window.removeEventListener('dragover', handleDragOver);
+  }, [nativeDraggingItemId]);
 
   const quarantinedItems = useMemo(
     () => lastIntegrityResult?.quarantinedItems ?? [],
     [lastIntegrityResult],
   );
-  const quarantinedItemsById = useMemo(
-    () => new Map(quarantinedItems.map((item) => [item.id, item])),
-    [quarantinedItems],
-  );
-  const hasGroupedQuarantine = quarantinedItems.length >= QUARANTINE_SUMMARY_THRESHOLD;
-  const canRenderGroupedQuarantine = filter === 'all' && !categoryId && searchQuery.trim() === '';
-  const quarantineIgnoreStorageKey = user?.id
-    ? `singra:vault-quarantine-ignored-items:${user.id}`
-    : null;
-  const activeIgnoredQuarantinedItems = useMemo(
-    () => quarantinedItems.filter((item) => ignoredQuarantineById[item.id] === getQuarantineIgnoreToken(item)),
-    [ignoredQuarantineById, quarantinedItems],
-  );
-  const activeIgnoredQuarantineIds = useMemo(
-    () => new Set(activeIgnoredQuarantinedItems.map((item) => item.id)),
-    [activeIgnoredQuarantinedItems],
-  );
-  const hasIgnoredGroupedQuarantine = hasGroupedQuarantine && activeIgnoredQuarantinedItems.length > 0;
 
-  const canRenderInlineQuarantine = useCallback((
-    item: VaultItem,
-    quarantine: QuarantinedVaultItem,
-  ) => {
-    if (quarantinedItems.length !== 1 || searchQuery.trim() !== '') {
-      return false;
-    }
+  const {
+    activeIgnoredQuarantinedItems,
+    activeIgnoredQuarantineIds,
+    showIgnoredQuarantine,
+    setShowIgnoredQuarantine,
+    ignoreItem: handleIgnoreQuarantineItem,
+    ignoreItems: persistIgnoredQuarantineItems,
+  } = useVaultIgnoredQuarantine({ userId, quarantinedItems });
 
-    const quarantinedItemType = quarantine.itemType ?? item.item_type;
-    if (quarantinedItemType === 'totp') {
-      return false;
-    }
-
-    if (categoryId && item.category_id !== categoryId) {
-      return false;
-    }
-
-    if (filter === 'passwords') {
-      return quarantinedItemType === 'password';
-    }
-    if (filter === 'notes') {
-      return quarantinedItemType === 'note';
-    }
-    if (filter === 'favorites') {
-      return false;
-    }
-
-    return filter === 'all';
-  }, [filter, categoryId, searchQuery, quarantinedItems.length]);
-
-  useEffect(() => {
-    setShowIgnoredQuarantine(false);
-
-    if (!quarantineIgnoreStorageKey || typeof window === 'undefined') {
-      setIgnoredQuarantineById({});
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(quarantineIgnoreStorageKey) || '{}');
-      setIgnoredQuarantineById(
-        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-          ? parsed as Record<string, string>
-          : {},
-      );
-    } catch {
-      setIgnoredQuarantineById({});
-    }
-  }, [quarantineIgnoreStorageKey]);
-
-  const persistIgnoredQuarantine = useCallback((nextIgnoredById: Record<string, string>) => {
-    if (!quarantineIgnoreStorageKey || typeof window === 'undefined') {
-      return;
-    }
-
-    window.localStorage.setItem(quarantineIgnoreStorageKey, JSON.stringify(nextIgnoredById));
-    setIgnoredQuarantineById(nextIgnoredById);
-  }, [quarantineIgnoreStorageKey]);
-
-  const handleIgnoreQuarantineItem = useCallback((item: QuarantinedVaultItem) => {
-    persistIgnoredQuarantine({
-      ...ignoredQuarantineById,
-      [item.id]: getQuarantineIgnoreToken(item),
-    });
-  }, [ignoredQuarantineById, persistIgnoredQuarantine]);
-
-  // Phase 10: when OpLog UI is available, only verified items may be searched.
-  // When vault security mode is lockedCritical/safeMode/safeModeRecommended,
-  // getVerifiedRecordIdsForEgress returns an empty set, effectively hiding
-  // all items from search results.
+  // Phase 10: in OpLog runtime only verified items may be searched. When the
+  // vault security mode is lockedCritical/safeMode/safeModeRecommended,
+  // `getVerifiedRecordIdsForEgress` returns an empty set and hides everything.
   const opLogVerifiedItemIds = useMemo(
     () => getVerifiedRecordIdsForEgress(opLogUiView),
     [opLogUiView],
   );
 
-  const visibleEntries = useMemo<RenderableVaultListEntry[]>(() => {
-    return items.reduce<RenderableVaultListEntry[]>((entries, item) => {
-      const quarantine = quarantinedItemsById.get(item.id);
-      if (quarantine) {
-        if (canRenderInlineQuarantine(item, quarantine)) {
-          entries.push({ kind: 'quarantined', item, quarantine });
-        }
-        return entries;
-      }
+  const categorySummaries = useMemo<CategorySummary[]>(() => {
+    if (!opLogLocalVaultState) {
+      return [];
+    }
 
-      if (!item.decryptedData) {
-        return entries;
-      }
+    return Array.from(opLogLocalVaultState.recordsById.values())
+      .map(parseOpLogCategoryPlaintext)
+      .filter((category): category is CategorySummary => !!category)
+      .sort((left, right) => left.name.localeCompare(right.name, 'de'));
+  }, [opLogLocalVaultState]);
 
-      // Phase 10: if OpLog UI is active, exclude non-verified records from search results.
-      if (opLogVerifiedItemIds && !opLogVerifiedItemIds.has(item.id)) {
-        return entries;
-      }
+  const categoryNameById = useMemo(
+    () => new Map(categorySummaries.map((category) => [category.id, category.name])),
+    [categorySummaries],
+  );
 
-      const resolvedCategoryId = item.decryptedData.categoryId ?? item.category_id;
-      const resolvedItemType = item.decryptedData.itemType || item.item_type;
-      const resolvedIsFavorite = typeof item.decryptedData.isFavorite === 'boolean'
-        ? item.decryptedData.isFavorite
-        : !!item.is_favorite;
-
-      if (resolvedItemType === 'totp') {
-        return entries;
-      }
-
-      const hooks = getServiceHooks();
-      const itemIsDecoy = hooks.isDecoyItem
-        ? hooks.isDecoyItem(item.decryptedData as unknown as Record<string, unknown>)
-        : false;
-
-      if (isDuressMode && !itemIsDecoy) {
-        return entries;
-      }
-      if (!isDuressMode && itemIsDecoy) {
-        return entries;
-      }
-
-      if (categoryId && resolvedCategoryId !== categoryId) {
-        return entries;
-      }
-
-      if (filter === 'passwords' && resolvedItemType !== 'password') {
-        return entries;
-      }
-      if (filter === 'notes' && resolvedItemType !== 'note') {
-        return entries;
-      }
-      if (filter === 'favorites' && !resolvedIsFavorite) {
-        return entries;
-      }
-
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const resolvedTitle = item.decryptedData.title || item.title;
-        const resolvedUrl = item.decryptedData.websiteUrl || item.website_url;
-        const matchTitle = resolvedTitle.toLowerCase().includes(query);
-        const matchUrl = resolvedUrl?.toLowerCase().includes(query);
-        const matchUsername = item.decryptedData.username?.toLowerCase().includes(query);
-        if (!matchTitle && !matchUrl && !matchUsername) {
-          return entries;
-        }
-      }
-
-      entries.push({ kind: 'item', item });
-      return entries;
-    }, []);
-  }, [
+  const {
+    visibleEntries,
+    visibleItemEntries,
+    favoriteEntries,
+    recentlyUsedEntries,
+    groupedCategorySections,
+    uncategorizedEntries,
+    inlineQuarantinedIds,
+    hasGroupedQuarantine,
+    canRenderGroupedQuarantine,
+  } = useVisibleVaultEntries({
     items,
-    quarantinedItemsById,
-    canRenderInlineQuarantine,
+    searchQuery,
     filter,
     categoryId,
-    searchQuery,
     isDuressMode,
+    quarantinedItems,
+    categorySummaries,
     opLogVerifiedItemIds,
+    recentlyCopiedItemIds,
+  });
+
+  const markItemRecentlyUsed = useCallback((itemId: string) => {
+    setRecentlyCopiedItemIds((current) => [
+      itemId,
+      ...current.filter((id) => id !== itemId),
+    ].slice(0, 20));
+  }, []);
+
+  const showOpError = useCallback((message: string) => {
+    toast({ variant: 'destructive', title: t('common.error'), description: message });
+  }, [t, toast]);
+
+  const showFavoriteCooldown = useCallback((remainingSeconds: number) => {
+    toast({
+      title: t('vault.favoriteCooldown.title', { defaultValue: 'Bitte kurz warten' }),
+      description: t('vault.favoriteCooldown.description', {
+        defaultValue: 'Favoriten werden gerade verschlüsselt gespeichert. Du kannst in {{count}} Sekunden weitermachen.',
+        count: remainingSeconds,
+      }),
+    });
+  }, [t, toast]);
+
+  const {
+    moveItemToCategory,
+    toggleItemFavorite,
+    deleteItem,
+  } = useVaultItemMutations({
+    items,
+    setItems,
+    opLogLocalVaultState,
+    opLogUpdateItem,
+    opLogDeleteItem,
+    onMarkRecentlyUsed: markItemRecentlyUsed,
+    onError: showOpError,
+    onFavoriteCooldown: showFavoriteCooldown,
+  });
+
+  const pointerDrag = useVaultItemPointerDrag({
+    onMoveItemToCategory: moveItemToCategory,
+    onDropTargetChange: setDropTargetCategoryId,
+  });
+
+  const openItemPreview = useCallback((item: VaultItem) => {
+    markItemRecentlyUsed(item.id);
+    setPreviewItemId(item.id);
+  }, [markItemRecentlyUsed]);
+
+  const editItemFromPreview = useCallback((itemId: string) => {
+    markItemRecentlyUsed(itemId);
+    setPreviewItemId(null);
+    onEditItem(itemId);
+  }, [markItemRecentlyUsed, onEditItem]);
+
+  const copySecretFromRow = useCallback(async (
+    item: VaultItem,
+    value: string | null | undefined,
+    type: 'Username' | 'Password',
+  ) => {
+    if (!value || (opLogVerifiedItemIds !== null && !opLogVerifiedItemIds.has(item.id))) {
+      return;
+    }
+
+    try {
+      await writeClipboard(value);
+      markItemRecentlyUsed(item.id);
+      toast({
+        title: t('vault.copied'),
+        description: `${t(`vault.copied${type}`)} ${t('vault.clipboardAutoClear')}`,
+      });
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: t('vault.copyFailed'),
+      });
+    }
+  }, [markItemRecentlyUsed, opLogVerifiedItemIds, t, toast]);
+
+  const previewItem = useMemo(
+    () => visibleItemEntries.find((entry) => entry.item.id === previewItemId)?.item ?? null,
+    [previewItemId, visibleItemEntries],
+  );
+
+  const deletePreviewItem = useMemo(
+    () => visibleItemEntries.find((entry) => entry.item.id === deletePreviewItemId)?.item ?? null,
+    [deletePreviewItemId, visibleItemEntries],
+  );
+
+  useEffect(() => {
+    if (previewItemId && !visibleItemEntries.some((entry) => entry.item.id === previewItemId)) {
+      setPreviewItemId(null);
+    }
+  }, [previewItemId, visibleItemEntries]);
+
+  const handleFocusVisible = useCallback((itemId: string) => {
+    markItemRecentlyUsed(itemId);
+    setPreviewItemId(itemId);
+  }, [markItemRecentlyUsed]);
+
+  const { highlightedItemId, registerElement } = useVaultItemFocusHighlight({
+    focusItemId,
+    visibleItemEntries,
+    onFocusVisible: handleFocusVisible,
+  });
+
+  const confirmDeletePreviewItem = useCallback(async () => {
+    if (!deletePreviewItem) {
+      return;
+    }
+
+    setDeletingPreviewItem(true);
+    const result = await deleteItem(deletePreviewItem.id);
+    setDeletingPreviewItem(false);
+
+    if (!result.ok) {
+      return;
+    }
+
+    setDeletePreviewItemId(null);
+    setPreviewItemId(null);
+    toast({
+      title: t('common.success'),
+      description: t('vault.itemDeleted'),
+    });
+  }, [deleteItem, deletePreviewItem, t, toast]);
+
+  const panelQuarantinedItems = useMemo(() => {
+    if (!hasGroupedQuarantine || !canRenderGroupedQuarantine) {
+      return [];
+    }
+    return quarantinedItems.filter(
+      (item) => !inlineQuarantinedIds.has(item.id) && !activeIgnoredQuarantineIds.has(item.id),
+    );
+  }, [
+    activeIgnoredQuarantineIds,
+    canRenderGroupedQuarantine,
+    hasGroupedQuarantine,
+    inlineQuarantinedIds,
+    quarantinedItems,
   ]);
 
-  const inlineQuarantinedIds = useMemo(
-    () => new Set(
-      visibleEntries
-        .filter((entry): entry is Extract<RenderableVaultListEntry, { kind: 'quarantined' }> => entry.kind === 'quarantined')
-        .map((entry) => entry.quarantine.id),
-    ),
-    [visibleEntries],
-  );
-
-  const panelQuarantinedItems = useMemo(
-    () => {
-      if (!hasGroupedQuarantine || !canRenderGroupedQuarantine) {
-        return [];
-      }
-
-      return quarantinedItems.filter(
-        (item) => !inlineQuarantinedIds.has(item.id) && !activeIgnoredQuarantineIds.has(item.id),
-      );
-    },
-    [
-      activeIgnoredQuarantineIds,
-      canRenderGroupedQuarantine,
-      hasGroupedQuarantine,
-      inlineQuarantinedIds,
-      quarantinedItems,
-    ],
-  );
   const restorablePanelItems = useMemo(
-    () => panelQuarantinedItems.filter(
-      (item) => quarantineResolutionById[item.id]?.canRestore,
-    ),
+    () => panelQuarantinedItems.filter((item) => quarantineResolutionById[item.id]?.canRestore),
     [panelQuarantinedItems, quarantineResolutionById],
   );
 
   const handleIgnoreGroupedQuarantine = useCallback(() => {
-    persistIgnoredQuarantine({
-      ...ignoredQuarantineById,
-      ...Object.fromEntries(
-        panelQuarantinedItems.map((item) => [item.id, getQuarantineIgnoreToken(item)]),
-      ),
-    });
+    persistIgnoredQuarantineItems(panelQuarantinedItems);
     setShowIgnoredQuarantine(false);
-  }, [ignoredQuarantineById, panelQuarantinedItems, persistIgnoredQuarantine]);
+  }, [panelQuarantinedItems, persistIgnoredQuarantineItems, setShowIgnoredQuarantine]);
 
-  const handleRestoreAllVisible = useCallback(async () => {
-    const itemsToRestore = restorablePanelItems;
-    if (itemsToRestore.length === 0) {
-      setBulkRestoreConfirmOpen(false);
-      return;
-    }
+  const bulkRestore = useVaultBulkRestore({ opLogRestoreRecord });
 
-    setBulkRestoreConfirmOpen(false);
-    setBulkRestoreProgress({
-      open: true,
-      status: 'running',
-      total: itemsToRestore.length,
-      completed: 0,
-      failed: 0,
-      currentItemId: itemsToRestore[0].id,
-      lastError: null,
-    });
+  const handleCategoryDrop = useCallback((nextCategoryId: string, itemId: string) => {
+    setNativeDraggingItemId(null);
+    void moveItemToCategory(itemId, nextCategoryId);
+  }, [moveItemToCategory]);
 
-    let completed = 0;
-    let failed = 0;
-    let lastError: string | null = null;
-
-    for (const item of itemsToRestore) {
-      setBulkRestoreProgress((current) => ({
-        ...current,
-        currentItemId: item.id,
-      }));
-
-      const result = await opLogRestoreRecord(item.id);
-      if (result.error) {
-        failed += 1;
-        lastError = result.error.message;
-      } else {
-        completed += 1;
-      }
-
-      setBulkRestoreProgress((current) => ({
-        ...current,
-        completed,
-        failed,
-        lastError,
-      }));
-    }
-
-    setBulkRestoreProgress((current) => ({
-      ...current,
-      status: failed > 0 ? 'failed' : 'success',
-      currentItemId: null,
-      lastError,
-    }));
-  }, [opLogRestoreRecord, restorablePanelItems]);
+  const rowApi = useMemo<VaultItemListRowApi>(() => ({
+    highlightedItemId,
+    canCopySecrets: (itemId) =>
+      opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(itemId),
+    registerElement,
+    onNativeDragStart: setNativeDraggingItemId,
+    onNativeDragEnd: () => {
+      setNativeDraggingItemId(null);
+      setDropTargetCategoryId(null);
+    },
+    onMarkRecentlyUsed: markItemRecentlyUsed,
+    onOpenPreview: openItemPreview,
+    onEditFromPreview: editItemFromPreview,
+    onToggleFavorite: (item) => { void toggleItemFavorite(item); },
+    onCopyUsername: (item, value) => { void copySecretFromRow(item, value, 'Username'); },
+    onCopyPassword: (item, value) => { void copySecretFromRow(item, value, 'Password'); },
+    pointerDrag: {
+      start: pointerDrag.startPointerDrag,
+      move: pointerDrag.handlePointerDragMove,
+      complete: pointerDrag.completePointerDrag,
+      cancel: pointerDrag.cancelPointerDrag,
+    },
+  }), [
+    copySecretFromRow,
+    editItemFromPreview,
+    highlightedItemId,
+    markItemRecentlyUsed,
+    openItemPreview,
+    opLogVerifiedItemIds,
+    pointerDrag.cancelPointerDrag,
+    pointerDrag.completePointerDrag,
+    pointerDrag.handlePointerDragMove,
+    pointerDrag.startPointerDrag,
+    registerElement,
+    toggleItemFavorite,
+  ]);
 
   const renderableItemCount = items.filter((item) => item.decryptedData).length;
+  const hasIgnoredGroupedQuarantine = hasGroupedQuarantine && activeIgnoredQuarantinedItems.length > 0;
+  const shouldRenderDashboardSections =
+    viewMode === 'grid'
+    && filter === 'all'
+    && !categoryId
+    && searchQuery.trim() === ''
+    && visibleItemEntries.length > 1;
 
   if ((loading || decrypting) && items.length === 0 && quarantinedItems.length === 0) {
-    return (
-      <div className="flex h-64 flex-col items-center justify-center text-muted-foreground">
-        <Loader2 className="mb-4 h-8 w-8 animate-spin" />
-        <p>{decrypting ? t('vault.items.decrypting') : t('common.loading')}</p>
-      </div>
-    );
+    return <VaultItemListLoadingState decrypting={decrypting} />;
   }
 
   if (items.length === 0 && quarantinedItems.length === 0) {
-    return (
-      <div className="flex h-64 flex-col items-center justify-center text-center">
-        <div className="mb-4 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-2))] p-4">
-          <Shield className="h-8 w-8 text-primary/60" />
-        </div>
-        <h3 className="mb-2 text-lg font-medium">{t('vault.empty.title')}</h3>
-        <p className="mb-4 max-w-sm text-muted-foreground">
-          {t('vault.empty.description')}
-        </p>
-        <Button onClick={() => onEditItem('')}>
-          <Plus className="mr-2 h-4 w-4" />
-          {t('vault.empty.action')}
-        </Button>
-      </div>
-    );
+    return <VaultItemListEmptyVault onAddItem={() => onEditItem('')} />;
   }
 
   if (visibleEntries.length === 0 && quarantinedItems.length === 0) {
-    return (
-      <div className="flex h-64 flex-col items-center justify-center text-center">
-        <div className="mb-4 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-2))] p-4">
-          <KeyRound className="h-8 w-8 text-primary/60" />
-        </div>
-        <h3 className="mb-2 text-lg font-medium">{t('vault.search.noResults')}</h3>
-        <p className="max-w-sm text-muted-foreground">
-          {t('vault.search.noResultsDescription')}
-        </p>
-      </div>
-    );
+    return <VaultItemListNoSearchResults />;
   }
 
   return (
     <div className="space-y-4">
-      {(backgroundSyncing || lastCloudSyncAt) && (
-        <div className="flex items-center justify-end text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1))] px-3 py-1">
-            <RefreshCw className={cn('h-3.5 w-3.5', backgroundSyncing && 'animate-spin')} />
-            {backgroundSyncing
-              ? t('vault.items.cloudSyncing', {
-                defaultValue: 'Synchronisiere mit Cloud...',
-              })
-              : t('vault.items.cloudSyncedRecently', {
-                defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden',
-              })}
-          </span>
-        </div>
-      )}
-
-      {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[hsl(var(--border)/0.45)] bg-[hsl(var(--el-1))] px-4 py-3 text-sm">
-          <p className="inline-flex items-center gap-2 text-muted-foreground">
-            <RefreshCw className={cn('h-4 w-4', revalidating && 'animate-spin')} />
-            {revalidating
-              ? t('vault.integrity.revalidatingEntries', {
-                defaultValue: 'Prüfe Einträge...',
-              })
-              : t('vault.integrity.revalidationHint', {
-                defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.',
-              })}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={revalidating}
-            onClick={() => void revalidateRemoteIntegrity()}
-          >
-            <RefreshCw className={cn('mr-2 h-4 w-4', revalidating && 'animate-spin')} />
-            {t('vault.integrity.revalidateAction', {
-              defaultValue: 'Tresor erneut prüfen',
-            })}
-          </Button>
-        </div>
-      )}
+      <VaultItemListSyncBar
+        backgroundSyncing={backgroundSyncing}
+        lastCloudSyncAt={lastCloudSyncAt}
+        securityStatusLoading={securityStatusLoading}
+        showRevalidationButton={canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating)}
+        revalidating={revalidating}
+        onRevalidate={() => void revalidateRemoteIntegrity()}
+      />
 
       {canRenderGroupedQuarantine && hasIgnoredGroupedQuarantine && !showIgnoredQuarantine && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
@@ -1048,11 +469,11 @@ reportUnreadableItemsRef.current([]);
         onIgnoreItem={handleIgnoreQuarantineItem}
         onRestoreAll={
           restorablePanelItems.length > 0
-            ? () => setBulkRestoreConfirmOpen(true)
+            ? () => bulkRestore.setConfirmOpen(true)
             : undefined
         }
         restoreAllCount={restorablePanelItems.length}
-        restoreAllDisabled={bulkRestoreProgress.open && bulkRestoreProgress.status === 'running'}
+        restoreAllDisabled={bulkRestore.progress.open && bulkRestore.progress.status === 'running'}
         onIgnoreAll={
           hasGroupedQuarantine && canRenderGroupedQuarantine && panelQuarantinedItems.length > 0
             ? handleIgnoreGroupedQuarantine
@@ -1061,32 +482,21 @@ reportUnreadableItemsRef.current([]);
       />
 
       {visibleEntries.length === 0 ? (
-        <div className="flex h-48 flex-col items-center justify-center text-center">
-          <div className="mb-4 rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-2))] p-4">
-            <KeyRound className="h-8 w-8 text-primary/60" />
-          </div>
-          {renderableItemCount === 0 ? (
-            <>
-              <h3 className="mb-2 text-lg font-medium">
-                {t('vault.integrity.onlyQuarantinedTitle', {
-                  defaultValue: 'Derzeit sind nur Einträge in Quarantäne vorhanden',
-                })}
-              </h3>
-              <p className="max-w-sm text-muted-foreground">
-                {t('vault.integrity.onlyQuarantinedDescription', {
-                  defaultValue: 'Normale Einträge sind aktuell nicht verfügbar. Prüfe die Quarantänehinweise oben.',
-                })}
-              </p>
-            </>
-          ) : (
-            <>
-              <h3 className="mb-2 text-lg font-medium">{t('vault.search.noResults')}</h3>
-              <p className="max-w-sm text-muted-foreground">
-                {t('vault.search.noResultsDescription')}
-              </p>
-            </>
-          )}
-        </div>
+        <VaultItemListEmptyVisible hasAnyDecryptableItem={renderableItemCount > 0} />
+      ) : shouldRenderDashboardSections ? (
+        <VaultItemListDashboard
+          viewMode={viewMode}
+          api={rowApi}
+          favoriteEntries={favoriteEntries}
+          recentlyUsedEntries={recentlyUsedEntries}
+          groupedCategorySections={groupedCategorySections}
+          uncategorizedEntries={uncategorizedEntries}
+          visibleItemCount={visibleItemEntries.length}
+          categoryNameById={categoryNameById}
+          dropTargetCategoryId={dropTargetCategoryId}
+          onDropTargetChange={setDropTargetCategoryId}
+          onCategoryDrop={handleCategoryDrop}
+        />
       ) : (
         <div
           className={cn(
@@ -1097,14 +507,11 @@ reportUnreadableItemsRef.current([]);
         >
           {visibleEntries.map((entry) => (
             entry.kind === 'item' ? (
-              <VaultItemCard
+              <VaultItemListCardRow
                 key={entry.item.id}
-                item={entry.item}
+                entry={entry}
                 viewMode={viewMode}
-                onEdit={() => onEditItem(entry.item.id)}
-                canCopySecrets={
-                  opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(entry.item.id)
-                }
+                api={rowApi}
               />
             ) : (
               <VaultQuarantinedItemCard
@@ -1118,58 +525,46 @@ reportUnreadableItemsRef.current([]);
         </div>
       )}
 
-      <AlertDialog
-        open={bulkRestoreConfirmOpen}
-        onOpenChange={setBulkRestoreConfirmOpen}
-      >
-        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t('vault.integrity.confirmBulkRestoreTitle', {
-                defaultValue: '{{count}} Einträge wiederherstellen?',
-                count: restorablePanelItems.length,
-              })}
-            </AlertDialogTitle>
-            <AlertDialogDescription className="leading-relaxed">
-              {t('vault.integrity.confirmBulkRestoreDescription', {
-                defaultValue: 'Es werden nur Einträge wiederhergestellt, für die auf diesem Gerät eine vertrauenswürdige lokale Kopie verfügbar ist. Jeder Eintrag wird einzeln geprüft und danach verifiziert.',
-              })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>
-              {t('common.cancel', {
-                defaultValue: 'Abbrechen',
-              })}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                void handleRestoreAllVisible();
-              }}
-            >
-              {t('vault.integrity.confirmBulkRestoreAction', {
-                defaultValue: 'Wiederherstellen',
-              })}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {pointerDrag.pointerDrag?.active && (
+        <div
+          className="pointer-events-none fixed z-[90] max-w-[min(280px,calc(100vw-2rem))] rounded-lg border border-primary/40 bg-background/90 px-3 py-2 text-sm font-medium text-foreground shadow-[0_18px_52px_hsl(0_0%_0%/0.45)] backdrop-blur-xl"
+          style={{
+            left: (Number.isFinite(pointerDrag.pointerDrag.x) ? pointerDrag.pointerDrag.x : 0) + 12,
+            top: (Number.isFinite(pointerDrag.pointerDrag.y) ? pointerDrag.pointerDrag.y : 0) + 12,
+          }}
+        >
+          <span className="block truncate">{pointerDrag.pointerDrag.title}</span>
+          <span className="text-xs text-primary">
+            {t('vault.dragDrop.moving', { defaultValue: 'Verschieben' })}
+          </span>
+        </div>
+      )}
 
-      <VaultQuarantineRestoreProgressDialog
-        open={bulkRestoreProgress.open}
-        status={bulkRestoreProgress.status}
-        total={bulkRestoreProgress.total}
-        completed={bulkRestoreProgress.completed}
-        failed={bulkRestoreProgress.failed}
-        currentItemId={bulkRestoreProgress.currentItemId}
-        lastError={bulkRestoreProgress.lastError}
-        onContinue={() => {
-          setBulkRestoreProgress((current) => ({
-            ...current,
-            open: false,
-          }));
+      <VaultItemListPreviewPanel
+        previewItem={previewItem}
+        deletePreviewItem={deletePreviewItem}
+        deletingPreviewItem={deletingPreviewItem}
+        canCopySecrets={previewItem ? rowApi.canCopySecrets(previewItem.id) : false}
+        onClose={() => {
+          setDeletePreviewItemId(null);
+          setPreviewItemId(null);
         }}
+        onCopyUsername={(item) => rowApi.onCopyUsername(item, item.decryptedData?.username ?? null)}
+        onCopyPassword={(item) => rowApi.onCopyPassword(item, item.decryptedData?.password ?? null)}
+        onToggleFavorite={rowApi.onToggleFavorite}
+        onEdit={rowApi.onEditFromPreview}
+        onRequestDelete={setDeletePreviewItemId}
+        onCancelDelete={() => setDeletePreviewItemId(null)}
+        onConfirmDelete={() => void confirmDeletePreviewItem()}
+      />
+
+      <VaultItemListBulkRestoreDialogs
+        confirmOpen={bulkRestore.confirmOpen}
+        onConfirmOpenChange={bulkRestore.setConfirmOpen}
+        restorableCount={restorablePanelItems.length}
+        onConfirmRestoreAll={() => void bulkRestore.restoreAll(restorablePanelItems)}
+        progress={bulkRestore.progress}
+        onProgressContinue={bulkRestore.closeProgress}
       />
     </div>
   );

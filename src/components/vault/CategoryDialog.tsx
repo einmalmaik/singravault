@@ -38,6 +38,7 @@ import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
 import { CategoryIcon } from './CategoryIcon';
 import { CATEGORY_ICON_PRESETS, normalizeCategoryIcon } from './categoryIconPolicy';
+import { getCategoryIconDefinition } from '@/lib/icons/categoryIconRegistry';
 import type { VaultItemData } from '@/services/cryptoService';
 import {
     loadVaultSnapshot,
@@ -67,6 +68,7 @@ interface CategoryDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     category: Category | null; // null = create new
+    initialAction?: 'delete';
     onSave?: (event?: CategoryChangeEvent) => void;
 }
 
@@ -100,7 +102,7 @@ function parseVerifiedOpLogItemCategoryId(record: LocalVerifiedRecord): string |
     }
 }
 
-export function CategoryDialog({ open, onOpenChange, category, onSave }: CategoryDialogProps) {
+export function CategoryDialog({ open, onOpenChange, category, initialAction, onSave }: CategoryDialogProps) {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useAuth();
@@ -135,6 +137,12 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             setColor('#3b82f6');
         }
     }, [category, open]);
+
+    useEffect(() => {
+        if (open && category && initialAction === 'delete') {
+            setShowDeleteConfirm(true);
+        }
+    }, [category, initialAction, open]);
 
     const handleSave = async () => {
         if (!user || !name.trim()) return;
@@ -290,7 +298,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
 
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
+            {/* Edit dialog — must NOT open when the caller wants immediate delete confirmation */}
+            <Dialog open={open && !(category && initialAction === 'delete')} onOpenChange={onOpenChange}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
@@ -317,7 +326,8 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                         {/* Icon Selection */}
                         <div className="space-y-2">
                             <Label>{t('categories.icon')}</Label>
-                            <div className="grid grid-cols-8 gap-1">
+                            <div className="max-h-[11.5rem] overflow-y-auto rounded-lg border border-border/45 bg-background/35 p-2">
+                            <div className="grid grid-cols-5 gap-1 sm:grid-cols-8">
                                 <button
                                     type="button"
                                     onClick={() => setIcon('')}
@@ -327,17 +337,24 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
                                 >
                                     <Folder className="mx-auto h-5 w-5" />
                                 </button>
-                                {CATEGORY_ICON_PRESETS.map((emoji, index) => (
+                                {CATEGORY_ICON_PRESETS.map((categoryIconId) => {
+                                    const definition = getCategoryIconDefinition(categoryIconId);
+                                    const PresetIcon = definition.Icon;
+                                    return (
                                     <button
-                                        key={`${emoji}-${index}`}
+                                        key={categoryIconId}
                                         type="button"
-                                        onClick={() => setIcon(emoji)}
-                                        className={`p-2 text-lg rounded hover:bg-accent transition-colors ${icon === emoji ? 'bg-accent ring-2 ring-primary' : ''
+                                        onClick={() => setIcon(categoryIconId)}
+                                        className={`p-2 text-lg rounded hover:bg-accent transition-colors ${icon === categoryIconId ? 'bg-accent ring-2 ring-primary' : ''
                                             }`}
+                                        aria-label={definition.label}
+                                        title={definition.label}
                                     >
-                                        {emoji}
+                                        <PresetIcon className="mx-auto h-5 w-5" aria-hidden="true" />
                                     </button>
-                                ))}
+                                    );
+                                })}
+                            </div>
                             </div>
                         </div>
 
@@ -406,7 +423,16 @@ export function CategoryDialog({ open, onOpenChange, category, onSave }: Categor
             </Dialog>
 
             {/* Delete Confirmation */}
-            <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+            <AlertDialog
+                open={showDeleteConfirm}
+                onOpenChange={(open) => {
+                    setShowDeleteConfirm(open);
+                    // When the AlertDialog closes without an action, close the whole CategoryDialog too.
+                    if (!open) {
+                        onOpenChange(false);
+                    }
+                }}
+            >
                 <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-xl">
                     <AlertDialogHeader>
                         <AlertDialogTitle className="break-words">{t('categories.deleteConfirmTitle')}</AlertDialogTitle>

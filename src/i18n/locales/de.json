@@ -576,7 +576,10 @@
       "deviceKeyRequiredTitle": "Geräteschlüssel erforderlich",
       "deviceKeyRequiredDescription": "Dieser Tresor ist durch einen Geräteschlüssel geschützt. Importiere den Schlüssel von einem vertrauenswürdigen Gerät, bevor du diesen Tresor hier entsperrst.",
       "accountSettings": "Account Settings",
-      "importDeviceKey": "Geräteschlüssel importieren"
+      "importDeviceKey": "Geräteschlüssel importieren",
+      "accountUnknown": "Angemeldetes Konto",
+      "currentAccount": "Aktuelles Konto",
+      "zeroKnowledgeHint": "Zero-Knowledge geschützt. Deine Daten werden nur auf deinen Geräten entschlüsselt."
     },
     "providers": {
       "google": "Google",
@@ -663,6 +666,12 @@
       "notes": "Notizen",
       "totp": "2FA Codes",
       "favorites": "Favoriten"
+    },
+    "sections": {
+      "favorites": "Favoriten",
+      "recentlyUsed": "Zuletzt verwendet",
+      "allEntries": "Alle Einträge",
+      "entryCount": "{{count}} Einträge"
     },
     "categories": {
       "title": "Kategorien",
@@ -838,6 +847,8 @@
       "general": "Allgemein",
       "security": "Sicherheit",
       "billingSupport": "Abo & Support",
+      "billing": "Abonnement",
+      "support": "Support",
       "data": "Daten",
       "dataLegal": "Daten & Rechtliches",
       "sharingEmergency": "Freigabe & Notfall"
@@ -1444,16 +1455,22 @@
     "scoreFair": "Mittleres Sicherheitsniveau",
     "scorePoor": "Schwaches Sicherheitsniveau",
     "weak": "Schwach",
+    "pwned": "Geleakt",
     "duplicate": "Doppelt",
     "old": "Alt",
+    "reused": "Wiederverwendet",
     "strong": "Stark",
     "issues": "Sicherheitsprobleme",
     "allGood": "Sehr gut! Dein Tresor ist gesund",
     "allGoodDesc": "Es wurden keine kritischen Passwortprobleme gefunden.",
     "weakPassword": "Schwaches Passwort",
+    "pwnedPassword": "Dieses Passwort wurde in Datenlecks gefunden.",
     "duplicateWith": "Duplikat von {{items}}",
     "oldPassword": "Zuletzt vor {{days}} Tagen geändert",
     "reasons": {
+      "score_0": "Sehr schwaches Passwort",
+      "score_1": "Schwaches Passwort",
+      "score_2": "Passwort sollte stärker sein",
       "too_short": "Passwort ist zu kurz",
       "no_uppercase": "Keine Großbuchstaben vorhanden",
       "no_lowercase": "Keine Kleinbuchstaben vorhanden",
@@ -1533,6 +1550,8 @@
     "select_plan": "Plan wählen",
     "upgrade": "Upgrade",
     "upgrade_now": "Jetzt upgraden",
+    "premiumFeatureLockedShort": "Premiumfunktion",
+    "premiumFeatureLockedDescription": "Für diese Funktion brauchst du Premium oder Families.",
     "features": {
       "unlimited_passwords": "Unbegrenzte Passwörter",
       "device_sync": "Geräte-Synchronisation",
@@ -1549,6 +1568,7 @@
       "emergency_access": "Notfallzugang",
       "vault_health": "Tresor-Gesundheitsbericht",
       "passkey_unlock": "Passkey Tresor-Entsperrung (PRF)",
+      "vault_health_reports": "Tresor-Gesundheitsbericht",
       "vault_integrity": "Tresor-Integritätsprüfung",
       "priority_support": "Prioritäts-Support",
       "six_accounts": "6 Premium-Konten",
