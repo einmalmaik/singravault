@@ -916,7 +916,27 @@ describe("loadVaultSnapshot", () => {
     expect(mockSupabase.from).toHaveBeenCalled();
   });
 
-  it("online: overlays a fresh local category mutation onto a stale remote snapshot", async () => {
+  // ============================================================================
+  // NOTE on the three tests below
+  // ============================================================================
+  // Phase 11 (commit de7f506) deliberately removed the in-memory
+  // "recent local mutation overlay" window from `loadVaultSnapshot` and
+  // `fetchRemoteOfflineSnapshot`. The new contract is:
+  //
+  //   - The pending mutation queue is the single source of truth for
+  //     "this local change must survive a remote refresh".
+  //   - A bare row mutation (`upsertOfflineItemRow` / `removeOfflineItemRow` /
+  //     `upsertOfflineCategoryRow` / `removeOfflineCategoryRow`) is *not*
+  //     enough to keep the cache authoritative once we are online again.
+  //   - Real callers always pair row mutations with `enqueueOfflineMutation`.
+  //
+  // The test that exercises the queue-driven path
+  // ("keeps cached snapshot authoritative while offline mutations are pending")
+  // already proves the new authoritative contract from the queue side.
+  // The three tests below now pin down the *symmetric* contract from the
+  // remote side: without a queued mutation, the remote refresh is allowed to
+  // win and to overwrite a stale cache.
+  it("online: returns 'remote' source when only local row mutations exist (no queued mutation)", async () => {
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
 
     await svc.upsertOfflineCategoryRow(
@@ -934,13 +954,13 @@ describe("loadVaultSnapshot", () => {
 
     const { snapshot, source } = await svc.loadVaultSnapshot(USER_ID);
 
-    expect(source).toBe("cache");
+    // Without a queued mutation, the remote refresh is authoritative.
+    expect(source).toBe("remote");
     expect(snapshot.items).toHaveLength(1);
-    expect(snapshot.categories.map((category) => category.id).sort()).toEqual(["cat-1", "cat-existing"]);
-    expect(snapshot.categories.find((category) => category.id === "cat-1")?.name).toBe("enc:cat:v1:local-write");
+    expect(snapshot.categories.map((category) => category.id)).toEqual(["cat-existing"]);
   });
 
-  it("online: overlays a fresh local category delete onto a stale remote snapshot", async () => {
+  it("online: a remote refresh without queued mutations replaces a local row delete", async () => {
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
 
     await svc.upsertOfflineCategoryRow(USER_ID, makeCategoryRow() as CategoryRow);
@@ -956,11 +976,18 @@ describe("loadVaultSnapshot", () => {
 
     const { snapshot, source } = await svc.loadVaultSnapshot(USER_ID);
 
-    expect(source).toBe("cache");
-    expect(snapshot.categories.map((category) => category.id)).toEqual(["cat-existing"]);
+    // A bare local delete (no enqueued mutation) does not survive a remote
+    // refresh. Real callers always enqueue the deletion mutation in addition
+    // to mutating the local row, which is covered by the queue-based test
+    // below.
+    expect(source).toBe("remote");
+    expect(snapshot.categories.map((category) => category.id).sort()).toEqual([
+      "cat-1",
+      "cat-existing",
+    ]);
   });
 
-  it("online: does not let a stale remote refresh resurrect a locally deleted item", async () => {
+  it("online: fetchRemoteOfflineSnapshot returns the remote rows verbatim (no row-mutation overlay)", async () => {
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
 
     await svc.upsertOfflineItemRow(USER_ID, makeItemRow() as VaultItemRow);
@@ -974,8 +1001,12 @@ describe("loadVaultSnapshot", () => {
     const refreshedSnapshot = await svc.fetchRemoteOfflineSnapshot(USER_ID);
     const cachedSnapshot = await svc.getOfflineSnapshot(USER_ID);
 
-    expect(refreshedSnapshot.items).toEqual([]);
-    expect(cachedSnapshot?.items).toEqual([]);
+    // Phase 11 contract: fetchRemoteOfflineSnapshot is a pure remote read.
+    // It does NOT consult any "recent local mutation" window. Callers that
+    // need a local delete to survive a remote refresh must enqueue the
+    // delete mutation; that path is exercised separately.
+    expect(refreshedSnapshot.items.map((item) => item.id)).toEqual(["item-1"]);
+    expect(cachedSnapshot?.items.map((item) => item.id)).toEqual(["item-1"]);
   });
 
   it("online: keeps cached snapshot authoritative while offline mutations are pending", async () => {

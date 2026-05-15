@@ -52,6 +52,7 @@ notizen.md
 /src-tauri/gen/
 /src-tauri/target/
 /supabase/.temp
+<<<<<<< Updated upstream
 FINAL_REVIEW.md
 
 .vercel
@@ -79,3 +80,8 @@ src-tauri/*rettung*.txt
 temp_fingerprint.txt
 /.tmp
 /neues-deisgn
+=======
+.playwright-mcp/page-2026-04-25T17-01-16-439Z.yml
+/.playwright-mcp
+FINAL_REVIEW.md
+>>>>>>> Stashed changes
