@@ -68,6 +68,7 @@ import { buildReturnState } from '@/services/returnNavigationState';
 import type { LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 import type { ItemPlaintext } from '@/services/vaultOpLog/vaultOpLogCrudService';
 import type { VaultHealthSidebarSummary } from '@/extensions/types';
+import { buildVaultHealthSidebarSummaryInput } from '@/services/vaultHealthAnalysisItemsService';
 
 interface Category {
     id: string;
@@ -457,7 +458,7 @@ export function VaultSidebar({
             try {
                 const healthItems = await getVaultHealthAnalysisItems();
                 if (vaultHealthRequestIdRef.current === requestId) {
-                    setVaultHealthSummary(analyzeVaultHealthSummary(healthItems));
+                    setVaultHealthSummary(analyzeVaultHealthSummary(buildVaultHealthSidebarSummaryInput(healthItems)));
                 }
             } catch {
                 if (vaultHealthRequestIdRef.current === requestId) {

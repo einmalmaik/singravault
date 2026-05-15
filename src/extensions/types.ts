@@ -168,6 +168,15 @@ export interface VaultHealthSidebarSummary {
     };
 }
 
+export interface VaultHealthSidebarSummaryInput {
+    score: number;
+    passwordItems: number;
+    affectedItems: number;
+    criticalItems: number;
+    warningItems: number;
+    stats: VaultHealthSidebarSummary['stats'];
+}
+
 /**
  * Service hooks that premium can register to inject business logic
  * into the core without direct imports.
@@ -267,7 +276,7 @@ export interface ServiceHooks {
      */
     clearIntegrityRoot?: (userId: string) => void;
 
-    analyzeVaultHealthSummary?: (items: VaultHealthAnalysisItem[]) => VaultHealthSidebarSummary;
+    analyzeVaultHealthSummary?: (input: VaultHealthSidebarSummaryInput) => VaultHealthSidebarSummary;
 }
 
 /**

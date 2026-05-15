@@ -5,7 +5,7 @@ import {
 } from '@/services/offlineVaultService';
 import type { VaultIntegrityVerificationResult } from '@/services/vaultIntegrityService';
 import { assertItemDecryptable } from '@/services/vaultQuarantineOrchestrator';
-import type { VaultHealthAnalysisItem } from '@/extensions/types';
+import type { VaultHealthAnalysisItem, VaultHealthSidebarSummaryInput } from '@/extensions/types';
 import type { LocalVaultState, LocalVerifiedRecord } from '@/services/vaultOpLog/vaultStateMachine';
 import type { VaultMigrationRolloutStatus } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 
@@ -25,6 +25,54 @@ export interface LoadVaultHealthAnalysisItemsInput {
 
 function isPasswordItemType(value: unknown): value is 'password' {
   return value === undefined || value === null || value === 'password';
+}
+
+function calculatePasswordEntropy(password: string): number {
+  const charsetSizes: { regex: RegExp; size: number }[] = [
+    { regex: /[a-z]/, size: 26 },
+    { regex: /[A-Z]/, size: 26 },
+    { regex: /[0-9]/, size: 10 },
+    { regex: /[^a-zA-Z0-9]/, size: 32 },
+  ];
+  const charsetSize = charsetSizes.reduce((total, { regex, size }) => (
+    regex.test(password) ? total + size : total
+  ), 0);
+  return charsetSize === 0 ? 0 : Math.floor(password.length * Math.log2(charsetSize));
+}
+
+function classifyWeakPassword(password: string): { weak: boolean; critical: boolean } {
+  if (password.length < 8) {
+    return { weak: true, critical: true };
+  }
+
+  if (calculatePasswordEntropy(password) < 28) {
+    return { weak: true, critical: false };
+  }
+
+  const hasCommonPattern = [
+    /^[a-z]+$/i,
+    /^[0-9]+$/,
+    /^(.)\1+$/,
+    /^(012|123|234|345|456|567|678|789)/,
+    /^(abc|bcd|cde|def|efg)/i,
+    /password/i,
+    /qwerty/i,
+    /letmein/i,
+    /welcome/i,
+    /admin/i,
+  ].some((pattern) => pattern.test(password));
+  if (hasCommonPattern) {
+    return { weak: true, critical: true };
+  }
+
+  return password.length < 12 && calculatePasswordEntropy(password) < 40
+    ? { weak: true, critical: false }
+    : { weak: false, critical: false };
+}
+
+function isOldPassword(updatedAt: string): boolean {
+  const ageMs = Date.now() - new Date(updatedAt).getTime();
+  return ageMs / (1000 * 60 * 60 * 24) > 90;
 }
 
 function parseVerifiedRecordPlaintext(record: LocalVerifiedRecord): Record<string, unknown> | null {
@@ -69,6 +117,93 @@ export function getVaultHealthAnalysisItemsFromOpLog(
       updatedAt: record.record.updatedAt,
     }];
   });
+}
+
+export function buildVaultHealthSidebarSummaryInput(
+  items: VaultHealthAnalysisItem[],
+): VaultHealthSidebarSummaryInput {
+  const passwordItems = items.filter((item) => item.itemType !== 'totp' && Boolean(item.password));
+  const affectedItemIds = new Set<string>();
+  const criticalItemIds = new Set<string>();
+  const warningItemIds = new Set<string>();
+  const passwordIdsBySecret = new Map<string, string[]>();
+  const passwordDomainsBySecret = new Map<string, Set<string>>();
+  let weak = 0;
+  let duplicate = 0;
+  let old = 0;
+  let reused = 0;
+
+  for (const item of passwordItems) {
+    const weakness = classifyWeakPassword(item.password);
+    if (weakness.weak) {
+      weak += 1;
+      affectedItemIds.add(item.id);
+      (weakness.critical ? criticalItemIds : warningItemIds).add(item.id);
+    }
+
+    if (isOldPassword(item.updatedAt)) {
+      old += 1;
+      affectedItemIds.add(item.id);
+    }
+
+    passwordIdsBySecret.set(item.password, [
+      ...(passwordIdsBySecret.get(item.password) ?? []),
+      item.id,
+    ]);
+
+    if (item.websiteUrl) {
+      try {
+        const domain = new URL(item.websiteUrl).hostname;
+        const domains = passwordDomainsBySecret.get(item.password) ?? new Set<string>();
+        domains.add(domain);
+        passwordDomainsBySecret.set(item.password, domains);
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  for (const ids of passwordIdsBySecret.values()) {
+    if (ids.length >= 2) {
+      for (const id of ids) {
+        duplicate += 1;
+        affectedItemIds.add(id);
+        warningItemIds.add(id);
+      }
+    }
+  }
+
+  for (const domains of passwordDomainsBySecret.values()) {
+    if (domains.size >= 2) {
+      reused += domains.size;
+    }
+  }
+
+  const totalPasswords = passwordItems.length;
+  const score = totalPasswords === 0
+    ? 100
+    : Math.max(0, Math.round(
+      100
+      - (weak / totalPasswords) * 40
+      - (duplicate / totalPasswords) * 30
+      - (old / totalPasswords) * 15
+      - Math.min((reused / totalPasswords) * 15, 15),
+    ));
+
+  return {
+    score,
+    passwordItems: totalPasswords,
+    affectedItems: affectedItemIds.size,
+    criticalItems: criticalItemIds.size,
+    warningItems: warningItemIds.size,
+    stats: {
+      weak,
+      duplicate,
+      old,
+      reused,
+      strong: Math.max(totalPasswords - weak, 0),
+    },
+  };
 }
 
 export async function getVaultHealthAnalysisItemsFromLegacySnapshot(

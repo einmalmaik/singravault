@@ -96,7 +96,7 @@ describe('VaultSidebar', () => {
       {
         id: 'loose-item',
         title: 'Loose Item',
-        password: 'loose-password',
+        password: 'loose-secret-with-more-entropy-2026',
         itemType: 'password',
         username: 'loose-user',
         updatedAt: '2026-02-18T12:00:00.000Z',
@@ -104,7 +104,7 @@ describe('VaultSidebar', () => {
       {
         id: 'categorized-item',
         title: 'Categorized Item',
-        password: 'categorized-password',
+        password: 'categorized-secret-with-more-entropy-2026',
         itemType: 'password',
         username: 'categorized-user',
         updatedAt: '2026-02-18T12:00:00.000Z',
@@ -272,11 +272,13 @@ describe('VaultSidebar', () => {
     expect(screen.getByText(/Bitte Tresor überprüfen: 2 Einträge/)).toBeInTheDocument();
     expect(screen.getByText(/1 doppelt · 1 alt · 3 stark/)).toBeInTheDocument();
     expect(mockAnalyzeVaultHealthSummary).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'loose-item', itemType: 'password' }),
-        expect.objectContaining({ id: 'categorized-item', itemType: 'password' }),
-      ]),
+      expect.objectContaining({
+        passwordItems: 2,
+        stats: expect.objectContaining({ weak: 0, duplicate: 0, strong: 2 }),
+      }),
     );
+    expect(JSON.stringify(mockAnalyzeVaultHealthSummary.mock.calls[0][0])).not.toContain('loose-secret-with-more-entropy-2026');
+    expect(JSON.stringify(mockAnalyzeVaultHealthSummary.mock.calls[0][0])).not.toContain('categorized-secret-with-more-entropy-2026');
     expect(mockVaultContext.getVaultHealthAnalysisItems).toHaveBeenCalled();
   });
 

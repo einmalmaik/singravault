@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  buildVaultHealthSidebarSummaryInput,
   getVaultHealthAnalysisItemsFromLegacySnapshot,
   getVaultHealthAnalysisItemsFromOpLog,
   loadVaultHealthAnalysisItems,
@@ -134,6 +135,90 @@ describe('vaultHealthAnalysisItemsService', () => {
     expect(items[0]).toEqual(expect.objectContaining({ id: 'weak-1', password: '1234567' }));
     expect(decryptItem).not.toHaveBeenCalled();
     expect(verifyIntegrity).not.toHaveBeenCalled();
+  });
+
+  it('reflects edited OpLog item plaintext when building sidebar health input', () => {
+    const beforeEditState = makeState([
+      makeRecord('login-1', 'item', {
+        title: 'First Login',
+        itemType: 'password',
+        password: 'SyntheticStrongSecret#2026-A',
+      }),
+      makeRecord('login-2', 'item', {
+        title: 'Second Login',
+        itemType: 'password',
+        password: 'SyntheticStrongSecret#2026-B',
+      }),
+    ]);
+    const afterEditState = makeState([
+      makeRecord('login-1', 'item', {
+        title: 'First Login',
+        itemType: 'password',
+        password: '1234567',
+      }),
+      makeRecord('login-2', 'item', {
+        title: 'Second Login',
+        itemType: 'password',
+        password: '1234567',
+      }),
+    ]);
+
+    const beforeEditInput = buildVaultHealthSidebarSummaryInput(
+      getVaultHealthAnalysisItemsFromOpLog(beforeEditState),
+    );
+    const afterEditInput = buildVaultHealthSidebarSummaryInput(
+      getVaultHealthAnalysisItemsFromOpLog(afterEditState),
+    );
+
+    expect(beforeEditInput.stats.weak).toBe(0);
+    expect(beforeEditInput.stats.duplicate).toBe(0);
+    expect(afterEditInput.stats.weak).toBe(2);
+    expect(afterEditInput.stats.duplicate).toBe(2);
+    expect(afterEditInput.affectedItems).toBe(2);
+    expect(JSON.stringify(afterEditInput)).not.toContain('1234567');
+  });
+
+  it('builds sidebar health input without exposing plaintext passwords', () => {
+    const input = buildVaultHealthSidebarSummaryInput([
+      {
+        id: 'weak-1',
+        title: 'Weak Login',
+        password: '1234567',
+        itemType: 'password',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'weak-2',
+        title: 'Second Weak Login',
+        password: '1234567',
+        itemType: 'password',
+        websiteUrl: 'https://example.invalid',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'strong-1',
+        title: 'Strong Login',
+        password: 'Zy9!Rk4#Lm2@Qv8$Tn6%Wp3&Xd',
+        itemType: 'password',
+        websiteUrl: 'https://other.example.invalid',
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    expect(input).toEqual(expect.objectContaining({
+      passwordItems: 3,
+      affectedItems: 2,
+      criticalItems: 2,
+      warningItems: 2,
+      stats: expect.objectContaining({
+        weak: 2,
+        duplicate: 2,
+        old: 2,
+        strong: 1,
+      }),
+    }));
+    expect(JSON.stringify(input)).not.toContain('1234567');
+    expect(JSON.stringify(input)).not.toContain('Zy9!Rk4#Lm2@Qv8$Tn6%Wp3&Xd');
   });
 
   it('decrypts only integrity-allowed legacy snapshot items', async () => {
