@@ -298,7 +298,8 @@ export function CategoryDialog({ open, onOpenChange, category, initialAction, on
 
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
+            {/* Edit dialog — must NOT open when the caller wants immediate delete confirmation */}
+            <Dialog open={open && !(category && initialAction === 'delete')} onOpenChange={onOpenChange}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
@@ -422,7 +423,16 @@ export function CategoryDialog({ open, onOpenChange, category, initialAction, on
             </Dialog>
 
             {/* Delete Confirmation */}
-            <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+            <AlertDialog
+                open={showDeleteConfirm}
+                onOpenChange={(open) => {
+                    setShowDeleteConfirm(open);
+                    // When the AlertDialog closes without an action, close the whole CategoryDialog too.
+                    if (!open) {
+                        onOpenChange(false);
+                    }
+                }}
+            >
                 <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-xl">
                     <AlertDialogHeader>
                         <AlertDialogTitle className="break-words">{t('categories.deleteConfirmTitle')}</AlertDialogTitle>

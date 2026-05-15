@@ -167,7 +167,7 @@ export function SettingsSurfaceLayout({
           </div>
 
           <Tabs value={activeTab} onValueChange={handleTabChange}>
-            <div className="-mx-1 overflow-x-auto px-1 pb-1">
+            <div className="-mx-1 overflow-x-auto px-1 pb-1 [mask-image:linear-gradient(to_right,transparent,black_0.75rem,black_calc(100%_-_0.75rem),transparent)] sm:[mask-image:none]">
               <TabsList className="inline-flex w-max min-w-full sm:min-w-0">
                 {availableTabs.map((tab) => (
                   <TabsTrigger key={tab} value={tab} className="whitespace-nowrap">

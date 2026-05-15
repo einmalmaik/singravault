@@ -151,7 +151,7 @@ export function VaultItemCard({
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
+                                className="h-10 w-10 sm:h-8 sm:w-8"
                                 onClick={() => copyToClipboard(item.decryptedData!.password!, 'Password')}
                             >
                                 <Copy className="w-4 h-4" />
@@ -170,7 +170,7 @@ export function VaultItemCard({
                         {!readOnly && (
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <Button variant="ghost" size="icon" className="h-10 w-10 sm:h-8 sm:w-8">
                                         <MoreVertical className="w-4 h-4" />
                                     </Button>
                                 </DropdownMenuTrigger>
@@ -236,7 +236,7 @@ export function VaultItemCard({
                         <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7"
+                            className="h-10 w-10 sm:h-7 sm:w-7"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 setShowPassword(!showPassword);
@@ -260,12 +260,12 @@ export function VaultItemCard({
                 )}
 
                 {/* Quick Actions */}
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex flex-wrap gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
                     {item.decryptedData?.username && canCopySecrets && (
                         <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 text-xs"
+                            className="min-h-10 text-xs sm:h-7 sm:min-h-0"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 copyToClipboard(item.decryptedData!.username!, 'Username');
@@ -279,7 +279,7 @@ export function VaultItemCard({
                         <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 text-xs"
+                            className="min-h-10 text-xs sm:h-7 sm:min-h-0"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 copyToClipboard(item.decryptedData!.password!, 'Password');

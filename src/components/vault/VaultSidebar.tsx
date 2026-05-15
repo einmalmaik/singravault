@@ -751,7 +751,7 @@ export function VaultSidebar({
                     'border-[hsl(var(--sidebar-border)/0.55)] shadow-[inset_-1px_0_0_hsl(var(--foreground)/0.03)]',
                     compactMode
                         ? 'h-full w-full'
-                        : cn('self-stretch min-h-full transition-all duration-300', collapsed ? 'w-16' : 'w-72')
+                        : cn('self-stretch min-h-full transition-all duration-300', collapsed ? 'w-16' : 'w-64 lg:w-72')
                 )}
             >
                 {/* Header */}
@@ -765,7 +765,7 @@ export function VaultSidebar({
                         <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8"
+                            className="h-10 w-10 lg:h-8 lg:w-8"
                             onClick={() => setCollapsed(!collapsed)}
                         >
                             {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -833,7 +833,7 @@ export function VaultSidebar({
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-6 w-6"
+                                    className="h-10 w-10 lg:h-8 lg:w-8"
                                     onClick={handleAddCategory}
                                 >
                                     <Plus className="w-3 h-3" />
@@ -912,10 +912,10 @@ export function VaultSidebar({
 
                                     {/* Edit menu (visible on hover) */}
                                     {!collapsed && (
-                                        <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100 lg:focus-within:opacity-100">
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild>
-                                                    <Button variant="ghost" size="icon" className="h-6 w-6">
+                                                    <Button variant="ghost" size="icon" className="h-10 w-10 lg:h-8 lg:w-8">
                                                         <MoreHorizontal className="w-3 h-3" />
                                                     </Button>
                                                 </DropdownMenuTrigger>
@@ -943,7 +943,7 @@ export function VaultSidebar({
 
                 {!collapsed && vaultHealthAccess.allowed && (
                     <div className={cn(
-                        'mx-3 mb-3 rounded-2xl border p-4 shadow-[0_18px_42px_hsl(0_0%_0%/0.28)]',
+                        'mx-3 mb-3 rounded-2xl border p-3 shadow-[0_18px_42px_hsl(0_0%_0%/0.28)] lg:p-4',
                         vaultStatusToneClasses.card,
                     )}>
                         <div className="flex items-start gap-3">
@@ -1114,7 +1114,7 @@ function SidebarItem({
             onClick={onClick}
             aria-disabled={disabled}
             className={cn(
-                'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150',
+                'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-150 lg:min-h-0',
                 'text-[hsl(var(--sidebar-foreground)/0.72)] hover:text-[hsl(var(--sidebar-foreground))]',
                 'hover:bg-[hsl(var(--el-2)/0.82)]',
                 active && 'border border-primary/25 bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--sidebar-primary))] shadow-[0_0_24px_hsl(var(--primary)/0.08)]',
@@ -1126,12 +1126,12 @@ function SidebarItem({
             <span style={color ? { color } : undefined}>{icon}</span>
             {!collapsed && (
                 <>
-                    <span className="flex-1 text-left text-sm truncate">{label}</span>
+                    <span className="flex-1 truncate text-left text-sm">{label}</span>
                     {count !== undefined && count > 0 && (
                         <span className="text-xs text-muted-foreground">{count}</span>
                     )}
                     {badge && (
-                        <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[0.65rem] font-medium text-primary">
+                        <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                             {badge}
                         </span>
                     )}

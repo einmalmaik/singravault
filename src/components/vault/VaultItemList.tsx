@@ -1663,7 +1663,7 @@ reportUnreadableItemsRef.current([]);
     <button
       type="button"
       className={cn(
-        'inline-flex h-8 w-8 shrink-0 touch-none items-center justify-center rounded-md border border-border/35 bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:border-primary/55 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45',
+        'inline-flex h-10 w-10 shrink-0 touch-none items-center justify-center rounded-md border border-border/35 bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:border-primary/55 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 sm:h-8 sm:w-8',
         className,
       )}
       aria-label={t('vault.dragDrop.dragHandle', { defaultValue: 'Eintrag verschieben' })}
@@ -1711,7 +1711,7 @@ reportUnreadableItemsRef.current([]);
         setDropTargetCategoryId(null);
       }}
     >
-      {renderPointerDragHandle(entry.item, 'absolute -left-2 top-2 z-20 sm:opacity-0 sm:group-hover/drag:opacity-100 sm:focus-visible:opacity-100')}
+      {renderPointerDragHandle(entry.item, 'absolute -left-2 top-2 z-20 opacity-0 sm:group-hover/drag:opacity-100 sm:focus-visible:opacity-100')}
       <VaultItemCard
         item={entry.item}
         viewMode={viewMode}
@@ -1762,13 +1762,13 @@ reportUnreadableItemsRef.current([]);
           setDropTargetCategoryId(null);
         }}
         className={cn(
-          'group grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-[hsl(var(--border)/0.22)] px-3 py-2.5 transition-all duration-500 ease-out hover:bg-white/[0.035] md:grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px]',
+          'group grid min-h-14 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-[hsl(var(--border)/0.22)] px-3 py-2.5 transition-all duration-500 ease-out hover:bg-white/[0.035] md:grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px]',
           highlightedItemId === item.id && 'relative z-10 bg-[hsl(var(--primary)/0.08)] ring-2 ring-primary/70 shadow-[0_0_0_1px_hsl(var(--primary)/0.24),0_0_32px_hsl(var(--primary)/0.28)]',
         )}
         onClick={() => openItemPreview(item)}
       >
         <div className="flex min-w-0 items-center gap-2.5">
-          {renderPointerDragHandle(item, 'h-7 w-7 border-transparent bg-transparent shadow-none sm:h-8 sm:w-8')}
+          {renderPointerDragHandle(item, 'border-transparent bg-transparent shadow-none')}
           <VaultIcon title={title} websiteUrl={websiteUrl} className="h-7 w-7 shrink-0" />
           <div className="min-w-0">
             <button
@@ -1807,7 +1807,7 @@ reportUnreadableItemsRef.current([]);
             variant="ghost"
             size="icon"
             className={cn(
-              'h-8 w-8 text-muted-foreground hover:text-amber-300',
+              'h-10 w-10 text-muted-foreground hover:text-amber-300 sm:h-8 sm:w-8',
               favorite && 'text-amber-400',
             )}
             aria-label={favorite
@@ -1825,7 +1825,7 @@ reportUnreadableItemsRef.current([]);
               type="button"
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-primary"
+              className="h-10 w-10 text-muted-foreground hover:text-primary sm:h-8 sm:w-8"
               aria-label={t('vault.actions.copyUsername')}
               onClick={(event) => {
                 event.stopPropagation();
@@ -1840,7 +1840,7 @@ reportUnreadableItemsRef.current([]);
               type="button"
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-primary"
+              className="h-10 w-10 text-muted-foreground hover:text-primary sm:h-8 sm:w-8"
               aria-label={t('vault.actions.copyPassword')}
               onClick={(event) => {
                 event.stopPropagation();
@@ -1854,7 +1854,7 @@ reportUnreadableItemsRef.current([]);
             type="button"
             variant="ghost"
             size="icon"
-            className="h-8 w-8 text-muted-foreground hover:text-primary"
+            className="h-10 w-10 text-muted-foreground hover:text-primary sm:h-8 sm:w-8"
             aria-label={t('common.edit')}
             onClick={(event) => {
               event.stopPropagation();
@@ -1973,24 +1973,35 @@ reportUnreadableItemsRef.current([]);
           )}
         </div>
         {favoriteExpanded ? (
-          <div
-            ref={favoriteScrollerRef}
-            className="scrollbar-hide flex cursor-grab touch-pan-x select-none gap-4 overflow-x-auto pb-2 pr-4 active:cursor-grabbing"
-            onPointerDown={handleFavoriteScrollerPointerDown}
-            onPointerMove={handleFavoriteScrollerPointerMove}
-            onPointerUp={handleFavoriteScrollerPointerEnd}
-            onPointerCancel={handleFavoriteScrollerPointerEnd}
-            onPointerLeave={handleFavoriteScrollerPointerEnd}
-          >
-            {entries.map((entry) => (
-              <div
-                key={entry.item.id}
-                className="min-w-[240px] max-w-[280px] flex-[0_0_72%] sm:basis-[260px] lg:basis-[240px] xl:basis-[220px]"
-              >
-                {renderItemCard(entry, { draggable: false })}
-              </div>
-            ))}
-          </div>
+          <>
+            {/* Mobile / tablet: vertikales Grid — versteckt ab lg */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:hidden">
+              {entries.map((entry) => (
+                <div key={entry.item.id}>
+                  {renderItemCard(entry, { draggable: false })}
+                </div>
+              ))}
+            </div>
+            {/* Desktop lg+: horizontaler Wisch-Carousel — versteckt unter lg */}
+            <div
+              ref={favoriteScrollerRef}
+              className="scrollbar-hide hidden cursor-grab touch-pan-x select-none gap-4 overflow-x-auto pb-2 pr-4 active:cursor-grabbing lg:flex"
+              onPointerDown={handleFavoriteScrollerPointerDown}
+              onPointerMove={handleFavoriteScrollerPointerMove}
+              onPointerUp={handleFavoriteScrollerPointerEnd}
+              onPointerCancel={handleFavoriteScrollerPointerEnd}
+              onPointerLeave={handleFavoriteScrollerPointerEnd}
+            >
+              {entries.map((entry) => (
+                <div
+                  key={entry.item.id}
+                  className="min-w-[240px] max-w-[280px] flex-[0_0_72%] lg:basis-[240px] xl:basis-[220px]"
+                >
+                  {renderItemCard(entry, { draggable: false })}
+                </div>
+              ))}
+            </div>
+          </>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             {entries.map((entry) => renderItemCard(entry))}
@@ -2311,30 +2322,30 @@ reportUnreadableItemsRef.current([]);
   }
 
   return (
-    <div className="relative space-y-4">
+    <div className="space-y-4">
       {(backgroundSyncing || lastCloudSyncAt || securityStatusLoading || (canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating))) && (
-        <div className="pointer-events-none absolute right-0 top-0 z-10 flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
           {(backgroundSyncing || lastCloudSyncAt) && (
-          <span
-            className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-primary shadow-[0_0_24px_hsl(var(--primary)/0.08)]"
-            title={backgroundSyncing
-              ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
-              : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
-            aria-label={backgroundSyncing
-              ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
-              : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
-          >
-            <Cloud className={cn('h-4 w-4', backgroundSyncing && 'animate-pulse')} />
-            <span className="sr-only">
-              {backgroundSyncing
+            <span
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-primary shadow-[0_0_24px_hsl(var(--primary)/0.08)]"
+              title={backgroundSyncing
                 ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
                 : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
+              aria-label={backgroundSyncing
+                ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
+                : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
+            >
+              <Cloud className={cn('h-4 w-4', backgroundSyncing && 'animate-pulse')} />
+              <span className="sr-only">
+                {backgroundSyncing
+                  ? t('vault.items.cloudSyncing', { defaultValue: 'Synchronisiere mit Cloud...' })
+                  : t('vault.items.cloudSyncedRecently', { defaultValue: 'Zuletzt synchronisiert vor wenigen Sekunden' })}
+              </span>
             </span>
-          </span>
           )}
           {securityStatusLoading && (
             <span
-              className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-300/25 bg-[hsl(var(--el-1)/0.78)] text-emerald-300 shadow-[0_0_24px_hsl(var(--success)/0.08)]"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-300/25 bg-[hsl(var(--el-1)/0.78)] text-emerald-300 shadow-[0_0_24px_hsl(var(--success)/0.08)]"
               title={t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
               aria-label={t('vault.oplog.loading', { defaultValue: 'Sicherheitsstatus wird geladen...' })}
             >
@@ -2345,20 +2356,20 @@ reportUnreadableItemsRef.current([]);
             </span>
           )}
           {canRenderGroupedQuarantine && (hasGroupedQuarantine || revalidating) && (
-          <button
-            type="button"
-            disabled={revalidating}
-            onClick={() => void revalidateRemoteIntegrity()}
-            className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-emerald-300 shadow-[0_0_24px_hsl(var(--success)/0.08)] transition-colors hover:border-emerald-300/40 hover:bg-emerald-400/10 disabled:cursor-wait"
-            title={revalidating
-              ? t('vault.integrity.revalidatingEntries', { defaultValue: 'Prüfe Einträge...' })
-              : t('vault.integrity.revalidationHint', { defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.' })}
-            aria-label={revalidating
-              ? t('vault.integrity.revalidatingEntries', { defaultValue: 'Prüfe Einträge...' })
-              : t('vault.integrity.revalidationHint', { defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.' })}
-          >
-            <ShieldCheck className={cn('h-4 w-4', revalidating && 'animate-pulse')} />
-          </button>
+            <button
+              type="button"
+              disabled={revalidating}
+              onClick={() => void revalidateRemoteIntegrity()}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--el-1)/0.78)] text-emerald-300 shadow-[0_0_24px_hsl(var(--success)/0.08)] transition-colors hover:border-emerald-300/40 hover:bg-emerald-400/10 disabled:cursor-wait"
+              title={revalidating
+                ? t('vault.integrity.revalidatingEntries', { defaultValue: 'Prüfe Einträge...' })
+                : t('vault.integrity.revalidationHint', { defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.' })}
+              aria-label={revalidating
+                ? t('vault.integrity.revalidatingEntries', { defaultValue: 'Prüfe Einträge...' })
+                : t('vault.integrity.revalidationHint', { defaultValue: 'Die Liste nutzt zuerst den lokalen Stand und prüft danach kurz gegen den Server.' })}
+            >
+              <ShieldCheck className={cn('h-4 w-4', revalidating && 'animate-pulse')} />
+            </button>
           )}
         </div>
       )}

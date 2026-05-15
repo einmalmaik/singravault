@@ -168,6 +168,15 @@ export default function VaultPage() {
         };
     }, []);
 
+    // Expose mobile nav height as CSS variable so floating elements (e.g. Support Widget) can avoid it.
+    useEffect(() => {
+        if (!isMobile) return;
+        document.documentElement.style.setProperty('--vault-mobile-nav-offset', '3.5rem');
+        return () => {
+            document.documentElement.style.removeProperty('--vault-mobile-nav-offset');
+        };
+    }, [isMobile]);
+
     useEffect(() => {
         if (!focusItemId) {
             return;
@@ -492,7 +501,7 @@ export default function VaultPage() {
                     </div>
 
                     <Tabs value={activeFilter} onValueChange={(v) => setActiveFilter(v as ItemFilter)} className="mt-4">
-                        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+                        <div className="-mx-1 overflow-x-auto px-1 pb-1 [mask-image:linear-gradient(to_right,transparent,black_0.75rem,black_calc(100%_-_0.75rem),transparent)] sm:[mask-image:none]">
                             <TabsList className="inline-flex w-max min-w-full sm:min-w-0">
                                 <TabsTrigger value="all" className="flex items-center gap-1.5 whitespace-nowrap">
                                     <Shield className="w-4 h-4" />
@@ -593,13 +602,13 @@ export default function VaultPage() {
 
             {isMobile && (
                 <nav
-                    className="sv-mobile-nav fixed inset-x-0 bottom-0 z-30 border-t border-border/55 bg-[hsl(var(--background)/0.92)] px-3 pb-[calc(0.75rem+var(--safe-area-bottom))] pt-2 backdrop-blur-xl"
+                    className="sv-mobile-nav fixed inset-x-0 bottom-0 z-30 border-t border-border/55 bg-[hsl(var(--background)/0.92)] px-[calc(0.75rem+var(--safe-area-left))] pb-[calc(0.75rem+var(--safe-area-bottom))] pt-2 backdrop-blur-xl"
                     aria-label={t('vault.mobileNavigation', { defaultValue: 'Tresor Navigation' })}
                 >
-                    <div className="mx-auto grid max-w-md grid-cols-4 gap-1">
+                    <div className="mx-auto grid max-w-md grid-cols-4 gap-2">
                         <Button
                             variant="ghost"
-                            className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
+                            className="h-14 flex-col gap-1 rounded-lg px-1 text-xs"
                             onClick={() => navigate('/vault')}
                         >
                             <Shield className="h-4 w-4" />
@@ -607,14 +616,14 @@ export default function VaultPage() {
                         </Button>
                         <Button
                             variant="ghost"
-                            className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
+                            className="h-14 flex-col gap-1 rounded-lg px-1 text-xs"
                             onClick={() => setSidebarOpen(true)}
                         >
                             <Grid3X3 className="h-4 w-4" />
                             {t('vault.sidebar.categories')}
                         </Button>
                         <Button
-                            className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
+                            className="h-14 flex-col gap-1 rounded-lg px-1 text-xs"
                             onClick={handleOpenNewItem}
                         >
                             <Plus className="h-4 w-4" />
@@ -622,8 +631,8 @@ export default function VaultPage() {
                         </Button>
                         <Button
                             variant="ghost"
-                            className="h-12 flex-col gap-1 rounded-lg text-[0.7rem]"
-                            disabled={isPremiumActive() && !authenticatorAccess.allowed}
+                            className="h-14 flex-col gap-1 rounded-lg px-1 text-xs"
+                            aria-disabled={isPremiumActive() && !authenticatorAccess.allowed}
                             title={isPremiumActive() && !authenticatorAccess.allowed ? t('subscription.premiumFeatureLockedDescription') : undefined}
                             onClick={() => {
                                 if (isPremiumActive() && authenticatorAccess.allowed) {

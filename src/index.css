@@ -131,6 +131,7 @@
 
   .ms-glass-header {
     @apply border-b border-border/60 bg-background/80 backdrop-blur-2xl;
+    padding-top: var(--safe-area-top);
     box-shadow:
       0 1px 0 hsl(var(--foreground) / 0.04) inset,
       0 18px 40px hsl(var(--foreground) / 0.05);

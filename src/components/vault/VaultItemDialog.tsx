@@ -704,14 +704,14 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         <>
             <Dialog open={open} onOpenChange={handleDialogOpenChange}>
                 <DialogContent
-                    className="max-h-[88vh] w-[calc(100vw-1.5rem)] overflow-hidden border border-border/60 bg-[linear-gradient(135deg,hsl(var(--card)/0.96),hsl(var(--el-1)/0.92))] p-0 shadow-[0_24px_70px_hsl(0_0%_0%/0.48)] backdrop-blur-2xl sm:max-w-2xl lg:max-w-4xl"
+                    className="max-h-[calc(100dvh_-_1rem)] w-[calc(100vw_-_1rem)] overflow-hidden border border-border/60 bg-[linear-gradient(135deg,hsl(var(--card)/0.96),hsl(var(--el-1)/0.92))] p-0 shadow-[0_24px_70px_hsl(0_0%_0%/0.48)] backdrop-blur-2xl sm:w-[calc(100vw_-_1.5rem)] sm:max-w-2xl lg:max-h-[88dvh] lg:max-w-4xl"
                     onOpenAutoFocus={(event) => {
                         // On mobile, Radix focusing the first input opens the keyboard immediately.
                         // Let the user decide whether they want to edit text or only adjust metadata.
                         event.preventDefault();
                     }}
                 >
-                    <div className="max-h-[88vh] overflow-y-auto">
+                    <div className="max-h-[calc(100dvh_-_1rem)] overflow-y-auto lg:max-h-[88dvh]">
                         <DialogHeader className="border-b border-border/45 px-5 py-4 sm:px-6">
                             <div className="flex items-start gap-3">
                                 <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-primary/30 bg-primary/10 text-primary">
@@ -896,7 +896,7 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
                                                             type="button"
                                                             variant="ghost"
                                                             size="icon"
-                                                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                                                            className="absolute right-1 top-1/2 h-10 w-10 -translate-y-1/2 sm:h-7 sm:w-7"
                                                             onClick={() => setShowPassword(!showPassword)}
                                                         >
                                                             {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1191,5 +1191,3 @@ export function VaultItemDialog({ open, onOpenChange, itemId, onSave, initialTyp
         </>
     );
 }
-
-
