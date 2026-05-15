@@ -121,6 +121,43 @@ describe('passwordStrengthService', () => {
             const result = await checkPasswordPwned('');
             expect(result.isPwned).toBe(false);
         });
+
+        it('reuses a cached result for the same password instead of hitting HIBP again', async () => {
+            const fetchMock = vi.fn().mockResolvedValue({
+                ok: true,
+                text: async () => '00A3B5E6D95E80F5E4E5C3C5:5\n',
+            });
+            global.fetch = fetchMock as unknown as typeof fetch;
+
+            const { checkPasswordPwned, clearPwnedCacheForTesting } = await import('./passwordStrengthService');
+            clearPwnedCacheForTesting();
+
+            await checkPasswordPwned('synthetic-fixture-password-not-real');
+            await checkPasswordPwned('synthetic-fixture-password-not-real');
+            await checkPasswordPwned('synthetic-fixture-password-not-real');
+
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not cache transient HIBP network errors', async () => {
+            const fetchMock = vi.fn()
+                .mockRejectedValueOnce(new Error('Network error'))
+                .mockResolvedValueOnce({
+                    ok: true,
+                    text: async () => '00A3B5E6D95E80F5E4E5C3C5:7\n',
+                });
+            global.fetch = fetchMock as unknown as typeof fetch;
+
+            const { checkPasswordPwned, clearPwnedCacheForTesting } = await import('./passwordStrengthService');
+            clearPwnedCacheForTesting();
+
+            const first = await checkPasswordPwned('another-synthetic-fixture-not-real');
+            expect(first.isPwned).toBe(false);
+
+            const second = await checkPasswordPwned('another-synthetic-fixture-not-real');
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(second.isPwned).toBe(false);
+        });
     });
 
     describe('checkPassword (combined)', () => {
