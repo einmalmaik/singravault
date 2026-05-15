@@ -34,6 +34,8 @@ describe('providerMatcher', () => {
     expect(resolveBrandIconId({ title: 'Proton Drive', websiteUrl: 'https://drive.proton.me' })).toBe('proton-drive');
     expect(resolveBrandIconId({ title: 'OpenAI ChatGPT', websiteUrl: 'https://chatgpt.com' })).toBe('openai');
     expect(resolveBrandIconId({ title: 'Tinder Premium', websiteUrl: 'https://tinder.com' })).toBe('tinder');
+    expect(resolveBrandIconId({ title: 'Only Fans Creator', websiteUrl: 'https://onlyfans.com' })).toBe('onlyfans');
+    expect(resolveBrandIconId({ title: 'Pornhub 2FA', websiteUrl: 'https://www.pornhub.com' })).toBe('pornhub');
     expect(resolveBrandIconId({ title: 'GOG Games', websiteUrl: 'https://gog.com' })).toBe('gog');
     expect(resolveBrandIconId({ title: 'Riot' })).toBe('riotgames');
     expect(resolveBrandIconId({ title: 'Docker Desktop', websiteUrl: 'https://docker.com' })).toBe('docker');

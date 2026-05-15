@@ -27,7 +27,9 @@ import {
   Shield,
   ShieldCheck,
   Star,
+  Trash2,
   TriangleAlert,
+  X,
 } from 'lucide-react';
 
 import {
@@ -371,6 +373,25 @@ function formatRelativeUpdatedAt(value: string): string {
   return `vor ${days} Tag${days === 1 ? '' : 'en'}`;
 }
 
+function formatVaultItemMetaDate(value: string | null | undefined): string {
+  if (!value) {
+    return '—';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 function scrollViewportForDrag(clientY: number): void {
   if (typeof window === 'undefined' || !Number.isFinite(clientY)) {
     return;
@@ -458,6 +479,7 @@ export function VaultItemList({
     opLogUpdateItem,
     opLogUiRefresh,
     opLogUiView,
+    opLogDeleteItem,
   } = useVault();
   const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
 
@@ -487,6 +509,9 @@ export function VaultItemList({
   const [nativeDraggingItemId, setNativeDraggingItemId] = useState<string | null>(null);
   const [favoriteExpanded, setFavoriteExpanded] = useState(false);
   const [favoriteCollapsedLimit, setFavoriteCollapsedLimit] = useState(FAVORITE_COLLAPSED_LIMIT_DESKTOP);
+  const [previewItemId, setPreviewItemId] = useState<string | null>(null);
+  const [deletePreviewItemId, setDeletePreviewItemId] = useState<string | null>(null);
+  const [deletingPreviewItem, setDeletingPreviewItem] = useState(false);
   const pointerDragRef = useRef<PointerDragState | null>(null);
   const pointerDragTimerRef = useRef<number | null>(null);
   const favoriteScrollerRef = useRef<HTMLDivElement | null>(null);
@@ -1096,6 +1121,17 @@ reportUnreadableItemsRef.current([]);
     });
   }, [items, markItemRecentlyUsed, opLogLocalVaultState, opLogUpdateItem, t, toast]);
 
+  const openItemPreview = useCallback((item: VaultItem) => {
+    markItemRecentlyUsed(item.id);
+    setPreviewItemId(item.id);
+  }, [markItemRecentlyUsed]);
+
+  const editItemFromPreview = useCallback((itemId: string) => {
+    markItemRecentlyUsed(itemId);
+    setPreviewItemId(null);
+    onEditItem(itemId);
+  }, [markItemRecentlyUsed, onEditItem]);
+
   const toggleItemFavorite = useCallback(async (item: VaultItem) => {
     const now = Date.now();
     const remainingMs = nextFavoriteActionAtRef.current - now;
@@ -1481,6 +1517,49 @@ reportUnreadableItemsRef.current([]);
     [visibleEntries],
   );
 
+  const previewItem = useMemo(
+    () => visibleItemEntries.find((entry) => entry.item.id === previewItemId)?.item ?? null,
+    [previewItemId, visibleItemEntries],
+  );
+
+  const deletePreviewItem = useMemo(
+    () => visibleItemEntries.find((entry) => entry.item.id === deletePreviewItemId)?.item ?? null,
+    [deletePreviewItemId, visibleItemEntries],
+  );
+
+  useEffect(() => {
+    if (previewItemId && !visibleItemEntries.some((entry) => entry.item.id === previewItemId)) {
+      setPreviewItemId(null);
+    }
+  }, [previewItemId, visibleItemEntries]);
+
+  const confirmDeletePreviewItem = useCallback(async () => {
+    if (!deletePreviewItem) {
+      return;
+    }
+
+    setDeletingPreviewItem(true);
+    const result = await opLogDeleteItem(deletePreviewItem.id);
+    setDeletingPreviewItem(false);
+
+    if (result.error) {
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: result.error.message,
+      });
+      return;
+    }
+
+    setDeletePreviewItemId(null);
+    setPreviewItemId(null);
+    setItems((current) => current.filter((item) => item.id !== deletePreviewItem.id));
+    toast({
+      title: t('common.success'),
+      description: t('vault.itemDeleted'),
+    });
+  }, [deletePreviewItem, opLogDeleteItem, t, toast]);
+
   const shouldRenderDashboardSections =
     viewMode === 'grid'
     && filter === 'all'
@@ -1573,17 +1652,14 @@ reportUnreadableItemsRef.current([]);
       <VaultItemCard
         item={entry.item}
         viewMode={viewMode}
-        onEdit={() => {
-          markItemRecentlyUsed(entry.item.id);
-          onEditItem(entry.item.id);
-        }}
+        onEdit={() => openItemPreview(entry.item)}
         onSecretCopied={markItemRecentlyUsed}
         canCopySecrets={
           opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(entry.item.id)
         }
       />
     </div>
-  ), [markItemRecentlyUsed, onEditItem, opLogVerifiedItemIds, renderPointerDragHandle, viewMode]);
+  ), [markItemRecentlyUsed, openItemPreview, opLogVerifiedItemIds, renderPointerDragHandle, viewMode]);
 
   const renderTableRow = useCallback((
     entry: Extract<RenderableVaultListEntry, { kind: 'item' }>,
@@ -1612,7 +1688,8 @@ reportUnreadableItemsRef.current([]);
           setNativeDraggingItemId(null);
           setDropTargetCategoryId(null);
         }}
-        className="group grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-[hsl(var(--border)/0.22)] px-3 py-2.5 transition-all duration-200 ease-out hover:bg-white/[0.035] md:grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px]"
+        className="group grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-[hsl(var(--border)/0.22)] px-3 py-2.5 transition-all duration-200 ease-out hover:bg-white/[0.035] md:grid-cols-[minmax(210px,1.3fr)_minmax(120px,0.9fr)_minmax(110px,0.8fr)_minmax(110px,0.8fr)_132px]"
+        onClick={() => openItemPreview(item)}
       >
         <div className="flex min-w-0 items-center gap-2.5">
           {renderPointerDragHandle(item, 'h-7 w-7 border-transparent bg-transparent shadow-none sm:h-8 sm:w-8')}
@@ -1621,9 +1698,9 @@ reportUnreadableItemsRef.current([]);
             <button
               type="button"
               className="block max-w-full truncate text-left text-sm font-medium text-foreground hover:text-primary"
-              onClick={() => {
-                markItemRecentlyUsed(item.id);
-                onEditItem(item.id);
+              onClick={(event) => {
+                event.stopPropagation();
+                openItemPreview(item);
               }}
             >
               {title}
@@ -1660,7 +1737,10 @@ reportUnreadableItemsRef.current([]);
             aria-label={favorite
               ? t('vault.actions.removeFavorite', { defaultValue: 'Favorit entfernen' })
               : t('vault.actions.addFavorite', { defaultValue: 'Als Favorit markieren' })}
-            onClick={() => void toggleItemFavorite(item)}
+            onClick={(event) => {
+              event.stopPropagation();
+              void toggleItemFavorite(item);
+            }}
           >
             <Star className={cn('h-4 w-4', favorite && 'fill-current')} />
           </Button>
@@ -1671,7 +1751,10 @@ reportUnreadableItemsRef.current([]);
               size="icon"
               className="h-8 w-8 text-muted-foreground hover:text-primary"
               aria-label={t('vault.actions.copyUsername')}
-              onClick={() => void copySecretFromRow(item, username, 'Username')}
+              onClick={(event) => {
+                event.stopPropagation();
+                void copySecretFromRow(item, username, 'Username');
+              }}
             >
               <Copy className="h-4 w-4" />
             </Button>
@@ -1683,7 +1766,10 @@ reportUnreadableItemsRef.current([]);
               size="icon"
               className="h-8 w-8 text-muted-foreground hover:text-primary"
               aria-label={t('vault.actions.copyPassword')}
-              onClick={() => void copySecretFromRow(item, password, 'Password')}
+              onClick={(event) => {
+                event.stopPropagation();
+                void copySecretFromRow(item, password, 'Password');
+              }}
             >
               <KeyRound className="h-4 w-4" />
             </Button>
@@ -1694,9 +1780,9 @@ reportUnreadableItemsRef.current([]);
             size="icon"
             className="h-8 w-8 text-muted-foreground hover:text-primary"
             aria-label={t('common.edit')}
-            onClick={() => {
-              markItemRecentlyUsed(item.id);
-              onEditItem(item.id);
+            onClick={(event) => {
+              event.stopPropagation();
+              editItemFromPreview(item.id);
             }}
           >
             <Edit className="h-4 w-4" />
@@ -1707,8 +1793,8 @@ reportUnreadableItemsRef.current([]);
   }, [
     categoryNameById,
     copySecretFromRow,
-    markItemRecentlyUsed,
-    onEditItem,
+    editItemFromPreview,
+    openItemPreview,
     opLogVerifiedItemIds,
     renderPointerDragHandle,
     t,
@@ -2311,6 +2397,136 @@ reportUnreadableItemsRef.current([]);
           </span>
         </div>
       )}
+
+      {previewItem && (
+        <aside className="fixed inset-x-0 bottom-0 z-50 max-h-[86vh] overflow-y-auto border-t border-border/55 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.08),transparent_34%),linear-gradient(180deg,hsl(var(--el-2)/0.98),hsl(var(--background)/0.98))] p-4 shadow-[0_-20px_56px_hsl(0_0%_0%/0.48)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-8 duration-300 lg:inset-x-auto lg:bottom-auto lg:right-0 lg:top-0 lg:h-screen lg:w-[22rem] lg:max-h-none lg:border-l lg:border-t-0 lg:p-5 lg:slide-in-from-right-8">
+          <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent" />
+          <div className="flex items-start justify-between gap-3 rounded-2xl border border-border/30 bg-white/[0.015] p-3 shadow-[0_14px_34px_hsl(0_0%_0%/0.18)]">
+            <div className="flex min-w-0 items-center gap-3">
+              <VaultIcon
+                title={getItemTitle(previewItem)}
+                websiteUrl={getItemWebsiteUrl(previewItem)}
+                className="h-12 w-12 rounded-xl"
+                iconClassName="h-6 w-6"
+              />
+              <div className="min-w-0">
+                <h3 className="truncate text-base font-semibold">{getItemTitle(previewItem)}</h3>
+                <p className="truncate text-xs text-muted-foreground">
+                  {getItemUsername(previewItem) || getItemWebsiteUrl(previewItem) || '—'}
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label={t('common.close', { defaultValue: 'Schließen' })}
+              onClick={() => {
+                setDeletePreviewItemId(null);
+                setPreviewItemId(null);
+              }}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div className="mt-5 space-y-2 rounded-2xl border border-border/25 bg-white/[0.012] p-2">
+            {getItemUsername(previewItem) && (opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(previewItem.id)) && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => void copySecretFromRow(previewItem, getItemUsername(previewItem), 'Username')}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                {t('vault.actions.copyUsername')}
+              </Button>
+            )}
+            {previewItem.decryptedData?.password && (opLogVerifiedItemIds === null || opLogVerifiedItemIds.has(previewItem.id)) && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => void copySecretFromRow(previewItem, previewItem.decryptedData?.password, 'Password')}
+              >
+                <KeyRound className="mr-2 h-4 w-4" />
+                {t('vault.actions.copyPassword')}
+              </Button>
+            )}
+            <Button type="button" variant="outline" className="w-full justify-start" onClick={() => void toggleItemFavorite(previewItem)}>
+              <Star className={cn('mr-2 h-4 w-4 text-amber-400', isItemFavorite(previewItem) && 'fill-current')} />
+              {isItemFavorite(previewItem)
+                ? t('vault.actions.removeFavorite', { defaultValue: 'Favorit entfernen' })
+                : t('vault.actions.addFavorite', { defaultValue: 'Als Favorit markieren' })}
+            </Button>
+            <Button type="button" variant="outline" className="w-full justify-start" onClick={() => editItemFromPreview(previewItem.id)}>
+              <Edit className="mr-2 h-4 w-4" />
+              {t('vault.actions.editEntry', { defaultValue: 'Eintrag bearbeiten' })}
+            </Button>
+            <Button type="button" variant="ghost" className="w-full justify-start text-destructive hover:text-destructive" onClick={() => setDeletePreviewItemId(previewItem.id)}>
+              <Trash2 className="mr-2 h-4 w-4" />
+              {t('vault.actions.deleteEntry', { defaultValue: 'Eintrag löschen' })}
+            </Button>
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-border/25 bg-white/[0.012] p-3">
+            <details>
+              <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
+                {t('authenticator.details', { defaultValue: 'Details anzeigen' })}
+              </summary>
+              <dl className="mt-3 space-y-2 text-xs text-muted-foreground">
+                <div className="flex justify-between gap-3">
+                  <dt>{t('common.created', { defaultValue: 'Erstellt' })}</dt>
+                  <dd className="text-right">{formatVaultItemMetaDate(previewItem.created_at)}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt>{t('common.updated', { defaultValue: 'Geändert' })}</dt>
+                  <dd className="text-right">{formatVaultItemMetaDate(previewItem.updated_at)}</dd>
+                </div>
+              </dl>
+            </details>
+          </div>
+        </aside>
+      )}
+
+      <AlertDialog
+        open={!!deletePreviewItem}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeletePreviewItemId(null);
+          }
+        }}
+      >
+        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('vault.confirmDeleteTitle', { defaultValue: 'Eintrag löschen?' })}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="leading-relaxed">
+              {t('vault.confirmDeleteDescription', {
+                defaultValue: 'Dieser Eintrag wird aus dem Tresor entfernt. Diese Aktion kann nicht direkt rückgängig gemacht werden.',
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingPreviewItem}>
+              {t('common.cancel', { defaultValue: 'Abbrechen' })}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletingPreviewItem}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDeletePreviewItem();
+              }}
+            >
+              {deletingPreviewItem && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('common.delete', { defaultValue: 'Löschen' })}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={bulkRestoreConfirmOpen}

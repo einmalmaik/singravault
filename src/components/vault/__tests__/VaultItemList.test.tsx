@@ -482,6 +482,8 @@ describe.sequential('VaultItemList', () => {
 
     fireEvent.click(within(recentSection!).getByText('Recent Item 3'));
 
+    expect(onEditItem).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: /Eintrag bearbeiten/i }));
     expect(onEditItem).toHaveBeenCalledWith('recent-item-3');
     expect(within(recentSection!).getByText('Recent Item 3')).toBeInTheDocument();
     expect(within(recentSection!).getByText('Recent Item 8')).toBeInTheDocument();
