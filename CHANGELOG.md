@@ -6,78 +6,78 @@ Alle nennenswerten Änderungen an diesem Projekt werden hier dokumentiert.
 
 ### Verbesserungen
 
-- Neues Designsystem nach Maunting Design-DNA: dunkles Premium-Vault-UI, Glassmorphism und eine durchgaengig responsive App-Shell. Login, Landing, rechtliche Unterseiten und die Vault-Oberflaeche sind visuell an das neue Premium-Dark-Design angeglichen.
-- Vault-Liste komplett ueberarbeitet: neuer Item-Vorschau-Bereich mit Schnellaktionen (Benutzername/Passwort kopieren, Favorit umschalten, bearbeiten, loeschen) sowie sichtbare Metadaten zum Eintrag.
-- Eintraege koennen jetzt per Drag-and-Drop zwischen Kategorien verschoben werden, sowohl mit Maus als auch per Touch (langes Druecken zum Aktivieren). Auch Kategorien lassen sich per Drag-and-Drop neu sortieren.
-- Neue Tabellenansicht fuer Vault-Eintraege mit zeilenweisem Kopieren, Favoriten-Toggle und Bearbeiten direkt aus der Liste; gruppierte Kategorie-Abschnitte sind klappbar.
-- Beim Springen zu einem bestimmten Eintrag (z. B. ueber Suche/Hinweise) wird der Eintrag jetzt scrolled-into-view und kurzzeitig hervorgehoben, damit klar ist, welcher Eintrag gemeint ist.
-- Sidebar zeigt eine Tresor-Gesundheitszusammenfassung an: schwache, pwned, doppelt verwendete, alte, wiederverwendete und starke Passwoerter werden lokal ausgewertet und je nach Status (gesund / Pruefen / kritisch) angezeigt.
-- "Have I Been Pwned"-Pruefung erfolgt mit k-Anonymity ueber den SHA-1-Praefix; vollstaendige Passwoerter verlassen das Geraet nicht. Ergebnisse werden waehrend der Sitzung zwischengespeichert, damit dieselben Hashes nicht wiederholt nachgefragt werden.
-- Passwort-Staerke-Bewertung beruecksichtigt jetzt zusaetzlichen Nutzerkontext (z. B. Titel, Benutzername, URL), damit naheliegende Varianten wie "github-meinname" korrekt schwaecher bewertet werden.
+- Neues Designsystem nach Maunting Design-DNA: dunkles Premium-Vault-UI, Glassmorphism und eine durchgängig responsive App-Shell. Login, Landing, rechtliche Unterseiten und die Vault-Oberfläche sind visuell an das neue Premium-Dark-Design angeglichen.
+- Vault-Liste komplett überarbeitet: neuer Item-Vorschau-Bereich mit Schnellaktionen (Benutzername/Passwort kopieren, Favorit umschalten, bearbeiten, löschen) sowie sichtbare Metadaten zum Eintrag.
+- Einträge können jetzt per Drag-and-Drop zwischen Kategorien verschoben werden, sowohl mit Maus als auch per Touch (langes Drücken zum Aktivieren). Auch Kategorien lassen sich per Drag-and-Drop neu sortieren.
+- Neue Tabellenansicht für Vault-Einträge mit zeilenweisem Kopieren, Favoriten-Toggle und Bearbeiten direkt aus der Liste; gruppierte Kategorie-Abschnitte sind klappbar.
+- Beim Springen zu einem bestimmten Eintrag (z. B. über Suche/Hinweise) wird der Eintrag jetzt scrolled-into-view und kurzzeitig hervorgehoben, damit klar ist, welcher Eintrag gemeint ist.
+- Sidebar zeigt eine Tresor-Gesundheitszusammenfassung an: schwache, pwned, doppelt verwendete, alte, wiederverwendete und starke Passwörter werden lokal ausgewertet und je nach Status (gesund / Prüfen / kritisch) angezeigt.
+- "Have I Been Pwned"-Prüfung erfolgt mit k-Anonymity über den SHA-1-Präfix; vollständige Passwörter verlassen das Gerät nicht. Ergebnisse werden während der Sitzung zwischengespeichert, damit dieselben Hashes nicht wiederholt nachgefragt werden.
+- Passwort-Stärke-Bewertung berücksichtigt jetzt zusätzlichen Nutzerkontext (z. B. Titel, Benutzername, URL), damit naheliegende Varianten wie "github-meinname" korrekt schwächer bewertet werden.
 - Toast-Benachrichtigungen lassen sich per Klick in die Zwischenablage kopieren, was das Teilen von Fehlerdetails vereinfacht.
-- Mobile- und Touch-Verbesserungen: groessere Tap-Ziele fuer Icon-Buttons, kompakte Bottom-Navigation mit Safe-Area-Abstand, dialoge nutzen die volle dynamische Viewport-Hoehe, Tabs mit horizontalem Scroll erhalten einen Fade-Hinweis, Favoriten erscheinen auf Mobil/Tablet als vertikales Grid und auf Desktop als horizontaler Karussell.
-- Provider-Icons fuer viele bekannte Anbieter (z. B. Gmail, Google, GitHub, AWS, Stripe, Proton, Binance) werden zentral auf interne Icon-IDs gemappt; Kategorie-Icons verwenden kontrollierte Registry-IDs statt sichtbarer Emoji-Icons.
-- Kategorie-Dialog: aufgeraeumtere Icon-Auswahl und sauberer geleiteter Loeschvorgang.
-- Item-Dialog: polishierte Layouts und Detail-Korrekturen.
+- Mobile- und Touch-Verbesserungen: größere Tap-Ziele für Icon-Buttons, kompakte Bottom-Navigation mit Safe-Area-Abstand, Dialoge nutzen die volle dynamische Viewport-Höhe, Tabs mit horizontalem Scroll erhalten einen Fade-Hinweis, Favoriten erscheinen auf Mobil/Tablet als vertikales Grid und auf Desktop als horizontales Karussell.
+- Provider-Icons für viele bekannte Anbieter (z. B. Gmail, Google, GitHub, AWS, Stripe, Proton, Binance) werden zentral auf interne Icon-IDs gemappt; Kategorie-Icons verwenden kontrollierte Registry-IDs statt sichtbarer Emoji-Icons.
+- Kategorie-Dialog: aufgeräumtere Icon-Auswahl und sauberer geleiteter Löschvorgang.
+- Item-Dialog: polierte Layouts und Detail-Korrekturen.
 
 ### Fehlerbehebungen
 
-- Leere Tresore zeigen beim ersten Laden nicht mehr faelschlich "Entschluessele Eintraege..." an, wenn keine Eintraege vorhanden sind.
-- Frisch erstellte Social-Login-Accounts erhalten beim Masterpasswort-Setup direkt einen initialen OpLog-Trust-State mit lokalem Device-Signing-Key, sodass neue Eintraege nicht mehr wegen fehlender OpLog-Device-Identitaet blockieren.
-- Frische, leere OpLog-Tresore werden nach lokaler Working-Set-Verifikation als verifiziert behandelt, statt faelschlich in alte Manifest-/Safe-Mode-Pfade zu fallen.
+- Leere Tresore zeigen beim ersten Laden nicht mehr fälschlich "Entschlüssele Einträge..." an, wenn keine Einträge vorhanden sind.
+- Frisch erstellte Social-Login-Accounts erhalten beim Masterpasswort-Setup direkt einen initialen OpLog-Trust-State mit lokalem Device-Signing-Key, sodass neue Einträge nicht mehr wegen fehlender OpLog-Device-Identität blockieren.
+- Frische, leere OpLog-Tresore werden nach lokaler Working-Set-Verifikation als verifiziert behandelt, statt fälschlich in alte Manifest-/Safe-Mode-Pfade zu fallen.
 - Der Sicherheitsstatus in der Sidebar flackert nicht mehr bei jedem Hintergrund-Refresh als Ladezustand; Realtime bleibt der Hauptpfad, Polling ist nur noch Fallback.
-- Routine-Pruefungen im gesunden Zustand schreiben keine dauerhaften `VaultRuntime`-Info-Logs mehr in die Konsole.
-- Passkey-Einstellungen: ein harmloser 401 waehrend des Session-Warmups zeigt keinen Fehler-Toast mehr.
-- Kategorie-Dialog: ein direkter Loeschwunsch oeffnet nicht mehr versehentlich erst den Bearbeiten-Dialog, und ein abgebrochener Bestaetigungsdialog schliesst auch den umgebenden Dialog sauber.
+- Routine-Prüfungen im gesunden Zustand schreiben keine dauerhaften `VaultRuntime`-Info-Logs mehr in die Konsole.
+- Passkey-Einstellungen: ein harmloser 401 während des Session-Warmups zeigt keinen Fehler-Toast mehr.
+- Kategorie-Dialog: ein direkter Löschwunsch öffnet nicht mehr versehentlich erst den Bearbeiten-Dialog, und ein abgebrochener Bestätigungsdialog schließt auch den umgebenden Dialog sauber.
 
-### Stabilitaet & Sicherheit
+### Stabilität & Sicherheit
 
-- Vault-CRUD-Aktionen werden ueber eine interne Aktions-Warteschlange serialisiert: signierte Operationen laufen sequenziell ab, sodass schnelle Folge-Aktionen auf langsamen Verbindungen nicht mehr in OpLog-Konflikte laufen.
-- Die Tresor-Gesundheits-Eingaben werden vor Uebergabe an Erweiterungs-Hooks bereinigt; Klartext-Passwoerter verlassen den lokalen Auswerter nicht.
-- HIBP-Cache vermeidet wiederholte Anfragen fuer denselben Passwort-Hash innerhalb einer Sitzung; bei Netzwerkfehlern werden Eintraege nicht zwischengespeichert.
-- Erweiterte Tests fuer die zentrale Crypto-Grenze (`cryptoService`): AES-GCM-Roundtrip fuer Text und binaere Payloads, IV-Eindeutigkeit, Manipulationsablehnung, AAD-Bindung, Envelope-Versionierung, KDF-Parameter-Stabilitaet und UserKey-/Private-Key-Wrapping. Sicherheitsversprechen aendern sich dadurch nicht; bestehende Eigenschaften sind jetzt vertraglich abgesichert.
+- Vault-CRUD-Aktionen werden über eine interne Aktions-Warteschlange serialisiert: signierte Operationen laufen sequenziell ab, sodass schnelle Folge-Aktionen auf langsamen Verbindungen nicht mehr in OpLog-Konflikte laufen.
+- Die Tresor-Gesundheits-Eingaben werden vor Übergabe an Erweiterungs-Hooks bereinigt; Klartext-Passwörter verlassen den lokalen Auswerter nicht.
+- HIBP-Cache vermeidet wiederholte Anfragen für denselben Passwort-Hash innerhalb einer Sitzung; bei Netzwerkfehlern werden Einträge nicht zwischengespeichert.
+- Erweiterte Tests für die zentrale Crypto-Grenze (`cryptoService`): AES-GCM-Roundtrip für Text und binäre Payloads, IV-Eindeutigkeit, Manipulationsablehnung, AAD-Bindung, Envelope-Versionierung, KDF-Parameter-Stabilität und UserKey-/Private-Key-Wrapping. Sicherheitsversprechen ändern sich dadurch nicht; bestehende Eigenschaften sind jetzt vertraglich abgesichert.
 
 ### Hinweise
 
-- Singra Vault bleibt ein experimenteller Prototyp. Bitte keine echten Passwoerter, produktiven Secrets oder Recovery-Daten speichern.
+- Singra Vault bleibt ein experimenteller Prototyp. Bitte keine echten Passwörter, produktiven Secrets oder Recovery-Daten speichern.
 - Die Tresor-Gesundheits-Auswertung ist ein Premium-Feature; ohne aktive Premium-Lizenz wird in der Sidebar ein Feature-Hinweis angezeigt.
-- Wenn alle vertrauenswuerdigen Geraete und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass fuer den Tresorzugriff.
-- Externe Hinweise: Die `webauthn` Edge Function muss deployt sein, damit Passkey-Registrierung in der gehosteten Singra-Instanz weiterhin zuverlaessig funktioniert. Diese externe Komponente ist nicht Teil des Desktop-Builds.
+- Wenn alle vertrauenswürdigen Geräte und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass für den Tresorzugriff.
+- Externe Hinweise: Die `webauthn` Edge Function muss deployt sein, damit Passkey-Registrierung in der gehosteten Singra-Instanz weiterhin zuverlässig funktioniert. Diese externe Komponente ist nicht Teil des Desktop-Builds.
 
 ## 0.4.7 - 2026-05-13
 
 ### Highlights
 
-- Neues Vault Operation Log: Tresor-Aenderungen laufen jetzt ueber signierte Operationen statt ueber das alte Integritaets-/Snapshot-System als primaere Vertrauensbasis.
-- OpLog Verification prueft Operation-Chain, Record-Kontext, Device-Trust, Trust-Epoch und Vault-Head, bevor Eintraege normal angezeigt oder fuer Export/Suche/Zwischenablage freigegeben werden.
-- Geraetevertrauen ist sichtbarer und strenger getrennt: Device Key entsperrt lokal, Device-Signing-Key und verifizierter Trust-State autorisieren Operationen.
-- Offline-Modus baut auf dem neuen OpLog-Modell auf: Offline erstellte, bearbeitete und geloeschte Eintraege werden als signierte Operationen nach dem Reconnect verifiziert synchronisiert.
-- Neue Sicherheitsanzeigen machen klarer, ob der Tresor verifiziert, eingeschraenkt, in Quarantaene, im Sicherheitsmodus oder wegen Geraetevertrauen gesperrt ist.
-- Singra Vault wird in App, README und Release-Kontext klarer als experimenteller Prototyp markiert: keine echten Passwoerter, produktiven Secrets oder Recovery-Daten speichern.
+- Neues Vault Operation Log: Tresor-Änderungen laufen jetzt über signierte Operationen statt über das alte Integritäts-/Snapshot-System als primäre Vertrauensbasis.
+- OpLog Verification prüft Operation-Chain, Record-Kontext, Device-Trust, Trust-Epoch und Vault-Head, bevor Einträge normal angezeigt oder für Export/Suche/Zwischenablage freigegeben werden.
+- Gerätevertrauen ist sichtbarer und strenger getrennt: Device Key entsperrt lokal, Device-Signing-Key und verifizierter Trust-State autorisieren Operationen.
+- Offline-Modus baut auf dem neuen OpLog-Modell auf: Offline erstellte, bearbeitete und gelöschte Einträge werden als signierte Operationen nach dem Reconnect verifiziert synchronisiert.
+- Neue Sicherheitsanzeigen machen klarer, ob der Tresor verifiziert, eingeschränkt, in Quarantäne, im Sicherheitsmodus oder wegen Gerätevertrauen gesperrt ist.
+- Singra Vault wird in App, README und Release-Kontext klarer als experimenteller Prototyp markiert: keine echten Passwörter, produktiven Secrets oder Recovery-Daten speichern.
 
 ### Verbesserungen
 
 - Item-, Kategorie- und Delete-Flows sind an den OpLog-CRUD-Pfad angebunden und vermeiden direkte Legacy-Writes als normale Vertrauensbasis.
-- Quarantaene, Konflikte und geloeschte Eintraege werden aus dem verifizierten OpLog-UI-State abgeleitet statt aus einem ungeprueften Serverstand.
+- Quarantäne, Konflikte und gelöschte Einträge werden aus dem verifizierten OpLog-UI-State abgeleitet statt aus einem ungeprüften Serverstand.
 - Restore-/Resolve-Pfade erzeugen neue signierte Operationen oder blockieren fail-closed, wenn kein verifizierter Kontext vorhanden ist.
-- Offline-Aenderungen werden als wartende Aenderungen behandelt und erst nach erfolgreicher Verifikation als synchronisiert markiert.
-- Ein widerrufenes Geraet kann wartende Offline-Aenderungen nicht mehr automatisch in die Cloud senden.
-- Eintraege, Kategorien und geloeschte Eintraege bleiben nach Offline-Nutzung und erneutem Online-Gehen konsistenter zwischen mehreren Geraeten.
-- Export, Suche und Zwischenablage verwenden nur verifizierte Tresor-Eintraege.
+- Offline-Änderungen werden als wartende Änderungen behandelt und erst nach erfolgreicher Verifikation als synchronisiert markiert.
+- Ein widerrufenes Gerät kann wartende Offline-Änderungen nicht mehr automatisch in die Cloud senden.
+- Einträge, Kategorien und gelöschte Einträge bleiben nach Offline-Nutzung und erneutem Online-Gehen konsistenter zwischen mehreren Geräten.
+- Export, Suche und Zwischenablage verwenden nur verifizierte Tresor-Einträge.
 
 ### Behoben
 
-- Frische, leere Tresore nach Social-Login/Neuregistrierung werden nicht mehr faelschlich wegen fehlendem Manifest V2 blockiert.
-- Leere, verifizierte OpLog-Tresore zeigen beim Aktualisieren nicht mehr faelschlich "Entschluessele Eintraege..." an.
-- Offline erstellte oder geloeschte Eintraege wurden in manchen Situationen nicht zuverlaessig synchronisiert.
-- Kurzzeitige Quarantaene-Anzeigen beim Laden des Sicherheitsstatus verschwinden nun sauberer nach erfolgreicher Verifikation.
-- Geraete-Recovery und erneutes Vertrauen eines Geraets funktionieren nach Widerruf stabiler.
-- Add-Device-Anfragen bleiben erneut versuchbar, wenn der spaetere Speichervorgang fehlschlaegt.
+- Frische, leere Tresore nach Social-Login/Neuregistrierung werden nicht mehr fälschlich wegen fehlendem Manifest V2 blockiert.
+- Leere, verifizierte OpLog-Tresore zeigen beim Aktualisieren nicht mehr fälschlich "Entschlüssele Einträge..." an.
+- Offline erstellte oder gelöschte Einträge wurden in manchen Situationen nicht zuverlässig synchronisiert.
+- Kurzzeitige Quarantäne-Anzeigen beim Laden des Sicherheitsstatus verschwinden nun sauberer nach erfolgreicher Verifikation.
+- Geräte-Recovery und erneutes Vertrauen eines Geräts funktionieren nach Widerruf stabiler.
+- Add-Device-Anfragen bleiben erneut versuchbar, wenn der spätere Speichervorgang fehlschlägt.
 - Deutsche Texte in Recovery-Code-Downloads und Sicherheitsmeldungen wurden verbessert.
 
 ### Hinweise
 
-- Wenn alle vertrauenswuerdigen Geraete und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass fuer den Tresorzugriff.
+- Wenn alle vertrauenswürdigen Geräte und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass für den Tresorzugriff.
 
 ## 0.4.3 - 2026-04-28
 

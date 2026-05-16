@@ -29,7 +29,7 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       tab: 'general',
       order: 20,
       title: t('settings.account.title'),
-      keywords: ['account', 'konto', 'email', 'logout', 'delete', 'loeschen'],
+      keywords: ['account', 'konto', 'email', 'logout', 'delete', 'löschen', 'loeschen'],
       render: () => <AccountSettings />,
     },
     {
@@ -106,7 +106,7 @@ export function getCoreVaultSettingsSections(t: TFunction): SettingsSectionDescr
       tab: 'security',
       order: 30,
       title: 'Recovery-Codes',
-      keywords: ['recovery', 'backup codes', 'geraete recovery', 'wiederherstellung', 'notfall', 'device trust'],
+      keywords: ['recovery', 'backup codes', 'geräte recovery', 'geraete recovery', 'wiederherstellung', 'notfall', 'device trust'],
       render: () => <VaultRecoveryCodesSettings />,
     },
     {

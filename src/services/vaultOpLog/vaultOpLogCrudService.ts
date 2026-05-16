@@ -63,7 +63,7 @@ export class CategoryStillReferencedError extends VaultOpLogCrudServiceError {
 
 export class VerifiedItemPlaintextUnavailableError extends VaultOpLogCrudServiceError {
   constructor(recordId: string) {
-    super(`Verifizierter Item-Plaintext fuer ${recordId} ist nicht verfuegbar oder ungueltig.`);
+    super(`Verifizierter Item-Plaintext für ${recordId} ist nicht verfügbar oder ungültig.`);
   }
 }
 

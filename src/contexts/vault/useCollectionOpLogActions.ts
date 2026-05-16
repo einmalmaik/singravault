@@ -129,7 +129,7 @@ export function useCollectionOpLogActions(
     }
     const identity = deviceContext?.identity ?? null;
     if (!identity) {
-      throw new Error('OpLog-Device-Identitaet fehlt oder ist auf diesem Geraet nicht verfuegbar.');
+      throw new Error('OpLog-Device-Identität fehlt oder ist auf diesem Gerät nicht verfügbar.');
     }
 
     const deviceSigningKey = await loadVaultOpLogDeviceSigningKey({
@@ -265,7 +265,7 @@ export function useCollectionOpLogActions(
       const base = await loadRuntimeBase();
       collectionKey = await loadCollectionKeyForCurrentUser(collectionId, base.keyMaterial);
       if (!collectionKey) {
-        throw new Error('Collection-Key ist fuer dieses Geraet nicht verfuegbar.');
+        throw new Error('Collection-Key ist für dieses Gerät nicht verfügbar.');
       }
 
       const deps = makeDeps(base, collectionId, collectionKey);
@@ -286,7 +286,7 @@ export function useCollectionOpLogActions(
 
       return { error: null };
     } catch (error) {
-      return { error: error instanceof Error ? error : new Error('Shared Collection konnte nicht geloescht werden.') };
+      return { error: error instanceof Error ? error : new Error('Shared Collection konnte nicht gelöscht werden.') };
     } finally {
       collectionKey?.fill(0);
     }

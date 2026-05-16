@@ -95,43 +95,43 @@ jobs:
           releaseBody: |
             ## Singra Vault 0.4.8
 
-            Dieses Release bringt das neue Premium-Dark-Designsystem in den Vault, ueberarbeitet die Vault-Liste mit Vorschau-Bereich, Tabellenansicht, Drag-and-Drop und Fokus-Highlight, fuegt eine optionale Tresor-Gesundheitszusammenfassung in der Sidebar hinzu und haertet Stabilitaet und zentrale Crypto-Vertraege ab.
+            Dieses Release bringt das neue Premium-Dark-Designsystem in den Vault, überarbeitet die Vault-Liste mit Vorschau-Bereich, Tabellenansicht, Drag-and-Drop und Fokus-Highlight, fügt eine optionale Tresor-Gesundheitszusammenfassung in der Sidebar hinzu und härtet Stabilität und zentrale Crypto-Verträge ab.
 
             ### Highlights
 
-            - Neues Premium-Dark-Designsystem fuer Login, Landing, rechtliche Unterseiten und die gesamte Vault-Oberflaeche, inklusive kontrollierter Provider- und Kategorie-Icons.
-            - Ueberarbeitete Vault-Liste mit neuem Item-Vorschau-Bereich (Schnellaktionen fuer Kopieren, Favorit, Bearbeiten, Loeschen) und neuer Tabellenansicht inklusive klappbarer Kategorie-Abschnitte.
-            - Drag-and-Drop fuer Eintraege zwischen Kategorien und fuer Kategorien selbst, sowohl mit Maus als auch per Touch (langes Druecken zum Aktivieren).
-            - Optionale Tresor-Gesundheitszusammenfassung in der Sidebar: schwache, pwned, doppelte, alte, wiederverwendete und starke Passwoerter werden lokal ausgewertet (Premium).
-            - "Have I Been Pwned"-Pruefung mit k-Anonymity ueber den SHA-1-Praefix; vollstaendige Passwoerter verlassen das Geraet nicht und Ergebnisse werden pro Sitzung zwischengespeichert.
-            - Singra Vault bleibt sichtbar als experimenteller Prototyp markiert. Bitte keine echten Passwoerter, produktiven Secrets oder Recovery-Daten speichern.
+            - Neues Premium-Dark-Designsystem für Login, Landing, rechtliche Unterseiten und die gesamte Vault-Oberfläche, inklusive kontrollierter Provider- und Kategorie-Icons.
+            - Überarbeitete Vault-Liste mit neuem Item-Vorschau-Bereich (Schnellaktionen für Kopieren, Favorit, Bearbeiten, Löschen) und neuer Tabellenansicht inklusive klappbarer Kategorie-Abschnitte.
+            - Drag-and-Drop für Einträge zwischen Kategorien und für Kategorien selbst, sowohl mit Maus als auch per Touch (langes Drücken zum Aktivieren).
+            - Optionale Tresor-Gesundheitszusammenfassung in der Sidebar: schwache, pwned, doppelte, alte, wiederverwendete und starke Passwörter werden lokal ausgewertet (Premium).
+            - "Have I Been Pwned"-Prüfung mit k-Anonymity über den SHA-1-Präfix; vollständige Passwörter verlassen das Gerät nicht und Ergebnisse werden pro Sitzung zwischengespeichert.
+            - Singra Vault bleibt sichtbar als experimenteller Prototyp markiert. Bitte keine echten Passwörter, produktiven Secrets oder Recovery-Daten speichern.
 
             ### Verbesserungen
 
             - Beim Springen zu einem bestimmten Eintrag wird dieser jetzt scrolled-into-view und kurzzeitig hervorgehoben.
             - Toast-Benachrichtigungen lassen sich per Klick in die Zwischenablage kopieren.
-            - Mobile- und Touch-UX deutlich aufgewertet: groessere Tap-Ziele, kompakte Bottom-Navigation mit Safe-Area-Abstand, dialoge nutzen die volle dynamische Viewport-Hoehe, Tabs mit Scroll erhalten einen Fade-Hinweis, Favoriten als vertikales Grid auf Mobil/Tablet und horizontaler Karussell auf Desktop.
-            - Passwort-Staerke-Bewertung beruecksichtigt zusaetzlichen Nutzerkontext (Titel, Benutzername, URL), damit naheliegende Varianten korrekt schwaecher bewertet werden.
-            - Kategorie- und Item-Dialoge mit polishierter Icon-Auswahl, Layouts und Detail-Korrekturen.
+            - Mobile- und Touch-UX deutlich aufgewertet: größere Tap-Ziele, kompakte Bottom-Navigation mit Safe-Area-Abstand, Dialoge nutzen die volle dynamische Viewport-Höhe, Tabs mit Scroll erhalten einen Fade-Hinweis, Favoriten als vertikales Grid auf Mobil/Tablet und horizontales Karussell auf Desktop.
+            - Passwort-Stärke-Bewertung berücksichtigt zusätzlichen Nutzerkontext (Titel, Benutzername, URL), damit naheliegende Varianten korrekt schwächer bewertet werden.
+            - Kategorie- und Item-Dialoge mit polierter Icon-Auswahl, Layouts und Detail-Korrekturen.
 
             ### Behoben
 
-            - Leere Tresore zeigen beim ersten Laden nicht mehr faelschlich "Entschluessele Eintraege..." an.
-            - Frisch erstellte Social-Login-Accounts erhalten beim Masterpasswort-Setup direkt einen initialen OpLog-Trust-State mit lokalem Device-Signing-Key, sodass neue Eintraege nicht mehr wegen fehlender OpLog-Device-Identitaet blockieren.
-            - Frische, leere OpLog-Tresore werden nach lokaler Verifikation als verifiziert behandelt, statt faelschlich in alte Manifest-/Safe-Mode-Pfade zu fallen.
+            - Leere Tresore zeigen beim ersten Laden nicht mehr fälschlich "Entschlüssele Einträge..." an.
+            - Frisch erstellte Social-Login-Accounts erhalten beim Masterpasswort-Setup direkt einen initialen OpLog-Trust-State mit lokalem Device-Signing-Key, sodass neue Einträge nicht mehr wegen fehlender OpLog-Device-Identität blockieren.
+            - Frische, leere OpLog-Tresore werden nach lokaler Verifikation als verifiziert behandelt, statt fälschlich in alte Manifest-/Safe-Mode-Pfade zu fallen.
             - Der Sicherheitsstatus in der Sidebar flackert nicht mehr bei jedem Hintergrund-Refresh als Ladezustand.
-            - Routine-Pruefungen im gesunden Zustand schreiben keine dauerhaften Info-Logs mehr in die Konsole.
-            - Passkey-Einstellungen: ein harmloser 401 waehrend des Session-Warmups zeigt keinen Fehler-Toast mehr.
+            - Routine-Prüfungen im gesunden Zustand schreiben keine dauerhaften Info-Logs mehr in die Konsole.
+            - Passkey-Einstellungen: ein harmloser 401 während des Session-Warmups zeigt keinen Fehler-Toast mehr.
 
-            ### Stabilitaet & Sicherheit
+            ### Stabilität & Sicherheit
 
-            - Vault-CRUD-Aktionen werden ueber eine interne Aktions-Warteschlange serialisiert; signierte Operationen laufen sequenziell ab und vermeiden OpLog-Konflikte auf langsamen Verbindungen.
-            - Erweiterte Tests fuer die zentrale Crypto-Grenze (AES-GCM-Roundtrip fuer Text und Binaerdaten, IV-Eindeutigkeit, Manipulationsablehnung, AAD-Bindung, Envelope-Versionierung, KDF-Parameter-Stabilitaet, UserKey-/Private-Key-Wrapping). Sicherheitsversprechen aendern sich dadurch nicht; bestehende Eigenschaften sind jetzt vertraglich abgesichert.
+            - Vault-CRUD-Aktionen werden über eine interne Aktions-Warteschlange serialisiert; signierte Operationen laufen sequenziell ab und vermeiden OpLog-Konflikte auf langsamen Verbindungen.
+            - Erweiterte Tests für die zentrale Crypto-Grenze (AES-GCM-Roundtrip für Text und Binärdaten, IV-Eindeutigkeit, Manipulationsablehnung, AAD-Bindung, Envelope-Versionierung, KDF-Parameter-Stabilität, UserKey-/Private-Key-Wrapping). Sicherheitsversprechen ändern sich dadurch nicht; bestehende Eigenschaften sind jetzt vertraglich abgesichert.
 
             ### Wichtige Hinweise
 
-            - Wenn alle vertrauenswuerdigen Geraete und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass fuer den Tresorzugriff.
-            - Der oeffentliche Quellcode bleibt Core-only; offizielle Desktop-Builds werden mit vorkonfigurierter Singra Cloud gebaut.
+            - Wenn alle vertrauenswürdigen Geräte und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass für den Tresorzugriff.
+            - Der öffentliche Quellcode bleibt Core-only; offizielle Desktop-Builds werden mit vorkonfigurierter Singra Cloud gebaut.
           generateReleaseNotes: false
           releaseDraft: false
           prerelease: false

@@ -24,7 +24,7 @@ export function useVaultMigrationActions({
 }: VaultMigrationActionsInput) {
   const runUserConfirmedMigration = useCallback(async (): Promise<{ error: Error | null }> => {
     if (!user) {
-      return { error: new Error('Keine aktive Sitzung verfÃ¼gbar.') };
+      return { error: new Error('Keine aktive Sitzung verfügbar.') };
     }
 
     const migrationContext = state.vaultMigrationKeyContext;
