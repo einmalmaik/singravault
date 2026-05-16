@@ -51,6 +51,10 @@ import { useVaultSetupActions } from './useVaultSetupActions';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
 import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 import { loadVaultHealthAnalysisItems } from '@/services/vaultHealthAnalysisItemsService';
+import {
+  findLegacyDuressDecoyCandidates as findLegacyDuressDecoyCandidatesService,
+  purgeLegacyDuressDecoyItems as purgeLegacyDuressDecoyItemsService,
+} from '@/services/legacyDuressDecoyCleanupService';
 
 function clearLegacyIntegrityStateAfterOpLogGate(
   state: ReturnType<typeof useVaultProviderState>,
@@ -637,6 +641,69 @@ export function useVaultProviderActions(): VaultContextType {
       verifyIntegrity,
     });
   }, [decryptItem, opLogUiState.localVaultState, state.vaultMigrationStatus, user, verifyIntegrity]);
+  const findLegacyDuressDecoyCandidates = useCallback(async () => {
+    if (!user || !state.encryptionKey || state.isLocked) {
+      return {
+        candidates: [],
+        inspectedRowCount: 0,
+        authenticatedRowCount: 0,
+        error: new Error('Vault must be unlocked to scan for legacy duress decoys.'),
+      };
+    }
+
+    const verifiedRecordIds = new Set<string>();
+    const localState = opLogUiState.localVaultState;
+    if (localState) {
+      for (const [recordId, record] of localState.recordsById.entries()) {
+        if (record.recordState === 'verified') {
+          verifiedRecordIds.add(recordId);
+        }
+      }
+    }
+
+    try {
+      const result = await findLegacyDuressDecoyCandidatesService({
+        userId: user.id,
+        vaultKey: state.encryptionKey,
+        opLogVerifiedRecordIds: verifiedRecordIds,
+      });
+      return { ...result, error: null };
+    } catch (error) {
+      return {
+        candidates: [],
+        inspectedRowCount: 0,
+        authenticatedRowCount: 0,
+        error: error instanceof Error ? error : new Error('Legacy duress decoy scan failed.'),
+      };
+    }
+  }, [opLogUiState.localVaultState, state.encryptionKey, state.isLocked, user]);
+  const purgeLegacyDuressDecoys = useCallback(async (
+    itemIds: ReadonlyArray<string>,
+  ): Promise<{ deletedCount: number; error: Error | null }> => {
+    if (!user) {
+      return { deletedCount: 0, error: new Error('No active user session') };
+    }
+    if (itemIds.length === 0) {
+      return { deletedCount: 0, error: new Error('No items selected for purge.') };
+    }
+    try {
+      const result = await purgeLegacyDuressDecoyItemsService({
+        userId: user.id,
+        itemIds,
+      });
+      // Force the migration gate / integrity-v2 evaluator to re-run on the
+      // next data refresh by bumping the local data version. The legacy
+      // rows are gone, so `hasLegacyRows` should now be false and the
+      // vault should leave the orphan_remote / migration_required state.
+      state.bumpVaultDataVersion();
+      return { deletedCount: result.deletedCount, error: null };
+    } catch (error) {
+      return {
+        deletedCount: 0,
+        error: error instanceof Error ? error : new Error('Legacy duress decoy purge failed.'),
+      };
+    }
+  }, [state, user]);
   useVaultRevokedDeviceAutoLock({
     isLocked: state.isLocked,
     localVaultState: opLogUiState.localVaultState,
@@ -682,6 +749,8 @@ export function useVaultProviderActions(): VaultContextType {
     exitSafeMode,
     resetVaultAfterIntegrityFailure,
     getVaultHealthAnalysisItems,
+    findLegacyDuressDecoyCandidates,
+    purgeLegacyDuressDecoys,
     startVaultMigration,
     retryVaultMigration,
     ...opLogActions,

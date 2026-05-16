@@ -415,18 +415,47 @@ describe('evaluateVaultMigrationGate', () => {
 });
 
 describe('legacy vault runtime write contract', () => {
-  it('does not keep direct legacy vault table writes in runtime source', () => {
+  it('does not keep direct legacy vault table inserts/updates/upserts in runtime source', () => {
     const runtimeFiles = listSourceFiles(join(process.cwd(), 'src'))
       .filter((file) => !file.includes(`${join('src', 'services', 'vaultOpLog', '__tests__')}`))
       .filter((file) => !file.includes(`${join('src', 'test')}`));
     const fromVaultItems = String.raw`\.from\((?:['"])vault_items(?:['"])\)`;
     const fromCategories = String.raw`\.from\((?:['"])categories(?:['"])\)`;
-    const writeMethod = String.raw`\.(insert|update|upsert|delete)\s*\(`;
+    // Recovery-only DELETEs against legacy tables are allowed (see
+    // legacyDuressDecoyCleanupService.ts) so users can clean up stale
+    // pre-OpLog Premium duress decoy rows. INSERT/UPDATE/UPSERT remain
+    // forbidden — the signed OpLog path is the only sanctioned write
+    // channel for runtime data mutations.
+    const writeMethod = String.raw`\.(insert|update|upsert)\s*\(`;
     const forbidden = new RegExp(`(?:${fromVaultItems}|${fromCategories})[\\s\\S]{0,240}${writeMethod}`, 'm');
 
     const offenders = runtimeFiles
       .filter((file) => forbidden.test(readFileSync(file, 'utf8')))
       .map((file) => relative(process.cwd(), file).replace(/\\/g, '/'));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('only allows DELETEs against legacy vault tables from the dedicated cleanup service', () => {
+    const runtimeFiles = listSourceFiles(join(process.cwd(), 'src'))
+      .filter((file) => !file.includes(`${join('src', 'services', 'vaultOpLog', '__tests__')}`))
+      .filter((file) => !file.includes(`${join('src', 'test')}`))
+      .filter((file) => !file.includes(`${join('src', 'services', '__tests__')}`));
+    const fromVaultItems = String.raw`\.from\((?:['"])vault_items(?:['"])\)`;
+    const fromCategories = String.raw`\.from\((?:['"])categories(?:['"])\)`;
+    const deleteMethod = String.raw`\.delete\s*\(`;
+    const forbidden = new RegExp(`(?:${fromVaultItems}|${fromCategories})[\\s\\S]{0,240}${deleteMethod}`, 'm');
+
+    const allowedDeleteCallers = new Set([
+      // Recovery service for legacy Premium duress decoys (post-USK
+      // accounts whose `vault_items` were polluted by direct inserts).
+      'src/services/legacyDuressDecoyCleanupService.ts',
+    ]);
+
+    const offenders = runtimeFiles
+      .filter((file) => forbidden.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(process.cwd(), file).replace(/\\/g, '/'))
+      .filter((relativePath) => !allowedDeleteCallers.has(relativePath));
 
     expect(offenders).toEqual([]);
   });

@@ -35,6 +35,8 @@ export interface VaultProviderActionBindings {
   exitSafeMode: () => void;
   resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
   getVaultHealthAnalysisItems: VaultContextType['getVaultHealthAnalysisItems'];
+  findLegacyDuressDecoyCandidates: VaultContextType['findLegacyDuressDecoyCandidates'];
+  purgeLegacyDuressDecoys: VaultContextType['purgeLegacyDuressDecoys'];
   startVaultMigration: () => Promise<{ error: Error | null }>;
   retryVaultMigration: () => Promise<{ error: Error | null }>;
 
@@ -111,6 +113,8 @@ export function buildVaultContextValue(
     exitSafeMode: actions.exitSafeMode,
     resetVaultAfterIntegrityFailure: actions.resetVaultAfterIntegrityFailure,
     getVaultHealthAnalysisItems: actions.getVaultHealthAnalysisItems,
+    findLegacyDuressDecoyCandidates: actions.findLegacyDuressDecoyCandidates,
+    purgeLegacyDuressDecoys: actions.purgeLegacyDuressDecoys,
 
     // Phase 9 — OpLog UI state
     opLogVaultId: opLogUiState.vaultId,

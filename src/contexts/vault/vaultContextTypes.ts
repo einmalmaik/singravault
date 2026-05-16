@@ -89,6 +89,26 @@ export interface VaultContextType {
     resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
     getVaultHealthAnalysisItems: () => Promise<VaultHealthAnalysisItem[]>;
 
+    // Recovery for the legacy Premium duress decoy bug: scans `vault_items`
+    // for rows that don't authenticate against the current vault key and
+    // are not part of the verified OpLog manifest. The UI shows the result
+    // and asks for explicit confirmation before invoking
+    // `purgeLegacyDuressDecoys`.
+    findLegacyDuressDecoyCandidates: () => Promise<{
+        candidates: ReadonlyArray<{
+            id: string;
+            updatedAt: string | null;
+            reason: 'decryption_failed';
+        }>;
+        inspectedRowCount: number;
+        authenticatedRowCount: number;
+        error: Error | null;
+    }>;
+    purgeLegacyDuressDecoys: (itemIds: ReadonlyArray<string>) => Promise<{
+        deletedCount: number;
+        error: Error | null;
+    }>;
+
     // Phase 9 — OpLog UI state (behind feature flag)
     opLogVaultId: string | null;
     opLogUiView: VaultOpLogUiView | null;

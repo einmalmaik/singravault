@@ -4,6 +4,7 @@ import { AccountSettings } from '@/components/settings/AccountSettings';
 import { AccountDataExportSettings } from '@/components/settings/AccountDataExportSettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { DataSettings } from '@/components/settings/DataSettings';
+import { LegacyDuressDecoyCleanupSettings } from '@/components/settings/LegacyDuressDecoyCleanupSettings';
 import { LegalLinksSettings } from '@/components/settings/LegalLinksSettings';
 import { PasswordSettings } from '@/components/settings/PasswordSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
@@ -117,6 +118,23 @@ export function getCoreVaultSettingsSections(t: TFunction): SettingsSectionDescr
       title: t('settings.data.title', 'Daten'),
       keywords: ['export', 'import', 'backup', 'vault export', 'tresor export', 'tresor import'],
       render: () => <DataSettings />,
+    },
+    {
+      id: 'vault-legacy-duress-cleanup',
+      surface: 'vault',
+      tab: 'data',
+      order: 90,
+      title: 'Tresor-Reparatur',
+      // Recovery surface for the legacy Premium duress decoy bug. Keep both
+      // Umlaut and ASCII variants so search finds it either way.
+      keywords: [
+        'tresor reparatur', 'tresor-reparatur', 'reparatur',
+        'panik-passwort', 'panik passwort', 'panic password',
+        'duress', 'duress decoy', 'koeder', 'köder',
+        'migration erforderlich', 'migration required',
+        'orphan', 'integrity_unknown',
+      ],
+      render: () => <LegacyDuressDecoyCleanupSettings />,
     },
   ];
 }

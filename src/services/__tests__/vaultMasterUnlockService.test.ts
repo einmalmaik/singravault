@@ -111,7 +111,9 @@ describe('vaultMasterUnlockService', () => {
     const kdfOutput = new Uint8Array([1, 2, 3, 4]);
     const vaultEncryptionKey = new Uint8Array([5, 6, 7, 8]);
     const deriveVaultKdfOutput = vi.fn(async () => new Uint8Array(kdfOutput));
-    const finalizeVaultUnlock = vi.fn(async () => ({ error: null }));
+    const finalizeVaultUnlock = vi.fn(
+      async (_activeKey: CryptoKey, _vaultEncryptionKey?: Uint8Array) => ({ error: null }),
+    );
 
     mockAttemptDualUnlock.mockResolvedValue({ mode: 'normal', key: activeKey });
     mockImportMasterKey.mockResolvedValue(activeKey);
@@ -232,7 +234,7 @@ describe('vaultMasterUnlockService', () => {
   });
 
   it("opens the duress vault via the dedicated duress-only hook when matched=true", async () => {
-    const duressKey = { type: 'duress' } as CryptoKey;
+    const duressKey = { type: 'duress' } as unknown as CryptoKey;
     delete mockHooks.attemptDualUnlock;
     mockHooks.attemptDuressUnlockOnly = mockAttemptDuressUnlockOnly;
     mockAttemptDuressUnlockOnly.mockResolvedValue({ matched: true, key: duressKey });
@@ -309,7 +311,7 @@ describe('vaultMasterUnlockService', () => {
   });
 
   it('prefers the dedicated duress-only hook over the legacy dual-unlock hook when both are registered', async () => {
-    const duressKey = { type: 'duress' } as CryptoKey;
+    const duressKey = { type: 'duress' } as unknown as CryptoKey;
     mockHooks.attemptDualUnlock = mockAttemptDualUnlock;
     mockHooks.attemptDuressUnlockOnly = mockAttemptDuressUnlockOnly;
     mockAttemptDuressUnlockOnly.mockResolvedValue({ matched: true, key: duressKey });
