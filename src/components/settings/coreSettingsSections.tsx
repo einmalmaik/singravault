@@ -78,6 +78,27 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       keywords: ['rechtlich', 'privacy', 'datenschutz', 'impressum', 'security', 'whitepaper'],
       render: () => <LegalLinksSettings />,
     },
+    {
+      id: 'profile-legacy-duress-cleanup',
+      // PROFILE surface (not vault) on purpose: the recovery flow has to
+      // be reachable while the vault is still in the
+      // `integrityMode === 'migration_required'` state, which means
+      // /vault/settings is unreachable. Account/profile settings are the
+      // only place that stays open for an authenticated user with a
+      // locked vault.
+      surface: 'profile',
+      tab: 'data-legal',
+      order: 30,
+      title: 'Tresor-Reparatur',
+      keywords: [
+        'tresor reparatur', 'tresor-reparatur', 'reparatur',
+        'panik-passwort', 'panik passwort', 'panic password',
+        'duress', 'duress decoy', 'koeder', 'köder',
+        'migration erforderlich', 'migration required',
+        'orphan', 'integrity_unknown',
+      ],
+      render: () => <LegacyDuressDecoyCleanupSettings />,
+    },
   ];
 }
 
@@ -118,23 +139,6 @@ export function getCoreVaultSettingsSections(t: TFunction): SettingsSectionDescr
       title: t('settings.data.title', 'Daten'),
       keywords: ['export', 'import', 'backup', 'vault export', 'tresor export', 'tresor import'],
       render: () => <DataSettings />,
-    },
-    {
-      id: 'vault-legacy-duress-cleanup',
-      surface: 'vault',
-      tab: 'data',
-      order: 90,
-      title: 'Tresor-Reparatur',
-      // Recovery surface for the legacy Premium duress decoy bug. Keep both
-      // Umlaut and ASCII variants so search finds it either way.
-      keywords: [
-        'tresor reparatur', 'tresor-reparatur', 'reparatur',
-        'panik-passwort', 'panik passwort', 'panic password',
-        'duress', 'duress decoy', 'koeder', 'köder',
-        'migration erforderlich', 'migration required',
-        'orphan', 'integrity_unknown',
-      ],
-      render: () => <LegacyDuressDecoyCleanupSettings />,
     },
   ];
 }

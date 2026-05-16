@@ -642,12 +642,33 @@ export function useVaultProviderActions(): VaultContextType {
     });
   }, [decryptItem, opLogUiState.localVaultState, state.vaultMigrationStatus, user, verifyIntegrity]);
   const findLegacyDuressDecoyCandidates = useCallback(async () => {
-    if (!user || !state.encryptionKey || state.isLocked) {
+    if (!user) {
       return {
         candidates: [],
         inspectedRowCount: 0,
         authenticatedRowCount: 0,
-        error: new Error('Vault must be unlocked to scan for legacy duress decoys.'),
+        error: new Error('No active user session.'),
+      };
+    }
+
+    // The scan must work in TWO states:
+    //   (a) the vault is fully unlocked (state.encryptionKey set), or
+    //   (b) the migration-gate has blocked normal unlock with
+    //       `integrityMode === 'migration_required'`. In that state
+    //       state.encryptionKey is null and state.isLocked is true, but
+    //       state.vaultMigrationKeyContext.activeKey still holds the
+    //       authenticated vault key from finalizeVaultUnlock. We need (b)
+    //       so users whose migration gate is blocked by legacy duress
+    //       decoys can self-repair from the panel that is shown to them.
+    const vaultKey = state.encryptionKey
+      ?? state.vaultMigrationKeyContext?.activeKey
+      ?? null;
+    if (!vaultKey) {
+      return {
+        candidates: [],
+        inspectedRowCount: 0,
+        authenticatedRowCount: 0,
+        error: new Error('Vault must be unlocked (or in migration-required state) to scan for legacy duress decoys.'),
       };
     }
 
@@ -664,7 +685,7 @@ export function useVaultProviderActions(): VaultContextType {
     try {
       const result = await findLegacyDuressDecoyCandidatesService({
         userId: user.id,
-        vaultKey: state.encryptionKey,
+        vaultKey,
         opLogVerifiedRecordIds: verifiedRecordIds,
       });
       return { ...result, error: null };
@@ -676,7 +697,7 @@ export function useVaultProviderActions(): VaultContextType {
         error: error instanceof Error ? error : new Error('Legacy duress decoy scan failed.'),
       };
     }
-  }, [opLogUiState.localVaultState, state.encryptionKey, state.isLocked, user]);
+  }, [opLogUiState.localVaultState, state.encryptionKey, state.vaultMigrationKeyContext, user]);
   const purgeLegacyDuressDecoys = useCallback(async (
     itemIds: ReadonlyArray<string>,
   ): Promise<{ deletedCount: number; error: Error | null }> => {
