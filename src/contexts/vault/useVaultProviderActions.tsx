@@ -55,6 +55,8 @@ import {
   findLegacyDuressDecoyCandidates as findLegacyDuressDecoyCandidatesService,
   purgeLegacyDuressDecoyItems as purgeLegacyDuressDecoyItemsService,
 } from '@/services/legacyDuressDecoyCleanupService';
+import { synthesizeDuressVaultItems } from '@/services/duressDecoyItemSynthesisService';
+import { getServiceHooks } from '@/extensions/registry';
 
 function clearLegacyIntegrityStateAfterOpLogGate(
   state: ReturnType<typeof useVaultProviderState>,
@@ -120,8 +122,17 @@ export function useVaultProviderActions(): VaultContextType {
     console.debug('[VaultContext] authReady is true, refreshing passkey unlock status...');
 
     try {
+      // `listPasskeys` returns every credential across all RP-IDs so the
+      // settings UI can manage them. For "can the user actually unlock
+      // on this device?" we must filter by both PRF support AND the
+      // current-RP flag — otherwise a PRF passkey registered only on
+      // another platform would falsely enable the unlock-with-passkey
+      // path here.
       const passkeys = await listPasskeys();
-      setHasPasskeyUnlock(passkeys.some((passkey) => passkey.prf_enabled));
+      setHasPasskeyUnlock(passkeys.some((passkey) => (
+        passkey.prf_enabled
+        && passkey.is_available_on_current_rp !== false
+      )));
     } catch {
       setHasPasskeyUnlock(false);
     }
@@ -337,6 +348,16 @@ export function useVaultProviderActions(): VaultContextType {
     state.setEncryptionKey(activeKey);
     state.setIsDuressMode(true);
     state.setIsLocked(false);
+    // Synthesise a fresh batch of in-memory decoy items for this duress
+    // session. The premium hook returns a randomised set on every call so
+    // the panic vault looks slightly different each time, matching the
+    // user's mental model of a "live" decoy vault. Keeping the items in
+    // memory only is a deliberate security property: nothing leaks to
+    // `vault_items`, the snapshot cache or the OpLog runtime, so an
+    // attacker with direct database access cannot tell that the panic
+    // vault was ever opened. See
+    // `src/services/duressDecoyItemSynthesisService.ts`.
+    state.setDuressDecoyItems(synthesizeDuressVaultItems());
     state.setIntegrityVerified(false);
     state.baseIntegrityResultRef.current = null;
     state.setLastIntegrityResult(null);
@@ -374,13 +395,36 @@ export function useVaultProviderActions(): VaultContextType {
       clearCurrentDeviceKey();
     }
 
+    // Reload the duress configuration straight from the profile before
+    // every unlock attempt. `state.duressConfig` is populated by the
+    // lifecycle effect on app boot / online events, but it stays `null`
+    // when duress was activated mid-session (Premium activation, panic
+    // password set in another tab, ...). Without this refresh the very
+    // first unlock after activation would fall through to the normal
+    // master-password path and silently reject the panic password as
+    // invalid. We sync the fresh value back into provider state so any
+    // subsequent code paths see the same view.
+    const hooks = getServiceHooks();
+    let resolvedDuressConfig = state.duressConfig;
+    if (hooks.getDuressConfig) {
+      try {
+        resolvedDuressConfig = await hooks.getDuressConfig(user.id);
+        state.setDuressConfig(resolvedDuressConfig);
+      } catch (error) {
+        console.warn(
+          '[Vault] Failed to refresh duress config before unlock; falling back to cached value.',
+          error,
+        );
+      }
+    }
+
     const unlockResult = await unlockVaultWithMasterPassword({
       userId: user.id,
       masterPassword,
       salt: credentials.salt,
       verificationHash: credentials.verificationHash,
       kdfVersion: credentials.kdfVersion ?? state.kdfVersion,
-      duressConfig: state.duressConfig,
+      duressConfig: resolvedDuressConfig,
       encryptedUserKey: credentials.encryptedUserKey,
       vaultProtectionMode: credentials.vaultProtectionMode,
       options,

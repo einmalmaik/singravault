@@ -8,6 +8,7 @@ import type {
 } from '@/services/vaultIntegrityService';
 import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecoveryService';
 import type { VaultHealthAnalysisItem, VaultItemForIntegrity } from '@/extensions/types';
+import type { VaultItem } from '@/components/vault/vaultItemList/vaultItemModel';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
 import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
 import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
@@ -34,6 +35,13 @@ export interface VaultContextType {
     isLoading: boolean;
     pendingSessionRestore: boolean;
     isDuressMode: boolean;
+    /**
+     * Ephemeral decoy items rendered in the duress vault. `null` outside
+     * of duress mode. Populated by the unlock flow via the premium
+     * `getDuressDecoyItems` hook and lives only in memory; lock or logout
+     * resets it back to `null`.
+     */
+    duressDecoyItems: VaultItem[] | null;
     deviceKeyActive: boolean;
     vaultProtectionMode: VaultProtectionMode;
     setupMasterPassword: (masterPassword: string) => Promise<{ error: Error | null }>;

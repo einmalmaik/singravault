@@ -152,6 +152,28 @@ export interface DuressOnlyUnlockResult {
 }
 
 /**
+ * Plaintext shape of a single ephemeral decoy entry shown in the duress vault.
+ *
+ * Decoys never leave memory: they are synthesised on every duress unlock by
+ * the premium hook (`getDuressDecoyItems`) and rendered directly without
+ * touching the database. That is intentional. Persisting decoys to
+ * `vault_items` (the previous behaviour) leaked their presence into the
+ * legacy table, which broke the OpLog migration gate and was a privacy
+ * regression for users who never even enabled duress mode.
+ *
+ * The shape is deliberately a strict subset of the regular vault item
+ * plaintext so the core list renderer can treat decoys like any other
+ * password entry without a separate code path.
+ */
+export interface DuressDecoyItemPlaintext {
+    title: string;
+    username?: string;
+    password?: string;
+    websiteUrl?: string;
+    notes?: string;
+}
+
+/**
  * Minimal vault item structure needed for integrity checks.
  */
 export interface VaultItemForIntegrity {
@@ -251,6 +273,22 @@ export interface ServiceHooks {
     attemptDuressUnlockOnly?: (
         input: DuressOnlyUnlockInput,
     ) => Promise<DuressOnlyUnlockResult>;
+
+    /**
+     * Returns a fresh batch of ephemeral decoy entries for the duress vault.
+     *
+     * Implementations MUST:
+     *   - return a new randomised set on every call (the user expectation is
+     *     "the panic vault looks slightly different every time")
+     *   - return only plaintext (the core never encrypts or persists these)
+     *   - never read or write `vault_items` / OpLog state
+     *
+     * The result is consumed exclusively by `synthesizeDuressVaultItems` in
+     * the core, which wraps each entry into an in-memory `VaultItem`.
+     * Returning an empty array is allowed and simply renders an empty
+     * decoy vault — the core never falls back to legacy decoy rows.
+     */
+    getDuressDecoyItems?: () => DuressDecoyItemPlaintext[];
 
     /**
      * Mark a vault item as a decoy item (duress mode).

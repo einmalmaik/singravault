@@ -625,6 +625,34 @@ export async function authenticatePasskey(
 // ============ Credential Management ============
 
 /**
+ * Maps a stored RP-ID to a user-facing label.
+ *
+ * Hard-coded names mirror the first-party origins the WebAuthn edge
+ * function whitelists — keep these aligned with `_shared/desktopOrigins.ts`
+ * so the settings UI never invents labels for unknown RP-IDs. For unknown
+ * RP-IDs we just show the raw hostname so users can still recognise their
+ * own passkey. `null` (legacy rows) is treated as the production web
+ * surface, matching the server-side `isCredentialAvailableForRp` policy.
+ */
+export function mapRpIdToFriendlyLabel(rpId: string | null | undefined): string {
+    if (!rpId) {
+        return 'Web (Produktion)';
+    }
+
+    if (rpId === 'singravault.mauntingstudios.de') {
+        return 'Web (Produktion)';
+    }
+    if (rpId === 'tauri.localhost' || rpId === 'asset.localhost' || rpId === 'ipc.localhost') {
+        return 'Desktop (Tauri)';
+    }
+    if (rpId === 'localhost' || rpId === '127.0.0.1') {
+        return 'Lokale Entwicklung';
+    }
+
+    return rpId;
+}
+
+/**
  * Lists all registered passkeys for the current user.
  *
  * @returns Array of credential summaries
@@ -881,7 +909,18 @@ export interface PasskeyAuthenticationResult {
 }
 
 /**
- * Passkey credential summary (from server)
+ * Passkey credential summary (from server).
+ *
+ * The list endpoint returns ALL of the user's credentials across every
+ * RP-ID/origin. `is_available_on_current_rp` flags which entries can
+ * actually be used for unlock on this device — settings UI groups
+ * credentials by this flag so users can audit and remove passkeys
+ * registered on other devices/platforms. Authentication code paths
+ * remain scoped to the current RP-ID server-side.
+ *
+ * `rp_id` is `null` for legacy rows registered before RP scoping was
+ * introduced; the server treats those as belonging to the production
+ * web surface (see `isCredentialAvailableForRp` in webauthn/index.ts).
  */
 export interface PasskeyCredential {
     id: string;
@@ -890,4 +929,6 @@ export interface PasskeyCredential {
     prf_enabled: boolean;
     created_at: string;
     last_used_at: string | null;
+    rp_id?: string | null;
+    is_available_on_current_rp?: boolean;
 }

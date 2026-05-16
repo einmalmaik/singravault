@@ -86,6 +86,7 @@ export function VaultItemList({
   const {
     decryptItem,
     decryptItemForLegacyMigration,
+    duressDecoyItems,
     encryptItem,
     isDuressMode,
     lastIntegrityResult,
@@ -116,6 +117,7 @@ export function VaultItemList({
   } = useVaultItemListData({
     userId,
     isDuressMode,
+    duressDecoyItems,
     useOpLogVerifiedRuntime,
     opLogLocalVaultState,
     refreshKey,

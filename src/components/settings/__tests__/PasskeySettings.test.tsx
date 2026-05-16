@@ -49,6 +49,9 @@ vi.mock("@/services/passkeyService", () => ({
   listPasskeys: (...args: unknown[]) => mockListPasskeys(...args),
   deletePasskey: (...args: unknown[]) => mockDeletePasskey(...args),
   getPasskeyClientSupport: (...args: unknown[]) => mockGetPasskeyClientSupport(...args),
+  // The component renders the friendly RP-ID label in every passkey row;
+  // the mock returns the raw RP-ID so assertions stay deterministic.
+  mapRpIdToFriendlyLabel: (rpId: string | null | undefined) => rpId ?? 'Web (Produktion)',
   isWebAuthnAvailable: vi.fn().mockReturnValue(true),
 }));
 
