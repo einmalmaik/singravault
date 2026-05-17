@@ -33,7 +33,7 @@ export interface VaultProviderActionBindings {
   reportUnreadableItems: (items: QuarantinedVaultItem[]) => void;
   enterSafeMode: () => Promise<{ error: Error | null }>;
   exitSafeMode: () => void;
-  resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+  resetVaultAfterIntegrityFailure: (reauthProofId: string) => Promise<{ error: Error | null }>;
   getVaultHealthAnalysisItems: VaultContextType['getVaultHealthAnalysisItems'];
   findLegacyDuressDecoyCandidates: VaultContextType['findLegacyDuressDecoyCandidates'];
   purgeLegacyDuressDecoys: VaultContextType['purgeLegacyDuressDecoys'];

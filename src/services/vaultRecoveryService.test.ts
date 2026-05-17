@@ -64,10 +64,10 @@ describe('vaultRecoveryService', () => {
       },
     );
 
-    await resetUserVaultState('user-1');
+    await resetUserVaultState('user-1', 'proof-abc');
 
     expect(supabaseState.rpcCalls).toEqual([
-      { name: 'begin_vault_reset_recovery', args: undefined },
+      { name: 'begin_vault_reset_recovery', args: { p_reauth_proof_id: 'proof-abc' } },
       {
         name: 'reset_user_vault_state',
         args: { p_recovery_challenge_id: 'challenge-1' },
@@ -78,22 +78,22 @@ describe('vaultRecoveryService', () => {
     expect(dependencyMocks.deleteDeviceKey).toHaveBeenCalledWith('user-1');
   });
 
-  it('rejects stale sessions when the server requires fresh reauthentication', async () => {
+  it('rejects when the server rejects the reauth proof', async () => {
     supabaseState.rpcResults.push({
       data: null,
-      error: { message: 'REAUTH_REQUIRED' },
+      error: { message: 'REAUTH_PROOF_REQUIRED' },
     });
 
-    await expect(resetUserVaultState('user-1')).rejects.toEqual(
+    await expect(resetUserVaultState('user-1', 'bad-proof')).rejects.toEqual(
       expect.objectContaining<VaultRecoveryResetError>({
         name: 'VaultRecoveryResetError',
-        code: 'REAUTH_REQUIRED',
-        message: 'REAUTH_REQUIRED',
+        code: 'REAUTH_PROOF_REQUIRED',
+        message: 'REAUTH_PROOF_REQUIRED',
       }),
     );
 
     expect(supabaseState.rpcCalls).toEqual([
-      { name: 'begin_vault_reset_recovery', args: undefined },
+      { name: 'begin_vault_reset_recovery', args: { p_reauth_proof_id: 'bad-proof' } },
     ]);
     expect(dependencyMocks.clearOfflineVaultData).not.toHaveBeenCalled();
     expect(dependencyMocks.removeIntegrityBaselineEnvelope).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe('vaultRecoveryService', () => {
       error: null,
     });
 
-    await expect(resetUserVaultState('user-1')).rejects.toEqual(
+    await expect(resetUserVaultState('user-1', 'proof-abc')).rejects.toEqual(
       expect.objectContaining<VaultRecoveryResetError>({
         name: 'VaultRecoveryResetError',
         code: 'RECOVERY_CHALLENGE_REQUIRED',
@@ -115,7 +115,7 @@ describe('vaultRecoveryService', () => {
     );
 
     expect(supabaseState.rpcCalls).toEqual([
-      { name: 'begin_vault_reset_recovery', args: undefined },
+      { name: 'begin_vault_reset_recovery', args: { p_reauth_proof_id: 'proof-abc' } },
     ]);
     expect(dependencyMocks.clearOfflineVaultData).not.toHaveBeenCalled();
     expect(dependencyMocks.removeIntegrityBaselineEnvelope).not.toHaveBeenCalled();
@@ -137,7 +137,7 @@ describe('vaultRecoveryService', () => {
       },
     );
 
-    await expect(resetUserVaultState('user-1')).rejects.toEqual(
+    await expect(resetUserVaultState('user-1', 'proof-abc')).rejects.toEqual(
       expect.objectContaining<VaultRecoveryResetError>({
         name: 'VaultRecoveryResetError',
         code: 'RECOVERY_CHALLENGE_REQUIRED',
@@ -146,7 +146,7 @@ describe('vaultRecoveryService', () => {
     );
 
     expect(supabaseState.rpcCalls).toEqual([
-      { name: 'begin_vault_reset_recovery', args: undefined },
+      { name: 'begin_vault_reset_recovery', args: { p_reauth_proof_id: 'proof-abc' } },
       {
         name: 'reset_user_vault_state',
         args: { p_recovery_challenge_id: 'challenge-1' },

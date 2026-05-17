@@ -175,6 +175,7 @@ Deno.serve(async (req) => {
 
         const { data, error } = await userClient.rpc("delete_my_account", {
             p_two_factor_challenge_id: payload.twoFactorChallengeId ?? null,
+            p_sensitive_action_challenge_id: payload.sensitiveActionChallengeId,
         });
         if (error) {
             await recordAuthRateLimitFailure(rateLimitState);
@@ -210,13 +211,17 @@ function getBearerToken(req: Request): string | null {
     return match?.[1]?.trim() || null;
 }
 
-async function parsePayload(req: Request): Promise<{ twoFactorChallengeId: string | null }> {
+async function parsePayload(req: Request): Promise<{ twoFactorChallengeId: string | null; sensitiveActionChallengeId: string | null }> {
     const body = await req.json().catch(() => ({}));
     const twoFactorChallengeId = typeof body?.twoFactorChallengeId === "string"
         && body.twoFactorChallengeId.trim().length > 0
         ? body.twoFactorChallengeId.trim()
         : null;
-    return { twoFactorChallengeId };
+    const sensitiveActionChallengeId = typeof body?.sensitiveActionChallengeId === "string"
+        && body.sensitiveActionChallengeId.trim().length > 0
+        ? body.sensitiveActionChallengeId.trim()
+        : null;
+    return { twoFactorChallengeId, sensitiveActionChallengeId };
 }
 
 async function removeUserAttachmentObjects(userId: string): Promise<number> {
@@ -282,7 +287,10 @@ function isStorageFolder(entry: { id?: string | null; metadata?: unknown }): boo
 
 function mapAccountDeleteError(message: string): string {
     if (message.includes("AUTH_REQUIRED")) return "AUTH_REQUIRED";
+    if (message.includes("REAUTH_PROOF_REQUIRED")) return "REAUTH_REQUIRED";
     if (message.includes("REAUTH_REQUIRED")) return "REAUTH_REQUIRED";
+    if (message.includes("ACCOUNT_DELETE_CHALLENGE_REQUIRED")) return "REAUTH_REQUIRED";
+    if (message.includes("RECOVERY_CHALLENGE_REQUIRED")) return "REAUTH_REQUIRED";
     if (message.includes("ACCOUNT_DELETE_2FA_REQUIRED")) return "ACCOUNT_DELETE_2FA_REQUIRED";
     if (message.includes("ACCOUNT_DELETE_INCOMPLETE")) return "ACCOUNT_DELETE_INCOMPLETE";
     if (message.includes("AUTH_USER_DELETE_FAILED")) return "ACCOUNT_DELETE_FAILED";

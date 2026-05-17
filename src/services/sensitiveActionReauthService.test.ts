@@ -58,7 +58,6 @@ import {
   getSensitiveActionReauthMethod,
   isSensitiveActionSessionFresh,
   reauthenticateWithAccountPassword,
-  reauthenticateWithSessionRefresh,
 } from '@/services/sensitiveActionReauthService';
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -131,89 +130,9 @@ describe('sensitiveActionReauthService', () => {
     });
   });
 
-  it('uses password reauth for email provider accounts', async () => {
-    mockGetUser.mockResolvedValue({
-      data: {
-        user: {
-          email: 'user@example.com',
-          app_metadata: {
-            provider: 'email',
-            providers: ['email'],
-          },
-        },
-      },
-      error: null,
-    });
-
+  it('always returns password reauth method regardless of auth provider', async () => {
     const method = await getSensitiveActionReauthMethod();
-
     expect(method).toBe('password');
-  });
-
-  it('uses confirmation reauth for social-only accounts', async () => {
-    mockGetUser.mockResolvedValue({
-      data: {
-        user: {
-          email: 'user@example.com',
-          app_metadata: {
-            provider: 'google',
-            providers: ['google'],
-          },
-        },
-      },
-      error: null,
-    });
-
-    const method = await getSensitiveActionReauthMethod();
-
-    expect(method).toBe('confirmation');
-  });
-
-  it('refreshes session for non-password reauth fallback', async () => {
-    const now = Math.floor(Date.now() / 1000);
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: createJwtWithIssuedAt(now - 100),
-          refresh_token: 'refresh-token',
-        },
-      },
-      error: null,
-    });
-    mockRefreshSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: createJwtWithIssuedAt(now),
-          refresh_token: 'new-refresh-token',
-        },
-      },
-      error: null,
-    });
-
-    const result = await reauthenticateWithSessionRefresh();
-
-    expect(result).toEqual({ success: true });
-    expect(mockRefreshSession).toHaveBeenCalledWith({
-      refresh_token: 'refresh-token',
-    });
-  });
-
-  it('returns auth required when no refresh token is available', async () => {
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: createJwtWithIssuedAt(Math.floor(Date.now() / 1000)),
-        },
-      },
-      error: null,
-    });
-
-    const result = await reauthenticateWithSessionRefresh();
-
-    expect(result).toEqual({
-      success: false,
-      error: 'AUTH_REQUIRED',
-    });
   });
 
   it('maps 401 reauth response to invalid credentials', async () => {
@@ -255,7 +174,40 @@ describe('sensitiveActionReauthService', () => {
     expect(mockSetSession).not.toHaveBeenCalled();
   });
 
-  it('sets session when reauthentication succeeds', async () => {
+  it('sets session and returns reauthProofId when reauthentication succeeds', async () => {
+    mockGetUser.mockResolvedValue({
+      data: { user: { email: 'user@example.com' } },
+      error: null,
+    });
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        loginResponse: 'login-response',
+        loginId: 'login-id',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        session: {
+          access_token: 'new-access-token',
+          refresh_token: 'new-refresh-token',
+          user: { id: 'user-id' },
+        },
+        opaqueSessionBinding: {
+          version: 'opaque-session-binding-v1',
+          userId: 'user-id',
+          proof: 'proof',
+        },
+        reauthProofId: 'proof-uuid-123',
+      }), { status: 200 }));
+
+    const result = await reauthenticateWithAccountPassword('valid-pass');
+
+    expect(result).toEqual({ success: true, reauthProofId: 'proof-uuid-123' });
+    expect(mockSetSession).toHaveBeenCalledWith({
+      access_token: 'new-access-token',
+      refresh_token: 'new-refresh-token',
+    });
+  });
+
+  it('fails when login-finish response has no reauthProofId', async () => {
     mockGetUser.mockResolvedValue({
       data: { user: { email: 'user@example.com' } },
       error: null,
@@ -280,10 +232,6 @@ describe('sensitiveActionReauthService', () => {
 
     const result = await reauthenticateWithAccountPassword('valid-pass');
 
-    expect(result).toEqual({ success: true });
-    expect(mockSetSession).toHaveBeenCalledWith({
-      access_token: 'new-access-token',
-      refresh_token: 'new-refresh-token',
-    });
+    expect(result).toEqual({ success: false, error: 'REAUTH_FAILED' });
   });
 });

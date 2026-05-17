@@ -193,10 +193,13 @@ describe('Vault Integrity V2 runtime bridge', () => {
     });
   });
 
-  it('bootstraps an empty Manifest V2 for a fresh verified remote vault', async () => {
+  it('fails closed with integrity_unknown when no server manifest and no local anchor exist (empty remote snapshot)', async () => {
+    // Previously this path bootstrapped a new manifest from the empty remote snapshot.
+    // That was unsafe: a compromised server returning an empty vault would be silently
+    // accepted as a trusted baseline.  The correct behavior is to fail closed so that
+    // the manifest is only established on the first authenticated client-side write.
     const key = await testKey();
     manifestStore.loadServerManifestEnvelopeV2.mockResolvedValue(null);
-    manifestStore.persistServerManifestEnvelopeV2.mockResolvedValue(undefined);
 
     await expect(evaluateRuntimeVaultIntegrityV2({
       userId: USER_ID,
@@ -205,23 +208,43 @@ describe('Vault Integrity V2 runtime bridge', () => {
       evaluationSource: 'unlock',
       snapshotSource: 'remote',
     })).resolves.toMatchObject({
-      mode: 'healthy',
+      mode: 'integrity_unknown',
+      nonTamperReason: 'manifest_snapshot_conflict',
       itemCount: 0,
       categoryCount: 0,
       quarantinedItems: [],
     });
 
-    expect(manifestStore.persistServerManifestEnvelopeV2).toHaveBeenCalledWith(expect.objectContaining({
+    expect(manifestStore.persistServerManifestEnvelopeV2).not.toHaveBeenCalled();
+    await expect(loadManifestHighWaterMark(USER_ID, VAULT_ID)).resolves.toBeNull();
+  });
+
+  it('fails closed with integrity_unknown when no server manifest, no local anchor, but a trusted recovery snapshot exists', async () => {
+    // The trusted recovery snapshot proves prior authenticated state.  Even without a
+    // local high-water mark an attacker who wipes the server must not be able to reset
+    // the trust chain via the bootstrap path.
+    const key = await testKey();
+    manifestStore.loadServerManifestEnvelopeV2.mockResolvedValue(null);
+
+    await expect(evaluateRuntimeVaultIntegrityV2({
       userId: USER_ID,
-      vaultId: VAULT_ID,
-      previousManifestHash: null,
-      expectedPreviousManifestRevision: null,
-      expectedPreviousManifestHash: null,
-    }));
-    await expect(loadManifestHighWaterMark(USER_ID, VAULT_ID)).resolves.toMatchObject({
-      manifestRevision: 1,
-      keyId: KEY_ID,
+      snapshot: freshEmptyRemoteSnapshot(),
+      vaultKey: key,
+      evaluationSource: 'unlock',
+      snapshotSource: 'remote',
+      trustedRecoveryState: {
+        trustedRecoveryAvailable: true,
+        trustedSnapshotItemsById: {},
+        trustedSnapshot: freshEmptyRemoteSnapshot(),
+      },
+    })).resolves.toMatchObject({
+      mode: 'integrity_unknown',
+      nonTamperReason: 'manifest_snapshot_conflict',
+      quarantinedItems: [],
     });
+
+    expect(manifestStore.persistServerManifestEnvelopeV2).not.toHaveBeenCalled();
+    await expect(loadManifestHighWaterMark(USER_ID, VAULT_ID)).resolves.toBeNull();
   });
 
   it('does not bootstrap a missing Manifest V2 over an existing local manifest anchor', async () => {

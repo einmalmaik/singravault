@@ -1,0 +1,55 @@
+[advisories]
+ignore = [
+    # rand@0.7.3 — GHSA-cq8v-f236-94qc, RUSTSEC-2026-0097
+    # rand@0.7.3 is pulled in transitively by phf_generator@0.8.0, which is a
+    # build-time code-generation dependency of the selectors@0.29.x crate that
+    # originates in WebKitGTK's CSS engine (via wry/tauri-runtime-wry on Linux).
+    # The vulnerability is in a build-time proc, not in any runtime binary code.
+    # Updating phf@0.8.x is blocked because selectors@0.29.x pins phf@0.8.x in
+    # its semver range; resolving it requires an upstream wry/webkit update.
+    { id = "GHSA-cq8v-f236-94qc", reason = "Build-time only via phf_generator@0.8.0 <- phf_codegen@0.8.0 <- selectors@0.29.x (WebKitGTK CSS engine, transitive from wry). No runtime impact; blocked on upstream wry/WebKitGTK upgrade." },
+    { id = "RUSTSEC-2026-0097",   reason = "Build-time only via phf_generator@0.8.0 <- phf_codegen@0.8.0 <- selectors@0.29.x (WebKitGTK CSS engine, transitive from wry). No runtime impact; blocked on upstream wry/WebKitGTK upgrade." },
+
+    # proc-macro-error@1.0.4 — RUSTSEC-2024-0370
+    # Unmaintained proc-macro helper used at compile time only (by gtk3-macros).
+    # No security impact at runtime; no maintained replacement exists for the
+    # gtk@0.18.x proc-macros that tauri-runtime-wry depends on for Linux builds.
+    { id = "RUSTSEC-2024-0370", reason = "Compile-time only; transitive dep from gtk3-macros via tauri-runtime-wry. No maintained replacement for gtk@0.18.x proc-macros." },
+
+    # gtk family (0.18.x) and supporting crates — RUSTSEC-2024-0411 through -0420, -0429
+    # The gtk3/gtk-rs 0.18.x crate family is unmaintained. These crates are pulled in
+    # by tauri-runtime-wry on Linux to provide GTK3 window management. They cannot be
+    # replaced without upgrading the entire wry/tauri window stack to a newer GTK
+    # version, which is an upstream tauri concern. The application does not expose
+    # these APIs to untrusted input; all vulnerable surface is behind the Tauri IPC
+    # boundary. Track resolution via https://github.com/tauri-apps/wry (GTK4 migration).
+    { id = "RUSTSEC-2024-0411", reason = "Unmaintained gdkwayland-sys; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0412", reason = "Unmaintained gdk; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0413", reason = "Unmaintained atk; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0414", reason = "Unmaintained gdkx11-sys; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0415", reason = "Unmaintained gtk; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0416", reason = "Unmaintained atk-sys; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0417", reason = "Unmaintained gdkx11; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0418", reason = "Unmaintained gdk-sys; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0419", reason = "Unmaintained gtk3-macros; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0420", reason = "Unmaintained gtk-sys; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "RUSTSEC-2024-0429", reason = "Unmaintained glib; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+    { id = "GHSA-wrw7-89jp-8q8g", reason = "Unmaintained glib@0.18.5; transitive from tauri-runtime-wry Linux GTK3 backend. No drop-in replacement; blocked on upstream wry GTK4 migration." },
+
+    # fxhash@0.2.1 — RUSTSEC-2025-0057
+    # Unmaintained hash utility crate used internally by the gtk/selectors crate
+    # family at compile time and in the CSS engine. No replacement available for
+    # this transitive dependency chain without upstream wry/WebKitGTK changes.
+    { id = "RUSTSEC-2025-0057", reason = "Unmaintained fxhash; transitive dep from gtk/selectors crate family via tauri-runtime-wry. No replacement available without upstream changes." },
+
+    # unic-* crates@0.9.0 — RUSTSEC-2025-0075, -0080, -0081, -0098, -0100
+    # The unic Unicode utility crates are unmaintained. They are pulled in
+    # transitively by the JavaScript engine embedded in wry (WebKitGTK on Linux).
+    # No code in this project depends on them directly; resolution requires an
+    # upstream wry/WebKitGTK JavaScript engine update.
+    { id = "RUSTSEC-2025-0075", reason = "Unmaintained unic-char-range; transitive dep from wry/WebKitGTK JS engine. No upgrade path without upstream wry/WebKitGTK update." },
+    { id = "RUSTSEC-2025-0080", reason = "Unmaintained unic-common; transitive dep from wry/WebKitGTK JS engine. No upgrade path without upstream wry/WebKitGTK update." },
+    { id = "RUSTSEC-2025-0081", reason = "Unmaintained unic-char-property; transitive dep from wry/WebKitGTK JS engine. No upgrade path without upstream wry/WebKitGTK update." },
+    { id = "RUSTSEC-2025-0098", reason = "Unmaintained unic-ucd-version; transitive dep from wry/WebKitGTK JS engine. No upgrade path without upstream wry/WebKitGTK update." },
+    { id = "RUSTSEC-2025-0100", reason = "Unmaintained unic-ucd-ident; transitive dep from wry/WebKitGTK JS engine. No upgrade path without upstream wry/WebKitGTK update." },
+]

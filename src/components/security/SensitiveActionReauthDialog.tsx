@@ -23,18 +23,19 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import {
-    getSensitiveActionReauthMethod,
     reauthenticateWithAccountPassword,
-    reauthenticateWithSessionRefresh,
-    type SensitiveActionReauthMethod,
 } from '@/services/sensitiveActionReauthService';
 
 export interface SensitiveActionReauthDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    onSuccess: () => Promise<boolean | void> | boolean | void;
+    /**
+     * Called after successful OPAQUE verification. Receives the server-issued
+     * reauth proof id that must be forwarded to any sensitive-action challenge
+     * RPC. Return false to keep the dialog open.
+     */
+    onSuccess: (reauthProofId: string) => Promise<boolean | void> | boolean | void;
     description?: string;
-    confirmationKeyword?: string;
 }
 
 export function SensitiveActionReauthDialog({
@@ -42,17 +43,11 @@ export function SensitiveActionReauthDialog({
     onOpenChange,
     onSuccess,
     description,
-    confirmationKeyword,
 }: SensitiveActionReauthDialogProps) {
     const { t } = useTranslation();
     const [password, setPassword] = useState('');
-    const [confirmationInput, setConfirmationInput] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [isResolvingMethod, setIsResolvingMethod] = useState(false);
-    const [reauthMethod, setReauthMethod] = useState<SensitiveActionReauthMethod>('password');
     const [errorCode, setErrorCode] = useState<string | null>(null);
-    const requiredKeyword = (confirmationKeyword || t('reauth.confirmationKeywordDefault')).trim();
-    const normalizedRequiredKeyword = requiredKeyword.toUpperCase();
 
     useEffect(() => {
         if (open) {
@@ -60,41 +55,8 @@ export function SensitiveActionReauthDialog({
         }
 
         setPassword('');
-        setConfirmationInput('');
         setIsSubmitting(false);
-        setIsResolvingMethod(false);
-        setReauthMethod('password');
         setErrorCode(null);
-    }, [open]);
-
-    useEffect(() => {
-        if (!open) {
-            return;
-        }
-
-        let active = true;
-        setIsResolvingMethod(true);
-
-        getSensitiveActionReauthMethod()
-            .then((method) => {
-                if (active) {
-                    setReauthMethod(method);
-                }
-            })
-            .catch(() => {
-                if (active) {
-                    setReauthMethod('password');
-                }
-            })
-            .finally(() => {
-                if (active) {
-                    setIsResolvingMethod(false);
-                }
-            });
-
-        return () => {
-            active = false;
-        };
     }, [open]);
 
     const resolveErrorMessage = () => {
@@ -110,10 +72,6 @@ export function SensitiveActionReauthDialog({
             return t('reauth.authRequired');
         }
 
-        if (errorCode === 'CONFIRMATION_MISMATCH') {
-            return t('reauth.confirmationMismatch', { keyword: requiredKeyword });
-        }
-
         return t('reauth.failed');
     };
 
@@ -126,31 +84,20 @@ export function SensitiveActionReauthDialog({
         setErrorCode(null);
 
         try {
-            const result = reauthMethod === 'password'
-                ? await reauthenticateWithAccountPassword(password)
-                : await handleConfirmationReauth();
+            const result = await reauthenticateWithAccountPassword(password);
 
             if (!result.success) {
                 setErrorCode(result.error || 'REAUTH_FAILED');
                 return;
             }
 
-            const shouldClose = await onSuccess();
+            const shouldClose = await onSuccess(result.reauthProofId!);
             if (shouldClose !== false) {
                 onOpenChange(false);
             }
         } finally {
             setIsSubmitting(false);
         }
-    };
-
-    const handleConfirmationReauth = async () => {
-        const normalizedConfirmationInput = confirmationInput.trim().toUpperCase();
-        if (normalizedConfirmationInput !== normalizedRequiredKeyword) {
-            return { success: false, error: 'CONFIRMATION_MISMATCH' };
-        }
-
-        return reauthenticateWithSessionRefresh();
     };
 
     return (
@@ -164,45 +111,16 @@ export function SensitiveActionReauthDialog({
                 </DialogHeader>
 
                 <div className="space-y-2 py-2">
-                    {isResolvingMethod && (
-                        <p className="text-sm text-muted-foreground">
-                            {t('common.loading')}
-                        </p>
-                    )}
-
-                    {!isResolvingMethod && reauthMethod === 'password' && (
-                        <>
-                            <Label htmlFor="sensitive-reauth-password">{t('reauth.passwordLabel')}</Label>
-                            <Input
-                                id="sensitive-reauth-password"
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                placeholder={t('reauth.passwordPlaceholder')}
-                                disabled={isSubmitting}
-                                autoComplete="current-password"
-                            />
-                        </>
-                    )}
-
-                    {!isResolvingMethod && reauthMethod === 'confirmation' && (
-                        <>
-                            <Label htmlFor="sensitive-reauth-confirmation">
-                                {t('reauth.confirmationLabel', { keyword: requiredKeyword })}
-                            </Label>
-                            <Input
-                                id="sensitive-reauth-confirmation"
-                                value={confirmationInput}
-                                onChange={(e) => setConfirmationInput(e.target.value)}
-                                placeholder={t('reauth.confirmationPlaceholder', { keyword: requiredKeyword })}
-                                disabled={isSubmitting}
-                                autoComplete="off"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                {t('reauth.confirmationHint', { keyword: requiredKeyword })}
-                            </p>
-                        </>
-                    )}
+                    <Label htmlFor="sensitive-reauth-password">{t('reauth.passwordLabel')}</Label>
+                    <Input
+                        id="sensitive-reauth-password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder={t('reauth.passwordPlaceholder')}
+                        disabled={isSubmitting}
+                        autoComplete="current-password"
+                    />
 
                     {errorCode && (
                         <p className="text-sm text-destructive">{resolveErrorMessage()}</p>
@@ -219,13 +137,7 @@ export function SensitiveActionReauthDialog({
                     </Button>
                     <Button
                         onClick={handleConfirm}
-                        disabled={
-                            isSubmitting
-                            || isResolvingMethod
-                            || (reauthMethod === 'password'
-                                ? !password.trim()
-                                : !confirmationInput.trim())
-                        }
+                        disabled={isSubmitting || !password.trim()}
                     >
                         {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         {t('reauth.confirm')}

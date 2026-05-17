@@ -39,7 +39,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { deleteDeviceKey } from '@/services/deviceKeyService';
 import { removeIntegrityBaselineEnvelope } from '@/services/integrityBaselineStore';
-import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthService';
+
 import { clearOfflineVaultData } from '@/services/offlineVaultService';
 import { saveExportFile } from '@/services/exportFileService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
@@ -138,7 +138,7 @@ export function AccountSettings() {
         changeLanguagePreference(value);
     };
 
-    const executeDeleteAccount = async (): Promise<boolean> => {
+    const executeDeleteAccount = async (reauthProofId: string): Promise<boolean> => {
         setIsDeleting(true);
         try {
             if (!user) {
@@ -163,8 +163,18 @@ export function AccountSettings() {
                 twoFactorChallengeId = verification.challengeId;
             }
 
+            const { data: challengeData, error: challengeError } = await supabase.rpc(
+                'begin_account_delete_challenge',
+                { p_reauth_proof_id: reauthProofId },
+            );
+            if (challengeError || !challengeData?.challenge_id) {
+                throw challengeError ?? new Error('ACCOUNT_DELETE_CHALLENGE_REQUIRED');
+            }
+            const sensitiveActionChallengeId = challengeData.challenge_id as string;
+
             const data = await invokeAuthedFunction<{ deleted?: boolean }>('account-delete', {
                 twoFactorChallengeId,
+                sensitiveActionChallengeId,
             });
             if (!data || data.deleted !== true) {
                 throw new Error('Account deletion verification failed');
@@ -216,14 +226,11 @@ export function AccountSettings() {
     const handleDeleteAccount = async () => {
         if (deleteConfirmation.trim().toUpperCase() !== 'DELETE' || isDeleting) return;
 
-        const hasFreshSession = await isSensitiveActionSessionFresh(300);
-        if (!hasFreshSession) {
-            setShowDeleteDialog(false);
-            setShowReauthDialog(true);
-            return;
-        }
-
-        await executeDeleteAccount();
+        // Always require explicit OPAQUE credential verification before a
+        // destructive account delete. JWT iat freshness is not sufficient because
+        // a silent session refresh mints a fresh iat without any credential proof.
+        setShowDeleteDialog(false);
+        setShowReauthDialog(true);
     };
 
     const handleExportBeforeDelete = async () => {
@@ -481,8 +488,7 @@ export function AccountSettings() {
                 open={showReauthDialog}
                 onOpenChange={setShowReauthDialog}
                 description={t('reauth.accountDeleteContext')}
-                confirmationKeyword="DELETE"
-                onSuccess={executeDeleteAccount}
+                onSuccess={(reauthProofId) => executeDeleteAccount(reauthProofId)}
             />
         </>
     );

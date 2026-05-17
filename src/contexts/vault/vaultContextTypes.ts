@@ -94,7 +94,7 @@ export interface VaultContextType {
     trustedRecoveryAvailable: boolean;
     enterSafeMode: () => Promise<{ error: Error | null }>;
     exitSafeMode: () => void;
-    resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+    resetVaultAfterIntegrityFailure: (reauthProofId: string) => Promise<{ error: Error | null }>;
     getVaultHealthAnalysisItems: () => Promise<VaultHealthAnalysisItem[]>;
 
     // Recovery for the legacy Premium duress decoy bug: scans `vault_items`

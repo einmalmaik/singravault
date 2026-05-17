@@ -421,10 +421,18 @@ async function handleLoginFinish(
     }
 
     const opaqueSessionBinding = await createSessionBinding(sessionKey, session);
+
+    // Issue a short-lived reauth proof that records this successful OPAQUE
+    // credential verification server-side. The client passes this proof when
+    // requesting a sensitive-action challenge, ensuring that challenge issuance
+    // is gated on a real credential proof rather than JWT iat freshness.
+    const reauthProofId = await issueReauthProof(userId);
+
     return new Response(JSON.stringify({
         success: true,
         session,
         opaqueSessionBinding,
+        reauthProofId,
     }), { status: 200, headers });
 }
 
@@ -506,6 +514,22 @@ async function issueSession(
     }
 
     return sessionData.session as unknown as Record<string, unknown>;
+}
+
+async function issueReauthProof(userId: string): Promise<string | null> {
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const { data, error } = await supabaseAdmin
+        .from("reauth_proofs")
+        .insert({ user_id: userId, expires_at: expiresAt })
+        .select("id")
+        .single();
+
+    if (error || !data?.id) {
+        console.error("Failed to issue reauth proof:", error?.code ?? "no data");
+        return null;
+    }
+
+    return data.id as string;
 }
 
 async function createSessionBinding(
