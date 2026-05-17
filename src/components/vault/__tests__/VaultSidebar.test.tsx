@@ -171,6 +171,7 @@ describe('VaultSidebar', () => {
 
   afterEach(() => {
     cleanup();
+    mockVaultContext.isDuressMode = false;
   });
 
   it('moves a dropped item without selecting the target category', async () => {
@@ -318,4 +319,27 @@ describe('VaultSidebar', () => {
     expect(screen.queryByText('Tresor-Status')).not.toBeInTheDocument();
     expect(mockAnalyzeVaultHealthSummary).not.toHaveBeenCalled();
   });
+
+  it('does not run vault health analysis in duress mode', async () => {
+    mockVaultContext.isDuressMode = true;
+
+    render(
+      <MemoryRouter initialEntries={['/vault']}>
+        <TooltipProvider>
+          <VaultSidebar
+            selectedCategory={null}
+            onSelectCategory={vi.fn()}
+          />
+        </TooltipProvider>
+      </MemoryRouter>,
+    );
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+
+    expect(mockVaultContext.getVaultHealthAnalysisItems).not.toHaveBeenCalled();
+    expect(mockAnalyzeVaultHealthSummary).not.toHaveBeenCalled();
+  });
+
 });

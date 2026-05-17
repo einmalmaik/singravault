@@ -112,7 +112,7 @@ export function VaultSidebar({
   });
 
   const { summary: vaultHealthSummary, loading: vaultHealthLoading } = useVaultSidebarHealth({
-    enabled: vaultHealthAccess.allowed,
+    enabled: vaultHealthAccess.allowed && !isDuressMode,
     userId,
     lastIntegrityResult,
     vaultDataVersion,

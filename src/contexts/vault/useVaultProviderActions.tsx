@@ -682,7 +682,7 @@ export function useVaultProviderActions(): VaultContextType {
   } = useVaultCryptoActions(state, user);
   const opLogUiState = useVaultOpLogUiState(state, user?.id ?? null);
   const getVaultHealthAnalysisItems = useCallback(() => {
-    if (!user) {
+    if (!user || state.isDuressMode) {
       return Promise.resolve([]);
     }
 
@@ -693,7 +693,7 @@ export function useVaultProviderActions(): VaultContextType {
       decryptItem,
       verifyIntegrity,
     });
-  }, [decryptItem, opLogUiState.localVaultState, state.vaultMigrationStatus, user, verifyIntegrity]);
+  }, [decryptItem, opLogUiState.localVaultState, state.isDuressMode, state.vaultMigrationStatus, user, verifyIntegrity]);
   const findLegacyDuressDecoyCandidates = useCallback(async () => {
     if (!user) {
       return {
