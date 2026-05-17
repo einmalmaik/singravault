@@ -75,7 +75,9 @@ function buildContentSecurityPolicy(mode: string, delivery: "header" | "meta" = 
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    ...(delivery === "header" ? ["frame-ancestors 'none'"] : []),
+    // In dev the preview runs inside a Replit iframe — omit frame-ancestors so
+    // the browser doesn't block the embed. Production keeps the strict policy.
+    ...(!dev && delivery === "header" ? ["frame-ancestors 'none'"] : []),
   ].join("; ");
 }
 
@@ -85,7 +87,8 @@ function getSecurityHeaders(mode: string) {
   return {
     "Content-Security-Policy": buildContentSecurityPolicy(mode),
     "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
+    // X-Frame-Options blocks iframes; omit in dev so the Replit preview works.
+    ...(!dev ? { "X-Frame-Options": "DENY" } : {}),
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()",
     "X-Permitted-Cross-Domain-Policies": "none",
@@ -256,15 +259,20 @@ export default defineConfig(async ({ mode }) => {
     };
   }
 
+  // Replit assigns the port via $PORT; fall back to 8080 for local dev.
+  const devPort = parseInt(process.env.PORT ?? "8080", 10);
+
   return {
     server: {
       host: tauriDevHost || "::",
-      port: 8080,
+      port: devPort,
       strictPort: isTauriBuild,
+      // Allow all hosts so the Replit reverse-proxy can reach the dev server.
+      allowedHosts: isDev && !isTauriBuild ? "all" : undefined,
       headers: securityHeaders,
       hmr: {
         overlay: false,
-        ...(tauriDevHost ? { protocol: "ws", host: tauriDevHost, port: 8080 } : {}),
+        ...(tauriDevHost ? { protocol: "ws", host: tauriDevHost, port: devPort } : {}),
       },
       watch: {
         ignored: ["**/src-tauri/**"],
