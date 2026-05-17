@@ -358,6 +358,15 @@ export function useVaultProviderActions(): VaultContextType {
     // vault was ever opened. See
     // `src/services/duressDecoyItemSynthesisService.ts`.
     state.setDuressDecoyItems(synthesizeDuressVaultItems());
+    // Reset OpLog V2 migration status so that `useOpLogVerifiedRuntime`
+    // is always false in the duress vault, regardless of any prior real-
+    // password unlock in the same session. Without this reset, a user who
+    // authenticated with their real password, locked the vault, then
+    // immediately entered the panic password could inherit a stale
+    // 'verified' status that causes VaultPage to block rendering with
+    // `shouldWaitForVerifiedDeviceTrust` (opLogUiView stays null because
+    // vaultEncryptionKey is not set in duress mode).
+    state.setVaultMigrationStatus(null);
     state.setIntegrityVerified(false);
     state.baseIntegrityResultRef.current = null;
     state.setLastIntegrityResult(null);
