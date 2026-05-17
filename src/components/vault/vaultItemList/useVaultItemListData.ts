@@ -202,7 +202,9 @@ export function useVaultItemListData({
   }, [userId]);
 
   const revalidateRemoteIntegrity = useCallback(async () => {
-    if (!userId || revalidatingRef.current || useOpLogVerifiedRuntime) {
+    // Duress vault has no server manifest — running a real integrity check
+    // would always resolve to integrity_unknown and block the panic vault.
+    if (!userId || revalidatingRef.current || useOpLogVerifiedRuntime || isDuressMode) {
       return;
     }
 
