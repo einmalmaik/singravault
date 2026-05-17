@@ -111,6 +111,7 @@ export default function VaultPage() {
         integrityMode,
         isLocked,
         isSetupRequired,
+        isDuressMode,
         isLoading: vaultLoading,
         lastIntegrityResult,
         vaultMigrationStatus,
@@ -145,7 +146,12 @@ export default function VaultPage() {
     });
     const authenticatorAccess = useFeatureGate('builtin_authenticator');
     const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified';
+    // In duress mode the vault content is synthesised in-memory and has no
+    // server-side manifest or OpLog anchor. Integrity checks must never block
+    // the duress vault — doing so would reveal to an observer that the duress
+    // password was used (a security invariant violation).
     const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime
+        && !isDuressMode
         && NON_DECRYPTABLE_INTEGRITY_MODES.has(integrityMode as VaultIntegrityMode);
     const localDeviceTrustStatus = opLogUiView
         ? getBrowserDeviceTrustStatus(opLogUiView.trustedDeviceIds)
@@ -261,7 +267,7 @@ export default function VaultPage() {
         return <MasterPasswordSetup />;
     }
 
-    if (!useOpLogVerifiedRuntime && (integrityMode === 'blocked' || integrityMode === 'safe')) {
+    if (!useOpLogVerifiedRuntime && !isDuressMode && (integrityMode === 'blocked' || integrityMode === 'safe')) {
         return <VaultIntegrityRecovery />;
     }
 

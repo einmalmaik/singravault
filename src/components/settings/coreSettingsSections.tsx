@@ -4,6 +4,7 @@ import { AccountSettings } from '@/components/settings/AccountSettings';
 import { AccountDataExportSettings } from '@/components/settings/AccountDataExportSettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { DataSettings } from '@/components/settings/DataSettings';
+import { LegacyDuressDecoyCleanupSettings } from '@/components/settings/LegacyDuressDecoyCleanupSettings';
 import { LegalLinksSettings } from '@/components/settings/LegalLinksSettings';
 import { PasswordSettings } from '@/components/settings/PasswordSettings';
 import { SecuritySettings } from '@/components/settings/SecuritySettings';
@@ -29,7 +30,7 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       tab: 'general',
       order: 20,
       title: t('settings.account.title'),
-      keywords: ['account', 'konto', 'email', 'logout', 'delete', 'loeschen'],
+      keywords: ['account', 'konto', 'email', 'logout', 'delete', 'löschen', 'loeschen'],
       render: () => <AccountSettings />,
     },
     {
@@ -77,6 +78,27 @@ export function getCoreProfileSettingsSections(t: TFunction): SettingsSectionDes
       keywords: ['rechtlich', 'privacy', 'datenschutz', 'impressum', 'security', 'whitepaper'],
       render: () => <LegalLinksSettings />,
     },
+    {
+      id: 'profile-legacy-duress-cleanup',
+      // PROFILE surface (not vault) on purpose: the recovery flow has to
+      // be reachable while the vault is still in the
+      // `integrityMode === 'migration_required'` state, which means
+      // /vault/settings is unreachable. Account/profile settings are the
+      // only place that stays open for an authenticated user with a
+      // locked vault.
+      surface: 'profile',
+      tab: 'data-legal',
+      order: 30,
+      title: 'Tresor-Reparatur',
+      keywords: [
+        'tresor reparatur', 'tresor-reparatur', 'reparatur',
+        'panik-passwort', 'panik passwort', 'panic password',
+        'duress', 'duress decoy', 'koeder', 'köder',
+        'migration erforderlich', 'migration required',
+        'orphan', 'integrity_unknown',
+      ],
+      render: () => <LegacyDuressDecoyCleanupSettings />,
+    },
   ];
 }
 
@@ -106,7 +128,7 @@ export function getCoreVaultSettingsSections(t: TFunction): SettingsSectionDescr
       tab: 'security',
       order: 30,
       title: 'Recovery-Codes',
-      keywords: ['recovery', 'backup codes', 'geraete recovery', 'wiederherstellung', 'notfall', 'device trust'],
+      keywords: ['recovery', 'backup codes', 'geräte recovery', 'geraete recovery', 'wiederherstellung', 'notfall', 'device trust'],
       render: () => <VaultRecoveryCodesSettings />,
     },
     {

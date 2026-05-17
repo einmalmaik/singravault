@@ -47,7 +47,7 @@ import { getTwoFactorRequirement } from '@/services/twoFactorService';
 export function DeviceKeySettings() {
     const { t } = useTranslation();
     const { toast } = useToast();
-    const { deviceKeyActive, enableDeviceKey, disableDeviceKey, isLocked, refreshDeviceKeyState, vaultProtectionMode } = useVault();
+    const { deviceKeyActive, enableDeviceKey, disableDeviceKey, isDuressMode, isLocked, refreshDeviceKeyState, vaultProtectionMode } = useVault();
     const { user } = useAuth();
 
     const [showEnableDialog, setShowEnableDialog] = useState(false);
@@ -102,6 +102,7 @@ export function DeviceKeySettings() {
 
     const handleEnable = async () => {
         if (!masterPassword) return;
+        if (isDuressMode) return;
         setLoading(true);
 
         const { error } = await enableDeviceKey(masterPassword);
@@ -129,6 +130,16 @@ export function DeviceKeySettings() {
 
     const handleExport = async () => {
         if (!user || !pin || pin.length < DEVICE_KEY_TRANSFER_SECRET_MIN_LENGTH) return;
+        if (isDuressMode) {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('deviceKey.exportFailed'),
+            });
+            setShowExportDialog(false);
+            setPin('');
+            return;
+        }
         const profile = await loadRemoteVaultProfile(user.id);
         const remoteRequiresDeviceKey = profile.credentials
             ? requiresDeviceKey(profile.credentials.vaultProtectionMode)
@@ -203,6 +214,7 @@ export function DeviceKeySettings() {
 
     const handleDisable = async () => {
         if (!disableMasterPassword || disablePhrase !== disableConfirmationPhrase || !disableAcknowledged) return;
+        if (isDuressMode) return;
         setLoading(true);
 
         let disableError: Error | null = null;
@@ -317,7 +329,7 @@ export function DeviceKeySettings() {
                             <Button
                                 variant="outline"
                                 onClick={() => setShowExportDialog(true)}
-                                disabled={isLocked}
+                                disabled={isLocked || isDuressMode}
                                 className="gap-2"
                             >
                                 <QrCode className="w-4 h-4" />
@@ -326,7 +338,7 @@ export function DeviceKeySettings() {
                             <Button
                                 variant="destructive"
                                 onClick={() => setShowDisableDialog(true)}
-                                disabled={isLocked}
+                                disabled={isLocked || isDuressMode}
                                 className="gap-2"
                             >
                                 <ShieldOff className="w-4 h-4" />
@@ -366,7 +378,7 @@ export function DeviceKeySettings() {
                         <div className="flex flex-col sm:flex-row gap-2">
                             <Button
                                 onClick={() => setShowEnableDialog(true)}
-                                disabled={isLocked}
+                                disabled={isLocked || isDuressMode}
                                 className="gap-2"
                             >
                                 <KeyRound className="w-4 h-4" />

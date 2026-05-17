@@ -8,6 +8,7 @@ const RESET_USER_VAULT_STATE_RPC = 'reset_user_vault_state';
 
 export type VaultRecoveryResetErrorCode =
   | 'REAUTH_REQUIRED'
+  | 'REAUTH_PROOF_REQUIRED'
   | 'RECOVERY_CHALLENGE_REQUIRED'
   | 'RESET_FAILED';
 
@@ -27,8 +28,8 @@ export class VaultRecoveryResetError extends Error {
  * Removes the current user's vault state so a compromised vault can be
  * re-initialized from a clean baseline. The auth account itself remains intact.
  */
-export async function resetUserVaultState(userId: string): Promise<void> {
-  const recoveryChallengeId = await beginVaultResetRecovery();
+export async function resetUserVaultState(userId: string, reauthProofId: string): Promise<void> {
+  const recoveryChallengeId = await beginVaultResetRecovery(reauthProofId);
 
   const { error } = await supabase.rpc(RESET_USER_VAULT_STATE_RPC, {
     p_recovery_challenge_id: recoveryChallengeId,
@@ -44,8 +45,10 @@ export async function resetUserVaultState(userId: string): Promise<void> {
   ]);
 }
 
-async function beginVaultResetRecovery(): Promise<string> {
-  const { data, error } = await supabase.rpc(BEGIN_VAULT_RESET_RECOVERY_RPC);
+async function beginVaultResetRecovery(reauthProofId: string): Promise<string> {
+  const { data, error } = await supabase.rpc(BEGIN_VAULT_RESET_RECOVERY_RPC, {
+    p_reauth_proof_id: reauthProofId,
+  });
   if (error) {
     throw mapVaultRecoveryResetError(error);
   }
@@ -73,6 +76,10 @@ function extractRecoveryChallengeId(data: unknown): string | null {
 
 function mapVaultRecoveryResetError(error: { message?: string } | null): VaultRecoveryResetError {
   const message = typeof error?.message === 'string' ? error.message : '';
+
+  if (message.includes('REAUTH_PROOF_REQUIRED')) {
+    return new VaultRecoveryResetError('REAUTH_PROOF_REQUIRED', { cause: error });
+  }
 
   if (message.includes('REAUTH_REQUIRED')) {
     return new VaultRecoveryResetError('REAUTH_REQUIRED', { cause: error });

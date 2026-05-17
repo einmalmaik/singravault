@@ -442,7 +442,7 @@ export function CategoryDialog({ open, onOpenChange, category, initialAction, on
                                 : categoryHasItems
                                     ? t('categories.deleteWithItemsOptionsDesc', {
                                         count: categoryDeleteItemCount,
-                                        defaultValue: 'Diese Kategorie enthaelt {{count}} Eintrag/Eintraege. Waehle, ob die Eintraege behalten oder ebenfalls geloescht werden.',
+                                        defaultValue: 'Diese Kategorie enthält {{count}} Eintrag/Einträge. Wähle, ob die Einträge behalten oder ebenfalls gelöscht werden.',
                                     })
                                     : t('categories.deleteConfirmDesc')}
                         </AlertDialogDescription>
@@ -460,7 +460,7 @@ export function CategoryDialog({ open, onOpenChange, category, initialAction, on
                                 className="h-auto min-h-10 w-full whitespace-normal break-words px-4 py-2 text-center leading-snug"
                             >
                                 {t('categories.deleteCategoryOnly', {
-                                    defaultValue: 'Nur Kategorie loeschen',
+                                    defaultValue: 'Nur Kategorie löschen',
                                 })}
                             </Button>
                         )}
@@ -473,7 +473,7 @@ export function CategoryDialog({ open, onOpenChange, category, initialAction, on
                         >
                             {categoryHasItems
                                 ? t('categories.deleteCategoryAndItems', {
-                                    defaultValue: 'Kategorie und Eintraege loeschen',
+                                    defaultValue: 'Kategorie und Einträge löschen',
                                 })
                                 : t('common.delete')}
                         </Button>

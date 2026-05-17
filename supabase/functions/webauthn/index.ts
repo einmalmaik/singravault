@@ -910,16 +910,34 @@ async function handleListCredentials(
         return jsonResponse({ error: "Failed to list credentials" }, 500, corsHeaders);
     }
 
-    const scopedCredentials = (credentials || []).filter((credential: { rp_id?: string | null }) =>
-        isCredentialAvailableForRp(credential.rp_id, rp.rpID)
-    );
+    // List ALL of the user's passkeys across every RP-ID/origin (web,
+    // desktop, local dev, ...) and tag each entry with whether it can be
+    // used on the current surface. This is purely a management view —
+    // every authentication and registration code path still scopes
+    // credentials to the active RP-ID via `isCredentialAvailableForRp`,
+    // so the security boundary is unchanged. The unscoped list lets a
+    // user see and delete passkeys they registered on a different
+    // device/platform, which previously left orphaned credentials
+    // visible only on the surface that registered them.
+    const annotatedCredentials = (credentials || []).map((credential: {
+        id: string;
+        credential_id: string;
+        device_name: string;
+        prf_enabled: boolean;
+        created_at: string;
+        last_used_at: string | null;
+        rp_id?: string | null;
+    }) => ({
+        ...credential,
+        is_available_on_current_rp: isCredentialAvailableForRp(credential.rp_id, rp.rpID),
+    }));
 
-    return jsonResponse({ credentials: scopedCredentials }, 200, corsHeaders);
+    return jsonResponse({ credentials: annotatedCredentials }, 200, corsHeaders);
 }
 
 async function handleDeleteCredential(
     user: { id: string },
-    rp: { rpID: string },
+    _rp: { rpID: string },
     supabase: ReturnType<typeof createClient>,
     body: Record<string, unknown>,
     corsHeaders: Record<string, string>,
@@ -930,9 +948,17 @@ async function handleDeleteCredential(
         return jsonResponse({ error: "Missing credentialId" }, 400, corsHeaders);
     }
 
+    // Ownership is the only relevant security check here: the credential
+    // row is fetched scoped by `user_id`, so the authenticated user can
+    // only ever target their own passkeys. We deliberately do NOT scope
+    // the delete to the current RP-ID anymore so users can clean up
+    // passkeys from other devices/platforms (e.g. a lost phone) from any
+    // surface where they are signed in. Authentication paths remain
+    // RP-scoped via `isCredentialAvailableForRp`, so an orphaned
+    // credential on another RP cannot be used to log in here regardless.
     const { data: credential, error: lookupError } = await supabase
         .from("passkey_credentials")
-        .select("id, rp_id")
+        .select("id")
         .eq("user_id", user.id)
         .eq("id", credentialId)
         .maybeSingle();
@@ -941,8 +967,8 @@ async function handleDeleteCredential(
         return jsonResponse({ error: "Failed to load credential" }, 500, corsHeaders);
     }
 
-    if (!credential || !isCredentialAvailableForRp((credential as { rp_id?: string | null }).rp_id, rp.rpID)) {
-        return jsonResponse({ error: "Credential not available for this app surface" }, 404, corsHeaders);
+    if (!credential) {
+        return jsonResponse({ error: "Credential not found" }, 404, corsHeaders);
     }
 
     const { error } = await supabase

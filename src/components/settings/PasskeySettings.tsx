@@ -7,7 +7,7 @@
  * Shows PRF support status and provides warnings about passkey limitations.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Fingerprint, Plus, Trash2, Loader2, ShieldCheck, ShieldAlert, Info, Lock } from 'lucide-react';
 
@@ -35,6 +35,7 @@ import {
     listPasskeys,
     deletePasskey,
     getPasskeyClientSupport,
+    mapRpIdToFriendlyLabel,
     PasskeyCredential,
 } from '@/services/passkeyService';
 import { isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
@@ -241,6 +242,30 @@ export function PasskeySettings() {
         }
     };
 
+    // Split the unscoped credential list into "usable on this device" and
+    // "registered on another device". The server already tags every row
+    // with `is_available_on_current_rp` based on `isCredentialAvailableForRp`,
+    // so this is a pure presentation split — no security decision lives
+    // in the UI. Authentication code paths remain RP-scoped server-side,
+    // so a credential listed under "other devices" cannot be used to
+    // unlock here even if rendering had a bug.
+    const { localPasskeys, remotePasskeys } = useMemo(() => {
+        const local: PasskeyCredential[] = [];
+        const remote: PasskeyCredential[] = [];
+        for (const passkey of passkeys) {
+            // `is_available_on_current_rp` is optional on legacy server
+            // builds. Treat `undefined` as "available" to preserve the
+            // pre-rollout UX: the old endpoint only returned RP-scoped
+            // rows, so every entry must be considered local.
+            if (passkey.is_available_on_current_rp === false) {
+                remote.push(passkey);
+            } else {
+                local.push(passkey);
+            }
+        }
+        return { localPasskeys: local, remotePasskeys: remote };
+    }, [passkeys]);
+
     const formatDate = (dateStr: string | null) => {
         if (!dateStr) return '—';
         return new Date(dateStr).toLocaleDateString(undefined, {
@@ -318,57 +343,53 @@ export function PasskeySettings() {
                     </Alert>
                 )}
 
-                {/* Registered passkeys list */}
+                {/* Registered passkeys list, split by current-RP availability */}
                 {loading ? (
                     <div className="flex justify-center py-6">
                         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                     </div>
                 ) : passkeys.length > 0 ? (
-                    <div className="space-y-3">
-                        {passkeys.map((pk) => (
-                            <div
-                                key={pk.id}
-                                className="flex items-center justify-between p-3 rounded-lg border bg-card"
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className={`p-2 rounded-full ${pk.prf_enabled ? 'bg-green-500/10' : 'bg-muted'}`}>
-                                        {pk.prf_enabled ? (
-                                            <ShieldCheck className="w-4 h-4 text-green-500" />
-                                        ) : (
-                                            <Fingerprint className="w-4 h-4 text-muted-foreground" />
-                                        )}
-                                    </div>
-                                    <div>
-                                        <p className="font-medium text-sm">{pk.device_name}</p>
-                                        <p className="text-xs text-muted-foreground">
-                                            {t('passkey.created', 'Created')}: {formatDate(pk.created_at)}
-                                            {pk.last_used_at && (
-                                                <> · {t('passkey.lastUsed', 'Last used')}: {formatDate(pk.last_used_at)}</>
-                                            )}
-                                        </p>
-                                        <p className="text-xs mt-0.5">
-                                            {pk.prf_enabled ? (
-                                                <span className="text-green-600 dark:text-green-400">
-                                                    {t('passkey.prfEnabled', 'Vault unlock enabled')}
-                                                </span>
-                                            ) : (
-                                                <span className="text-muted-foreground">
-                                                    {t('passkey.prfDisabled', 'Authentication only (no PRF)')}
-                                                </span>
-                                            )}
-                                        </p>
-                                    </div>
-                                </div>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="text-destructive hover:text-destructive"
-                                    onClick={() => setDeleteTarget(pk)}
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </Button>
+                    <div className="space-y-5">
+                        {localPasskeys.length > 0 && (
+                            <div className="space-y-3">
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    {t('passkey.sectionThisDevice', 'Auf diesem Gerät verfügbar')}
+                                </p>
+                                {localPasskeys.map((pk) => (
+                                    <PasskeyRow
+                                        key={pk.id}
+                                        passkey={pk}
+                                        isLocal
+                                        formatDate={formatDate}
+                                        onDelete={() => setDeleteTarget(pk)}
+                                        t={t}
+                                    />
+                                ))}
                             </div>
-                        ))}
+                        )}
+                        {remotePasskeys.length > 0 && (
+                            <div className="space-y-3">
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    {t('passkey.sectionOtherDevices', 'Andere Geräte / Plattformen')}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                    {t(
+                                        'passkey.otherDevicesHint',
+                                        'Diese Passkeys sind auf diesem Gerät nicht nutzbar, lassen sich aber von hier aus entfernen.',
+                                    )}
+                                </p>
+                                {remotePasskeys.map((pk) => (
+                                    <PasskeyRow
+                                        key={pk.id}
+                                        passkey={pk}
+                                        isLocal={false}
+                                        formatDate={formatDate}
+                                        onDelete={() => setDeleteTarget(pk)}
+                                        t={t}
+                                    />
+                                ))}
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <p className="text-sm text-muted-foreground text-center py-4">
@@ -476,6 +497,72 @@ export function PasskeySettings() {
                 </AlertDialogContent>
             </AlertDialog>
         </Card>
+    );
+}
+
+interface PasskeyRowProps {
+    readonly passkey: PasskeyCredential;
+    /**
+     * Whether this credential can be used to unlock the vault on the
+     * current surface. `false` rows are rendered with muted styling and
+     * a "registered on another device" hint, but still expose the same
+     * delete action — the server enforces ownership-by-user_id, not
+     * RP-scope, on delete.
+     */
+    readonly isLocal: boolean;
+    readonly formatDate: (dateStr: string | null) => string;
+    readonly onDelete: () => void;
+    readonly t: ReturnType<typeof useTranslation>['t'];
+}
+
+function PasskeyRow({ passkey, isLocal, formatDate, onDelete, t }: PasskeyRowProps) {
+    const platformLabel = mapRpIdToFriendlyLabel(passkey.rp_id);
+
+    return (
+        <div
+            className={`flex items-center justify-between p-3 rounded-lg border bg-card ${isLocal ? '' : 'opacity-70'}`}
+        >
+            <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-full ${passkey.prf_enabled ? 'bg-green-500/10' : 'bg-muted'}`}>
+                    {passkey.prf_enabled ? (
+                        <ShieldCheck className="w-4 h-4 text-green-500" />
+                    ) : (
+                        <Fingerprint className="w-4 h-4 text-muted-foreground" />
+                    )}
+                </div>
+                <div>
+                    <p className="font-medium text-sm">{passkey.device_name}</p>
+                    <p className="text-xs text-muted-foreground">
+                        {platformLabel}
+                        {' · '}
+                        {t('passkey.created', 'Created')}: {formatDate(passkey.created_at)}
+                        {passkey.last_used_at && (
+                            <> · {t('passkey.lastUsed', 'Last used')}: {formatDate(passkey.last_used_at)}</>
+                        )}
+                    </p>
+                    <p className="text-xs mt-0.5">
+                        {passkey.prf_enabled ? (
+                            <span className={isLocal ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}>
+                                {t('passkey.prfEnabled', 'Vault unlock enabled')}
+                            </span>
+                        ) : (
+                            <span className="text-muted-foreground">
+                                {t('passkey.prfDisabled', 'Authentication only (no PRF)')}
+                            </span>
+                        )}
+                    </p>
+                </div>
+            </div>
+            <Button
+                variant="ghost"
+                size="icon"
+                className="text-destructive hover:text-destructive"
+                onClick={onDelete}
+                aria-label={t('passkey.removePasskey', 'Passkey entfernen')}
+            >
+                <Trash2 className="w-4 h-4" />
+            </Button>
+        </div>
     );
 }
 

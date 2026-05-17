@@ -8,6 +8,7 @@ import type {
 } from '@/services/vaultIntegrityService';
 import type { QuarantineResolutionState } from '@/services/vaultQuarantineRecoveryService';
 import type { VaultHealthAnalysisItem, VaultItemForIntegrity } from '@/extensions/types';
+import type { VaultItem } from '@/components/vault/vaultItemList/vaultItemModel';
 import type { VaultProtectionMode } from '@/services/deviceKeyProtectionPolicy';
 import type { VaultOpLogUiView } from '@/services/vaultOpLog/vaultOpLogUiAdapter';
 import type { LocalVaultState } from '@/services/vaultOpLog/vaultStateMachine';
@@ -34,6 +35,13 @@ export interface VaultContextType {
     isLoading: boolean;
     pendingSessionRestore: boolean;
     isDuressMode: boolean;
+    /**
+     * Ephemeral decoy items rendered in the duress vault. `null` outside
+     * of duress mode. Populated by the unlock flow via the premium
+     * `getDuressDecoyItems` hook and lives only in memory; lock or logout
+     * resets it back to `null`.
+     */
+    duressDecoyItems: VaultItem[] | null;
     deviceKeyActive: boolean;
     vaultProtectionMode: VaultProtectionMode;
     setupMasterPassword: (masterPassword: string) => Promise<{ error: Error | null }>;
@@ -86,8 +94,28 @@ export interface VaultContextType {
     trustedRecoveryAvailable: boolean;
     enterSafeMode: () => Promise<{ error: Error | null }>;
     exitSafeMode: () => void;
-    resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+    resetVaultAfterIntegrityFailure: (reauthProofId: string) => Promise<{ error: Error | null }>;
     getVaultHealthAnalysisItems: () => Promise<VaultHealthAnalysisItem[]>;
+
+    // Recovery for the legacy Premium duress decoy bug: scans `vault_items`
+    // for rows that don't authenticate against the current vault key and
+    // are not part of the verified OpLog manifest. The UI shows the result
+    // and asks for explicit confirmation before invoking
+    // `purgeLegacyDuressDecoys`.
+    findLegacyDuressDecoyCandidates: () => Promise<{
+        candidates: ReadonlyArray<{
+            id: string;
+            updatedAt: string | null;
+            reason: 'decryption_failed';
+        }>;
+        inspectedRowCount: number;
+        authenticatedRowCount: number;
+        error: Error | null;
+    }>;
+    purgeLegacyDuressDecoys: (itemIds: ReadonlyArray<string>) => Promise<{
+        deletedCount: number;
+        error: Error | null;
+    }>;
 
     // Phase 9 — OpLog UI state (behind feature flag)
     opLogVaultId: string | null;

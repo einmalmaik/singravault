@@ -117,10 +117,60 @@ export interface DuressConfigHook {
 
 /**
  * Result of a dual-unlock attempt (real vs duress password).
+ *
+ * @deprecated The dual-unlock contract is incompatible with the USK
+ * (User-Symmetric-Key) architecture: it verifies the master password against
+ * the master-derived key, but `profiles.master_password_verifier` is bound to
+ * the UserKey, not the master-derived key. Premium implementations MUST
+ * migrate to `attemptDuressUnlockOnly`, which checks the duress credentials
+ * only and lets the core perform the canonical USK-based master-password
+ * verification.
  */
 export interface DualUnlockResult {
     mode: 'real' | 'duress' | 'invalid';
     key: CryptoKey | null;
+}
+
+/**
+ * Result of a duress-only unlock attempt.
+ *
+ * Premium implementations of `attemptDuressUnlockOnly` MUST NOT attempt to
+ * verify the real master password. The core performs that check against the
+ * USK-based verifier; mixing both checks here re-introduces the pre-USK bug
+ * where the master-derived key cannot match a UserKey-based verifier.
+ */
+export interface DuressOnlyUnlockInput {
+    password: string;
+    duressConfig: DuressConfigHook;
+}
+
+export interface DuressOnlyUnlockResult {
+    /** True iff the supplied password matched the duress credentials. */
+    matched: boolean;
+    /** Derived duress vault key on a positive match; null otherwise. */
+    key: CryptoKey | null;
+}
+
+/**
+ * Plaintext shape of a single ephemeral decoy entry shown in the duress vault.
+ *
+ * Decoys never leave memory: they are synthesised on every duress unlock by
+ * the premium hook (`getDuressDecoyItems`) and rendered directly without
+ * touching the database. That is intentional. Persisting decoys to
+ * `vault_items` (the previous behaviour) leaked their presence into the
+ * legacy table, which broke the OpLog migration gate and was a privacy
+ * regression for users who never even enabled duress mode.
+ *
+ * The shape is deliberately a strict subset of the regular vault item
+ * plaintext so the core list renderer can treat decoys like any other
+ * password entry without a separate code path.
+ */
+export interface DuressDecoyItemPlaintext {
+    title: string;
+    username?: string;
+    password?: string;
+    websiteUrl?: string;
+    notes?: string;
 }
 
 /**
@@ -191,6 +241,13 @@ export interface ServiceHooks {
 
     /**
      * Attempt dual unlock with both real and duress passwords.
+     *
+     * @deprecated USK-incompatible. Implement `attemptDuressUnlockOnly`
+     * instead; the core performs the real master-password check against the
+     * USK-based verifier and only delegates the duress-credential check.
+     * Implementations are still invoked as a fallback for legacy Premium
+     * builds, but a `mode: 'invalid'` result is treated as "duress did not
+     * match" and falls through to the canonical primary unlock path.
      */
     attemptDualUnlock?: (
         password: string,
@@ -199,6 +256,39 @@ export interface ServiceHooks {
         kdfVersion: number,
         duressConfig: DuressConfigHook,
     ) => Promise<DualUnlockResult>;
+
+    /**
+     * Verify the entered password against the user's duress credentials only.
+     *
+     * Implementations MUST:
+     *   - derive the duress key with `duressConfig.salt` and
+     *     `duressConfig.kdfVersion`
+     *   - compare it against `duressConfig.verifier` only
+     *   - leave the real master-password check to the core (USK path)
+     *
+     * Returning `matched: true` opens the decoy/duress vault. Returning
+     * `matched: false` (or throwing) lets the core fall through to the normal
+     * USK-based master-password unlock.
+     */
+    attemptDuressUnlockOnly?: (
+        input: DuressOnlyUnlockInput,
+    ) => Promise<DuressOnlyUnlockResult>;
+
+    /**
+     * Returns a fresh batch of ephemeral decoy entries for the duress vault.
+     *
+     * Implementations MUST:
+     *   - return a new randomised set on every call (the user expectation is
+     *     "the panic vault looks slightly different every time")
+     *   - return only plaintext (the core never encrypts or persists these)
+     *   - never read or write `vault_items` / OpLog state
+     *
+     * The result is consumed exclusively by `synthesizeDuressVaultItems` in
+     * the core, which wraps each entry into an in-memory `VaultItem`.
+     * Returning an empty array is allowed and simply renders an empty
+     * decoy vault — the core never falls back to legacy decoy rows.
+     */
+    getDuressDecoyItems?: () => DuressDecoyItemPlaintext[];
 
     /**
      * Mark a vault item as a decoy item (duress mode).

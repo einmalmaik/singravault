@@ -133,7 +133,10 @@ export function useVaultSidebarCategories({
       }
 
       const { snapshot, source } = await loadVaultSnapshot(userId);
-      const integrityResult = await verifyIntegrityRef.current(snapshot, { source });
+      // In duress mode the decoy items are in-memory only — do not run a
+      // real integrity check (which would always return integrity_unknown
+      // because no server manifest exists for the duress key).
+      const integrityResult = isDuressMode ? null : await verifyIntegrityRef.current(snapshot, { source });
       if (integrityResult?.mode === 'blocked') {
         if (fetchRequestIdRef.current === requestId) {
           setCategories([]);

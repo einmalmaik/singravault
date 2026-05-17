@@ -51,6 +51,12 @@ import { useVaultSetupActions } from './useVaultSetupActions';
 import type { VaultContextType, VaultUnlockOptions } from './vaultContextTypes';
 import { evaluateVaultMigrationGate } from '@/services/vaultOpLog/vaultMigrationRolloutService';
 import { loadVaultHealthAnalysisItems } from '@/services/vaultHealthAnalysisItemsService';
+import {
+  findLegacyDuressDecoyCandidates as findLegacyDuressDecoyCandidatesService,
+  purgeLegacyDuressDecoyItems as purgeLegacyDuressDecoyItemsService,
+} from '@/services/legacyDuressDecoyCleanupService';
+import { synthesizeDuressVaultItems } from '@/services/duressDecoyItemSynthesisService';
+import { getServiceHooks } from '@/extensions/registry';
 
 function clearLegacyIntegrityStateAfterOpLogGate(
   state: ReturnType<typeof useVaultProviderState>,
@@ -116,8 +122,17 @@ export function useVaultProviderActions(): VaultContextType {
     console.debug('[VaultContext] authReady is true, refreshing passkey unlock status...');
 
     try {
+      // `listPasskeys` returns every credential across all RP-IDs so the
+      // settings UI can manage them. For "can the user actually unlock
+      // on this device?" we must filter by both PRF support AND the
+      // current-RP flag — otherwise a PRF passkey registered only on
+      // another platform would falsely enable the unlock-with-passkey
+      // path here.
       const passkeys = await listPasskeys();
-      setHasPasskeyUnlock(passkeys.some((passkey) => passkey.prf_enabled));
+      setHasPasskeyUnlock(passkeys.some((passkey) => (
+        passkey.prf_enabled
+        && passkey.is_available_on_current_rp !== false
+      )));
     } catch {
       setHasPasskeyUnlock(false);
     }
@@ -333,6 +348,25 @@ export function useVaultProviderActions(): VaultContextType {
     state.setEncryptionKey(activeKey);
     state.setIsDuressMode(true);
     state.setIsLocked(false);
+    // Synthesise a fresh batch of in-memory decoy items for this duress
+    // session. The premium hook returns a randomised set on every call so
+    // the panic vault looks slightly different each time, matching the
+    // user's mental model of a "live" decoy vault. Keeping the items in
+    // memory only is a deliberate security property: nothing leaks to
+    // `vault_items`, the snapshot cache or the OpLog runtime, so an
+    // attacker with direct database access cannot tell that the panic
+    // vault was ever opened. See
+    // `src/services/duressDecoyItemSynthesisService.ts`.
+    state.setDuressDecoyItems(synthesizeDuressVaultItems());
+    // Reset OpLog V2 migration status so that `useOpLogVerifiedRuntime`
+    // is always false in the duress vault, regardless of any prior real-
+    // password unlock in the same session. Without this reset, a user who
+    // authenticated with their real password, locked the vault, then
+    // immediately entered the panic password could inherit a stale
+    // 'verified' status that causes VaultPage to block rendering with
+    // `shouldWaitForVerifiedDeviceTrust` (opLogUiView stays null because
+    // vaultEncryptionKey is not set in duress mode).
+    state.setVaultMigrationStatus(null);
     state.setIntegrityVerified(false);
     state.baseIntegrityResultRef.current = null;
     state.setLastIntegrityResult(null);
@@ -370,13 +404,36 @@ export function useVaultProviderActions(): VaultContextType {
       clearCurrentDeviceKey();
     }
 
+    // Reload the duress configuration straight from the profile before
+    // every unlock attempt. `state.duressConfig` is populated by the
+    // lifecycle effect on app boot / online events, but it stays `null`
+    // when duress was activated mid-session (Premium activation, panic
+    // password set in another tab, ...). Without this refresh the very
+    // first unlock after activation would fall through to the normal
+    // master-password path and silently reject the panic password as
+    // invalid. We sync the fresh value back into provider state so any
+    // subsequent code paths see the same view.
+    const hooks = getServiceHooks();
+    let resolvedDuressConfig = state.duressConfig;
+    if (hooks.getDuressConfig) {
+      try {
+        resolvedDuressConfig = await hooks.getDuressConfig(user.id);
+        state.setDuressConfig(resolvedDuressConfig);
+      } catch (error) {
+        console.warn(
+          '[Vault] Failed to refresh duress config before unlock; falling back to cached value.',
+          error,
+        );
+      }
+    }
+
     const unlockResult = await unlockVaultWithMasterPassword({
       userId: user.id,
       masterPassword,
       salt: credentials.salt,
       verificationHash: credentials.verificationHash,
       kdfVersion: credentials.kdfVersion ?? state.kdfVersion,
-      duressConfig: state.duressConfig,
+      duressConfig: resolvedDuressConfig,
       encryptedUserKey: credentials.encryptedUserKey,
       vaultProtectionMode: credentials.vaultProtectionMode,
       options,
@@ -637,6 +694,90 @@ export function useVaultProviderActions(): VaultContextType {
       verifyIntegrity,
     });
   }, [decryptItem, opLogUiState.localVaultState, state.vaultMigrationStatus, user, verifyIntegrity]);
+  const findLegacyDuressDecoyCandidates = useCallback(async () => {
+    if (!user) {
+      return {
+        candidates: [],
+        inspectedRowCount: 0,
+        authenticatedRowCount: 0,
+        error: new Error('No active user session.'),
+      };
+    }
+
+    // The scan must work in TWO states:
+    //   (a) the vault is fully unlocked (state.encryptionKey set), or
+    //   (b) the migration-gate has blocked normal unlock with
+    //       `integrityMode === 'migration_required'`. In that state
+    //       state.encryptionKey is null and state.isLocked is true, but
+    //       state.vaultMigrationKeyContext.activeKey still holds the
+    //       authenticated vault key from finalizeVaultUnlock. We need (b)
+    //       so users whose migration gate is blocked by legacy duress
+    //       decoys can self-repair from the panel that is shown to them.
+    const vaultKey = state.encryptionKey
+      ?? state.vaultMigrationKeyContext?.activeKey
+      ?? null;
+    if (!vaultKey) {
+      return {
+        candidates: [],
+        inspectedRowCount: 0,
+        authenticatedRowCount: 0,
+        error: new Error('Vault must be unlocked (or in migration-required state) to scan for legacy duress decoys.'),
+      };
+    }
+
+    const verifiedRecordIds = new Set<string>();
+    const localState = opLogUiState.localVaultState;
+    if (localState) {
+      for (const [recordId, record] of localState.recordsById.entries()) {
+        if (record.recordState === 'verified') {
+          verifiedRecordIds.add(recordId);
+        }
+      }
+    }
+
+    try {
+      const result = await findLegacyDuressDecoyCandidatesService({
+        userId: user.id,
+        vaultKey,
+        opLogVerifiedRecordIds: verifiedRecordIds,
+      });
+      return { ...result, error: null };
+    } catch (error) {
+      return {
+        candidates: [],
+        inspectedRowCount: 0,
+        authenticatedRowCount: 0,
+        error: error instanceof Error ? error : new Error('Legacy duress decoy scan failed.'),
+      };
+    }
+  }, [opLogUiState.localVaultState, state.encryptionKey, state.vaultMigrationKeyContext, user]);
+  const purgeLegacyDuressDecoys = useCallback(async (
+    itemIds: ReadonlyArray<string>,
+  ): Promise<{ deletedCount: number; error: Error | null }> => {
+    if (!user) {
+      return { deletedCount: 0, error: new Error('No active user session') };
+    }
+    if (itemIds.length === 0) {
+      return { deletedCount: 0, error: new Error('No items selected for purge.') };
+    }
+    try {
+      const result = await purgeLegacyDuressDecoyItemsService({
+        userId: user.id,
+        itemIds,
+      });
+      // Force the migration gate / integrity-v2 evaluator to re-run on the
+      // next data refresh by bumping the local data version. The legacy
+      // rows are gone, so `hasLegacyRows` should now be false and the
+      // vault should leave the orphan_remote / migration_required state.
+      state.bumpVaultDataVersion();
+      return { deletedCount: result.deletedCount, error: null };
+    } catch (error) {
+      return {
+        deletedCount: 0,
+        error: error instanceof Error ? error : new Error('Legacy duress decoy purge failed.'),
+      };
+    }
+  }, [state, user]);
   useVaultRevokedDeviceAutoLock({
     isLocked: state.isLocked,
     localVaultState: opLogUiState.localVaultState,
@@ -682,6 +823,8 @@ export function useVaultProviderActions(): VaultContextType {
     exitSafeMode,
     resetVaultAfterIntegrityFailure,
     getVaultHealthAnalysisItems,
+    findLegacyDuressDecoyCandidates,
+    purgeLegacyDuressDecoys,
     startVaultMigration,
     retryVaultMigration,
     ...opLogActions,

@@ -4,6 +4,7 @@ import {
   type VaultProtectionMode,
 } from '@/services/deviceKeyProtectionPolicy';
 import type { DuressConfigHook } from '@/extensions/types';
+import type { VaultItem } from '@/components/vault/vaultItemList/vaultItemModel';
 import {
   buildQuarantineResolutionMap,
   type QuarantineResolutionRuntimeState,
@@ -84,6 +85,11 @@ export function useVaultProviderState() {
   const [hasPasskeyUnlock, setHasPasskeyUnlock] = useState(false);
   const [isDuressMode, setIsDuressMode] = useState(false);
   const [duressConfig, setDuressConfig] = useState<DuressConfigHook | null>(null);
+  // In-memory decoy items for the duress vault. Populated on every duress
+  // unlock by `useVaultProviderActions.openDuressVault`. Never persisted, so
+  // resetting to `null` on lock/logout is the only cleanup required — the
+  // existing `clearActiveVaultSession` handles that below.
+  const [duressDecoyItems, setDuressDecoyItems] = useState<VaultItem[] | null>(null);
   const [deviceKeyActive, setDeviceKeyActive] = useState(false);
   const [currentDeviceKey, setCurrentDeviceKey] = useState<Uint8Array | null>(null);
   const [vaultProtectionMode, setVaultProtectionMode] = useState<VaultProtectionMode>(VAULT_PROTECTION_MODE_MASTER_ONLY);
@@ -195,6 +201,10 @@ export function useVaultProviderState() {
     });
     setIsLocked(true);
     setIsDuressMode(false);
+    // Drop synthesised decoy items so a relock cannot leak them into a
+    // subsequent real-password unlock; openDuressVault repopulates fresh
+    // values on the next duress unlock.
+    setDuressDecoyItems(null);
     setIntegrityVerified(false);
     baseIntegrityResultRef.current = null;
     setLastIntegrityResult(null);
@@ -322,6 +332,8 @@ export function useVaultProviderState() {
     setIsDuressMode,
     duressConfig,
     setDuressConfig,
+    duressDecoyItems,
+    setDuressDecoyItems,
     deviceKeyActive,
     setDeviceKeyActive,
     currentDeviceKey,

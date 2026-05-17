@@ -33,8 +33,10 @@ export interface VaultProviderActionBindings {
   reportUnreadableItems: (items: QuarantinedVaultItem[]) => void;
   enterSafeMode: () => Promise<{ error: Error | null }>;
   exitSafeMode: () => void;
-  resetVaultAfterIntegrityFailure: () => Promise<{ error: Error | null }>;
+  resetVaultAfterIntegrityFailure: (reauthProofId: string) => Promise<{ error: Error | null }>;
   getVaultHealthAnalysisItems: VaultContextType['getVaultHealthAnalysisItems'];
+  findLegacyDuressDecoyCandidates: VaultContextType['findLegacyDuressDecoyCandidates'];
+  purgeLegacyDuressDecoys: VaultContextType['purgeLegacyDuressDecoys'];
   startVaultMigration: () => Promise<{ error: Error | null }>;
   retryVaultMigration: () => Promise<{ error: Error | null }>;
 
@@ -66,6 +68,7 @@ export function buildVaultContextValue(
     isSetupRequired: state.isSetupRequired,
     isLoading: state.isLoading,
     isDuressMode: state.isDuressMode,
+    duressDecoyItems: state.duressDecoyItems,
     deviceKeyActive: state.deviceKeyActive,
     vaultProtectionMode: state.vaultProtectionMode,
     setupMasterPassword: actions.setupMasterPassword,
@@ -111,6 +114,8 @@ export function buildVaultContextValue(
     exitSafeMode: actions.exitSafeMode,
     resetVaultAfterIntegrityFailure: actions.resetVaultAfterIntegrityFailure,
     getVaultHealthAnalysisItems: actions.getVaultHealthAnalysisItems,
+    findLegacyDuressDecoyCandidates: actions.findLegacyDuressDecoyCandidates,
+    purgeLegacyDuressDecoys: actions.purgeLegacyDuressDecoys,
 
     // Phase 9 — OpLog UI state
     opLogVaultId: opLogUiState.vaultId,

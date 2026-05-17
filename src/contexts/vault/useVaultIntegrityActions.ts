@@ -86,12 +86,12 @@ export function useVaultIntegrityActions({
     state.setIntegrityMode(state.integrityBlockedReason ? 'blocked' : 'healthy');
   }, [state]);
 
-  const resetVaultAfterIntegrityFailure = useCallback(async (): Promise<{ error: Error | null }> => {
+  const resetVaultAfterIntegrityFailure = useCallback(async (reauthProofId: string): Promise<{ error: Error | null }> => {
     if (!user) {
       return { error: new Error('No active user session') };
     }
 
-    const result = await resetVaultAfterIntegrityFailureForUser(user.id);
+    const result = await resetVaultAfterIntegrityFailureForUser(user.id, reauthProofId);
     if (result.error) {
       return result;
     }

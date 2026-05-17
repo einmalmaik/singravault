@@ -81,18 +81,13 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
       return buildRuntimeNonTamperResult(input.snapshot, 'integrity_unknown', 'manifest_snapshot_conflict');
     }
 
-    const bootstrappedManifest = await bootstrapInitialEmptyRemoteManifest({
-      userId: input.userId,
-      snapshot: input.snapshot,
-      snapshotSource,
-      vaultKey: input.vaultKey,
-      encryptedUserKey: input.encryptedUserKey,
-    });
-    if (!bootstrappedManifest) {
-      return null;
-    }
-
-    storedManifest = bootstrappedManifest;
+    // No server manifest and no local anchor exists.  Accepting an empty remote
+    // snapshot as a trusted bootstrap baseline here would allow a compromised or
+    // rolled-back server to silently reset the vault's trust chain.  There is no
+    // client-side evidence that this is a genuinely new vault rather than a wiped
+    // one, so the only safe choice is to fail closed.  The manifest will be
+    // established on the first trusted client-side write instead.
+    return buildRuntimeNonTamperResult(input.snapshot, 'integrity_unknown', 'manifest_snapshot_conflict');
   }
 
   let localHighWaterMark: ManifestHighWaterMarkRecordV1 | null;
@@ -238,76 +233,6 @@ export async function evaluateRuntimeVaultIntegrityV2(input: {
   }
 
   return mapDecisionToRuntimeResult(decision, input.snapshot, snapshotSource);
-}
-
-async function bootstrapInitialEmptyRemoteManifest(input: {
-  userId: string;
-  snapshot: OfflineVaultSnapshot;
-  snapshotSource: 'remote' | 'cache' | 'empty';
-  vaultKey: CryptoKey;
-  encryptedUserKey?: string | null;
-}): Promise<Awaited<ReturnType<typeof loadServerManifestEnvelopeV2>> | null> {
-  const vaultId = input.snapshot.vaultId;
-  if (!vaultId || !isFreshEmptyRemoteSnapshot(input.snapshot, input.snapshotSource)) {
-    return null;
-  }
-
-  const keyId = deriveVaultIntegrityKeyIdV2({ encryptedUserKey: input.encryptedUserKey });
-  const bundle = await buildManifestEnvelopeV2FromVerifiedInputs({
-    userId: input.userId,
-    vaultId,
-    keyId,
-    keysetVersion: 1,
-    manifestRevision: 1,
-    categories: [],
-    items: [],
-    vaultKey: input.vaultKey,
-  });
-
-  await persistServerManifestEnvelopeV2({
-    userId: input.userId,
-    vaultId,
-    envelope: bundle.envelope,
-    manifestHash: bundle.manifestHash,
-    previousManifestHash: null,
-    expectedPreviousManifestRevision: null,
-    expectedPreviousManifestHash: null,
-  });
-  await saveManifestHighWaterMark({
-    userId: input.userId,
-    vaultId,
-    manifestRevision: 1,
-    manifestHash: bundle.manifestHash,
-    keyId,
-  });
-
-  return {
-    userId: input.userId,
-    vaultId,
-    manifestRevision: 1,
-    manifestHash: bundle.manifestHash,
-    previousManifestHash: null,
-    keyId,
-    envelope: bundle.envelope,
-  };
-}
-
-function isFreshEmptyRemoteSnapshot(
-  snapshot: OfflineVaultSnapshot,
-  snapshotSource: 'remote' | 'cache' | 'empty',
-): boolean {
-  const completeness = snapshot.completeness;
-  return snapshotSource === 'remote'
-    && snapshot.items.length === 0
-    && snapshot.categories.length === 0
-    && completeness?.kind === 'complete'
-    && completeness.source === 'remote'
-    && completeness.vault.defaultVaultResolved === true
-    && completeness.scope.vaultId === snapshot.vaultId
-    && completeness.items.loadedCount === 0
-    && completeness.items.totalCount === 0
-    && completeness.categories.loadedCount === 0
-    && completeness.categories.totalCount === 0;
 }
 
 export async function persistRuntimeManifestV2ForTrustedSnapshot(input: {

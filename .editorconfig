@@ -1,0 +1,31 @@
+# EditorConfig — https://EditorConfig.org
+#
+# This file enforces UTF-8 across every editor that respects EditorConfig
+# (VSCode, JetBrains, Sublime, vim with plugin, etc.). It is the primary
+# defence against the recurring Umlaut-mojibake bug where German Umlauts
+# get rewritten as "ae"/"oe"/"ue" or `Ã¤` because an editor reopened a
+# UTF-8 file as Windows-1252 / Latin-1 and saved it back.
+#
+# If you ever see a German Umlaut break again, FIRST check that your
+# editor honors this file (charset = utf-8). Do NOT replace Umlauts with
+# ASCII fallbacks ("ae"/"oe"/"ue") in user-facing strings, patch notes,
+# i18n locales or CHANGELOG entries.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{md,mdx}]
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab
+
+[*.{bat,cmd,ps1}]
+end_of_line = crlf

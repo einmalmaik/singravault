@@ -16,11 +16,11 @@ vi.mock('react-i18next', () => ({
         'common.error': 'Fehler',
         'common.cancel': 'Abbrechen',
         'vault.integrity.restoreAction': 'Wiederherstellen',
-        'vault.integrity.deleteEntry': 'Endgueltig loeschen',
-        'vault.integrity.noTrustedLocalCopy': 'Auf diesem Geraet ist keine verifizierte lokale Kopie verfuegbar.',
-        'vault.integrity.restoreSuccess': 'Die letzte verifizierte Version wurde ueber das Operation Log wiederhergestellt.',
-        'vault.integrity.deleteSuccess': 'Der Quarantaene-Eintrag wurde ueber eine signierte Tombstone-Operation entfernt.',
-        'vault.integrity.confirmDeleteTitle': 'Eintrag endgueltig loeschen?',
+        'vault.integrity.deleteEntry': 'Endgültig löschen',
+        'vault.integrity.noTrustedLocalCopy': 'Auf diesem Gerät ist keine verifizierte lokale Kopie verfügbar.',
+        'vault.integrity.restoreSuccess': 'Die letzte verifizierte Version wurde über das Operation Log wiederhergestellt.',
+        'vault.integrity.deleteSuccess': 'Der Quarantäne-Eintrag wurde über eine signierte Tombstone-Operation entfernt.',
+        'vault.integrity.confirmDeleteTitle': 'Eintrag endgültig löschen?',
       };
 
       return fixedTranslations[key] || options?.defaultValue || key;
@@ -82,7 +82,7 @@ describe('VaultQuarantineActions', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Wiederherstellen' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Endgueltig loeschen' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Endgültig löschen' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Loeschung akzeptieren' })).not.toBeInTheDocument();
     expect(screen.queryByText(/keine verifizierte lokale Kopie/i)).not.toBeInTheDocument();
   });
@@ -197,10 +197,10 @@ describe('VaultQuarantineActions', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Endgueltig loeschen' }));
-    expect(screen.getByText('Eintrag endgueltig loeschen?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Endgültig löschen' }));
+    expect(screen.getByText('Eintrag endgültig löschen?')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Endgueltig loeschen' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Endgültig löschen' }));
 
     await waitFor(() => {
       expect(mockOpLogDeleteUntrustedRecord).toHaveBeenCalledWith('item-3');

@@ -100,44 +100,100 @@ export async function unlockVaultWithMasterPassword(
 async function tryDuressUnlock(
   input: VaultMasterUnlockInput,
 ): Promise<{ handled: boolean; error: Error | null }> {
-  if (!input.duressConfig?.enabled || !getServiceHooks().attemptDualUnlock) {
+  if (!input.duressConfig?.enabled) {
     return { handled: false, error: null };
   }
 
-  if (!input.verificationHash) {
-    return {
-      handled: true,
-      error: new Error('Duress unlock requires a current verifier. Please unlock online once with your master password.'),
-    };
+  const hooks = getServiceHooks();
+
+  // Prefer the USK-safe duress-only hook. It verifies the duress credentials
+  // in isolation and never touches the master-password verifier, so it stays
+  // correct regardless of whether the verifier is bound to the master-derived
+  // key (pre-USK) or the UserKey (post-USK).
+  if (hooks.attemptDuressUnlockOnly) {
+    return tryDuressUnlockViaDedicatedHook(input, hooks.attemptDuressUnlockOnly);
   }
 
-  const result = await getServiceHooks().attemptDualUnlock!(
-    input.masterPassword,
-    input.salt,
-    input.verificationHash,
-    input.kdfVersion,
-    input.duressConfig,
-  );
-
-  if (result.mode === 'invalid') {
-    recordFailedAttempt();
-    return { handled: true, error: new Error('Invalid master password') };
+  if (hooks.attemptDualUnlock) {
+    return tryDuressUnlockViaLegacyDualHook(input, hooks.attemptDualUnlock);
   }
 
-  resetUnlockAttempts();
-  if (result.mode === 'duress') {
-    const twoFactorResult = await input.enforceVaultTwoFactorBeforeKeyRelease(input.options);
-    if (twoFactorResult.error) {
-      return { handled: true, error: twoFactorResult.error };
-    }
-    input.openDuressVault(result.key!);
-    return { handled: true, error: null };
-  }
-
-  // A normal dual-unlock result must still use the primary unlock path.
-  // Phase-12 migration needs a copy of the vault KDF output; the duress hook
-  // only returns the active key and cannot safely supply that migration key.
   return { handled: false, error: null };
+}
+
+async function tryDuressUnlockViaDedicatedHook(
+  input: VaultMasterUnlockInput,
+  hook: NonNullable<ReturnType<typeof getServiceHooks>['attemptDuressUnlockOnly']>,
+): Promise<{ handled: boolean; error: Error | null }> {
+  let result;
+  try {
+    result = await hook({
+      password: input.masterPassword,
+      duressConfig: input.duressConfig!,
+    });
+  } catch (error) {
+    console.warn('Duress-only unlock hook threw; falling back to primary unlock.', error);
+    return { handled: false, error: null };
+  }
+
+  if (!result.matched || !result.key) {
+    // Duress did not match. The core's primary unlock path is the single
+    // source of truth for the real master password and runs next.
+    return { handled: false, error: null };
+  }
+
+  return openDuressVaultWithTwoFactor(input, result.key);
+}
+
+async function tryDuressUnlockViaLegacyDualHook(
+  input: VaultMasterUnlockInput,
+  hook: NonNullable<ReturnType<typeof getServiceHooks>['attemptDualUnlock']>,
+): Promise<{ handled: boolean; error: Error | null }> {
+  if (!input.verificationHash) {
+    // Pre-USK dual-unlock requires a verifier; without one we cannot ask the
+    // legacy hook, so defer to the primary path which has its own checks.
+    return { handled: false, error: null };
+  }
+
+  let result;
+  try {
+    result = await hook(
+      input.masterPassword,
+      input.salt,
+      input.verificationHash,
+      input.kdfVersion,
+      input.duressConfig!,
+    );
+  } catch (error) {
+    console.warn('Legacy dual-unlock hook threw; falling back to primary unlock.', error);
+    return { handled: false, error: null };
+  }
+
+  if (result.mode === 'duress' && result.key) {
+    return openDuressVaultWithTwoFactor(input, result.key);
+  }
+
+  // For 'real', 'normal', 'invalid', or any unknown mode: defer to the primary
+  // master-unlock path. Treating 'invalid' as terminal here would break unlock
+  // for any USK-based vault: the legacy hook verifies against the
+  // master-derived key, but `profiles.master_password_verifier` is bound to
+  // the UserKey on post-USK setups, so `verifyKey` returns false even when
+  // the password is correct. The primary path performs the canonical
+  // USK-based verification and is authoritative.
+  return { handled: false, error: null };
+}
+
+async function openDuressVaultWithTwoFactor(
+  input: VaultMasterUnlockInput,
+  duressKey: CryptoKey,
+): Promise<{ handled: boolean; error: Error | null }> {
+  resetUnlockAttempts();
+  const twoFactorResult = await input.enforceVaultTwoFactorBeforeKeyRelease(input.options);
+  if (twoFactorResult.error) {
+    return { handled: true, error: twoFactorResult.error };
+  }
+  input.openDuressVault(duressKey);
+  return { handled: true, error: null };
 }
 
 async function unlockWithPrimaryVaultKey(

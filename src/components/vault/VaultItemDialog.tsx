@@ -193,6 +193,11 @@ function resolveInitialItemType(
 function shouldVerifyLegacyDialogCategorySnapshot(
     vaultMigrationStatus: VaultMigrationRolloutStatus | null,
 ): boolean {
+    // null means the vault is in duress (panic) mode — treat it the same as
+    // 'verified' so we never run a real integrity check against the server
+    // manifest using the duress key (which has no manifest and would always
+    // return integrity_unknown, triggering the blocking UI).
+    if (vaultMigrationStatus === null) return false;
     return vaultMigrationStatus !== 'verified';
 }
 

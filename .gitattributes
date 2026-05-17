@@ -1,0 +1,58 @@
+# Force UTF-8 + LF for every text file so German Umlauts (ä/ö/ü/ß and
+# uppercase variants) survive cross-platform clones, code reviews and
+# Windows checkouts. This file is the safety net behind .editorconfig.
+#
+# If a file ever comes back as `Ã¤`/`Ã¶`/`Ã¼` or shows ASCII fallbacks
+# ("ae"/"oe"/"ue") instead of real Umlauts, treat it as a bug — do not
+# permanently rewrite the German texts.
+
+# Default: treat as text, normalize to LF, declare UTF-8 working-tree encoding.
+* text=auto eol=lf working-tree-encoding=UTF-8
+
+# Source code (always text, never auto-detected as binary).
+*.ts        text eol=lf working-tree-encoding=UTF-8
+*.tsx       text eol=lf working-tree-encoding=UTF-8
+*.js        text eol=lf working-tree-encoding=UTF-8
+*.jsx       text eol=lf working-tree-encoding=UTF-8
+*.json      text eol=lf working-tree-encoding=UTF-8
+*.md        text eol=lf working-tree-encoding=UTF-8
+*.mdx       text eol=lf working-tree-encoding=UTF-8
+*.html      text eol=lf working-tree-encoding=UTF-8
+*.css       text eol=lf working-tree-encoding=UTF-8
+*.scss      text eol=lf working-tree-encoding=UTF-8
+*.yml       text eol=lf working-tree-encoding=UTF-8
+*.yaml      text eol=lf working-tree-encoding=UTF-8
+*.toml      text eol=lf working-tree-encoding=UTF-8
+*.sql       text eol=lf working-tree-encoding=UTF-8
+*.sh        text eol=lf working-tree-encoding=UTF-8
+*.rs        text eol=lf working-tree-encoding=UTF-8
+*.mjs       text eol=lf working-tree-encoding=UTF-8
+
+# Windows-only scripts keep CRLF so they stay executable on Windows.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary assets — never normalised, never UTF-8 reinterpreted.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.webp      binary
+*.svg       text eol=lf working-tree-encoding=UTF-8
+*.pdf       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.eot       binary
+*.zip       binary
+*.gz        binary
+*.7z        binary
+*.exe       binary
+*.dll       binary
+*.dmg       binary
+*.app       binary
+
+# Lockfiles — text but high-noise; keep LF without touching encoding.
+package-lock.json text eol=lf

@@ -38,9 +38,10 @@ export async function persistTrustedRecoverySnapshot(
 
 export async function resetVaultAfterIntegrityFailureForUser(
   userId: string,
+  reauthProofId: string,
 ): Promise<{ error: Error | null }> {
   try {
-    await resetUserVaultState(userId);
+    await resetUserVaultState(userId, reauthProofId);
     return { error: null };
   } catch (error) {
     return {

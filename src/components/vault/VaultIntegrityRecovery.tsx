@@ -19,7 +19,6 @@ import { useToast } from '@/hooks/use-toast';
 import type { VaultItemData } from '@/services/cryptoService';
 import { saveExportFile } from '@/services/exportFileService';
 import { getTrustedOfflineSnapshot } from '@/services/offlineVaultService';
-import { isSensitiveActionSessionFresh } from '@/services/sensitiveActionReauthService';
 import { buildVaultExportPayload } from '@/services/vaultExportService';
 import { VaultRecoveryResetError } from '@/services/vaultRecoveryService';
 import {
@@ -268,13 +267,16 @@ export function VaultIntegrityRecovery() {
     return error.message;
   };
 
-  const executeResetVault = async (): Promise<boolean> => {
+  const executeResetVault = async (reauthProofId: string): Promise<boolean> => {
     setIsResetting(true);
-    const result = await resetVaultAfterIntegrityFailure();
+    const result = await resetVaultAfterIntegrityFailure(reauthProofId);
     setIsResetting(false);
 
     if (result.error) {
-      if (result.error instanceof VaultRecoveryResetError && result.error.code === 'REAUTH_REQUIRED') {
+      if (
+        result.error instanceof VaultRecoveryResetError &&
+        (result.error.code === 'REAUTH_REQUIRED' || result.error.code === 'REAUTH_PROOF_REQUIRED')
+      ) {
         toast({
           title: t('common.error'),
           description: t('reauth.vaultResetContext'),
@@ -305,13 +307,10 @@ export function VaultIntegrityRecovery() {
       return;
     }
 
-    const hasFreshSession = await isSensitiveActionSessionFresh(300);
-    if (!hasFreshSession) {
-      setShowReauthDialog(true);
-      return;
-    }
-
-    await executeResetVault();
+    // Always require explicit OPAQUE credential verification before a
+    // destructive vault reset. JWT iat freshness is not sufficient because
+    // a silent session refresh mints a fresh iat without any credential proof.
+    setShowReauthDialog(true);
   };
 
   return (
@@ -438,8 +437,7 @@ export function VaultIntegrityRecovery() {
         open={showReauthDialog}
         onOpenChange={setShowReauthDialog}
         description={t('reauth.vaultResetContext')}
-        confirmationKeyword={t('reauth.resetKeyword')}
-        onSuccess={executeResetVault}
+        onSuccess={(reauthProofId) => executeResetVault(reauthProofId)}
       />
     </>
   );

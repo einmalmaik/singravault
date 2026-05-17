@@ -44,6 +44,14 @@ const CLOUD_SYNC_MIN_REQUEST_GAP_MS = 25_000;
 export interface UseVaultItemListDataInput {
   readonly userId: string | null;
   readonly isDuressMode: boolean;
+  /**
+   * Ephemeral, in-memory decoy items rendered when `isDuressMode` is true.
+   * `null` outside of duress mode. When in duress mode the data hook
+   * returns these directly and skips every persistence-backed code path
+   * (snapshot load, OpLog projection, integrity gate, decryption); duress
+   * decoys are plaintext-by-design and never go near the database.
+   */
+  readonly duressDecoyItems: VaultItem[] | null;
   readonly useOpLogVerifiedRuntime: boolean;
   readonly opLogLocalVaultState: LocalVaultState | null;
   readonly refreshKey?: number;
@@ -74,6 +82,7 @@ export interface UseVaultItemListDataResult {
 export function useVaultItemListData({
   userId,
   isDuressMode,
+  duressDecoyItems,
   useOpLogVerifiedRuntime,
   opLogLocalVaultState,
   refreshKey,
@@ -193,7 +202,9 @@ export function useVaultItemListData({
   }, [userId]);
 
   const revalidateRemoteIntegrity = useCallback(async () => {
-    if (!userId || revalidatingRef.current || useOpLogVerifiedRuntime) {
+    // Duress vault has no server manifest — running a real integrity check
+    // would always resolve to integrity_unknown and block the panic vault.
+    if (!userId || revalidatingRef.current || useOpLogVerifiedRuntime || isDuressMode) {
       return;
     }
 
@@ -252,6 +263,28 @@ export function useVaultItemListData({
         setDecrypting(false);
       }
       try {
+        // Duress (panic) vault: short-circuit every persistence-backed
+        // path. The decoy items are already plaintext and ephemeral, so
+        // the snapshot, OpLog projection, integrity gate and
+        // legacy-migration code paths must be bypassed entirely. Running
+        // them with the duress key would just produce a flood of
+        // decryption failures and quarantined items — there is no real
+        // ciphertext to decrypt against the duress key, by design. Note
+        // that the data hook still fully resets on `(userId, isDuressMode)`
+        // changes via the cleanup effect above, so toggling between real
+        // and duress vaults cannot leak items in either direction.
+        if (isDuressMode) {
+          reportUnreadableItemsRef.current([]);
+          setItems(duressDecoyItems ?? []);
+          hasRenderedVaultContentRef.current = true;
+          setLastCloudSyncAt(new Date());
+          fetchItemsRef.current = false;
+          setLoading(false);
+          setDecrypting(false);
+          setBackgroundSyncing(false);
+          return;
+        }
+
         if (useOpLogVerifiedRuntime) {
           const opLogItems = opLogLocalVaultState
             ? Array.from(opLogLocalVaultState.recordsById.values())
@@ -500,6 +533,7 @@ export function useVaultItemListData({
     refreshKey,
     cloudSyncTick,
     isDuressMode,
+    duressDecoyItems,
     revalidateRemoteIntegrity,
     opLogLocalVaultState,
     useOpLogVerifiedRuntime,
