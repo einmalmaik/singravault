@@ -28,21 +28,24 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useVault } from '@/contexts/VaultContext';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import { saveExportFile } from '@/services/exportFileService';
-import { buildVaultExportPayload } from '@/services/vaultExportService';
 import {
-  getVerifiedRecordIdsForEgress,
+  buildVaultOpLogExportPayload,
+  importVaultExportPayload,
+  parseVaultImportPayload,
+} from '@/services/vaultExportService';
+import {
   isVaultSecurityModeBlockingEgress,
 } from '@/services/vaultOpLog';
-import { LEGACY_VAULT_WRITE_BLOCKED_MESSAGE } from '@/services/vaultOpLog/vaultLegacyWriteBlocker';
 
 export function DataSettings() {
     const { t } = useTranslation();
     const { user } = useAuth();
     const {
-        decryptItem,
         isLocked,
+        opLogCreateCategory,
+        opLogCreateItem,
+        opLogLocalVaultState,
         opLogUiView,
     } = useVault();
     const { toast } = useToast();
@@ -65,8 +68,7 @@ export function DataSettings() {
 
         setIsExporting(true);
         try {
-            const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView);
-            if (!opLogUiView || !allowedItemIds || isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)) {
+            if (!opLogUiView || !opLogLocalVaultState) {
                 toast({
                     variant: 'destructive',
                     title: t('common.error'),
@@ -77,31 +79,7 @@ export function DataSettings() {
                 return;
             }
 
-            // Get user's vault
-            const { data: vault } = await supabase
-                .from('vaults')
-                .select('id')
-                .eq('user_id', user.id)
-                .eq('is_default', true)
-                .single();
-
-            if (!vault) {
-                throw new Error('No vault found');
-            }
-
-            // Get all vault items
-            const { data: items } = await supabase
-                .from('vault_items')
-                .select('*')
-                .eq('vault_id', vault.id);
-
-            if (!items) {
-                throw new Error('Failed to fetch items');
-            }
-
-            const exportData = await buildVaultExportPayload(items, decryptItem, {
-                allowedItemIds,
-            });
+            const exportData = buildVaultOpLogExportPayload(opLogLocalVaultState, opLogUiView);
 
             const saved = await saveExportFile({
                 name: `singra-vault-export-${new Date().toISOString().split('T')[0]}.json`,
@@ -118,7 +96,7 @@ export function DataSettings() {
                 description: t('settings.data.exportSuccess', { count: exportData.itemCount }),
             });
         } catch (error) {
-            console.error('Export failed:', error);
+            console.error('Export failed');
             toast({
                 variant: 'destructive',
                 title: t('common.error'),
@@ -142,13 +120,29 @@ export function DataSettings() {
 
         setIsImporting(true);
         try {
+            if (!opLogUiView || !opLogLocalVaultState || isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)) {
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description: t('vault.export.blockedBySecurityMode', {
+                        defaultValue: 'Import ist ohne verifizierten Tresor-Zustand nicht erlaubt.',
+                    }),
+                });
+                return;
+            }
+
+            const payload = parseVaultImportPayload(await importFile.text());
+            const result = await importVaultExportPayload(payload, {
+                createCategory: opLogCreateCategory,
+                createItem: opLogCreateItem,
+            });
+
             toast({
-                variant: 'destructive',
-                title: t('common.error'),
-                description: LEGACY_VAULT_WRITE_BLOCKED_MESSAGE,
+                title: t('common.success'),
+                description: t('settings.data.importSuccess', { count: result.itemCount }),
             });
         } catch (error) {
-            console.error('Import failed:', error);
+            console.error('Import failed');
             toast({
                 variant: 'destructive',
                 title: t('common.error'),

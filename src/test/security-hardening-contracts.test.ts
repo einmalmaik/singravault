@@ -428,22 +428,26 @@ describe("security hardening contracts", () => {
 
     expect(vaultPage).toContain("const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified'");
     expect(vaultPage).toContain("const shouldShowLegacyIntegrityRecovery = !useOpLogVerifiedRuntime");
-    expect(vaultPage).toContain("if (!useOpLogVerifiedRuntime && (integrityMode === 'blocked' || integrityMode === 'safe'))");
+    expect(vaultPage).toContain("if (!useOpLogVerifiedRuntime && !isDuressMode && (integrityMode === 'blocked' || integrityMode === 'safe'))");
     expect(vaultPage).toContain("if (shouldShowLegacyIntegrityRecovery)");
     expect(vaultSidebar).toContain("const useOpLogVerifiedRuntime = vaultMigrationStatus === 'verified'");
     expect(sidebarCategoriesHook).toContain("if (useOpLogVerifiedRuntime)");
     expect(sidebarCategoriesHook).toContain("mapVerifiedCategoryRecord");
   });
 
-  it("requires a verified OpLog allowlist before export decrypts legacy vault rows", () => {
+  it("requires verified OpLog state before exporting vault data", () => {
     const dataSettings = readFileSync("src/components/settings/DataSettings.tsx", "utf-8");
     const accountSettings = readFileSync("src/components/settings/AccountSettings.tsx", "utf-8");
+    const exportService = readFileSync("src/services/vaultExportService.ts", "utf-8");
 
-    for (const source of [dataSettings, accountSettings]) {
-      expect(source).toContain("const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView)");
-      expect(source).toContain("!opLogUiView || !allowedItemIds || isVaultSecurityModeBlockingEgress");
-      expect(source).toContain("allowedItemIds,");
-      expect(source).not.toContain("allowedItemIds: allowedItemIds ?? undefined");
-    }
+    expect(dataSettings).toContain("buildVaultOpLogExportPayload(opLogLocalVaultState, opLogUiView)");
+    expect(dataSettings).not.toContain("from('vault_items')");
+    expect(exportService).toContain("const allowedIds = getVerifiedRecordIdsForEgress(opLogUiView)");
+    expect(exportService).toContain("isVaultSecurityModeBlockingEgress(opLogUiView.vaultSecurityMode)");
+
+    expect(accountSettings).toContain("const allowedItemIds = getVerifiedRecordIdsForEgress(opLogUiView)");
+    expect(accountSettings).toContain("!opLogUiView || !allowedItemIds || isVaultSecurityModeBlockingEgress");
+    expect(accountSettings).toContain("allowedItemIds,");
+    expect(accountSettings).not.toContain("allowedItemIds: allowedItemIds ?? undefined");
   });
 });
