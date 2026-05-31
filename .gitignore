@@ -80,3 +80,5 @@ temp_fingerprint.txt
 /.tmp
 /neues-design
 /neues-deisgn
+/.refact
+*.code-workspace
