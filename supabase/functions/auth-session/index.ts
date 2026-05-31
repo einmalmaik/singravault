@@ -275,7 +275,14 @@ async function handleOAuthSync(
         setSessionCookie(headers, refreshedData.session.refresh_token);
     }
 
-    const reauthProofId = await issueReauthProof(refreshedData.session.user.id);
+    const userId = refreshedData.session.user.id;
+    const provider = String(refreshedData.session.user.app_metadata?.provider ?? "oauth");
+
+    // Record the interactive login so handleOAuthReauth can verify freshness
+    // without relying on JWT amr claims (which get wiped by silent token refresh).
+    await recordSocialLoginEvent(userId, provider);
+
+    const reauthProofId = await issueReauthProof(userId);
 
     return new Response(JSON.stringify({ success: true, session: refreshedData.session, reauthProofId }), {
         status: 200,
@@ -426,9 +433,26 @@ async function handleOAuthReauth(
         });
     }
 
-    // Verify session freshness from JWT.
-    const isFresh = isJwtSessionFresh(accessToken);
-    if (!isFresh) {
+    // Verify that the user has a recent interactive social login recorded in
+    // social_login_events. This is safer than checking JWT amr claims because:
+    //   1. The edgeFunctionService auto-refreshes tokens before every call,
+    //      overwriting amr with [{method:"refresh"}] even for fresh logins.
+    //   2. social_login_events is written server-side (service-role only) during
+    //      the oauth-sync flow — the client cannot forge this.
+    //   3. The 15-minute window (900s) allows for normal UI interaction time
+    //      while still requiring a recent interactive authentication.
+    const { data: isFreshData, error: freshCheckError } = await supabaseAdmin.rpc(
+        "check_recent_social_login",
+        { p_user_id: userId, p_max_age_secs: 900 },
+    );
+    if (freshCheckError) {
+        console.error("social login freshness check failed:", freshCheckError.message);
+        return new Response(JSON.stringify({ error: "Internal error" }), {
+            status: 500,
+            headers: responseHeaders,
+        });
+    }
+    if (!isFreshData) {
         return new Response(JSON.stringify({ error: "REAUTH_REQUIRED" }), {
             status: 401,
             headers: responseHeaders,
@@ -449,36 +473,14 @@ async function handleOAuthReauth(
     });
 }
 
-function isJwtSessionFresh(accessToken: string, maxAgeSeconds = 300): boolean {
-    try {
-        const segments = accessToken.split('.');
-        if (segments.length < 2) return false;
-        
-        // Decode base64 URL payload
-        const base64Payload = segments[1].replace(/-/g, '+').replace(/_/g, '/');
-        const padded = `${base64Payload}${'='.repeat((4 - (base64Payload.length % 4)) % 4)}`;
-        const payload = JSON.parse(atob(padded)) as Record<string, unknown>;
-        
-        const iat = payload.iat;
-        if (typeof iat !== 'number') return false;
-        
-        const now = Math.floor(Date.now() / 1000);
-        // Prevent clock skew issues by adding a 30s grace window
-        if (iat > now + 30) return false;
-        if ((now - iat) > maxAgeSeconds) return false;
-
-        // Check AMR to ensure it wasn't a silent refresh
-        const amr = payload.amr;
-        if (Array.isArray(amr)) {
-            for (const claim of amr) {
-                if (claim === 'refresh' || (typeof claim === 'object' && claim !== null && claim.method === 'refresh')) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    } catch {
-        return false;
+async function recordSocialLoginEvent(userId: string, provider: string): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("social_login_events")
+        .insert({ user_id: userId, provider });
+    if (error) {
+        // Non-fatal: log and continue. The reauth check will fail later if the
+        // record is missing, which is the safe (fail-closed) outcome.
+        console.error("Failed to record social login event:", error.code ?? error.message);
     }
 }
 
