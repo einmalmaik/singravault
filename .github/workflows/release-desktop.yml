@@ -93,42 +93,20 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Singra Vault v__VERSION__"
           releaseBody: |
-            ## Singra Vault 0.4.9
+            ## Singra Vault 0.5.0
 
-            Dieses Patch-Release stabilisiert die Core- und Desktop-Builds nach den letzten Sicherheits- und Duress-Änderungen. Der öffentliche Core bleibt ohne Premium-Quellcode baubar; offizielle Desktop-Releases werden weiterhin mit der separaten Premium-Quelle gebaut.
+            Dieses Release bringt wichtige Korrekturen und Verbesserungen für den Export und Import von Tresordaten über den OpLog-Sicherheitskontext.
 
             ### Highlights
 
-            - Tauri-Desktop-Builds laufen wieder mit zusammenpassenden Tauri-2.11-Paketen auf npm- und Rust-Seite.
-            - Version `0.4.9` ist jetzt in npm, Tauri-Konfiguration und Rust-Paketmetadaten konsistent gesetzt.
-            - Duress-/Panic-Vault-Pfade wurden stabilisiert, damit Integritätsprüfungen im Decoy-Kontext nicht versehentlich normale Vault-Blockaden auslösen.
-            - Passkey-Einstellungen und Duress-Decoy-Verwaltung wurden getrennt und besser auf Core/Premium-Grenzen abgestimmt.
-            - Singra Vault bleibt ein experimenteller Prototyp. Bitte keine echten Passwörter, produktiven Secrets oder Recovery-Daten speichern.
+            - **Daten-Export über OpLog**: Der unverschlüsselte JSON-Export von Tresordaten erfolgt nun direkt aus dem verifizierten OpLog-Zustand anstelle der veralteten `vault_items`-Tabellenzeilen.
+            - **Verbesserte Import-Validierung**: Import-Payloads werden vor dem ersten Schreibvorgang vollständig validiert. Bei fehlerhaften oder manipulierten Typfeldern schlägt der Import sicherheitshalber direkt fehl (fail closed).
 
-            ### Verbesserungen
+            ### Verbesserungen & Fehlerbehebungen
 
-            - Dev-/Preview-Server respektieren den `PORT`-Wert sauberer und erlauben die benötigten Hosts ohne iframe-blockierende Entwicklungsheader.
-            - Passkey-Labels und Duress-Decoy-Synthese wurden testbarer und klarer getrennt.
-            - Legacy-Duress-Decoy-Cleanup bleibt als Core-kompatibles Werkzeug verfügbar, ohne Premium-Code in den öffentlichen Core zu ziehen.
-            - Release-Guardrails und Paketmetadaten wurden für den erneuten `0.4.9`-Desktop-Release nachgezogen.
-
-            ### Behoben
-
-            - Erzwungene Passwort-Entsperrpfade und Umlaut-Encoding-Regressionen wurden korrigiert.
-            - Panic-Vault-Dialogs, Sidebar-Kategorien und Item-Listen überspringen Integritäts-Revalidierungen nur im Duress-Kontext und behandeln normale Vaults weiterhin fail-closed.
-            - `openDuressVault` ist gegen veralteten `vaultMigrationStatus` abgesichert.
-            - Integritäts-blockierende UI wird im Duress-Modus unterdrückt, ohne Kategorie-Drift oder Item-Quarantäne im normalen Vault zu entschärfen.
-
-            ### Stabilität & Sicherheit
-
-            - Auth-Step-up, Device-Key-Grenzen und Manifest-Bootstrap wurden gehärtet.
-            - Recovery- und Integritätsdienste behalten Challenge-/Reauth-Grenzen bei; es gibt keinen Master-only-Fallback bei `device_key_required`.
-            - Tauri API/CLI wurden gezielt auf 2.11.x angehoben, passend zur gelockten Rust-Crate `tauri 2.11.2`.
-
-            ### Wichtige Hinweise
-
-            - Wenn alle vertrauenswürdigen Geräte und alle Recovery-Codes verloren sind, gibt es weiterhin keinen Support-Bypass für den Tresorzugriff.
-            - Der öffentliche Quellcode bleibt Core-only; offizielle Desktop-Builds werden mit vorkonfigurierter Singra Cloud und separat ausgechecktem Premium-Code gebaut.
+            - **Vollständiger Payload-Export**: Plaintext-Payloads beim Export/Import umfassen nun auch Notizen, benutzerdefinierte Felder und TOTP-Metadaten vollständig.
+            - **Kategorie-Remapping**: Kategorien werden beim Import prioritär angelegt und ihre IDs beim Erstellen der OpLog-Einträge korrekt gemappt.
+            - **Sicherheits-Contracts**: Die Testabdeckung für die zentralen OpLog-Exportpfade und Regressions-Tests für Export-/Import-Invarianten wurde erweitert.
           generateReleaseNotes: false
           releaseDraft: false
           prerelease: false
