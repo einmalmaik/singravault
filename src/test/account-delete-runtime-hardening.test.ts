@@ -78,6 +78,21 @@ describe("account deletion and auth runtime hardening", () => {
     expect(accountDeleteFunction).not.toContain("hint: error.hint");
   });
 
+  it("routes social login/OAuth users to a dedicated oauth-reauth edge function path during deletion", () => {
+    expect(accountSettings).toContain("const isOAuthUser = user?.app_metadata?.provider !== 'email'");
+    expect(accountSettings).toContain("invokeAuthedFunction<{ reauthProofId?: string }>('auth-session'");
+    expect(accountSettings).toContain("action: 'oauth-reauth'");
+
+    expect(authOpaque).toContain("issueReauthProof");
+    const authSession = readFileSync("supabase/functions/auth-session/index.ts", "utf-8");
+    expect(authSession).toContain('"oauth-reauth"');
+    expect(authSession).toContain("handleOAuthReauth(");
+    expect(authSession).toContain("isJwtSessionFresh(");
+    expect(authSession).toContain("user_opaque_records");
+    expect(authSession).toContain("FORBIDDEN"); // returns 403 for OPAQUE password users
+    expect(authSession).toContain("issueReauthProof(");
+  });
+
   it("keeps account-delete UI export/2FA warning outside nested paragraph descriptions", () => {
     expect(accountSettings).toContain("<AlertDialogDescription asChild>");
     expect(accountSettings).toContain("exportBeforeDelete");

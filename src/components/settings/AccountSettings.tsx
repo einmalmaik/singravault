@@ -65,7 +65,7 @@ const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
 export function AccountSettings() {
     const { t } = useTranslation();
-    const { user, signOut } = useAuth();
+    const { user, session, signOut } = useAuth();
     const { decryptItem, isLocked, opLogUiView } = useVault();
     const { toast } = useToast();
     const navigate = useNavigate();
@@ -226,11 +226,40 @@ export function AccountSettings() {
     const handleDeleteAccount = async () => {
         if (deleteConfirmation.trim().toUpperCase() !== 'DELETE' || isDeleting) return;
 
-        // Always require explicit OPAQUE credential verification before a
-        // destructive account delete. JWT iat freshness is not sufficient because
-        // a silent session refresh mints a fresh iat without any credential proof.
-        setShowDeleteDialog(false);
-        setShowReauthDialog(true);
+        const isOAuthUser = user?.app_metadata?.provider !== 'email';
+        if (isOAuthUser) {
+            setIsDeleting(true);
+            try {
+                const result = await invokeAuthedFunction<{ reauthProofId?: string }>('auth-session', {
+                    action: 'oauth-reauth',
+                });
+
+                if (result.reauthProofId) {
+                    setShowDeleteDialog(false);
+                    await executeDeleteAccount(result.reauthProofId);
+                } else {
+                    throw new Error('No reauthProofId returned');
+                }
+            } catch (error) {
+                let description = t('settings.account.deleteFailed');
+                if (isEdgeFunctionServiceError(error) && error.status === 401) {
+                    description = 'Deine Sitzung ist abgelaufen oder ungültig. Bitte melde dich ab und erneut an, um dein Konto zu löschen.';
+                }
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description,
+                });
+            } finally {
+                setIsDeleting(false);
+            }
+        } else {
+            // Always require explicit OPAQUE credential verification before a
+            // destructive account delete. JWT iat freshness is not sufficient because
+            // a silent session refresh mints a fresh iat without any credential proof.
+            setShowDeleteDialog(false);
+            setShowReauthDialog(true);
+        }
     };
 
     const handleExportBeforeDelete = async () => {

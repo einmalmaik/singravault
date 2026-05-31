@@ -172,6 +172,10 @@ Deno.serve(async (req) => {
             return await handleOAuthSync(req, payload, headers, jsonHeaders());
         }
 
+        if (payload?.action === "oauth-reauth") {
+            return await handleOAuthReauth(req, headers, jsonHeaders());
+        }
+
         return await legacyPasswordLoginBlockedResponse(req, payload, jsonHeaders());
     } catch (err: unknown) {
         console.error("Auth Session Error:", err);
@@ -271,7 +275,9 @@ async function handleOAuthSync(
         setSessionCookie(headers, refreshedData.session.refresh_token);
     }
 
-    return new Response(JSON.stringify({ success: true, session: refreshedData.session }), {
+    const reauthProofId = await issueReauthProof(refreshedData.session.user.id);
+
+    return new Response(JSON.stringify({ success: true, session: refreshedData.session, reauthProofId }), {
         status: 200,
         headers: responseHeaders,
     });
@@ -373,4 +379,121 @@ function toLockedState(failure: AuthRateLimitFailureResult) {
         lockedUntil: failure.lockedUntil,
         retryAfterSeconds: failure.retryAfterSeconds,
     };
+}
+
+async function handleOAuthReauth(
+    req: Request,
+    headers: Headers,
+    responseHeaders: Headers,
+): Promise<Response> {
+    const accessToken = parseBearerToken(req.headers.get("Authorization"));
+    if (!accessToken) {
+        return new Response(JSON.stringify({ error: "AUTH_REQUIRED" }), {
+            status: 401,
+            headers: responseHeaders,
+        });
+    }
+
+    const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(accessToken);
+    const userId = userData.user?.id;
+    if (userError || !userId) {
+        return new Response(JSON.stringify({ error: "AUTH_REQUIRED" }), {
+            status: 401,
+            headers: responseHeaders,
+        });
+    }
+
+    // Verify they are an OAuth user (no OPAQUE password record).
+    const { data: opaqueRecord, error: dbError } = await supabaseAdmin
+        .from("user_opaque_records")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+    if (dbError) {
+        console.error("Database query failed during OAuth reauth check:", dbError);
+        return new Response(JSON.stringify({ error: "Internal error" }), {
+            status: 500,
+            headers: responseHeaders,
+        });
+    }
+
+    if (opaqueRecord) {
+        // Password/OPAQUE users are not allowed to use this path.
+        return new Response(JSON.stringify({ error: "FORBIDDEN" }), {
+            status: 403,
+            headers: responseHeaders,
+        });
+    }
+
+    // Verify session freshness from JWT.
+    const isFresh = isJwtSessionFresh(accessToken);
+    if (!isFresh) {
+        return new Response(JSON.stringify({ error: "REAUTH_REQUIRED" }), {
+            status: 401,
+            headers: responseHeaders,
+        });
+    }
+
+    const reauthProofId = await issueReauthProof(userId);
+    if (!reauthProofId) {
+        return new Response(JSON.stringify({ error: "Internal error" }), {
+            status: 500,
+            headers: responseHeaders,
+        });
+    }
+
+    return new Response(JSON.stringify({ success: true, reauthProofId }), {
+        status: 200,
+        headers: responseHeaders,
+    });
+}
+
+function isJwtSessionFresh(accessToken: string, maxAgeSeconds = 300): boolean {
+    try {
+        const segments = accessToken.split('.');
+        if (segments.length < 2) return false;
+        
+        // Decode base64 URL payload
+        const base64Payload = segments[1].replace(/-/g, '+').replace(/_/g, '/');
+        const padded = `${base64Payload}${'='.repeat((4 - (base64Payload.length % 4)) % 4)}`;
+        const payload = JSON.parse(atob(padded)) as Record<string, unknown>;
+        
+        const iat = payload.iat;
+        if (typeof iat !== 'number') return false;
+        
+        const now = Math.floor(Date.now() / 1000);
+        // Prevent clock skew issues by adding a 30s grace window
+        if (iat > now + 30) return false;
+        if ((now - iat) > maxAgeSeconds) return false;
+
+        // Check AMR to ensure it wasn't a silent refresh
+        const amr = payload.amr;
+        if (Array.isArray(amr)) {
+            for (const claim of amr) {
+                if (claim === 'refresh' || (typeof claim === 'object' && claim !== null && claim.method === 'refresh')) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function issueReauthProof(userId: string): Promise<string | null> {
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const { data, error } = await supabaseAdmin
+        .from("reauth_proofs")
+        .insert({ user_id: userId, expires_at: expiresAt })
+        .select("id")
+        .single();
+
+    if (error || !data?.id) {
+        console.error("Failed to issue reauth proof:", error?.code ?? "no data");
+        return null;
+    }
+
+    return data.id as string;
 }
