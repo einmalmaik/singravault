@@ -96,6 +96,18 @@ describe("account deletion and auth runtime hardening", () => {
     expect(authSession).toContain("issueReauthProof(");
   });
 
+  it("syncs Tauri OAuth callbacks server-side so social-login delete reauth can see the fresh login", () => {
+    const authPage = readFileSync("src/pages/Auth.tsx", "utf-8");
+    const syncPolicy = readFileSync("src/services/oauthSessionSyncPolicy.ts", "utf-8");
+
+    expect(authPage).toContain("resolveOAuthSessionSyncPolicy({ usesCookieSession, isDesktopRuntime })");
+    expect(authPage).toContain("if (currentOAuthSessionSyncPolicy.shouldSync)");
+    expect(authPage).toContain("credentials: currentOAuthSessionSyncPolicy.credentials");
+    expect(authPage).toContain("skipCookie: currentOAuthSessionSyncPolicy.skipCookie");
+    expect(syncPolicy).toContain("shouldSync: input.usesCookieSession || input.isDesktopRuntime");
+    expect(syncPolicy).toContain('credentials: input.usesCookieSession ? "include" : "omit"');
+  });
+
   it("keeps OAuth reauth freshness records server-only but writable by edge functions", () => {
     const socialLoginMigration = readFileSync(
       "supabase/migrations/20260531220000_social_login_events_for_oauth_reauth.sql",
