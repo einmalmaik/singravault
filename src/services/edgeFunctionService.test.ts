@@ -230,4 +230,39 @@ describe("edgeFunctionService", () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it("does not retry intentional reauth-required 401 responses", async () => {
+    const error = new FunctionsHttpError("Edge Function returned a non-2xx status code");
+    attachContext(error, {
+      status: 401,
+      json: vi.fn().mockResolvedValue({ error: "REAUTH_REQUIRED" }),
+    });
+
+    mockInvoke.mockResolvedValueOnce({
+      data: null,
+      error,
+    });
+
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        session: {
+          access_token: "rehydrated-token",
+          refresh_token: "rehydrated-refresh-token",
+        },
+      }),
+    } as unknown as Response);
+
+    await expect(
+      invokeAuthedFunction("auth-session", { action: "oauth-reauth" }),
+    ).rejects.toMatchObject({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      details: { error: "REAUTH_REQUIRED" },
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mockSetSession).not.toHaveBeenCalled();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
 });

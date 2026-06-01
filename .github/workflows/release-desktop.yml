@@ -93,14 +93,16 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Singra Vault v__VERSION__"
           releaseBody: |
-            ## Singra Vault 0.5.1
+            ## Singra Vault 0.5.3
 
-            Dieses Release behebt ein kritisches Problem bei der Kontolöschung für Nutzer mit Social Logins (OAuth).
+            Dieses Patch-Release reduziert unnötige Auth-Refreshes im Account-Delete-Reauth-Flow.
 
             ### Highlights
 
-            - **Kontolöschung für Social Logins**: Es wurde ein sicherer Reauthentifizierungspfad für Social-Login-Nutzer (Google, GitHub, etc.) implementiert. Da diese Konten kein OPAQUE-Passwort besitzen, wird nun deren interaktive OAuth-Sitzungsfrische geprüft (maximal 5 Minuten alt und nicht stumm im Hintergrund erneuert), um einen sicheren Reauth-Proof serverseitig auszustellen.
-            - **Automatisierte Sicherheits-Contracts**: Integrationstests stellen sicher, dass Password-Nutzer diesen Pfad nicht missbrauchen können und veraltete Social-Login-Sitzungen die Löschung verweigern (fail-closed).
+            - **Kein Retry bei Step-up-Ablehnung**: `REAUTH_REQUIRED` und verwandte Security-Ablehnungen werden nicht mehr als reparierbare 401-Transportfehler behandelt.
+            - **Weniger unnötige Requests**: Social-Login- und Account-Delete-Reauth-Fehler lösen keinen zusätzlichen BFF-Refresh und keinen zweiten Edge-Function-Aufruf mehr aus.
+            - **Account-Delete-Schutz bleibt aktiv**: Echte abgelaufene Auth-Sessions werden weiterhin einmal über den BFF-Pfad rehydriert; absichtliche Reauth-/2FA-Blockaden bleiben fail-closed.
+            - **Regression abgesichert**: Tests prüfen, dass `REAUTH_REQUIRED` direkt an die UI zurückgeht und der Retry-Pfad nur für echte Auth-Refresh-Fälle aktiv bleibt.
           generateReleaseNotes: false
           releaseDraft: false
           prerelease: false
