@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
 import { ReactNode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { useAuthMock, getSubscriptionMock, getFeatureAccessOverrideMock, hasFeatureAccessMock } = vi.hoisted(() => ({
@@ -209,6 +209,49 @@ describe("SubscriptionContext", () => {
       tier: "premium",
       hasAttachments: true,
       hasFamily: true,
+      hasSubObject: true,
+    });
+  });
+
+  it("refreshes subscription state when the app regains focus after checkout", async () => {
+    useAuthMock.mockReturnValue({ user: { id: "checkout-user" }, loading: false, authReady: true });
+    getSubscriptionMock
+      .mockResolvedValueOnce({
+        id: "sub-free",
+        user_id: "checkout-user",
+        tier: "free",
+        status: "active",
+        current_period_end: null,
+        cancel_at_period_end: false,
+        has_used_intro_discount: false,
+      })
+      .mockResolvedValueOnce({
+        id: "sub-paid",
+        user_id: "checkout-user",
+        tier: "premium",
+        status: "active",
+        current_period_end: null,
+        cancel_at_period_end: false,
+        has_used_intro_discount: true,
+      });
+
+    render(
+      <SubscriptionProvider>
+        <Probe />
+      </SubscriptionProvider>
+    );
+
+    await waitFor(() => expect(readState().tier).toBe("free"));
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() => expect(readState().tier).toBe("premium"));
+    expect(getSubscriptionMock).toHaveBeenCalledTimes(2);
+    expect(readState()).toMatchObject({
+      tier: "premium",
+      hasAttachments: true,
       hasSubObject: true,
     });
   });

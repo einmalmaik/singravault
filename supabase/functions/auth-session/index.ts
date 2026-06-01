@@ -44,7 +44,7 @@
  * HttpOnly: true
  * Secure:   true
  * SameSite: None
- * MaxAge:   14 Tage (konfigurierbar)
+ * MaxAge:   30 Tage (konfigurierbar)
  * Partitioned: true (Chrome CHIPS)
  * ```
  *
@@ -103,9 +103,9 @@ const SESSION_COOKIE_NAME = "sb-bff-session";
 
 /**
  * Cookie-Lebensdauer in Sekunden.
- * Default: 14 Tage (1.209.600 Sekunden).
+ * Default: 30 Tage (2.592.000 Sekunden).
  */
-const SESSION_COOKIE_MAX_AGE = Number(Deno.env.get("SESSION_COOKIE_MAX_AGE_SECONDS") ?? 60 * 60 * 24 * 14);
+const SESSION_COOKIE_MAX_AGE = Number(Deno.env.get("SESSION_COOKIE_MAX_AGE_SECONDS") ?? 60 * 60 * 24 * 30);
 
 /**
  * Erstellt einen Supabase-Auth-Client für Session-Operationen.
