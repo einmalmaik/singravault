@@ -93,16 +93,16 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Singra Vault v__VERSION__"
           releaseBody: |
-            ## Singra Vault 0.5.3
+            ## Singra Vault 0.5.5
 
-            Dieses Patch-Release reduziert unnötige Auth-Refreshes im Account-Delete-Reauth-Flow.
+            Dieses Patch-Release repariert Premium-Dateianhänge für den aktuellen OpLog-Tresorpfad.
 
             ### Highlights
 
-            - **Kein Retry bei Step-up-Ablehnung**: `REAUTH_REQUIRED` und verwandte Security-Ablehnungen werden nicht mehr als reparierbare 401-Transportfehler behandelt.
-            - **Weniger unnötige Requests**: Social-Login- und Account-Delete-Reauth-Fehler lösen keinen zusätzlichen BFF-Refresh und keinen zweiten Edge-Function-Aufruf mehr aus.
-            - **Account-Delete-Schutz bleibt aktiv**: Echte abgelaufene Auth-Sessions werden weiterhin einmal über den BFF-Pfad rehydriert; absichtliche Reauth-/2FA-Blockaden bleiben fail-closed.
-            - **Regression abgesichert**: Tests prüfen, dass `REAUTH_REQUIRED` direkt an die UI zurückgeht und der Retry-Pfad nur für echte Auth-Refresh-Fälle aktiv bleibt.
+            - **Dateiuploads funktionieren wieder mit OpLog-Einträgen**: `file_attachments` akzeptiert aktive eigene `vault_records` vom Typ `item` als Upload-Ziel.
+            - **Keine Legacy-Shadow-Items**: Der Fix entfernt die alte `vault_items`-only-FK-Kopplung und behält die serverseitigen Owner-, Premium-, E2EE- und Opaque-Metadata-Prüfungen bei.
+            - **Keine `[object Object]`-Fehler mehr**: Premium normalisiert Supabase-/Storage-Fehler in lesbare Upload-, Download- und Delete-Meldungen.
+            - **Lokal verifiziert**: Migration, Premium-Komponente, Attachment-Service, Crypto-Vertrag und Host-Build wurden gezielt geprüft.
           generateReleaseNotes: false
           releaseDraft: false
           prerelease: false
