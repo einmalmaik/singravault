@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Session } from "@supabase/supabase-js";
 
 const runtimeState = vi.hoisted(() => ({
   isTauri: false,
@@ -44,11 +45,14 @@ vi.mock("@/platform/deepLink", () => ({
 import {
   AUTH_OFFLINE_IDENTITY_STORAGE_KEY,
   clearPersistentSession,
+  getSessionRefreshDelayMs,
   hydrateAuthSession,
+  isSessionRefreshDue,
   readSessionFallback,
   readOfflineIdentity,
   refreshCurrentSession,
   SESSION_FALLBACK_STORAGE_KEY,
+  startAuthSessionKeepAlive,
 } from "@/services/authSessionManager";
 
 const mockUser = {
@@ -85,6 +89,7 @@ describe("authSessionManager", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     restoreNavigatorOnline?.();
     restoreNavigatorOnline = null;
@@ -130,6 +135,74 @@ describe("authSessionManager", () => {
     await expect(first).resolves.toMatchObject({ access_token: "access-token" });
     await expect(second).resolves.toMatchObject({ access_token: "access-token" });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules active session refresh before the access token expires", () => {
+    const nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+    const session = {
+      ...mockSession,
+      expires_at: Math.floor((nowMs + 10 * 60 * 1000) / 1000),
+    } as Session;
+
+    expect(getSessionRefreshDelayMs(session, nowMs)).toBe(5 * 60 * 1000);
+    expect(isSessionRefreshDue({
+      ...session,
+      expires_at: Math.floor((nowMs + 4 * 60 * 1000) / 1000),
+    }, nowMs)).toBe(true);
+  });
+
+  it("keeps an active web session alive through BFF cookie refresh", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+    let currentSession = {
+      ...mockSession,
+      access_token: "expiring-access-token",
+      refresh_token: "expiring-refresh-token",
+      expires_at: Math.floor((Date.now() + 6 * 60 * 1000) / 1000),
+    } as Session;
+    const refreshedSession = {
+      ...mockSession,
+      access_token: "refreshed-access-token",
+      refresh_token: "refreshed-refresh-token",
+      expires_at: Math.floor((Date.now() + 60 * 60 * 1000) / 1000),
+      user: { ...mockUser, id: "" },
+    } as Session;
+
+    mockGetSession.mockImplementation(async () => ({ data: { session: currentSession }, error: null }));
+    mockSetSession.mockImplementation(async () => {
+      currentSession = refreshedSession;
+      return { data: { session: refreshedSession }, error: null };
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ session: refreshedSession }), { status: 200 }),
+    );
+
+    const onSessionRefreshed = vi.fn((session: Session) => {
+      currentSession = session;
+    });
+    const stop = startAuthSessionKeepAlive({
+      getSession: () => currentSession,
+      onSessionRefreshed,
+    });
+
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/auth-session"),
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+      }),
+    );
+    expect(onSessionRefreshed).toHaveBeenCalledWith(expect.objectContaining({
+      access_token: "refreshed-access-token",
+      refresh_token: "refreshed-refresh-token",
+    }));
+
+    stop();
+    vi.useRealTimers();
   });
 
   it("clears fallback tokens and offline identity on sign-out cleanup", async () => {

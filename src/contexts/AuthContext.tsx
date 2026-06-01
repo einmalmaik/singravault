@@ -8,7 +8,7 @@
  * authSessionManager so the same rules are shared by Web, PWA and Tauri.
  */
 
-import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import type { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -17,6 +17,7 @@ import {
   hydrateAuthSession,
   isInIframe,
   persistAuthenticatedSession,
+  startAuthSessionKeepAlive,
 } from "@/services/authSessionManager";
 import { isTauriRuntime } from "@/platform/runtime";
 import { disableTauriDevAuthBypass } from "@/platform/tauriDevMode";
@@ -42,12 +43,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authMode, setAuthMode] = useState<AuthMode>("unauthenticated");
   const sessionRef = useRef<Session | null>(null);
 
-  const applySessionState = (nextSession: Session | null, nextUser: User | null, nextMode: AuthMode) => {
+  const applySessionState = useCallback((nextSession: Session | null, nextUser: User | null, nextMode: AuthMode) => {
     sessionRef.current = nextSession;
     setSession(nextSession);
     setUser(nextUser);
     setAuthMode(nextMode);
-  };
+  }, []);
 
   useEffect(() => {
     disableTauriDevAuthBypass();
@@ -92,7 +93,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void hydrateSession();
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [applySessionState]);
+
+  useEffect(() => {
+    if (!authReady || authMode !== "online" || !session?.access_token) {
+      return undefined;
+    }
+
+    return startAuthSessionKeepAlive({
+      getSession: () => sessionRef.current,
+      onSessionRefreshed: (refreshedSession) => {
+        applySessionState(refreshedSession, refreshedSession.user, "online");
+      },
+    });
+  }, [applySessionState, authMode, authReady, session?.access_token]);
 
   const signOut = async () => {
     await clearPersistentSession();
