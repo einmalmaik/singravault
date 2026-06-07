@@ -17,6 +17,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # gitleaks-action diffs the PR commit range (base^..head); the default
+          # shallow clone (fetch-depth: 1) lacks the base commit's parent and
+          # makes the scan abort with "unknown revision". Fetch full history.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
