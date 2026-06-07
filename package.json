@@ -36,7 +36,7 @@
     "loadtest:prepare": "npm run loadtest:seed-users && npm run loadtest:gen-tokens"
   },
   "dependencies": {
-    "@dis/shield": "github:einmalmaik/dis#93a9eb2",
+    "@dis/shield": "github:einmalmaik/dis#5ab99e7",
     "@hookform/resolvers": "^3.10.0",
     "@noble/post-quantum": "0.5.4",
     "@radix-ui/react-accordion": "^1.2.11",
