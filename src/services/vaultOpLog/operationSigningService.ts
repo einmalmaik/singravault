@@ -4,16 +4,26 @@
  * `operationSigningService` — canonicalise, sign and verify vault
  * operations.
  *
- * v1 uses WebCrypto ECDSA over P-256 with SHA-256. Public keys are
- * stored as SPKI bytes, base64url-encoded, in the vault device trust
- * list. Private keys are generated with `extractable: false` so
- * they never leave the device.
+ * v1 uses ECDSA over P-256 with SHA-256. Public keys are stored as
+ * SPKI bytes, base64url-encoded, in the vault device trust list.
+ * Private keys are generated with `extractable: false` so they never
+ * leave the device.
  *
  * Signatures are computed over the SHA-256 of the canonical signed
- * body. The signature wire form is the raw r||s concatenation as
- * produced by WebCrypto's `ECDSA` signer, base64url-encoded.
+ * body. The signature wire form is the raw r||s concatenation,
+ * base64url-encoded.
+ *
+ * Powered by DIS — Defensive Integration Shield: the ECDSA primitive
+ * (generate, SPKI import, sign, verify) comes from `@dis/shield/signing`.
+ * This module owns only canonicalisation and the operation envelope.
  */
 
+import {
+  generateEcdsaP256KeyPair,
+  importEcdsaP256PublicKeySpki,
+  signEcdsaP256,
+  verifyEcdsaP256,
+} from '@dis/shield/signing';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,
@@ -35,8 +45,6 @@ import {
   type VaultOperationSignedBodyV1,
 } from './types';
 
-const SIGNING_ALGORITHM = { name: 'ECDSA', namedCurve: 'P-256' } as const;
-const SIGNING_PARAMS = { name: 'ECDSA', hash: 'SHA-256' } as const;
 const SIGNATURE_RAW_LENGTH = 64;
 
 export interface DeviceSigningKeyPair {
@@ -51,17 +59,11 @@ export interface DeviceSigningKeyPair {
  * public key that will be persisted in the vault trust list.
  */
 export async function generateDeviceSigningKeyPair(): Promise<DeviceSigningKeyPair> {
-  const keyPair = await crypto.subtle.generateKey(
-    SIGNING_ALGORITHM,
-    /* extractable */ false,
-    ['sign', 'verify'],
-  );
-  const exportablePublic = await crypto.subtle.exportKey('spki', keyPair.publicKey);
-  const publicKeyB64Url = encodeBase64Url(new Uint8Array(exportablePublic));
+  const keyPair = await generateEcdsaP256KeyPair();
   return {
     privateKey: keyPair.privateKey,
     publicKey: keyPair.publicKey,
-    publicKeyB64Url,
+    publicKeyB64Url: encodeBase64Url(keyPair.publicKeySpki),
   };
 }
 
@@ -76,13 +78,7 @@ export async function importDevicePublicKey(publicKeyB64Url: string): Promise<Cr
     throw new VaultSignatureError('public_key_format_invalid', 'public key is not valid base64url');
   }
   try {
-    return await crypto.subtle.importKey(
-      'spki',
-      spkiBytes as unknown as ArrayBuffer,
-      SIGNING_ALGORITHM,
-      false,
-      ['verify'],
-    );
+    return await importEcdsaP256PublicKeySpki(spkiBytes);
   } catch {
     throw new VaultSignatureError('public_key_format_invalid', 'public key SPKI import failed');
   }
@@ -288,13 +284,10 @@ export async function signOperation(
   privateKey: CryptoKey,
 ): Promise<SignedVaultOperationV1> {
   const bytes = canonicalizeVaultStructure(body);
-  const signatureBuffer = await crypto.subtle.sign(
-    SIGNING_PARAMS,
-    privateKey,
-    bytes as unknown as ArrayBuffer,
-  );
-  const signatureBytes = new Uint8Array(signatureBuffer);
-  if (signatureBytes.length !== SIGNATURE_RAW_LENGTH) {
+  let signatureBytes: Uint8Array;
+  try {
+    signatureBytes = await signEcdsaP256(privateKey, bytes);
+  } catch {
     throw new VaultSignatureError('signature_format_invalid', 'unexpected ECDSA signature byte length');
   }
   const signature = encodeBase64Url(signatureBytes);
@@ -334,12 +327,7 @@ export async function verifyOperationSignature(
   }
   const bytes = canonicalizeVaultStructure(signed.body);
   try {
-    return await crypto.subtle.verify(
-      SIGNING_PARAMS,
-      publicKey,
-      signatureBytes as unknown as ArrayBuffer,
-      bytes as unknown as ArrayBuffer,
-    );
+    return await verifyEcdsaP256(publicKey, signatureBytes, bytes);
   } catch {
     return false;
   }
@@ -354,18 +342,8 @@ export async function doesDeviceSigningKeyMatchPublicKey(
     app: 'singra-vault',
     purpose: 'oplog-device-signing-key-possession-check-v1',
   });
-  const signatureBuffer = await crypto.subtle.sign(
-    SIGNING_PARAMS,
-    privateKey,
-    challenge as unknown as ArrayBuffer,
-  );
-
-  return crypto.subtle.verify(
-    SIGNING_PARAMS,
-    publicKey,
-    signatureBuffer,
-    challenge as unknown as ArrayBuffer,
-  );
+  const signatureBytes = await signEcdsaP256(privateKey, challenge);
+  return verifyEcdsaP256(publicKey, signatureBytes, challenge);
 }
 
 function isIsoInstant(value: string): boolean {

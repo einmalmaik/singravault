@@ -13,6 +13,8 @@
  * browsers is not yet confirmed.
  */
 
+import { randomUuid } from '@dis/shield/random';
+
 const LOCK_PREFIX = 'singra-vault/op-log/' as const;
 const LEADER_KEY_PREFIX = 'singra:vaultOpLog:leader:' as const;
 const LEADER_TTL_MS = 5000 as const;
@@ -138,20 +140,9 @@ export class InMemoryQueueLock implements QueueLock {
 // ---------------------------------------------------------------------------
 
 function generateLockId(): string {
-  // crypto.randomUUID is available in Node 19+ and modern browsers.
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  // Minimal fallback for test/headless environments.
-  const bytes = new Uint8Array(16);
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < bytes.length; i += 1) {
-      bytes[i] = Math.floor(Math.random() * 256);
-    }
-  }
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  // Powered by DIS: CSPRNG-backed UUID with a secure byte fallback —
+  // never Math.random.
+  return randomUuid();
 }
 
 function sleep(ms: number): Promise<void> {

@@ -10,6 +10,7 @@
 
 // ============ Type Definitions ============
 
+import { sha1Hex } from '@dis/shield/integrity';
 export interface PasswordCheckResult {
     score: 0 | 1 | 2 | 3 | 4;
     isStrong: boolean;
@@ -179,12 +180,9 @@ export async function checkPasswordPwned(password: string): Promise<PwnedResult>
         return { isPwned: false, pwnedCount: 0 };
     }
 
-    // SHA-1 hash (also used as cache key)
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    const hashBuffer = await crypto.subtle.digest('SHA-1', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+    // SHA-1 hash (also used as cache key). SHA-1 is mandated by the HIBP
+    // k-anonymity API; the primitive comes from @dis/shield/integrity.
+    const hashHex = (await sha1Hex(new TextEncoder().encode(password))).toUpperCase();
 
     const cached = pwnedCache.get(hashHex);
     if (cached) {

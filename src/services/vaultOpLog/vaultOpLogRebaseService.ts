@@ -14,6 +14,7 @@
  * no last-write-wins.
  */
 
+import { randomUuid } from '@dis/shield/random';
 import { canonicalizeVaultStructure } from './canonicalJson';
 import { deriveRecordKey, sealRecord } from './cryptoRecordService';
 import { buildOperationSignedBody, signOperation } from './operationSigningService';
@@ -62,7 +63,7 @@ export async function rebaseOperationWithPlaintext(
     };
   }
 
-  const newOpId = crypto.randomUUID();
+  const newOpId = randomUuid();
   const createdAtClient = new Date().toISOString();
   const nextRecordVersion = context.currentRecord.recordVersion + 1;
   const isTombstone = op.opType === 'delete';

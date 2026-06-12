@@ -13,6 +13,8 @@
  * @see https://opaque-auth.com/docs/
  */
 
+import { hmacSha256 } from '@dis/shield/integrity';
+import { bytesToHex } from '@dis/shield/core';
 import * as opaque from '@serenity-kit/opaque';
 import type { Session } from '@supabase/supabase-js';
 
@@ -183,21 +185,11 @@ async function createOpaqueSessionBindingProof(params: {
     accessToken: string;
 }): Promise<string> {
     const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-        'raw',
+    const signature = await hmacSha256(
         encoder.encode(params.sessionKey),
-        { name: 'HMAC', hash: 'SHA-256' },
-        false,
-        ['sign'],
-    );
-    const signature = await crypto.subtle.sign(
-        'HMAC',
-        key,
         encoder.encode(`${OPAQUE_SESSION_BINDING_VERSION}\n${params.userId}\n${params.accessToken}`),
     );
-    return Array.from(new Uint8Array(signature))
-        .map((byte) => byte.toString(16).padStart(2, '0'))
-        .join('');
+    return bytesToHex(signature);
 }
 
 function parseOpaqueSessionBinding(binding: unknown): { version: string; userId: string; proof: string } {

@@ -14,8 +14,16 @@
  * encryption key. The KDF context is canonicalised so two clients
  * always derive the same record key for the same (vaultId, recordId,
  * recordType, keyVersion) tuple.
+ *
+ * Powered by DIS — Defensive Integration Shield: the HKDF and
+ * AES-256-GCM primitives come from `@dis/shield`. This module owns
+ * only the canonical KDF context, the AAD contract and the hash
+ * verification order.
  */
 
+import { deriveHkdfSha256Bits } from '@dis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@dis/shield/aead';
+import { randomBytes } from '@dis/shield/random';
 import {
   canonicalizeVaultStructure,
   constantTimeEquals,
@@ -82,24 +90,7 @@ export async function deriveRecordKey(input: DeriveRecordKeyInput): Promise<Uint
     recordType: input.recordType,
     keyVersion: input.keyVersion,
   });
-  const baseKey = await crypto.subtle.importKey(
-    'raw',
-    input.vaultEncryptionKey as unknown as ArrayBuffer,
-    { name: 'HKDF' },
-    false,
-    ['deriveBits'],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new Uint8Array(0) as unknown as ArrayBuffer,
-      info: info as unknown as ArrayBuffer,
-    },
-    baseKey,
-    256,
-  );
-  return new Uint8Array(bits);
+  return deriveHkdfSha256Bits(input.vaultEncryptionKey, { info });
 }
 
 // ---------------------------------------------------------------
@@ -127,22 +118,12 @@ export async function sealRecord(input: SealRecordInput): Promise<SealedRecordV1
   }
   const aad = buildRecordAad(input.aadInput);
   const aadBytes = encodeRecordAadBytes(aad);
-  const nonce = input.nonce ?? crypto.getRandomValues(new Uint8Array(AEAD_NONCE_BYTE_LENGTH));
+  const nonce = input.nonce ?? randomBytes(AEAD_NONCE_BYTE_LENGTH);
   if (nonce.length !== AEAD_NONCE_BYTE_LENGTH) {
     throw new VaultCryptoError('key_material_invalid', 'nonce must be 12 bytes');
   }
   const key = await importAeadKey(input.recordKey, ['encrypt']);
-  const ciphertextBuffer = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: nonce as unknown as ArrayBuffer,
-      additionalData: aadBytes as unknown as ArrayBuffer,
-      tagLength: 128,
-    },
-    key,
-    input.plaintext as unknown as ArrayBuffer,
-  );
-  const ciphertext = new Uint8Array(ciphertextBuffer);
+  const ciphertext = await aesGcmEncrypt(key, nonce, input.plaintext, aadBytes);
   const nonceB64Url = encodeBase64Url(nonce);
   const ciphertextB64Url = encodeBase64Url(ciphertext);
   const aadHash = await computeAadHash(aad);
@@ -226,17 +207,8 @@ export async function openRecord(input: OpenRecordInput): Promise<OpenedRecordV1
   const key = await importAeadKey(input.recordKey, ['decrypt']);
 
   try {
-    const plaintextBuffer = await crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: nonce as unknown as ArrayBuffer,
-        additionalData: expectedAadBytes as unknown as ArrayBuffer,
-        tagLength: 128,
-      },
-      key,
-      ciphertext as unknown as ArrayBuffer,
-    );
-    return { plaintext: new Uint8Array(plaintextBuffer), aad: expectedAad };
+    const plaintext = await aesGcmDecrypt(key, nonce, ciphertext, expectedAadBytes);
+    return { plaintext, aad: expectedAad };
   } catch {
     throw new VaultCryptoError('aead_decryption_failed', 'AEAD decryption failed');
   }
@@ -257,11 +229,5 @@ async function importAeadKey(rawKey: Uint8Array, usages: KeyUsage[]): Promise<Cr
   if (!isUint8ArrayLike(rawKey) || rawKey.length !== 32) {
     throw new VaultCryptoError('key_material_invalid', 'record key must be 32 bytes');
   }
-  return crypto.subtle.importKey(
-    'raw',
-    rawKey as unknown as ArrayBuffer,
-    { name: 'AES-GCM' },
-    false,
-    usages,
-  );
+  return importAesGcmRawKey(rawKey, usages);
 }

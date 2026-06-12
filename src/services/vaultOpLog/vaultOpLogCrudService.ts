@@ -9,6 +9,7 @@
  * state-machine reload path.
  */
 
+import { randomUuid } from '@dis/shield/random';
 import { canonicalizeVaultStructure } from './canonicalJson';
 import {
   buildCreateRecordOperation,
@@ -526,10 +527,10 @@ export async function createItem(
   plaintext: ItemPlaintext,
 ): Promise<SubmissionPipelineResult & { recordId: string }> {
   const verifiedBase = requireVerifiedVaultBase(base);
-  const recordId = crypto.randomUUID();
+  const recordId = randomUuid();
   const built = await buildCreateRecordOperation({
-    opId: crypto.randomUUID(),
-    intentId: crypto.randomUUID(),
+    opId: randomUuid(),
+    intentId: randomUuid(),
     rebasedFromOpId: null,
     vaultId: deps.vaultId,
     recordId,
@@ -555,8 +556,8 @@ export async function updateItem(
 ): Promise<SubmissionPipelineResult> {
   const verifiedBase = requireVerifiedBaseMetadata(base);
   const built = await buildUpdateRecordOperation({
-    opId: crypto.randomUUID(),
-    intentId: crypto.randomUUID(),
+    opId: randomUuid(),
+    intentId: randomUuid(),
     rebasedFromOpId: null,
     vaultId: deps.vaultId,
     recordId,
@@ -582,8 +583,8 @@ export async function deleteItem(
 ): Promise<SubmissionPipelineResult> {
   const verifiedBase = requireVerifiedBaseMetadata(base);
   const built = await buildDeleteRecordOperation({
-    opId: crypto.randomUUID(),
-    intentId: crypto.randomUUID(),
+    opId: randomUuid(),
+    intentId: randomUuid(),
     rebasedFromOpId: null,
     vaultId: deps.vaultId,
     recordId,
@@ -607,10 +608,10 @@ export async function createCategory(
   plaintext: CategoryPlaintext,
 ): Promise<SubmissionPipelineResult & { recordId: string }> {
   const verifiedBase = requireVerifiedVaultBase(base);
-  const recordId = crypto.randomUUID();
+  const recordId = randomUuid();
   const built = await buildCreateRecordOperation({
-    opId: crypto.randomUUID(),
-    intentId: crypto.randomUUID(),
+    opId: randomUuid(),
+    intentId: randomUuid(),
     rebasedFromOpId: null,
     vaultId: deps.vaultId,
     recordId,
@@ -636,8 +637,8 @@ export async function updateCategory(
 ): Promise<SubmissionPipelineResult> {
   const verifiedBase = requireVerifiedBaseMetadata(base);
   const built = await buildUpdateRecordOperation({
-    opId: crypto.randomUUID(),
-    intentId: crypto.randomUUID(),
+    opId: randomUuid(),
+    intentId: randomUuid(),
     rebasedFromOpId: null,
     vaultId: deps.vaultId,
     recordId,
@@ -668,8 +669,8 @@ export async function deleteCategory(
   }
 
   const built = await buildDeleteRecordOperation({
-    opId: crypto.randomUUID(),
-    intentId: crypto.randomUUID(),
+    opId: randomUuid(),
+    intentId: randomUuid(),
     rebasedFromOpId: null,
     vaultId: deps.vaultId,
     recordId,
@@ -760,8 +761,8 @@ export async function restoreRecord(
 ): Promise<SubmissionPipelineResult> {
   const verifiedBase = requireVerifiedBaseMetadata(base);
   const built = await buildRestoreRecordOperation({
-    opId: crypto.randomUUID(),
-    intentId: crypto.randomUUID(),
+    opId: randomUuid(),
+    intentId: randomUuid(),
     rebasedFromOpId: null,
     vaultId: deps.vaultId,
     recordId,
@@ -789,8 +790,8 @@ export async function resolveConflict(
 ): Promise<SubmissionPipelineResult> {
   const verifiedBase = requireVerifiedBaseMetadata(base);
   const built = await buildUpdateRecordOperation({
-    opId: crypto.randomUUID(),
-    intentId: crypto.randomUUID(),
+    opId: randomUuid(),
+    intentId: randomUuid(),
     rebasedFromOpId: null,
     vaultId: deps.vaultId,
     recordId,

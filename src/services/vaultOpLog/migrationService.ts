@@ -26,6 +26,7 @@
  *   faulty category mapping.
  */
 
+import { randomUuid } from '@dis/shield/random';
 import {
   buildCreateRecordOperation,
   toVaultOperationRow,
@@ -363,7 +364,7 @@ async function bootstrapDeviceTrust(state: MigrationOrchestratorState): Promise<
   const initialHead = await buildBootstrapVaultHead(state.vaultId);
   state.initialVaultHead = initialHead;
 
-  const initialOpId = crypto.randomUUID();
+  const initialOpId = randomUuid();
 
   const result = await bootstrapVaultTrust(
     state.rpcClient,

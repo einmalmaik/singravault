@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
+import { verifyEcdsaP256 } from '@dis/shield/signing';
 import { canonicalizeVaultStructure, decodeBase64Url } from '@/services/vaultOpLog/canonicalJson';
 import { importDevicePublicKey } from '@/services/vaultOpLog/operationSigningService';
 import { openVerifiedCollectionRecord } from './crypto';
@@ -149,11 +150,10 @@ async function verifyCollectionOperationSignature(
   const publicKey = await importDevicePublicKey(publicSigningKey);
   const signature = decodeBase64Url(operation.signature);
   if (signature.length !== 64) return false;
-  return crypto.subtle.verify(
-    { name: 'ECDSA', hash: 'SHA-256' },
+  return verifyEcdsaP256(
     publicKey,
-    signature as unknown as ArrayBuffer,
-    canonicalizeVaultStructure(operation.signedBody) as unknown as ArrayBuffer,
+    signature,
+    canonicalizeVaultStructure(operation.signedBody),
   );
 }
 

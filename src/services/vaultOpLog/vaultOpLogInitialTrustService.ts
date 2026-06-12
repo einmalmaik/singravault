@@ -8,6 +8,7 @@
  * dedicated RPC. It does not use the Device Key as trust material.
  */
 
+import { randomUuid } from '@dis/shield/random';
 import { generateDeviceSigningKeyPair } from './operationSigningService';
 import { computeVaultHead, sha256Base64Url } from './recordHashes';
 import {
@@ -52,7 +53,7 @@ export async function ensureInitialVaultOpLogTrust(input: {
   saveVaultOpLogDeviceIdentity(signingContext.identity);
 
   const initialHead = await buildInitialVaultHead(input.vaultId);
-  const initialOpId = crypto.randomUUID();
+  const initialOpId = randomUuid();
   const bootstrap = await bootstrapVaultTrust(
     input.rpcClient,
     input.vaultId,
@@ -92,7 +93,7 @@ async function getOrCreateLocalSigningContext(
   const keyPair = await generateDeviceSigningKeyPair();
   return {
     identity: {
-      deviceId: crypto.randomUUID(),
+      deviceId: randomUuid(),
       publicSigningKeyB64Url: keyPair.publicKeyB64Url,
     },
     privateKey: keyPair.privateKey,

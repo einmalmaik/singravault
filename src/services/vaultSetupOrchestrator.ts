@@ -1,3 +1,4 @@
+import { randomUuid } from '@dis/shield/random';
 import {
   CURRENT_KDF_VERSION,
   createEncryptedUserKey,
@@ -175,7 +176,7 @@ async function ensureDefaultVaultId(userId: string): Promise<string> {
   }
 
   if (!existingVault) {
-    const createdVaultId = crypto.randomUUID();
+    const createdVaultId = randomUuid();
     const { error: createVaultError } = await supabase
       .from('vaults')
       .insert({

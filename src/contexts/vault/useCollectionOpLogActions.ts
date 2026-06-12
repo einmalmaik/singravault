@@ -1,3 +1,4 @@
+import { randomUuid } from '@dis/shield/random';
 import { useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -208,8 +209,8 @@ export function useCollectionOpLogActions(
   }, [loadRuntimeBase, makeDeps, user]);
 
   const createSharedCollection = useCallback(async (input: CreateSharedCollectionInput) => {
-    const collectionId = crypto.randomUUID();
-    const recordId = crypto.randomUUID();
+    const collectionId = randomUuid();
+    const recordId = randomUuid();
     let collectionKey: Uint8Array | null = null;
     try {
       const base = await loadRuntimeBase(input.masterPassword);

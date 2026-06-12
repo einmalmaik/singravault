@@ -26,6 +26,7 @@
  * the restore schema is defined.
  */
 
+import { sha256Bytes } from '@dis/shield/integrity';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,
@@ -691,8 +692,7 @@ export type BuiltRecoverDeviceOperation = Awaited<ReturnType<typeof buildRecover
 
 export async function computePublicKeyFingerprint(publicKeyB64Url: string): Promise<string> {
   const keyBytes = decodeBase64Url(publicKeyB64Url);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', keyBytes as unknown as ArrayBuffer);
-  return encodeBase64Url(new Uint8Array(hashBuffer));
+  return encodeBase64Url(await sha256Bytes(keyBytes));
 }
 
 // ---------------------------------------------------------------------------

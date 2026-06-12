@@ -5,10 +5,12 @@
  * and vault head.
  *
  * Every input to a hash goes through `canonicalizeVaultStructure`
- * first. Hashes are SHA-256. The wire form is base64url without
- * padding.
+ * first. Hashes are SHA-256 (Powered by DIS — Defensive Integration
+ * Shield, `@dis/shield/integrity`). The wire form is base64url
+ * without padding.
  */
 
+import { sha256Bytes } from '@dis/shield/integrity';
 import {
   canonicalizeVaultStructure,
   encodeBase64Url,
@@ -22,16 +24,6 @@ import {
 const HEAD_SCHEMA_V1 = 'vault-head-v1' as const;
 const OP_HASH_SCHEMA_V1 = 'op-hash-v1' as const;
 const CIPHERTEXT_HASH_SCHEMA_V1 = 'ciphertext-hash-v1' as const;
-
-/**
- * Internal helper: SHA-256 over a canonical byte sequence. Centralises
- * the `BufferSource` cast needed by the newer lib.dom.d.ts so the
- * individual hash functions stay focused on what they hash.
- */
-async function sha256Bytes(bytes: Uint8Array): Promise<Uint8Array> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
-  return new Uint8Array(digest);
-}
 
 /**
  * SHA-256 of the canonical AAD bytes, base64url.

@@ -17,6 +17,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
+        with:
+          # gitleaks-action diffs the PR commit range (base^..head); the default
+          # shallow clone (fetch-depth: 1) lacks the base commit's parent and
+          # makes the scan abort with "unknown revision". Fetch full history.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4.4.0
@@ -34,6 +39,13 @@ jobs:
 
       - name: Test
         run: npm run test
+        env:
+          # Non-secret public Supabase project URL (already hard-coded in the
+          # test fixtures and supabase/config). A few auth/OAuth tests read the
+          # configured URL directly instead of stubbing it; the publishable key
+          # is a throwaway value (tests never hit a real backend).
+          VITE_SUPABASE_URL: https://lcrtadxlojaucwapgzmy.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: ci-test-publishable-key
 
       - name: Build
         run: npm run build
@@ -41,13 +53,26 @@ jobs:
       - name: npm audit (high+)
         run: npm audit --omit=dev --audit-level=high
 
-      - name: OSV scan
-        uses: google/osv-scanner-action@v2.3.5
-        with:
-          scan-args: |-
-            --lockfile=package-lock.json
-
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # OSV dependency scan. `google/osv-scanner-action` ships reusable workflows,
+  # not a step action, so it must be called as its own job (the previous
+  # `steps: - uses: google/osv-scanner-action@v2.3.5` failed at job setup with
+  # "Top level 'runs:' section is required"). The PR-scan workflow diffs the
+  # base branch against the PR and fails only on vulnerabilities *introduced*
+  # by the PR, so pre-existing advisories in the lockfile don't block unrelated
+  # changes. SARIF upload is disabled to avoid requiring GitHub Code Scanning.
+  osv-scan:
+    if: github.event_name == 'pull_request'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.3.8
+    with:
+      scan-args: |-
+        --lockfile=package-lock.json
+      upload-sarif: false

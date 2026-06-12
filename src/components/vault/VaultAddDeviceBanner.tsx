@@ -1,3 +1,4 @@
+import { randomUuid } from '@dis/shield/random';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Key, Loader2, ShieldAlert } from 'lucide-react';
@@ -144,8 +145,8 @@ export function VaultAddDeviceBanner() {
         recoveryCode,
       });
       const built = await buildRecoverDeviceOperation({
-        opId: crypto.randomUUID(),
-        intentId: crypto.randomUUID(),
+        opId: randomUuid(),
+        intentId: randomUuid(),
         rebasedFromOpId: null,
         vaultId: opLogVaultId,
         deviceId: pending.identity.deviceId,

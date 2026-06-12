@@ -29,6 +29,7 @@
  *     store diagnosis → discard all decrypted material.
  */
 
+import { importEcdsaP256PublicKeySpki } from '@dis/shield/signing';
 import {
   getVaultHead,
   getVaultChangesSince,
@@ -206,12 +207,8 @@ export async function runShadowModeVerification(
       trustedDevicesById: new Map([[input.deviceId, trustedDevice]]),
     };
 
-    const publicKey = await crypto.subtle.importKey(
-      'spki',
-      decodeBase64Url(input.publicSigningKeyB64Url) as unknown as ArrayBuffer,
-      { name: 'ECDSA', namedCurve: 'P-256' },
-      false,
-      ['verify'],
+    const publicKey = await importEcdsaP256PublicKeySpki(
+      decodeBase64Url(input.publicSigningKeyB64Url),
     );
 
     // Step 5: Run the state machine over every operation
