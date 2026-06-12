@@ -91,6 +91,16 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
     useEffect(() => {
         void loadSubscription();
+
+        if (typeof window !== 'undefined') {
+            const handleFocus = () => {
+                void loadSubscription();
+            };
+            window.addEventListener('focus', handleFocus);
+            return () => {
+                window.removeEventListener('focus', handleFocus);
+            };
+        }
     }, [loadSubscription]);
 
     const tier: SubscriptionTier = (subscription?.tier as SubscriptionTier) || 'free';

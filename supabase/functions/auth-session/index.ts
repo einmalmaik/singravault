@@ -44,7 +44,7 @@
  * HttpOnly: true
  * Secure:   true
  * SameSite: None
- * MaxAge:   14 Tage (konfigurierbar)
+ * MaxAge:   30 Tage (konfigurierbar)
  * Partitioned: true (Chrome CHIPS)
  * ```
  *
@@ -103,9 +103,9 @@ const SESSION_COOKIE_NAME = "sb-bff-session";
 
 /**
  * Cookie-Lebensdauer in Sekunden.
- * Default: 14 Tage (1.209.600 Sekunden).
+ * Default: 30 Tage (2.592.000 Sekunden).
  */
-const SESSION_COOKIE_MAX_AGE = Number(Deno.env.get("SESSION_COOKIE_MAX_AGE_SECONDS") ?? 60 * 60 * 24 * 14);
+const SESSION_COOKIE_MAX_AGE = Number(Deno.env.get("SESSION_COOKIE_MAX_AGE_SECONDS") ?? 60 * 60 * 24 * 30);
 
 /**
  * Erstellt einen Supabase-Auth-Client für Session-Operationen.
@@ -170,6 +170,10 @@ Deno.serve(async (req) => {
         const payload = await req.json();
         if (payload?.action === "oauth-sync") {
             return await handleOAuthSync(req, payload, headers, jsonHeaders());
+        }
+
+        if (payload?.action === "oauth-reauth") {
+            return await handleOAuthReauth(req, headers, jsonHeaders());
         }
 
         return await legacyPasswordLoginBlockedResponse(req, payload, jsonHeaders());
@@ -271,7 +275,16 @@ async function handleOAuthSync(
         setSessionCookie(headers, refreshedData.session.refresh_token);
     }
 
-    return new Response(JSON.stringify({ success: true, session: refreshedData.session }), {
+    const userId = refreshedData.session.user.id;
+    const provider = String(refreshedData.session.user.app_metadata?.provider ?? "oauth");
+
+    // Record the interactive login so handleOAuthReauth can verify freshness
+    // without relying on JWT amr claims (which get wiped by silent token refresh).
+    await recordSocialLoginEvent(userId, provider);
+
+    const reauthProofId = await issueReauthProof(userId);
+
+    return new Response(JSON.stringify({ success: true, session: refreshedData.session, reauthProofId }), {
         status: 200,
         headers: responseHeaders,
     });
@@ -373,4 +386,116 @@ function toLockedState(failure: AuthRateLimitFailureResult) {
         lockedUntil: failure.lockedUntil,
         retryAfterSeconds: failure.retryAfterSeconds,
     };
+}
+
+async function handleOAuthReauth(
+    req: Request,
+    headers: Headers,
+    responseHeaders: Headers,
+): Promise<Response> {
+    const accessToken = parseBearerToken(req.headers.get("Authorization"));
+    if (!accessToken) {
+        return new Response(JSON.stringify({ error: "AUTH_REQUIRED" }), {
+            status: 401,
+            headers: responseHeaders,
+        });
+    }
+
+    const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(accessToken);
+    const userId = userData.user?.id;
+    if (userError || !userId) {
+        return new Response(JSON.stringify({ error: "AUTH_REQUIRED" }), {
+            status: 401,
+            headers: responseHeaders,
+        });
+    }
+
+    // Verify they are an OAuth user (no OPAQUE password record).
+    const { data: opaqueRecord, error: dbError } = await supabaseAdmin
+        .from("user_opaque_records")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+    if (dbError) {
+        console.error("Database query failed during OAuth reauth check:", dbError);
+        return new Response(JSON.stringify({ error: "Internal error" }), {
+            status: 500,
+            headers: responseHeaders,
+        });
+    }
+
+    if (opaqueRecord) {
+        // Password/OPAQUE users are not allowed to use this path.
+        return new Response(JSON.stringify({ error: "FORBIDDEN" }), {
+            status: 403,
+            headers: responseHeaders,
+        });
+    }
+
+    // Verify that the user has a recent interactive social login recorded in
+    // social_login_events. This is safer than checking JWT amr claims because:
+    //   1. The edgeFunctionService auto-refreshes tokens before every call,
+    //      overwriting amr with [{method:"refresh"}] even for fresh logins.
+    //   2. social_login_events is written server-side (service-role only) during
+    //      the oauth-sync flow — the client cannot forge this.
+    //   3. The 15-minute window (900s) allows for normal UI interaction time
+    //      while still requiring a recent interactive authentication.
+    const { data: isFreshData, error: freshCheckError } = await supabaseAdmin.rpc(
+        "check_recent_social_login",
+        { p_user_id: userId, p_max_age_secs: 900 },
+    );
+    if (freshCheckError) {
+        console.error("social login freshness check failed:", freshCheckError.message);
+        return new Response(JSON.stringify({ error: "Internal error" }), {
+            status: 500,
+            headers: responseHeaders,
+        });
+    }
+    if (!isFreshData) {
+        return new Response(JSON.stringify({ error: "REAUTH_REQUIRED" }), {
+            status: 401,
+            headers: responseHeaders,
+        });
+    }
+
+    const reauthProofId = await issueReauthProof(userId);
+    if (!reauthProofId) {
+        return new Response(JSON.stringify({ error: "Internal error" }), {
+            status: 500,
+            headers: responseHeaders,
+        });
+    }
+
+    return new Response(JSON.stringify({ success: true, reauthProofId }), {
+        status: 200,
+        headers: responseHeaders,
+    });
+}
+
+async function recordSocialLoginEvent(userId: string, provider: string): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("social_login_events")
+        .insert({ user_id: userId, provider });
+    if (error) {
+        // Non-fatal: log and continue. The reauth check will fail later if the
+        // record is missing, which is the safe (fail-closed) outcome.
+        console.error("Failed to record social login event:", error.code ?? error.message);
+    }
+}
+
+async function issueReauthProof(userId: string): Promise<string | null> {
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const { data, error } = await supabaseAdmin
+        .from("reauth_proofs")
+        .insert({ user_id: userId, expires_at: expiresAt })
+        .select("id")
+        .single();
+
+    if (error || !data?.id) {
+        console.error("Failed to issue reauth proof:", error?.code ?? "no data");
+        return null;
+    }
+
+    return data.id as string;
 }

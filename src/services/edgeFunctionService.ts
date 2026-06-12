@@ -187,8 +187,31 @@ function logAuthErrorDetails(functionName: string, error: unknown): void {
 }
 
 function isRetryableAuthError(error: unknown): boolean {
-    return isEdgeFunctionServiceError(error) && error.code === 'AUTH_REQUIRED' && error.status === 401;
+    if (!isEdgeFunctionServiceError(error) || error.code !== 'AUTH_REQUIRED' || error.status !== 401) {
+        return false;
+    }
+
+    return !hasNonRetryableAuthReason(error.details);
 }
+
+function hasNonRetryableAuthReason(details: Record<string, unknown> | undefined): boolean {
+    if (!details) {
+        return false;
+    }
+
+    return Object.values(details).some((value) => (
+        typeof value === 'string'
+        && NON_RETRYABLE_AUTH_REASONS.some((reason) => value.includes(reason))
+    ));
+}
+
+const NON_RETRYABLE_AUTH_REASONS = [
+    'REAUTH_REQUIRED',
+    'REAUTH_PROOF_REQUIRED',
+    'ACCOUNT_DELETE_CHALLENGE_REQUIRED',
+    'ACCOUNT_DELETE_2FA_REQUIRED',
+    'TWO_FACTOR_REQUIRED',
+];
 
 interface FunctionsHttpErrorContext {
     status?: number;

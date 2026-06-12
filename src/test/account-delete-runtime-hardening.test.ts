@@ -78,6 +78,65 @@ describe("account deletion and auth runtime hardening", () => {
     expect(accountDeleteFunction).not.toContain("hint: error.hint");
   });
 
+  it("routes social login/OAuth users to a dedicated oauth-reauth edge function path during deletion", () => {
+    expect(accountSettings).toContain("const isOAuthUser = user?.app_metadata?.provider !== 'email'");
+    expect(accountSettings).toContain("invokeAuthedFunction<{ reauthProofId?: string }>('auth-session'");
+    expect(accountSettings).toContain("action: 'oauth-reauth'");
+    expect(accountSettings).toContain("isOAuthDeleteReauthRequired");
+
+    expect(authOpaque).toContain("issueReauthProof");
+    const authSession = readFileSync("supabase/functions/auth-session/index.ts", "utf-8");
+    expect(authSession).toContain('"oauth-reauth"');
+    expect(authSession).toContain("handleOAuthReauth(");
+    expect(authSession).toContain("recordSocialLoginEvent(");
+    expect(authSession).toContain("check_recent_social_login");
+    expect(authSession).not.toContain("isJwtSessionFresh(");
+    expect(authSession).toContain("user_opaque_records");
+    expect(authSession).toContain("FORBIDDEN"); // returns 403 for OPAQUE password users
+    expect(authSession).toContain("issueReauthProof(");
+  });
+
+  it("syncs Tauri OAuth callbacks server-side so social-login delete reauth can see the fresh login", () => {
+    const authPage = readFileSync("src/pages/Auth.tsx", "utf-8");
+    const syncPolicy = readFileSync("src/services/oauthSessionSyncPolicy.ts", "utf-8");
+
+    expect(authPage).toContain("resolveOAuthSessionSyncPolicy({ usesCookieSession, isDesktopRuntime })");
+    expect(authPage).toContain("if (currentOAuthSessionSyncPolicy.shouldSync)");
+    expect(authPage).toContain("credentials: currentOAuthSessionSyncPolicy.credentials");
+    expect(authPage).toContain("skipCookie: currentOAuthSessionSyncPolicy.skipCookie");
+    expect(syncPolicy).toContain("shouldSync: input.usesCookieSession || input.isDesktopRuntime");
+    expect(syncPolicy).toContain('credentials: input.usesCookieSession ? "include" : "omit"');
+  });
+
+  it("keeps OAuth reauth freshness records server-only but writable by edge functions", () => {
+    const socialLoginMigration = readFileSync(
+      "supabase/migrations/20260531220000_social_login_events_for_oauth_reauth.sql",
+      "utf-8",
+    );
+
+    expect(socialLoginMigration).toContain("CREATE TABLE IF NOT EXISTS public.social_login_events");
+    expect(socialLoginMigration).toContain("ALTER TABLE public.social_login_events ENABLE ROW LEVEL SECURITY");
+    expect(socialLoginMigration).toContain("REVOKE ALL ON TABLE public.social_login_events FROM authenticated");
+    expect(socialLoginMigration).toContain("GRANT INSERT ON TABLE public.social_login_events TO service_role");
+    expect(socialLoginMigration).toContain("GRANT INSERT, SELECT ON TABLE public.reauth_proofs TO service_role");
+    expect(socialLoginMigration).toContain("REVOKE ALL ON FUNCTION public.check_recent_social_login(UUID, INTEGER) FROM anon");
+    expect(socialLoginMigration).toContain("REVOKE ALL ON FUNCTION public.check_recent_social_login(UUID, INTEGER) FROM authenticated");
+    expect(socialLoginMigration).toContain("GRANT EXECUTE ON FUNCTION public.check_recent_social_login(UUID, INTEGER) TO service_role");
+    expect(socialLoginMigration).not.toMatch(/GRANT\s+(SELECT|INSERT|UPDATE|DELETE)[\s\S]{0,120}social_login_events[\s\S]{0,80}TO\s+(anon|authenticated)/i);
+  });
+
+  it("ships a deployed follow-up migration that restricts the OAuth reauth RPC grants", () => {
+    const rpcGrantMigration = readFileSync(
+      "supabase/migrations/20260531221000_restrict_social_login_reauth_rpc_grants.sql",
+      "utf-8",
+    );
+
+    expect(rpcGrantMigration).toContain("REVOKE ALL ON FUNCTION public.check_recent_social_login(UUID, INTEGER) FROM PUBLIC");
+    expect(rpcGrantMigration).toContain("REVOKE ALL ON FUNCTION public.check_recent_social_login(UUID, INTEGER) FROM anon");
+    expect(rpcGrantMigration).toContain("REVOKE ALL ON FUNCTION public.check_recent_social_login(UUID, INTEGER) FROM authenticated");
+    expect(rpcGrantMigration).toContain("GRANT EXECUTE ON FUNCTION public.check_recent_social_login(UUID, INTEGER) TO service_role");
+  });
+
   it("keeps account-delete UI export/2FA warning outside nested paragraph descriptions", () => {
     expect(accountSettings).toContain("<AlertDialogDescription asChild>");
     expect(accountSettings).toContain("exportBeforeDelete");

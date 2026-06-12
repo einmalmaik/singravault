@@ -24,6 +24,8 @@ export const AUTH_OFFLINE_IDENTITY_STORAGE_KEY = "singra-auth-offline-identity";
 const AUTH_STATE_DB_NAME = "singra-auth-state";
 const OFFLINE_IDENTITY_STORE = "offline-identities";
 const OFFLINE_IDENTITY_RECORD_KEY = "last";
+const SESSION_REFRESH_SKEW_MS = 5 * 60 * 1000;
+const SESSION_REFRESH_RETRY_MS = 60 * 1000;
 
 export type AuthMode = "online" | "offline" | "unauthenticated";
 
@@ -43,6 +45,11 @@ export interface HydratedAuthState {
 type SessionTokens = Pick<Session, "access_token" | "refresh_token">;
 
 let refreshInFlight: Promise<Session | null> | null = null;
+
+export interface AuthSessionKeepAliveOptions {
+  getSession: () => Session | null;
+  onSessionRefreshed: (session: Session) => void;
+}
 
 export function isInIframe(): boolean {
   if (typeof window === "undefined") {
@@ -170,6 +177,145 @@ export async function refreshCurrentSession(): Promise<Session | null> {
   }
 
   return refreshInFlight;
+}
+
+export function startAuthSessionKeepAlive(options: AuthSessionKeepAliveOptions): () => void {
+  let stopped = false;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let refreshAttemptInFlight = false;
+
+  const clearRefreshTimer = () => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
+  };
+
+  const scheduleNextRefresh = (session: Session | null) => {
+    clearRefreshTimer();
+    if (stopped || !session?.access_token) {
+      return;
+    }
+
+    const delayMs = getSessionRefreshDelayMs(session);
+    if (delayMs === null) {
+      return;
+    }
+
+    refreshTimer = setTimeout(
+      () => {
+        void refreshActiveSession("timer");
+      },
+      delayMs,
+    );
+  };
+
+  const refreshActiveSession = async (_reason: "timer" | "focus" | "online") => {
+    if (stopped || refreshAttemptInFlight || !options.getSession()?.access_token) {
+      return;
+    }
+
+    clearRefreshTimer();
+
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      refreshTimer = setTimeout(
+        () => {
+          void refreshActiveSession("timer");
+        },
+        SESSION_REFRESH_RETRY_MS,
+      );
+      return;
+    }
+
+    refreshAttemptInFlight = true;
+    try {
+      const refreshedSession = await refreshCurrentSession();
+      if (stopped) {
+        return;
+      }
+
+      if (refreshedSession?.access_token) {
+        options.onSessionRefreshed(refreshedSession);
+        scheduleNextRefresh(refreshedSession);
+      } else {
+        refreshTimer = setTimeout(
+          () => {
+            void refreshActiveSession("timer");
+          },
+          SESSION_REFRESH_RETRY_MS,
+        );
+      }
+    } catch {
+      if (!stopped) {
+        refreshTimer = setTimeout(
+          () => {
+            void refreshActiveSession("timer");
+          },
+          SESSION_REFRESH_RETRY_MS,
+        );
+      }
+    } finally {
+      refreshAttemptInFlight = false;
+    }
+  };
+
+  const refreshIfDue = (reason: "focus" | "online") => {
+    const session = options.getSession();
+    if (!session?.access_token) {
+      return;
+    }
+
+    if (isSessionRefreshDue(session)) {
+      void refreshActiveSession(reason);
+      return;
+    }
+
+    scheduleNextRefresh(session);
+  };
+
+  const handleFocus = () => refreshIfDue("focus");
+  const handleOnline = () => refreshIfDue("online");
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      refreshIfDue("focus");
+    }
+  };
+
+  scheduleNextRefresh(options.getSession());
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("online", handleOnline);
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+  }
+
+  return () => {
+    stopped = true;
+    clearRefreshTimer();
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("online", handleOnline);
+    }
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    }
+  };
+}
+
+export function isSessionRefreshDue(session: Session, nowMs = Date.now()): boolean {
+  const delayMs = getSessionRefreshDelayMs(session, nowMs);
+  return delayMs !== null && delayMs <= 0;
+}
+
+export function getSessionRefreshDelayMs(session: Session, nowMs = Date.now()): number | null {
+  const expiresAtMs = getSessionExpiresAtMs(session);
+  if (!expiresAtMs) {
+    return null;
+  }
+
+  return Math.max(0, expiresAtMs - nowMs - SESSION_REFRESH_SKEW_MS);
 }
 
 export async function clearPersistentSession(): Promise<void> {
@@ -402,6 +548,14 @@ function onlineState(session: Session): HydratedAuthState {
     user: session.user,
     offlineIdentity: null,
   };
+}
+
+function getSessionExpiresAtMs(session: Session): number | null {
+  if (typeof session.expires_at === "number" && Number.isFinite(session.expires_at)) {
+    return session.expires_at * 1000;
+  }
+
+  return null;
 }
 
 async function saveOfflineIdentityFromSession(session: Session): Promise<void> {

@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { User, LogOut, Trash2, Loader2, Mail, Download, ShieldCheck, AlertTriangle, Languages } from 'lucide-react';
+import { User, LogOut, Trash2, Loader2, Mail, Download, ShieldCheck, AlertTriangle, Languages, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,8 +48,12 @@ import {
   isVaultSecurityModeBlockingEgress,
 } from '@/services/vaultOpLog';
 import { verifyTwoFactorChallenge } from '@/services/twoFactorService';
-import { clearLastOAuthProvider } from '@/services/socialLoginPreferenceService';
+import { clearLastOAuthProvider, readLastOAuthProvider } from '@/services/socialLoginPreferenceService';
 import { invokeAuthedFunction, isEdgeFunctionServiceError } from '@/services/edgeFunctionService';
+import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
+import { isTauriRuntime } from '@/platform/runtime';
+import { openExternalUrl } from '@/platform/openExternalUrl';
+import { createDesktopOAuthUrl, type DesktopOAuthProvider } from '@/platform/desktopOAuth';
 import {
     changeLanguagePreference,
     getStoredLanguagePreference,
@@ -65,16 +69,19 @@ const ENCRYPTED_ITEM_TITLE_PLACEHOLDER = 'Encrypted Item';
 
 export function AccountSettings() {
     const { t } = useTranslation();
-    const { user, signOut } = useAuth();
+    const { user, session, signOut } = useAuth();
     const { decryptItem, isLocked, opLogUiView } = useVault();
     const { toast } = useToast();
     const navigate = useNavigate();
 
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [showReauthDialog, setShowReauthDialog] = useState(false);
+    const [showOAuthReauthDialog, setShowOAuthReauthDialog] = useState(false);
+    const [oauthReauthProvider, setOAuthReauthProvider] = useState<DesktopOAuthProvider | null>(null);
     const [deleteConfirmation, setDeleteConfirmation] = useState('');
     const [twoFactorCode, setTwoFactorCode] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
+    const [isOAuthReauthing, setIsOAuthReauthing] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isLoadingDeleteContext, setIsLoadingDeleteContext] = useState(false);
     const [vaultItemCount, setVaultItemCount] = useState(0);
@@ -83,6 +90,7 @@ export function AccountSettings() {
 
     const systemLanguage = resolveSystemLanguage();
     const supportedLanguages = Object.entries(languages) as Array<[LanguageCode, (typeof languages)[LanguageCode]]>;
+    const oauthReauthProviderLabel = getOAuthProviderLabel(oauthReauthProvider);
 
     useEffect(() => {
         if (!showDeleteDialog || !user) {
@@ -226,11 +234,84 @@ export function AccountSettings() {
     const handleDeleteAccount = async () => {
         if (deleteConfirmation.trim().toUpperCase() !== 'DELETE' || isDeleting) return;
 
-        // Always require explicit OPAQUE credential verification before a
-        // destructive account delete. JWT iat freshness is not sufficient because
-        // a silent session refresh mints a fresh iat without any credential proof.
-        setShowDeleteDialog(false);
-        setShowReauthDialog(true);
+        const isOAuthUser = user?.app_metadata?.provider !== 'email';
+        if (isOAuthUser) {
+            setIsDeleting(true);
+            try {
+                const result = await invokeAuthedFunction<{ reauthProofId?: string }>('auth-session', {
+                    action: 'oauth-reauth',
+                });
+                if (result.reauthProofId) {
+                    setShowDeleteDialog(false);
+                    await executeDeleteAccount(result.reauthProofId);
+                } else {
+                    throw new Error('No reauthProofId returned');
+                }
+            } catch (error) {
+                if (isOAuthDeleteReauthRequired(error)) {
+                    const provider = readLastOAuthProvider() ?? normalizeDesktopOAuthProvider(user?.app_metadata?.provider);
+                    setOAuthReauthProvider(provider);
+                    setShowDeleteDialog(false);
+                    setShowOAuthReauthDialog(true);
+                    return;
+                }
+
+                let description = t('settings.account.deleteFailed');
+                if (isEdgeFunctionServiceError(error) && error.status === 401) {
+                    description = t('reauth.sessionExpiredSignInAgain',
+                        { defaultValue: 'Deine Sitzung ist abgelaufen. Melde dich bitte erneut an.' });
+                }
+                toast({
+                    variant: 'destructive',
+                    title: t('common.error'),
+                    description,
+                });
+            } finally {
+                setIsDeleting(false);
+            }
+        } else {
+            // Always require explicit OPAQUE credential verification before a
+            // destructive account delete. JWT iat freshness is not sufficient because
+            // a silent session refresh mints a fresh iat without any credential proof.
+            setShowDeleteDialog(false);
+            setShowReauthDialog(true);
+        }
+    };
+
+    const handleOAuthReauthForDelete = async () => {
+        setIsOAuthReauthing(true);
+        try {
+            const provider = oauthReauthProvider
+                ?? normalizeDesktopOAuthProvider(user?.app_metadata?.provider)
+                ?? 'google';
+            if (isTauriRuntime()) {
+                await openExternalUrl(await createDesktopOAuthUrl(provider));
+                // The delete flow will continue when the OAuth callback arrives
+                // and the user reopens the delete dialog with a fresh session.
+                toast({
+                    title: t('reauth.oauthReauthSent', { defaultValue: 'Browser geöffnet' }),
+                    description: t('reauth.oauthReauthSentDesc', {
+                        defaultValue: 'Melde dich in deinem Browser an und kehre dann zurück, um das Konto zu löschen.',
+                    }),
+                });
+                setShowOAuthReauthDialog(false);
+            } else {
+                const { error } = await supabase.auth.signInWithOAuth({
+                    provider,
+                    options: { redirectTo: getOAuthRedirectUrl() },
+                });
+                if (error) throw error;
+                // Web: redirect will happen, dialog closes naturally.
+            }
+        } catch {
+            toast({
+                variant: 'destructive',
+                title: t('common.error'),
+                description: t('auth.errors.generic'),
+            });
+        } finally {
+            setIsOAuthReauthing(false);
+        }
     };
 
     const handleExportBeforeDelete = async () => {
@@ -490,6 +571,43 @@ export function AccountSettings() {
                 description={t('reauth.accountDeleteContext')}
                 onSuccess={(reauthProofId) => executeDeleteAccount(reauthProofId)}
             />
+
+            {/* OAuth reauth dialog shown when social-login freshness check fails */}
+            <AlertDialog open={showOAuthReauthDialog} onOpenChange={setShowOAuthReauthDialog}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle className="flex items-center gap-2">
+                            <RefreshCw className="w-5 h-5 text-amber-500" />
+                            {t('reauth.oauthReauthTitle', { defaultValue: 'Erneute Anmeldung erforderlich' })}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t('reauth.oauthReauthDesc', {
+                                defaultValue:
+                                    'Aus Sicherheitsgründen musst du dich kurz erneut mit deinem Social-Login anmelden, bevor du dein Konto löschen kannst. Deine letzte Anmeldung liegt mehr als 15 Minuten zurück.',
+                            })}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>
+                            {t('common.cancel')}
+                        </AlertDialogCancel>
+                        <Button
+                            type="button"
+                            onClick={handleOAuthReauthForDelete}
+                            disabled={isOAuthReauthing}
+                            className="gap-2"
+                        >
+                            {isOAuthReauthing
+                                ? <Loader2 className="w-4 h-4 animate-spin" />
+                                : <RefreshCw className="w-4 h-4" />}
+                            {t('reauth.oauthReauthAction', {
+                                provider: oauthReauthProviderLabel,
+                                defaultValue: `Erneut mit ${oauthReauthProviderLabel} anmelden`,
+                            })}
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </>
     );
 }
@@ -506,4 +624,25 @@ function isAccountDeleteReauthRequired(error: unknown): boolean {
     return Object.values(error.details ?? {}).some((value) =>
         typeof value === 'string' && value.includes('REAUTH_REQUIRED')
     );
+}
+
+function isOAuthDeleteReauthRequired(error: unknown): boolean {
+    return isEdgeFunctionServiceError(error)
+        && error.status === 401
+        && Object.values(error.details ?? {}).some((value) =>
+            typeof value === 'string' && value.includes('REAUTH_REQUIRED')
+        );
+}
+
+function normalizeDesktopOAuthProvider(provider: unknown): DesktopOAuthProvider | null {
+    return provider === 'google' || provider === 'github' || provider === 'discord'
+        ? provider
+        : null;
+}
+
+function getOAuthProviderLabel(provider: DesktopOAuthProvider | null): string {
+    if (provider === 'google') return 'Google';
+    if (provider === 'github') return 'GitHub';
+    if (provider === 'discord') return 'Discord';
+    return 'Social-Login';
 }

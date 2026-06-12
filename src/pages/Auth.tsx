@@ -6,7 +6,7 @@
  * Handles login, passkey, and signup flows via Custom Edge Functions (BFF Pattern).
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { createClient, type Session } from '@supabase/supabase-js';
@@ -39,6 +39,7 @@ import { usePasswordCheck } from '@/hooks/usePasswordCheck';
 import { PasswordStrengthMeter } from '@/components/ui/PasswordStrengthMeter';
 import { resolvePostAuthRedirectPath } from '@/services/postAuthRedirectService';
 import { applyAuthenticatedSession, clearPersistentSession, persistAuthenticatedSession } from '@/services/authSessionManager';
+import { resolveOAuthSessionSyncPolicy } from '@/services/oauthSessionSyncPolicy';
 import { getInitialDeepLinks, listenForDeepLinks } from '@/platform/deepLink';
 import { getOAuthRedirectUrl } from '@/platform/oauthRedirect';
 import {
@@ -148,12 +149,17 @@ export default function Auth() {
   const isDesktopBridgePage = !isTauriRuntime() && isDesktopOAuthBridgeUrl(window.location.href, window.location.origin);
   const postAuthRedirectPath = resolvePostAuthRedirectPath(searchParams.get('redirect'), location.state);
   const API_URL = runtimeConfig.supabaseFunctionsUrl ?? `${runtimeConfig.supabaseUrl}/functions/v1`;
+  const isDesktopRuntime = isTauriRuntime();
   const inIframe = (() => {
     try { return window.self !== window.top; } catch { return true; }
   })();
-  const usesCookieSession = !inIframe && !isTauriRuntime();
+  const usesCookieSession = !inIframe && !isDesktopRuntime;
+  const oauthSessionSyncPolicy = useMemo(
+    () => resolveOAuthSessionSyncPolicy({ usesCookieSession, isDesktopRuntime }),
+    [isDesktopRuntime, usesCookieSession],
+  );
 
-  const authCallbackRuntimeRef = useRef({ API_URL, mode, navigate, postAuthRedirectPath, usesCookieSession, t, toast });
+  const authCallbackRuntimeRef = useRef({ API_URL, mode, navigate, postAuthRedirectPath, usesCookieSession, oauthSessionSyncPolicy, t, toast });
   const pendingCallbacks = useRef(new Set<string>());
   const settledCallbacks = useRef(new Set<string>());
   const notifiedCallbacks = useRef(new Set<string>());
@@ -163,8 +169,8 @@ export default function Auth() {
   }, []);
 
   useEffect(() => {
-    authCallbackRuntimeRef.current = { API_URL, mode, navigate, postAuthRedirectPath, usesCookieSession, t, toast };
-  }, [API_URL, mode, navigate, postAuthRedirectPath, t, toast, usesCookieSession]);
+    authCallbackRuntimeRef.current = { API_URL, mode, navigate, postAuthRedirectPath, usesCookieSession, oauthSessionSyncPolicy, t, toast };
+  }, [API_URL, mode, navigate, oauthSessionSyncPolicy, postAuthRedirectPath, t, toast, usesCookieSession]);
 
   const applyCallbackSession = useCallback(async (callbackUrl: string): Promise<boolean> => {
     const callbackPayload = parseOAuthCallbackPayload(callbackUrl, window.location.origin);
@@ -259,26 +265,27 @@ export default function Auth() {
         API_URL: authApiUrl,
         mode: currentMode,
         navigate: goToPostAuthPath,
+        oauthSessionSyncPolicy: currentOAuthSessionSyncPolicy,
         postAuthRedirectPath: redirectPath,
-        usesCookieSession: shouldUseCookieSession,
       } = authCallbackRuntimeRef.current;
 
-      if (shouldUseCookieSession) {
+      if (currentOAuthSessionSyncPolicy.shouldSync) {
         const syncResponse = await fetch(`${authApiUrl}/auth-session`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session.access_token}`,
           },
-          credentials: 'include',
+          credentials: currentOAuthSessionSyncPolicy.credentials,
           body: JSON.stringify({
             action: 'oauth-sync',
             refreshToken: session.refresh_token,
+            skipCookie: currentOAuthSessionSyncPolicy.skipCookie,
           }),
         });
 
         if (!syncResponse.ok) {
-          console.warn('[Auth] OAuth session cookie sync failed:', syncResponse.status);
+          console.warn('[Auth] OAuth session sync failed:', syncResponse.status);
         } else {
           const syncPayload = await syncResponse.json().catch(() => null) as {
             session?: Session;
