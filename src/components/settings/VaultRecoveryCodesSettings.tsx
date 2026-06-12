@@ -1,3 +1,4 @@
+import { randomUuid } from '@dis/shield/random';
 import { useEffect, useState } from 'react';
 import { Download, KeyRound, Loader2, RotateCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -116,8 +117,8 @@ export function VaultRecoveryCodesSettings() {
       }
 
       const built = await buildRecoveryCodesRotateOperation({
-        opId: crypto.randomUUID(),
-        intentId: crypto.randomUUID(),
+        opId: randomUuid(),
+        intentId: randomUuid(),
         rebasedFromOpId: null,
         vaultId: opLogVaultId,
         deviceId: deviceContext.identity.deviceId,

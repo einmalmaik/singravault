@@ -3,11 +3,16 @@
 /**
  * Snapshot-specific crypto: key derivation and AEAD seal / open.
  *
- * Reuses WebCrypto primitives only.  No custom cipher modes.
- * The snapshot key is derived from the vault encryption key via
- * HKDF-SHA-256 with a snapshot-specific purpose.
+ * Powered by DIS — Defensive Integration Shield: HKDF-SHA-256,
+ * AES-256-GCM and SHA-256 come from `@dis/shield`. No custom cipher
+ * modes. The snapshot key is derived from the vault encryption key
+ * via HKDF-SHA-256 with a snapshot-specific purpose.
  */
 
+import { deriveHkdfSha256Bits } from '@dis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@dis/shield/aead';
+import { sha256Bytes } from '@dis/shield/integrity';
+import { randomBytes } from '@dis/shield/random';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,
@@ -54,24 +59,7 @@ export async function deriveSnapshotKey(input: DeriveSnapshotKeyInput): Promise<
     deviceId: input.deviceId,
     trustEpoch: input.trustEpoch,
   });
-  const baseKey = await crypto.subtle.importKey(
-    'raw',
-    input.vaultEncryptionKey as unknown as ArrayBuffer,
-    { name: 'HKDF' },
-    false,
-    ['deriveBits'],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new Uint8Array(0) as unknown as ArrayBuffer,
-      info: info as unknown as ArrayBuffer,
-    },
-    baseKey,
-    256,
-  );
-  return new Uint8Array(bits);
+  return deriveHkdfSha256Bits(input.vaultEncryptionKey, { info });
 }
 
 // ---------------------------------------------------------------------------
@@ -101,22 +89,12 @@ export async function sealSnapshot(input: SealSnapshotInput): Promise<SealedSnap
   }
   const aadHash = await computeSnapshotAadHash(input.aad);
   const aadBytes = canonicalizeVaultStructure(input.aad);
-  const nonce = input.nonce ?? crypto.getRandomValues(new Uint8Array(AEAD_NONCE_BYTE_LENGTH));
+  const nonce = input.nonce ?? randomBytes(AEAD_NONCE_BYTE_LENGTH);
   if (nonce.length !== AEAD_NONCE_BYTE_LENGTH) {
     throw new VaultCryptoError('key_material_invalid', 'nonce must be 12 bytes');
   }
   const key = await importSnapshotAeadKey(input.snapshotKey, ['encrypt']);
-  const ciphertextBuffer = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: nonce as unknown as ArrayBuffer,
-      additionalData: aadBytes as unknown as ArrayBuffer,
-      tagLength: 128,
-    },
-    key,
-    input.plaintext as unknown as ArrayBuffer,
-  );
-  const ciphertext = new Uint8Array(ciphertextBuffer);
+  const ciphertext = await aesGcmEncrypt(key, nonce, input.plaintext, aadBytes);
   return {
     aad: input.aad,
     aadHash,
@@ -155,17 +133,7 @@ export async function openSnapshot(input: OpenSnapshotInput): Promise<Uint8Array
   const key = await importSnapshotAeadKey(input.snapshotKey, ['decrypt']);
 
   try {
-    const plaintextBuffer = await crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: nonce as unknown as ArrayBuffer,
-        additionalData: expectedAadBytes as unknown as ArrayBuffer,
-        tagLength: 128,
-      },
-      key,
-      ciphertext as unknown as ArrayBuffer,
-    );
-    return new Uint8Array(plaintextBuffer);
+    return await aesGcmDecrypt(key, nonce, ciphertext, expectedAadBytes);
   } catch {
     throw new VaultCryptoError('aead_decryption_failed', 'snapshot AEAD decryption failed');
   }
@@ -179,13 +147,7 @@ async function importSnapshotAeadKey(rawKey: Uint8Array, usages: KeyUsage[]): Pr
   if (!isUint8ArrayLike(rawKey) || rawKey.length !== 32) {
     throw new VaultCryptoError('key_material_invalid', 'snapshot key must be 32 bytes');
   }
-  return crypto.subtle.importKey(
-    'raw',
-    rawKey as unknown as ArrayBuffer,
-    { name: 'AES-GCM' },
-    false,
-    usages,
-  );
+  return importAesGcmRawKey(rawKey, usages);
 }
 
 /**
@@ -193,8 +155,7 @@ async function importSnapshotAeadKey(rawKey: Uint8Array, usages: KeyUsage[]): Pr
  */
 export async function computeSnapshotAadHash(aad: SnapshotAadV1): Promise<string> {
   const bytes = canonicalizeVaultStructure(aad);
-  const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
-  return encodeBase64Url(new Uint8Array(digest));
+  return encodeBase64Url(await sha256Bytes(bytes));
 }
 
 /**
@@ -230,8 +191,7 @@ export async function computeSnapshotHash(envelope: {
     snapshotCiphertext: envelope.snapshotCiphertext,
   };
   const bytes = canonicalizeVaultStructure(payload);
-  const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
-  return encodeBase64Url(new Uint8Array(digest));
+  return encodeBase64Url(await sha256Bytes(bytes));
 }
 
 function constantTimeEquals(a: Uint8Array, b: Uint8Array): boolean {

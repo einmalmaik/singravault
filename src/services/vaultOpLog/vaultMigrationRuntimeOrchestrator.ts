@@ -9,6 +9,7 @@
  * caller may unlock the normal vault UI.
  */
 
+import { randomUuid } from '@dis/shield/random';
 import { supabase } from '@/integrations/supabase/client';
 import type { VaultItemData } from '@/services/cryptoService';
 import { generateDeviceSigningKeyPair } from './operationSigningService';
@@ -226,7 +227,7 @@ async function getOrCreateDeviceSigningContext(
   }
 
   const keyPair = await generateDeviceSigningKeyPair();
-  const deviceId = crypto.randomUUID();
+  const deviceId = randomUuid();
   await saveVaultOpLogDeviceSigningKey({
     userId,
     vaultId,

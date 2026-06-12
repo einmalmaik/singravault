@@ -12,6 +12,7 @@
  * submit_vault_operation path.  No direct upsert.
  */
 
+import { signEcdsaP256, verifyEcdsaP256 } from '@dis/shield/signing';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,
@@ -215,12 +216,7 @@ export async function createTrustedSnapshot(
 
   // Sign the snapshotHash bytes (deterministic, canonical).
   const hashBytes = decodeBase64Url(snapshotHash);
-  const signatureBuffer = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    input.deviceSigningKey,
-    hashBytes as unknown as ArrayBuffer,
-  );
-  const signature = encodeBase64Url(new Uint8Array(signatureBuffer));
+  const signature = encodeBase64Url(await signEcdsaP256(input.deviceSigningKey, hashBytes));
 
   const envelope: TrustedSnapshotEnvelopeV1 = {
     ...preEnvelope,
@@ -340,11 +336,10 @@ export async function verifyTrustedSnapshot(
   const hashBytes = decodeBase64Url(envelope.snapshotHash);
   let signatureValid: boolean;
   try {
-    signatureValid = await crypto.subtle.verify(
-      { name: 'ECDSA', hash: 'SHA-256' },
+    signatureValid = await verifyEcdsaP256(
       publicKey,
-      decodeBase64Url(envelope.signature) as unknown as ArrayBuffer,
-      hashBytes as unknown as ArrayBuffer,
+      decodeBase64Url(envelope.signature),
+      hashBytes,
     );
   } catch {
     signatureValid = false;

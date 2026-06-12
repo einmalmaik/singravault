@@ -1,6 +1,9 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
+import { deriveHkdfSha256Bits } from '@dis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@dis/shield/aead';
+import { randomBytes } from '@dis/shield/random';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,
@@ -51,13 +54,6 @@ export async function deriveCollectionRecordKey(input: {
     throw new Error('collection key must be at least 16 bytes');
   }
 
-  const baseKey = await crypto.subtle.importKey(
-    'raw',
-    input.collectionKey as unknown as ArrayBuffer,
-    { name: 'HKDF' },
-    false,
-    ['deriveBits'],
-  );
   const info = canonicalizeVaultStructure({
     purpose: 'singra-vault/collection-record-key-v1',
     collectionId: input.collectionId,
@@ -65,17 +61,7 @@ export async function deriveCollectionRecordKey(input: {
     recordType: input.recordType,
     keyVersion: input.keyVersion,
   });
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new Uint8Array(0) as unknown as ArrayBuffer,
-      info: info as unknown as ArrayBuffer,
-    },
-    baseKey,
-    256,
-  );
-  return new Uint8Array(bits);
+  return deriveHkdfSha256Bits(input.collectionKey, { info });
 }
 
 export async function computeCollectionAadHash(aad: CollectionRecordAadV1): Promise<string> {
@@ -119,23 +105,19 @@ export async function sealCollectionRecord(input: {
   const aad = buildCollectionRecordAad(input);
   const aadBytes = encodeCollectionRecordAadBytes(aad);
   const recordKey = await deriveCollectionRecordKey(input);
-  let ciphertextBuffer: ArrayBuffer;
-  const nonce = input.nonce ?? crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
+  let ciphertext: Uint8Array;
+  const nonce = input.nonce ?? randomBytes(NONCE_BYTES);
   try {
     const key = await importAesKey(recordKey, ['encrypt']);
     if (nonce.length !== NONCE_BYTES) {
       throw new Error('collection record nonce must be 12 bytes');
     }
-    ciphertextBuffer = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv: nonce as unknown as ArrayBuffer, additionalData: aadBytes as unknown as ArrayBuffer, tagLength: 128 },
-      key,
-      input.plaintext as unknown as ArrayBuffer,
-    );
+    ciphertext = await aesGcmEncrypt(key, nonce, input.plaintext, aadBytes);
   } finally {
     recordKey.fill(0);
   }
   const nonceB64Url = encodeBase64Url(nonce);
-  const ciphertextB64Url = encodeBase64Url(new Uint8Array(ciphertextBuffer));
+  const ciphertextB64Url = encodeBase64Url(ciphertext);
   const aadHash = await computeCollectionAadHash(aad);
   const ciphertextHash = await computeCollectionCiphertextHash({
     aadHash,
@@ -195,17 +177,12 @@ export async function openVerifiedCollectionRecord(input: {
   });
   try {
     const key = await importAesKey(recordKey, ['decrypt']);
-    const plaintext = await crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: decodeBase64Url(input.sealed.nonceB64Url) as unknown as ArrayBuffer,
-        additionalData: encodeCollectionRecordAadBytes(expectedAad) as unknown as ArrayBuffer,
-        tagLength: 128,
-      },
+    return await aesGcmDecrypt(
       key,
-      decodeBase64Url(input.sealed.ciphertextB64Url) as unknown as ArrayBuffer,
+      decodeBase64Url(input.sealed.nonceB64Url),
+      decodeBase64Url(input.sealed.ciphertextB64Url),
+      encodeCollectionRecordAadBytes(expectedAad),
     );
-    return new Uint8Array(plaintext);
   } finally {
     recordKey.fill(0);
   }
@@ -215,7 +192,7 @@ async function importAesKey(rawKey: Uint8Array, usages: KeyUsage[]): Promise<Cry
   if (rawKey.length !== 32) {
     throw new Error('collection record key must be 32 bytes');
   }
-  return crypto.subtle.importKey('raw', rawKey as unknown as ArrayBuffer, { name: 'AES-GCM' }, false, usages);
+  return importAesGcmRawKey(rawKey, usages);
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {

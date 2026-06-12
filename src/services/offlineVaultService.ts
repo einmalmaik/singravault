@@ -7,6 +7,7 @@
  * for replay when connectivity returns.
  */
 
+import { randomUuid } from '@dis/shield/random';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { isTauriDevUserId, TAURI_DEV_VAULT_ID } from '@/platform/tauriDevMode';
@@ -689,7 +690,7 @@ export async function applyOfflineCategoryDeletion(
 export async function enqueueOfflineMutation(
   mutation: Omit<OfflineMutation, 'id' | 'createdAt'>,
 ): Promise<string> {
-  const id = crypto.randomUUID();
+  const id = randomUuid();
   if (isTauriDevUserId(mutation.userId)) {
     return id;
   }

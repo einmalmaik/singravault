@@ -15,6 +15,8 @@
  * - WebCrypto non-extractable Keys werden für Speicherung verwendet.
  */
 
+import { sha256Bytes } from '@dis/shield/integrity';
+import { randomBytes, randomUuid } from '@dis/shield/random';
 import { encodeBase64Url } from './canonicalJson';
 import { generateDeviceSigningKeyPair } from './operationSigningService';
 import type {
@@ -75,8 +77,7 @@ export function generateBrowserDeviceName(): string {
  * Pairing-Nonce erzeugen (kryptografisch sichere Zufallszahl)
  */
 export function generatePairingNonce(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return encodeBase64Url(bytes);
+  return encodeBase64Url(randomBytes(32));
 }
 
 /**
@@ -93,7 +94,7 @@ export async function createBrowserDeviceIdentity(
   // Key Pair erzeugen (non-extractable private key)
   const keyPair = await generateDeviceSigningKeyPair();
 
-  const deviceId = crypto.randomUUID();
+  const deviceId = randomUuid();
   const name = deviceName ?? generateBrowserDeviceName();
 
   const identity: VaultOpLogDeviceIdentity = {
@@ -198,8 +199,7 @@ export async function getPublicKeyShortFingerprint(
   publicKeyB64Url: string,
 ): Promise<string> {
   const keyBytes = Uint8Array.from(atob(publicKeyB64Url.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-  const hashBuffer = await crypto.subtle.digest('SHA-256', keyBytes as unknown as ArrayBuffer);
-  const hashArray = new Uint8Array(hashBuffer);
+  const hashArray = await sha256Bytes(keyBytes);
   const hex = Array.from(hashArray.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('');
   return hex.toUpperCase();
 }

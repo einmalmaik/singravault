@@ -31,6 +31,9 @@
  *   - Raw key bytes are wiped from memory immediately after use
  */
 
+import { deriveHkdfAesGcmKey } from '@dis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt } from '@dis/shield/aead';
+import { randomBytes } from '@dis/shield/random';
 import { startRegistration, startAuthentication, base64URLStringToBuffer } from '@simplewebauthn/browser';
 import type {
     PublicKeyCredentialCreationOptionsJSON,
@@ -712,28 +715,8 @@ export async function deletePasskey(
 async function deriveWrappingKey(prfOutput: Uint8Array): Promise<CryptoKey> {
     assertPasskeyKeyMaterialLength(prfOutput, 'Passkey PRF output');
 
-    // Import PRF output as HKDF key material
-    const baseKey = await crypto.subtle.importKey(
-        'raw',
-        prfOutput,
-        'HKDF',
-        false,
-        ['deriveKey'],
-    );
-
-    // Derive AES-256-GCM key via HKDF-SHA-256
-    return crypto.subtle.deriveKey(
-        {
-            name: 'HKDF',
-            hash: 'SHA-256',
-            salt: HKDF_SALT,
-            info: HKDF_INFO,
-        },
-        baseKey,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt', 'decrypt'],
-    );
+    // Derive AES-256-GCM key via HKDF-SHA-256 (Powered by DIS)
+    return deriveHkdfAesGcmKey(prfOutput, { salt: HKDF_SALT, info: HKDF_INFO });
 }
 
 /**
@@ -753,18 +736,12 @@ async function encryptRawKeyBytes(
     assertPasskeyKeyMaterialLength(prfOutput, 'Passkey PRF output');
 
     const wrappingKey = await deriveWrappingKey(prfOutput);
-    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+    const iv = randomBytes(IV_LENGTH);
     let ciphertextBytes: Uint8Array | null = null;
     let combined: Uint8Array | null = null;
 
     try {
-        const ciphertext = await crypto.subtle.encrypt(
-            { name: 'AES-GCM', iv, tagLength: 128 },
-            wrappingKey,
-            rawKeyBytes,
-        );
-
-        ciphertextBytes = new Uint8Array(ciphertext);
+        ciphertextBytes = await aesGcmEncrypt(wrappingKey, iv, rawKeyBytes);
         // Combine IV + ciphertext (includes auth tag appended by AES-GCM)
         combined = new Uint8Array(iv.length + ciphertextBytes.byteLength);
         combined.set(iv, 0);
@@ -802,13 +779,7 @@ async function decryptRawKeyBytes(
     const ciphertext = combined.slice(IV_LENGTH);
 
     try {
-        const plaintext = await crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv, tagLength: 128 },
-            wrappingKey,
-            ciphertext,
-        );
-
-        const plaintextBytes = new Uint8Array(plaintext);
+        const plaintextBytes = await aesGcmDecrypt(wrappingKey, iv, ciphertext);
         assertPasskeyKeyMaterialLength(plaintextBytes, 'Passkey wrapped key plaintext');
         return plaintextBytes;
     } finally {

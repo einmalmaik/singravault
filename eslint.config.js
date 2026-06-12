@@ -25,14 +25,18 @@ export default tseslint.config(
   },
 
   // ── DIS crypto-centralization guardrail ──────────────────────────────────
-  // Vault item encryption (Argon2id KDF, AES-256-GCM) and post-quantum hybrid
-  // key wrapping (ML-KEM-768 + RSA-4096) now live exclusively in the audited
-  // @dis/shield package — "Powered by DIS — Defensive Integration Shield".
-  // Application code consumes them ONLY through the cryptoService /
-  // pqCryptoService adapters, never by importing crypto libraries directly.
-  // This rule fails closed so new code cannot reintroduce in-tree crypto.
+  // Since the Phase-6 full extraction, EVERY cryptographic primitive — Argon2id
+  // KDF, AES-256-GCM, HKDF, HMAC, SHA-256/SHA-1, ECDSA P-256 signing, TOTP,
+  // ML-KEM-768 hybrid wrapping, CSPRNG randomness and UUIDs — lives exclusively
+  // in the audited @dis/shield package ("Powered by DIS — Defensive Integration
+  // Shield"). Application code consumes them ONLY through @dis/shield (or the
+  // cryptoService / pqCryptoService re-export adapters), never by importing
+  // crypto libraries or calling WebCrypto directly. These rules fail closed so
+  // new code cannot reintroduce in-tree crypto. Tests are exempt: they may use
+  // raw primitives to build fixtures and cross-check DIS behaviour.
   {
     files: ["src/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}", "src/test/**/*.{ts,tsx}", "src/test-stubs/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -41,7 +45,12 @@ export default tseslint.config(
             {
               name: "hash-wasm",
               message:
-                "Do not import hash-wasm directly. Argon2id key derivation lives in @dis/shield; consume it via services/cryptoService.",
+                "Do not import hash-wasm directly. Argon2id lives in @dis/shield/kdf.",
+            },
+            {
+              name: "otpauth",
+              message:
+                "Do not import otpauth directly. TOTP lives in @dis/shield/totp.",
             },
             {
               name: "@noble/post-quantum",
@@ -58,39 +67,25 @@ export default tseslint.config(
           ],
         },
       ],
-    },
-  },
-  // Allowlist: the DIS adapters own the centralized crypto surface, and a few
-  // legacy crypto modules + their tests still call Argon2id (hash-wasm) directly
-  // and are tracked as the next cutover targets (deviceKey / TOTP). They remain
-  // forbidden from importing @noble/post-quantum.
-  {
-    files: [
-      "src/services/cryptoService.ts",
-      "src/services/pqCryptoService.ts",
-      "src/services/deviceKeyService.ts",
-      "src/services/twoFactorService.ts",
-      "**/*.test.{ts,tsx}",
-      "src/test/**/*.{ts,tsx}",
-    ],
-    rules: {
-      "no-restricted-imports": [
+      "no-restricted-properties": [
         "error",
         {
-          paths: [
-            {
-              name: "@noble/post-quantum",
-              message:
-                "Do not import @noble/post-quantum directly. ML-KEM hybrid wrapping lives in @dis/shield; consume it via services/pqCryptoService.",
-            },
-          ],
-          patterns: [
-            {
-              group: ["@noble/post-quantum/*"],
-              message:
-                "Do not import @noble/post-quantum directly. ML-KEM hybrid wrapping lives in @dis/shield; consume it via services/pqCryptoService.",
-            },
-          ],
+          object: "crypto",
+          property: "subtle",
+          message:
+            "Do not call WebCrypto directly. Every primitive lives in @dis/shield (aead/kdf/integrity/signing). Capability checks may use `'subtle' in crypto`.",
+        },
+        {
+          object: "crypto",
+          property: "getRandomValues",
+          message:
+            "Do not call crypto.getRandomValues directly. Use randomBytes/fillRandom/randomInt from @dis/shield/random.",
+        },
+        {
+          object: "crypto",
+          property: "randomUUID",
+          message:
+            "Do not call crypto.randomUUID directly. Use randomUuid from @dis/shield/random.",
         },
       ],
     },

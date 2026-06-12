@@ -10,7 +10,14 @@
  * - 2FA enable/disable with security checks
  */
 
-import * as OTPAuth from 'otpauth';
+// Powered by DIS — Defensive Integration Shield: TOTP (RFC 6238), Argon2id,
+// HMAC-SHA-256, SHA-256 and the CSPRNG come from `@dis/shield`. This service
+// owns only enrolment state, backup-code formats and Supabase persistence.
+import { buildTotpUri, generateTotpSecret, verifyTotpCode } from '@dis/shield/totp';
+import { argon2idRaw } from '@dis/shield/kdf';
+import { hmacSha256, sha256Hex } from '@dis/shield/integrity';
+import { randomBytes, randomInt } from '@dis/shield/random';
+import { bytesToHex } from '@dis/shield/core';
 import { supabase } from '@/integrations/supabase/client';
 
 // ============ Types ============
@@ -79,8 +86,7 @@ const BACKUP_CODE_LENGTH = 8;
  * @returns Base32 encoded secret
  */
 export function generateTOTPSecret(): string {
-    const secret = new OTPAuth.Secret({ size: 20 });
-    return secret.base32;
+    return generateTotpSecret();
 }
 
 /**
@@ -90,16 +96,7 @@ export function generateTOTPSecret(): string {
  * @returns otpauth:// URI for QR code generation
  */
 export function generateQRCodeUri(secret: string, email: string): string {
-    const totp = new OTPAuth.TOTP({
-        issuer: ISSUER,
-        label: email,
-        algorithm: 'SHA1',
-        digits: 6,
-        period: 30,
-        secret: OTPAuth.Secret.fromBase32(secret),
-    });
-
-    return totp.toString();
+    return buildTotpUri({ issuer: ISSUER, label: email, secret });
 }
 
 /**
@@ -120,22 +117,8 @@ export function formatSecretForDisplay(secret: string): string {
  * @returns true if code is valid
  */
 export function verifyTOTPCode(secret: string, code: string): boolean {
-    try {
-        const totp = new OTPAuth.TOTP({
-            issuer: ISSUER,
-            algorithm: 'SHA1',
-            digits: 6,
-            period: 30,
-            secret: OTPAuth.Secret.fromBase32(secret.replace(/\s/g, '')),
-        });
-
-        // Allow 1 period window (30 seconds) for clock drift
-        const delta = totp.validate({ token: code.replace(/\s/g, ''), window: 1 });
-        return delta !== null;
-    } catch (error) {
-        console.error('TOTP verification error:', error);
-        return false;
-    }
+    // Allow 1 period window (30 seconds) for clock drift
+    return verifyTotpCode(secret, code, 1);
 }
 
 // ============ Backup Codes ============
@@ -170,22 +153,8 @@ export function generateBackupCodes(): string[] {
  * @returns Secure random integer
  */
 function getSecureRandomInt(min: number, max: number): number {
-    const range = max - min + 1;
-    const bytesNeeded = Math.ceil(Math.log2(range) / 8) || 1;
-    const maxValid = Math.floor((256 ** bytesNeeded) / range) * range - 1;
-
-    let randomValue: number;
-    const randomBytes = new Uint8Array(bytesNeeded);
-
-    do {
-        crypto.getRandomValues(randomBytes);
-        randomValue = 0;
-        for (let i = 0; i < bytesNeeded; i++) {
-            randomValue = (randomValue << 8) | randomBytes[i];
-        }
-    } while (randomValue > maxValid);
-
-    return min + (randomValue % range);
+    // Powered by DIS: byte-for-byte the same rejection-sampling algorithm.
+    return randomInt(min, max);
 }
 
 /**
@@ -203,22 +172,20 @@ export async function hashBackupCode(code: string, salt?: string): Promise<strin
 
     // Version 3: Argon2id (new secure standard)
     // Generate unique salt for this backup code
-    const codeSalt = crypto.getRandomValues(new Uint8Array(16));
+    const codeSalt = randomBytes(16);
     const saltBase64 = btoa(String.fromCharCode(...codeSalt));
 
-    // Import argon2 for backup codes (lighter params than master password)
-    const { argon2id } = await import('hash-wasm');
-
     // Use lighter Argon2 params for backup codes (still secure but faster)
-    const hash = await argon2id({
+    const hashBytes = await argon2idRaw({
         password: normalizedCode,
         salt: codeSalt,
         parallelism: 1,
         iterations: 2,
         memorySize: 16384, // 16 MiB - lighter than master password
         hashLength: 32,
-        outputType: 'hex',
     });
+    const hash = bytesToHex(hashBytes);
+    hashBytes.fill(0);
 
     // Return versioned format for new codes
     return `v3:${saltBase64}:${hash}`;
@@ -233,23 +200,11 @@ async function hashBackupCodeLegacy(code: string, salt?: string): Promise<string
     const data = encoder.encode(normalizedCode);
 
     if (salt) {
-        const keyData = encoder.encode(salt);
-        const hmacKey = await crypto.subtle.importKey(
-            'raw',
-            keyData,
-            { name: 'HMAC', hash: 'SHA-256' },
-            false,
-            ['sign']
-        );
-        const signature = await crypto.subtle.sign('HMAC', hmacKey, data);
-        const hashArray = Array.from(new Uint8Array(signature));
-        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return bytesToHex(await hmacSha256(encoder.encode(salt), data));
     }
 
     // Legacy fallback: unsalted SHA-256
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return sha256Hex(data);
 }
 
 /**
@@ -268,16 +223,16 @@ export async function verifyBackupCodeHash(
         const [, saltBase64, hash] = storedHash.split(':');
         const salt = new Uint8Array(atob(saltBase64).split('').map(c => c.charCodeAt(0)));
 
-        const { argon2id } = await import('hash-wasm');
-        const computedHash = await argon2id({
+        const computedBytes = await argon2idRaw({
             password: normalizedCode,
             salt: salt,
             parallelism: 1,
             iterations: 2,
             memorySize: 16384,
             hashLength: 32,
-            outputType: 'hex',
         });
+        const computedHash = bytesToHex(computedBytes);
+        computedBytes.fill(0);
 
         return computedHash === hash;
     }

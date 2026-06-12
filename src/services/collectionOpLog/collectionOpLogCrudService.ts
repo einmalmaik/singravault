@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
+import { randomUuid } from '@dis/shield/random';
 import { canonicalizeVaultStructure } from '@/services/vaultOpLog/canonicalJson';
 import type { SupabaseRpcClient } from '@/services/vaultOpLog/vaultOpLogRepository';
 import { buildCollectionOperation } from './operationBuilder';
@@ -79,7 +80,7 @@ export async function submitAndVerifyCollectionMutation(
   }
 
   const built = await buildCollectionOperation({
-    opId: crypto.randomUUID(),
+    opId: randomUuid(),
     collectionId: deps.collectionId,
     actorUserId: deps.actorUserId,
     actorVaultId: deps.actorVaultId,

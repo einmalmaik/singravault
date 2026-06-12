@@ -1,3 +1,4 @@
+import { randomUuid } from '@dis/shield/random';
 import { useCallback, useRef, type MutableRefObject } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { User } from '@supabase/supabase-js';
@@ -420,8 +421,8 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
         }
 
         const builtOp = await buildAddDeviceOperation({
-          opId: crypto.randomUUID(),
-          intentId: crypto.randomUUID(),
+          opId: randomUuid(),
+          intentId: randomUuid(),
           rebasedFromOpId: null,
           vaultId: deps.vaultId,
           deviceId: deps.deviceId,
@@ -486,8 +487,8 @@ export function useVaultOpLogCrudActions(input: UseVaultOpLogCrudActionsInput) {
         }
 
         const builtOp = await buildRevokeDeviceOperation({
-          opId: crypto.randomUUID(),
-          intentId: crypto.randomUUID(),
+          opId: randomUuid(),
+          intentId: randomUuid(),
           rebasedFromOpId: null,
           vaultId: deps.vaultId,
           deviceId: deps.deviceId,

@@ -16,7 +16,7 @@
  *      `useVisibleVaultEntries` keeps them on screen in duress mode and
  *      hides them in the real vault — same contract as before, just
  *      sourced from RAM instead of the database.
- *   3. Synthetic items use `crypto.randomUUID()` for `id` and a fixed
+ *   3. Synthetic items use `randomUuid()` for `id` and a fixed
  *      synthetic `vault_id` so they never collide with real vault rows.
  *      They are never written back, so no migration / sync code path
  *      can accidentally promote them to persisted state.
@@ -32,6 +32,7 @@
  *     and hide real items in the duress vault.
  */
 
+import { randomUuid } from '@dis/shield/random';
 import type { VaultItem } from '@/components/vault/vaultItemList/vaultItemModel';
 import type { DuressDecoyItemPlaintext } from '@/extensions/types';
 import { getServiceHooks } from '@/extensions/registry';
@@ -85,7 +86,7 @@ function wrapDecoyEntryAsVaultItem(
     entry: DuressDecoyItemPlaintext,
     nowIso: string,
 ): VaultItem {
-    const id = crypto.randomUUID();
+    const id = randomUuid();
     const title = entry.title?.trim() || 'Eintrag';
 
     return {

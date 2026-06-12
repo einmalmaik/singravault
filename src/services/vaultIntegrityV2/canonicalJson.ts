@@ -1,3 +1,5 @@
+import { sha256StringBase64 } from '@dis/shield/integrity';
+
 export function stableStringify(value: unknown): string {
   return JSON.stringify(toStableJson(value));
 }
@@ -24,8 +26,8 @@ function toStableJson(value: unknown): unknown {
 }
 
 export async function sha256Base64(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return bytesToBase64(new Uint8Array(digest));
+  // Powered by DIS — Defensive Integration Shield (byte-identical output).
+  return sha256StringBase64(value);
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {

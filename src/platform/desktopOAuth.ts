@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
+import { sha256Bytes } from '@dis/shield/integrity';
+import { randomBytes } from '@dis/shield/random';
 import type { Session } from "@supabase/supabase-js";
 import { runtimeConfig } from "@/config/runtimeConfig";
 import { clearPkceVerifier, loadPkceVerifier, savePkceVerifier } from "./pkceVerifierStore";
@@ -127,21 +129,16 @@ export function getDesktopOAuthBridgeUrl(flowId?: string | null): string {
 }
 
 function createFlowId(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return base64UrlEncode(bytes);
+  return base64UrlEncode(randomBytes(16));
 }
 
 function createVerifier(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return base64UrlEncode(bytes);
+  return base64UrlEncode(randomBytes(32));
 }
 
 async function createChallenge(verifier: string): Promise<string> {
-  const data = new TextEncoder().encode(verifier);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return base64UrlEncode(new Uint8Array(digest));
+  const digest = await sha256Bytes(new TextEncoder().encode(verifier));
+  return base64UrlEncode(digest);
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {

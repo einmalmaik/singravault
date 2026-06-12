@@ -1,3 +1,7 @@
+// Powered by DIS — Defensive Integration Shield: AES-256-GCM and the CSPRNG
+// come from `@dis/shield`. This module owns only IndexedDB/Tauri storage.
+import { aesGcmDecrypt, aesGcmEncrypt, generateAesGcmKey } from "@dis/shield/aead";
+import { randomBytes } from "@dis/shield/random";
 import { isTauriRuntime } from "./runtime";
 import { getTauriInvoke } from "./tauriInvoke";
 
@@ -6,7 +10,6 @@ const DB_VERSION = 1;
 const META_STORE = "meta";
 const SECRETS_STORE = "secrets";
 const WRAPPING_KEY_ID = "browser-wrapping-key";
-const WRAPPING_KEY_ALGORITHM = { name: "AES-GCM", length: 256 } as const;
 const WRAPPING_IV_LENGTH = 12;
 
 export class LocalSecretStoreError extends Error {
@@ -81,18 +84,12 @@ export async function saveLocalSecretBytes(key: string, value: Uint8Array): Prom
     throw new LocalSecretStoreUnsupportedError();
   }
 
-  const iv = crypto.getRandomValues(new Uint8Array(WRAPPING_IV_LENGTH));
+  const iv = randomBytes(WRAPPING_IV_LENGTH);
   let encryptedBytes: Uint8Array | null = null;
   let combined: Uint8Array | null = null;
 
   try {
-    const encrypted = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      wrappingKey,
-      value,
-    );
-
-    encryptedBytes = new Uint8Array(encrypted);
+    encryptedBytes = await aesGcmEncrypt(wrappingKey, iv, value);
     combined = new Uint8Array(iv.length + encryptedBytes.byteLength);
     combined.set(iv, 0);
     combined.set(encryptedBytes, iv.length);
@@ -163,13 +160,7 @@ export async function loadLocalSecretBytes(key: string): Promise<Uint8Array | nu
   const ciphertext = combined.slice(WRAPPING_IV_LENGTH);
 
   try {
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      wrappingKey,
-      ciphertext,
-    );
-
-    return new Uint8Array(decrypted);
+    return await aesGcmDecrypt(wrappingKey, iv, ciphertext);
   } catch {
     // Preserve the stored payload. A transient decrypt failure should surface
     // as an unreadable secret, not permanent data loss.
@@ -280,11 +271,7 @@ async function getBrowserWrappingKey(createIfMissing: boolean): Promise<CryptoKe
     return null;
   }
 
-  const wrappingKey = await crypto.subtle.generateKey(
-    WRAPPING_KEY_ALGORITHM,
-    false,
-    ["encrypt", "decrypt"],
-  );
+  const wrappingKey = await generateAesGcmKey();
 
   await withStore<void>(META_STORE, "readwrite", (store, _transaction, resolve, reject) => {
     const request = store.put({

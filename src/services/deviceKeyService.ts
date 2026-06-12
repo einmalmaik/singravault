@@ -18,13 +18,23 @@
  * - Loss of Device Key + no backup = vault unrecoverable (by design)
  */
 
+// Powered by DIS — Defensive Integration Shield: Argon2id, HKDF-SHA-256,
+// AES-256-GCM and the CSPRNG come from `@dis/shield`. This service owns only
+// the device-key lifecycle, the transfer envelope format and storage.
+import {
+    argon2idRaw,
+    deriveHkdfAesGcmKey,
+    deriveHkdfSha256Bits,
+    importAesGcmKey,
+} from '@dis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt } from '@dis/shield/aead';
+import { randomBytes } from '@dis/shield/random';
 import {
     isLocalSecretStoreSupported,
     loadLocalSecretBytes,
     removeLocalSecret,
     saveLocalSecretBytes,
 } from '@/platform/localSecretStore';
-import { argon2id } from 'hash-wasm';
 import {
     deleteNativeDeviceKey,
     exportNativeDeviceKeyForTransfer,
@@ -80,7 +90,7 @@ interface DeviceKeyTransferEnvelopeV2 {
  * @returns Random 32-byte Uint8Array
  */
 export function generateDeviceKey(): Uint8Array {
-    return crypto.getRandomValues(new Uint8Array(DEVICE_KEY_LENGTH));
+    return randomBytes(DEVICE_KEY_LENGTH);
 }
 
 /**
@@ -89,14 +99,14 @@ export function generateDeviceKey(): Uint8Array {
  * @returns URL/QR-friendly secret with about 192 bits of randomness
  */
 export function generateDeviceKeyTransferSecret(): string {
-    const randomBytes = crypto.getRandomValues(new Uint8Array(24));
+    const secretBytes = randomBytes(24);
     try {
-        return uint8ArrayToBase64(randomBytes)
+        return uint8ArrayToBase64(secretBytes)
             .replace(/\+/g, '-')
             .replace(/\//g, '_')
             .replace(/=+$/g, '');
     } finally {
-        randomBytes.fill(0);
+        secretBytes.fill(0);
     }
 }
 
@@ -230,30 +240,11 @@ export async function deriveWithDeviceKey(
     }
     assertDeviceKeyLength(deviceKey);
 
-    // Import the Argon2id output as HKDF base key material
-    const baseKey = await crypto.subtle.importKey(
-        'raw',
-        argon2Output as BufferSource,
-        'HKDF',
-        false,
-        ['deriveBits'],
-    );
-
-    const info = new TextEncoder().encode(HKDF_INFO);
-
     // HKDF with deviceKey as salt, argon2Output as IKM
-    const derivedBits = await crypto.subtle.deriveBits(
-        {
-            name: 'HKDF',
-            hash: 'SHA-256',
-            salt: deviceKey as BufferSource,
-            info: info as BufferSource,
-        },
-        baseKey,
-        256, // 32 bytes
-    );
-
-    return new Uint8Array(derivedBits);
+    return deriveHkdfSha256Bits(argon2Output, {
+        salt: deviceKey,
+        info: new TextEncoder().encode(HKDF_INFO),
+    });
 }
 
 // ============ QR / Transfer Functions ============
@@ -282,19 +273,13 @@ export async function exportDeviceKeyForTransfer(
     const deviceKey = await getDeviceKey(userId);
     if (!deviceKey) return null;
 
-    const iv = crypto.getRandomValues(new Uint8Array(TRANSFER_IV_LENGTH));
-    const salt = crypto.getRandomValues(new Uint8Array(TRANSFER_SALT_LENGTH));
+    const iv = randomBytes(TRANSFER_IV_LENGTH);
+    const salt = randomBytes(TRANSFER_SALT_LENGTH);
     let encryptedBytes: Uint8Array | null = null;
     try {
         const pinKey = await deriveTransferWrappingKey(pin, salt, TRANSFER_KDF_PARAMS);
 
-        const encrypted = await crypto.subtle.encrypt(
-            { name: 'AES-GCM', iv },
-            pinKey,
-            deviceKey as BufferSource,
-        );
-
-        encryptedBytes = new Uint8Array(encrypted);
+        encryptedBytes = await aesGcmEncrypt(pinKey, iv, deviceKey);
         const envelope: DeviceKeyTransferEnvelopeV2 = {
             version: 2,
             kdf: 'argon2id',
@@ -375,13 +360,7 @@ export async function importDeviceKeyFromTransfer(
             hashLength: TRANSFER_KDF_PARAMS.hashLength,
         });
 
-        const decrypted = await crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv },
-            pinKey,
-            encrypted as BufferSource,
-        );
-
-        const deviceKey = new Uint8Array(decrypted);
+        const deviceKey = await aesGcmDecrypt(pinKey, iv, encrypted);
         try {
             if (deviceKey.length !== DEVICE_KEY_LENGTH) return false;
 
@@ -463,9 +442,11 @@ async function deleteLegacyIndexedDbDeviceKey(userId: string): Promise<void> {
 }
 
 function isLegacyDeviceKeyStoreAvailable(): boolean {
+    // Capability check only — no crypto call. Avoids the crypto.subtle member
+    // expression so the DIS guardrail can ban direct WebCrypto access.
     return typeof indexedDB !== 'undefined'
         && typeof crypto !== 'undefined'
-        && typeof crypto.subtle !== 'undefined';
+        && 'subtle' in crypto;
 }
 
 function openLegacyDeviceKeyDb(): Promise<IDBDatabase> {
@@ -512,36 +493,15 @@ async function decryptLegacyDeviceKeyRecord(
     }
 
     const wrappingKey = await deriveLegacyWrappingKey(userId);
-    const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: new Uint8Array(record.iv) },
-        wrappingKey,
-        new Uint8Array(record.encrypted),
-    );
-
-    return new Uint8Array(decrypted);
+    return aesGcmDecrypt(wrappingKey, new Uint8Array(record.iv), new Uint8Array(record.encrypted));
 }
 
 async function deriveLegacyWrappingKey(userId: string): Promise<CryptoKey> {
-    const keyMaterial = await crypto.subtle.importKey(
-        'raw',
-        new TextEncoder().encode(userId),
-        'HKDF',
-        false,
-        ['deriveKey'],
-    );
-
-    return crypto.subtle.deriveKey(
-        {
-            name: 'HKDF',
-            hash: 'SHA-256',
-            salt: new TextEncoder().encode(LEGACY_WRAP_SALT),
-            info: new TextEncoder().encode(LEGACY_WRAP_INFO),
-        },
-        keyMaterial,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['decrypt'],
-    );
+    return deriveHkdfAesGcmKey(new TextEncoder().encode(userId), {
+        salt: new TextEncoder().encode(LEGACY_WRAP_SALT),
+        info: new TextEncoder().encode(LEGACY_WRAP_INFO),
+        usages: ['decrypt'],
+    });
 }
 
 function isValidTransferSecret(pin: string): boolean {
@@ -573,48 +533,19 @@ async function deriveTransferWrappingKey(
         throw new Error('Unsupported device key transfer KDF parameters.');
     }
 
-    const result = await argon2id({
+    const keyBytes = await argon2idRaw({
         password: pin,
         salt,
         parallelism: params.parallelism,
         iterations: params.iterations,
         memorySize: params.memory,
         hashLength: params.hashLength,
-        outputType: 'binary',
-    }) as unknown;
-
-    const keyBytes = normalizeArgon2Output(result);
+    });
     try {
-        return crypto.subtle.importKey(
-            'raw',
-            keyBytes as BufferSource,
-            { name: 'AES-GCM', length: 256 },
-            false,
-            ['encrypt', 'decrypt'],
-        );
+        return await importAesGcmKey(keyBytes);
     } finally {
         keyBytes.fill(0);
     }
-}
-
-function normalizeArgon2Output(result: unknown): Uint8Array {
-    if (result instanceof Uint8Array) {
-        return new Uint8Array(result);
-    }
-
-    if (result instanceof ArrayBuffer) {
-        return new Uint8Array(result);
-    }
-
-    if (Array.isArray(result)) {
-        return new Uint8Array(result);
-    }
-
-    if (ArrayBuffer.isView(result)) {
-        return new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
-    }
-
-    throw new Error('argon2id returned unsupported type');
 }
 
 function parseTransferEnvelopeV2(transferData: string): DeviceKeyTransferEnvelopeV2 {

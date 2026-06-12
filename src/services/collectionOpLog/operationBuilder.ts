@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
+import { signEcdsaP256 } from '@dis/shield/signing';
 import { canonicalizeVaultStructure, encodeBase64Url } from '@/services/vaultOpLog/canonicalJson';
 import { sha256Base64Url } from '@/services/vaultOpLog/recordHashes';
 import { sealCollectionRecord } from './crypto';
@@ -137,15 +138,7 @@ export async function signCollectionOperation(
   privateKey: CryptoKey,
 ): Promise<SignedCollectionOperationV1> {
   const bytes = canonicalizeVaultStructure(body);
-  const signatureBuffer = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    privateKey,
-    bytes as unknown as ArrayBuffer,
-  );
-  const signatureBytes = new Uint8Array(signatureBuffer);
-  if (signatureBytes.length !== 64) {
-    throw new Error('unexpected collection operation signature length');
-  }
+  const signatureBytes = await signEcdsaP256(privateKey, bytes);
   return {
     body,
     signature: encodeBase64Url(signatureBytes),

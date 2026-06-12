@@ -10,6 +10,7 @@
  * 4 words = ~41.4 bits entropy, 5 words = ~51.7 bits, 6 words = ~62.0 bits.
  */
 
+import { randomInt } from '@dis/shield/random';
 import { EFF_SHORT_WORDLIST } from '@/services/wordlists';
 
 // Character sets for password generation
@@ -216,22 +217,9 @@ function getSecureRandomElement<T>(arr: T[]): T {
  * Generates a cryptographically secure random integer in range [min, max]
  */
 function getSecureRandomInt(min: number, max: number): number {
-    const range = max - min + 1;
-    const bytesNeeded = Math.ceil(Math.log2(range) / 8) || 1;
-    const maxValid = Math.floor((256 ** bytesNeeded) / range) * range - 1;
-
-    let randomValue: number;
-    const randomBytes = new Uint8Array(bytesNeeded);
-
-    do {
-        crypto.getRandomValues(randomBytes);
-        randomValue = 0;
-        for (let i = 0; i < bytesNeeded; i++) {
-            randomValue = (randomValue << 8) | randomBytes[i];
-        }
-    } while (randomValue > maxValid);
-
-    return min + (randomValue % range);
+    // Powered by DIS: byte-for-byte the same rejection-sampling algorithm,
+    // sourced from @dis/shield/random.
+    return randomInt(min, max);
 }
 
 /**

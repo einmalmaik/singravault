@@ -2,12 +2,15 @@
 // Licensed under the Business Source License 1.1 — see LICENSE
 /**
  * @fileoverview TOTP (Time-based One-Time Password) Service
- * 
+ *
  * Implements RFC 6238 TOTP generation for 2FA codes.
- * Uses the otpauth library for reliable OTP handling.
+ *
+ * Powered by DIS — Defensive Integration Shield: the TOTP primitive comes
+ * from `@dis/shield/totp`. This service owns only input normalisation,
+ * validation and URI parsing (plain URL handling, no crypto).
  */
 
-import * as OTPAuth from 'otpauth';
+import { buildTotpUriWithOptions, generateTotpCode } from '@dis/shield/totp';
 
 export const SUPPORTED_TOTP_ALGORITHMS = ['SHA1', 'SHA256', 'SHA512'] as const;
 export const SUPPORTED_TOTP_DIGITS = [6, 8] as const;
@@ -82,15 +85,7 @@ export function generateTOTP(secret: string, config: TOTPConfig = {}): string {
             return '------';
         }
 
-        const totp = new OTPAuth.TOTP({
-            issuer: 'Singra Vault',
-            algorithm: normalizedConfig.algorithm,
-            digits: normalizedConfig.digits,
-            period: normalizedConfig.period,
-            secret: OTPAuth.Secret.fromBase32(normalizeTOTPSecretInput(secret)),
-        });
-
-        return totp.generate();
+        return generateTotpCode(normalizeTOTPSecretInput(secret), normalizedConfig);
     } catch {
         console.error('TOTP generation error: invalid or unsupported secret');
         return '------';
@@ -272,16 +267,14 @@ export function parseTOTPUri(uri: string): TOTPData | null {
  * @returns otpauth:// URI
  */
 export function generateTOTPUri(data: TOTPData): string {
-    const totp = new OTPAuth.TOTP({
-        issuer: data.issuer,
-        label: data.label,
-        algorithm: data.algorithm || 'SHA1',
-        digits: data.digits || 6,
-        period: data.period || 30,
-        secret: OTPAuth.Secret.fromBase32(data.secret),
-    });
-
-    return totp.toString();
+    return buildTotpUriWithOptions(
+        { issuer: data.issuer, label: data.label, secret: data.secret },
+        {
+            algorithm: data.algorithm || 'SHA1',
+            digits: data.digits || 6,
+            period: data.period || 30,
+        },
+    );
 }
 
 // ============ Type Definitions ============
