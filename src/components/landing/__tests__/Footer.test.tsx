@@ -11,6 +11,8 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, params?: Record<string, unknown>) => {
       if (key === 'landing.footer.copyright') return `© ${params?.year} Singra Vault.`;
+      if (key === 'landing.footer.poweredBy') return 'Powered by';
+      if (key === 'landing.footer.poweredByTooltip') return 'Defensive Integration Shield';
       return key;
     },
     i18n: { language: 'de' },
@@ -38,5 +40,24 @@ describe('Footer', () => {
     expect(screen.queryByText(/Premium Version/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Core Version/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Whitepaper Version/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a "Powered by DIS" attribution with the DIS logo linking to the DIS repo', () => {
+    render(
+      <MemoryRouter>
+        <Footer />
+      </MemoryRouter>,
+    );
+
+    const disLink = screen.getByRole('link', { name: /Powered by.*Defensive Integration Shield/i });
+    expect(disLink).toBeInTheDocument();
+    expect(disLink).toHaveAttribute('href', 'https://github.com/einmalmaik/dis');
+    expect(disLink).toHaveAttribute('target', '_blank');
+    expect(disLink).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(disLink).toHaveAttribute('title', 'Defensive Integration Shield');
+
+    const disLogo = screen.getByAltText('DIS') as HTMLImageElement;
+    expect(disLogo).toBeInTheDocument();
+    expect(disLogo.getAttribute('src')).toBe('/DIS-logo.png');
   });
 });

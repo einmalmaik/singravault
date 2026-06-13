@@ -120,9 +120,29 @@ export function Footer() {
         </div>
 
         {/* Copyright */}
-        <div className="border-t mt-8 pt-8 text-center text-sm text-muted-foreground space-y-1">
+        <div className="border-t mt-8 pt-8 text-center text-sm text-muted-foreground space-y-2">
           <p>{t('landing.footer.copyright', { year: currentYear })}</p>
           <p>{`Singra Vault Version ${APP_VERSION_DISPLAY}`}</p>
+
+          {/* Powered by DIS — Defensive Integration Shield */}
+          <div className="pt-2 flex justify-center">
+            <a
+              href="https://github.com/einmalmaik/dis"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group inline-flex items-center gap-2 rounded-full border border-border/50 bg-background/40 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-background/60 transition-colors"
+              title={t('landing.footer.poweredByTooltip')}
+            >
+              <span>{t('landing.footer.poweredBy')}</span>
+              <img
+                src="/DIS-logo.png"
+                alt="DIS"
+                className="h-4 w-4 rounded-sm ring-1 ring-border/40 group-hover:ring-primary/40 transition-colors"
+                loading="lazy"
+              />
+              <span className="font-medium">Defensive Integration Shield</span>
+            </a>
+          </div>
         </div>
       </div>
     </footer>

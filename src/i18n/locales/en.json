@@ -225,7 +225,9 @@
       "legalHeading": "Legal",
       "imprint": "Imprint",
       "cookies": "Cookie Settings",
-      "copyright": "© {{year}} Singra Vault. Source Available under BSL 1.1 License."
+      "copyright": "© {{year}} Singra Vault. Source Available under BSL 1.1 License.",
+      "poweredBy": "Powered by",
+      "poweredByTooltip": "DIS — Defensive Integration Shield: the centralised crypto and security layer that powers Singra Vault."
     }
   },
   "securityWhitepaper": {
