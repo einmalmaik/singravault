@@ -93,16 +93,12 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Singra Vault v__VERSION__"
           releaseBody: |
-            ## Singra Vault 0.5.5
+            ## Singra Vault 0.6.2
 
-            Dieses Patch-Release repariert Premium-Dateianhänge für den aktuellen OpLog-Tresorpfad.
-
-            ### Highlights
-
-            - **Dateiuploads funktionieren wieder mit OpLog-Einträgen**: `file_attachments` akzeptiert aktive eigene `vault_records` vom Typ `item` als Upload-Ziel.
-            - **Keine Legacy-Shadow-Items**: Der Fix entfernt die alte `vault_items`-only-FK-Kopplung und behält die serverseitigen Owner-, Premium-, E2EE- und Opaque-Metadata-Prüfungen bei.
-            - **Keine `[object Object]`-Fehler mehr**: Premium normalisiert Supabase-/Storage-Fehler in lesbare Upload-, Download- und Delete-Meldungen.
-            - **Lokal verifiziert**: Migration, Premium-Komponente, Attachment-Service, Crypto-Vertrag und Host-Build wurden gezielt geprüft.
+            Switches the crypto backbone from the GitHub-pinned `@dis/shield`
+            package to the published `@msdis/shield` package on the public
+            npm registry. No cryptographic, layout or wire-format changes —
+            public surface is byte-identical.
           generateReleaseNotes: false
           releaseDraft: false
           prerelease: false
