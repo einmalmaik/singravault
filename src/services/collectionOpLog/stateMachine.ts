@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
-import { verifyEcdsaP256 } from '@dis/shield/signing';
+import { verifyEcdsaP256 } from '@msdis/shield/signing';
 import { canonicalizeVaultStructure, decodeBase64Url } from '@/services/vaultOpLog/canonicalJson';
 import { importDevicePublicKey } from '@/services/vaultOpLog/operationSigningService';
 import { openVerifiedCollectionRecord } from './crypto';

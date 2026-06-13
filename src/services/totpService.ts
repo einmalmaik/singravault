@@ -6,11 +6,11 @@
  * Implements RFC 6238 TOTP generation for 2FA codes.
  *
  * Powered by DIS — Defensive Integration Shield: the TOTP primitive comes
- * from `@dis/shield/totp`. This service owns only input normalisation,
+ * from `@msdis/shield/totp`. This service owns only input normalisation,
  * validation and URI parsing (plain URL handling, no crypto).
  */
 
-import { buildTotpUriWithOptions, generateTotpCode } from '@dis/shield/totp';
+import { buildTotpUriWithOptions, generateTotpCode } from '@msdis/shield/totp';
 
 export const SUPPORTED_TOTP_ALGORITHMS = ['SHA1', 'SHA256', 'SHA512'] as const;
 export const SUPPORTED_TOTP_DIGITS = [6, 8] as const;

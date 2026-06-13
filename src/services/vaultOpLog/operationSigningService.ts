@@ -14,7 +14,7 @@
  * base64url-encoded.
  *
  * Powered by DIS — Defensive Integration Shield: the ECDSA primitive
- * (generate, SPKI import, sign, verify) comes from `@dis/shield/signing`.
+ * (generate, SPKI import, sign, verify) comes from `@msdis/shield/signing`.
  * This module owns only canonicalisation and the operation envelope.
  */
 
@@ -23,7 +23,7 @@ import {
   importEcdsaP256PublicKeySpki,
   signEcdsaP256,
   verifyEcdsaP256,
-} from '@dis/shield/signing';
+} from '@msdis/shield/signing';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,

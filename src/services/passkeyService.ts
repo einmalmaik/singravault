@@ -31,9 +31,9 @@
  *   - Raw key bytes are wiped from memory immediately after use
  */
 
-import { deriveHkdfAesGcmKey } from '@dis/shield/kdf';
-import { aesGcmDecrypt, aesGcmEncrypt } from '@dis/shield/aead';
-import { randomBytes } from '@dis/shield/random';
+import { deriveHkdfAesGcmKey } from '@msdis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt } from '@msdis/shield/aead';
+import { randomBytes } from '@msdis/shield/random';
 import { startRegistration, startAuthentication, base64URLStringToBuffer } from '@simplewebauthn/browser';
 import type {
     PublicKeyCredentialCreationOptionsJSON,

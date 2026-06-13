@@ -11,13 +11,13 @@
  */
 
 // Powered by DIS — Defensive Integration Shield: TOTP (RFC 6238), Argon2id,
-// HMAC-SHA-256, SHA-256 and the CSPRNG come from `@dis/shield`. This service
+// HMAC-SHA-256, SHA-256 and the CSPRNG come from `@msdis/shield`. This service
 // owns only enrolment state, backup-code formats and Supabase persistence.
-import { buildTotpUri, generateTotpSecret, verifyTotpCode } from '@dis/shield/totp';
-import { argon2idRaw } from '@dis/shield/kdf';
-import { hmacSha256, sha256Hex } from '@dis/shield/integrity';
-import { randomBytes, randomInt } from '@dis/shield/random';
-import { bytesToHex } from '@dis/shield/core';
+import { buildTotpUri, generateTotpSecret, verifyTotpCode } from '@msdis/shield/totp';
+import { argon2idRaw } from '@msdis/shield/kdf';
+import { hmacSha256, sha256Hex } from '@msdis/shield/integrity';
+import { randomBytes, randomInt } from '@msdis/shield/random';
+import { bytesToHex } from '@msdis/shield/core';
 import { supabase } from '@/integrations/supabase/client';
 
 // ============ Types ============

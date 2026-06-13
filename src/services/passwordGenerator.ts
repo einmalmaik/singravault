@@ -10,7 +10,7 @@
  * 4 words = ~41.4 bits entropy, 5 words = ~51.7 bits, 6 words = ~62.0 bits.
  */
 
-import { randomInt } from '@dis/shield/random';
+import { randomInt } from '@msdis/shield/random';
 import { EFF_SHORT_WORDLIST } from '@/services/wordlists';
 
 // Character sets for password generation
@@ -218,7 +218,7 @@ function getSecureRandomElement<T>(arr: T[]): T {
  */
 function getSecureRandomInt(min: number, max: number): number {
     // Powered by DIS: byte-for-byte the same rejection-sampling algorithm,
-    // sourced from @dis/shield/random.
+    // sourced from @msdis/shield/random.
     return randomInt(min, max);
 }
 

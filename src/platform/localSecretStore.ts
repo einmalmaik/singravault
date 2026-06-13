@@ -1,7 +1,7 @@
 // Powered by DIS — Defensive Integration Shield: AES-256-GCM and the CSPRNG
-// come from `@dis/shield`. This module owns only IndexedDB/Tauri storage.
-import { aesGcmDecrypt, aesGcmEncrypt, generateAesGcmKey } from "@dis/shield/aead";
-import { randomBytes } from "@dis/shield/random";
+// come from `@msdis/shield`. This module owns only IndexedDB/Tauri storage.
+import { aesGcmDecrypt, aesGcmEncrypt, generateAesGcmKey } from "@msdis/shield/aead";
+import { randomBytes } from "@msdis/shield/random";
 import { isTauriRuntime } from "./runtime";
 import { getTauriInvoke } from "./tauriInvoke";
 

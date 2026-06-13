@@ -28,8 +28,8 @@ export default tseslint.config(
   // Since the Phase-6 full extraction, EVERY cryptographic primitive — Argon2id
   // KDF, AES-256-GCM, HKDF, HMAC, SHA-256/SHA-1, ECDSA P-256 signing, TOTP,
   // ML-KEM-768 hybrid wrapping, CSPRNG randomness and UUIDs — lives exclusively
-  // in the audited @dis/shield package ("Powered by DIS — Defensive Integration
-  // Shield"). Application code consumes them ONLY through @dis/shield (or the
+  // in the audited @msdis/shield package ("Powered by DIS — Defensive Integration
+  // Shield"). Application code consumes them ONLY through @msdis/shield (or the
   // cryptoService / pqCryptoService re-export adapters), never by importing
   // crypto libraries or calling WebCrypto directly. These rules fail closed so
   // new code cannot reintroduce in-tree crypto. Tests are exempt: they may use
@@ -45,24 +45,24 @@ export default tseslint.config(
             {
               name: "hash-wasm",
               message:
-                "Do not import hash-wasm directly. Argon2id lives in @dis/shield/kdf.",
+                "Do not import hash-wasm directly. Argon2id lives in @msdis/shield/kdf.",
             },
             {
               name: "otpauth",
               message:
-                "Do not import otpauth directly. TOTP lives in @dis/shield/totp.",
+                "Do not import otpauth directly. TOTP lives in @msdis/shield/totp.",
             },
             {
               name: "@noble/post-quantum",
               message:
-                "Do not import @noble/post-quantum directly. ML-KEM hybrid wrapping lives in @dis/shield; consume it via services/pqCryptoService.",
+                "Do not import @noble/post-quantum directly. ML-KEM hybrid wrapping lives in @msdis/shield; consume it via services/pqCryptoService.",
             },
           ],
           patterns: [
             {
               group: ["@noble/post-quantum/*"],
               message:
-                "Do not import @noble/post-quantum directly. ML-KEM hybrid wrapping lives in @dis/shield; consume it via services/pqCryptoService.",
+                "Do not import @noble/post-quantum directly. ML-KEM hybrid wrapping lives in @msdis/shield; consume it via services/pqCryptoService.",
             },
           ],
         },
@@ -73,19 +73,19 @@ export default tseslint.config(
           object: "crypto",
           property: "subtle",
           message:
-            "Do not call WebCrypto directly. Every primitive lives in @dis/shield (aead/kdf/integrity/signing). Capability checks may use `'subtle' in crypto`.",
+            "Do not call WebCrypto directly. Every primitive lives in @msdis/shield (aead/kdf/integrity/signing). Capability checks may use `'subtle' in crypto`.",
         },
         {
           object: "crypto",
           property: "getRandomValues",
           message:
-            "Do not call crypto.getRandomValues directly. Use randomBytes/fillRandom/randomInt from @dis/shield/random.",
+            "Do not call crypto.getRandomValues directly. Use randomBytes/fillRandom/randomInt from @msdis/shield/random.",
         },
         {
           object: "crypto",
           property: "randomUUID",
           message:
-            "Do not call crypto.randomUUID directly. Use randomUuid from @dis/shield/random.",
+            "Do not call crypto.randomUUID directly. Use randomUuid from @msdis/shield/random.",
         },
       ],
     },

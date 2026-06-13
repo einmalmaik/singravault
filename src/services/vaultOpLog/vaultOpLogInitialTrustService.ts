@@ -8,7 +8,7 @@
  * dedicated RPC. It does not use the Device Key as trust material.
  */
 
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 import { generateDeviceSigningKeyPair } from './operationSigningService';
 import { computeVaultHead, sha256Base64Url } from './recordHashes';
 import {

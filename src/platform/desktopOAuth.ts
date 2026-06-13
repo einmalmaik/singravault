@@ -1,8 +1,8 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
-import { sha256Bytes } from '@dis/shield/integrity';
-import { randomBytes } from '@dis/shield/random';
+import { sha256Bytes } from '@msdis/shield/integrity';
+import { randomBytes } from '@msdis/shield/random';
 import type { Session } from "@supabase/supabase-js";
 import { runtimeConfig } from "@/config/runtimeConfig";
 import { clearPkceVerifier, loadPkceVerifier, savePkceVerifier } from "./pkceVerifierStore";

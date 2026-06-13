@@ -1,4 +1,4 @@
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 import {
   CURRENT_KDF_VERSION,
   createEncryptedUserKey,

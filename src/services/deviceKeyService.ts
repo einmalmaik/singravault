@@ -19,16 +19,16 @@
  */
 
 // Powered by DIS — Defensive Integration Shield: Argon2id, HKDF-SHA-256,
-// AES-256-GCM and the CSPRNG come from `@dis/shield`. This service owns only
+// AES-256-GCM and the CSPRNG come from `@msdis/shield`. This service owns only
 // the device-key lifecycle, the transfer envelope format and storage.
 import {
     argon2idRaw,
     deriveHkdfAesGcmKey,
     deriveHkdfSha256Bits,
     importAesGcmKey,
-} from '@dis/shield/kdf';
-import { aesGcmDecrypt, aesGcmEncrypt } from '@dis/shield/aead';
-import { randomBytes } from '@dis/shield/random';
+} from '@msdis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt } from '@msdis/shield/aead';
+import { randomBytes } from '@msdis/shield/random';
 import {
     isLocalSecretStoreSupported,
     loadLocalSecretBytes,

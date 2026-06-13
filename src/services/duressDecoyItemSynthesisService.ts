@@ -32,7 +32,7 @@
  *     and hide real items in the duress vault.
  */
 
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 import type { VaultItem } from '@/components/vault/vaultItemList/vaultItemModel';
 import type { DuressDecoyItemPlaintext } from '@/extensions/types';
 import { getServiceHooks } from '@/extensions/registry';

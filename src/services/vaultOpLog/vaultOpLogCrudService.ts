@@ -9,7 +9,7 @@
  * state-machine reload path.
  */
 
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 import { canonicalizeVaultStructure } from './canonicalJson';
 import {
   buildCreateRecordOperation,

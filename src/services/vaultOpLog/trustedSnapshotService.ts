@@ -12,7 +12,7 @@
  * submit_vault_operation path.  No direct upsert.
  */
 
-import { signEcdsaP256, verifyEcdsaP256 } from '@dis/shield/signing';
+import { signEcdsaP256, verifyEcdsaP256 } from '@msdis/shield/signing';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,

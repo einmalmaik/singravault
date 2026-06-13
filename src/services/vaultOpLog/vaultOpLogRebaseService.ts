@@ -14,7 +14,7 @@
  * no last-write-wins.
  */
 
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 import { canonicalizeVaultStructure } from './canonicalJson';
 import { deriveRecordKey, sealRecord } from './cryptoRecordService';
 import { buildOperationSignedBody, signOperation } from './operationSigningService';

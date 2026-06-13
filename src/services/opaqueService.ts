@@ -13,8 +13,8 @@
  * @see https://opaque-auth.com/docs/
  */
 
-import { hmacSha256 } from '@dis/shield/integrity';
-import { bytesToHex } from '@dis/shield/core';
+import { hmacSha256 } from '@msdis/shield/integrity';
+import { bytesToHex } from '@msdis/shield/core';
 import * as opaque from '@serenity-kit/opaque';
 import type { Session } from '@supabase/supabase-js';
 

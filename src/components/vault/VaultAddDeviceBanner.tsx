@@ -1,4 +1,4 @@
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Key, Loader2, ShieldAlert } from 'lucide-react';

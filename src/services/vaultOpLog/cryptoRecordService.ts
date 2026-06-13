@@ -16,14 +16,14 @@
  * recordType, keyVersion) tuple.
  *
  * Powered by DIS — Defensive Integration Shield: the HKDF and
- * AES-256-GCM primitives come from `@dis/shield`. This module owns
+ * AES-256-GCM primitives come from `@msdis/shield`. This module owns
  * only the canonical KDF context, the AAD contract and the hash
  * verification order.
  */
 
-import { deriveHkdfSha256Bits } from '@dis/shield/kdf';
-import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@dis/shield/aead';
-import { randomBytes } from '@dis/shield/random';
+import { deriveHkdfSha256Bits } from '@msdis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@msdis/shield/aead';
+import { randomBytes } from '@msdis/shield/random';
 import {
   canonicalizeVaultStructure,
   constantTimeEquals,

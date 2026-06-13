@@ -85,14 +85,14 @@ vi.mock("@/integrations/supabase/client", () => ({
 }));
 
 // Mock the DIS TOTP boundary so we can control TOTP validation results.
-// (Since the Phase-6 cutover the service consumes @dis/shield/totp instead of
-// importing otpauth directly; @dis/shield is externalised in vitest, so the
+// (Since the Phase-6 cutover the service consumes @msdis/shield/totp instead of
+// importing otpauth directly; @msdis/shield is externalised in vitest, so the
 // mock has to live at the DIS module boundary.)
 // mockValidate keeps the historical otpauth contract: delta number = valid,
 // null = invalid.
 const mockValidate = vi.hoisted(() => vi.fn().mockReturnValue(0));
 
-vi.mock("@dis/shield/totp", () => ({
+vi.mock("@msdis/shield/totp", () => ({
   generateTotpSecret: vi.fn().mockReturnValue("MOCKSECRETBASE32"),
   buildTotpUri: vi.fn().mockReturnValue("otpauth://totp/test"),
   verifyTotpCode: vi.fn().mockImplementation(() => mockValidate() !== null),

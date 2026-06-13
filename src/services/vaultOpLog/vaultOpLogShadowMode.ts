@@ -29,7 +29,7 @@
  *     store diagnosis → discard all decrypted material.
  */
 
-import { importEcdsaP256PublicKeySpki } from '@dis/shield/signing';
+import { importEcdsaP256PublicKeySpki } from '@msdis/shield/signing';
 import {
   getVaultHead,
   getVaultChangesSince,

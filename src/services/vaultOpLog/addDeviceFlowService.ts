@@ -15,8 +15,8 @@
  * - WebCrypto non-extractable Keys werden für Speicherung verwendet.
  */
 
-import { sha256Bytes } from '@dis/shield/integrity';
-import { randomBytes, randomUuid } from '@dis/shield/random';
+import { sha256Bytes } from '@msdis/shield/integrity';
+import { randomBytes, randomUuid } from '@msdis/shield/random';
 import { encodeBase64Url } from './canonicalJson';
 import { generateDeviceSigningKeyPair } from './operationSigningService';
 import type {

@@ -13,7 +13,7 @@
  * browsers is not yet confirmed.
  */
 
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 
 const LOCK_PREFIX = 'singra-vault/op-log/' as const;
 const LEADER_KEY_PREFIX = 'singra:vaultOpLog:leader:' as const;

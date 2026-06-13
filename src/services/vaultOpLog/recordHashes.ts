@@ -6,11 +6,11 @@
  *
  * Every input to a hash goes through `canonicalizeVaultStructure`
  * first. Hashes are SHA-256 (Powered by DIS — Defensive Integration
- * Shield, `@dis/shield/integrity`). The wire form is base64url
+ * Shield, `@msdis/shield/integrity`). The wire form is base64url
  * without padding.
  */
 
-import { sha256Bytes } from '@dis/shield/integrity';
+import { sha256Bytes } from '@msdis/shield/integrity';
 import {
   canonicalizeVaultStructure,
   encodeBase64Url,

@@ -1,6 +1,6 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 — see LICENSE
-import { fillRandom } from '@dis/shield/random';
+import { fillRandom } from '@msdis/shield/random';
 
 /**
  * @fileoverview SecureBuffer — Memory-safe wrapper for sensitive key material

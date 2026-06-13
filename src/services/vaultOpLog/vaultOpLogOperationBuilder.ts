@@ -26,7 +26,7 @@
  * the restore schema is defined.
  */
 
-import { sha256Bytes } from '@dis/shield/integrity';
+import { sha256Bytes } from '@msdis/shield/integrity';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,

@@ -4,15 +4,15 @@
  * Snapshot-specific crypto: key derivation and AEAD seal / open.
  *
  * Powered by DIS — Defensive Integration Shield: HKDF-SHA-256,
- * AES-256-GCM and SHA-256 come from `@dis/shield`. No custom cipher
+ * AES-256-GCM and SHA-256 come from `@msdis/shield`. No custom cipher
  * modes. The snapshot key is derived from the vault encryption key
  * via HKDF-SHA-256 with a snapshot-specific purpose.
  */
 
-import { deriveHkdfSha256Bits } from '@dis/shield/kdf';
-import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@dis/shield/aead';
-import { sha256Bytes } from '@dis/shield/integrity';
-import { randomBytes } from '@dis/shield/random';
+import { deriveHkdfSha256Bits } from '@msdis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@msdis/shield/aead';
+import { sha256Bytes } from '@msdis/shield/integrity';
+import { randomBytes } from '@msdis/shield/random';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,

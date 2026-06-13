@@ -1,4 +1,4 @@
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 import { useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import {

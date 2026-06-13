@@ -1,9 +1,9 @@
 // Copyright (c) 2025-2026 Maunting Studios
 // Licensed under the Business Source License 1.1 - see LICENSE
 
-import { deriveHkdfSha256Bits } from '@dis/shield/kdf';
-import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@dis/shield/aead';
-import { randomBytes } from '@dis/shield/random';
+import { deriveHkdfSha256Bits } from '@msdis/shield/kdf';
+import { aesGcmDecrypt, aesGcmEncrypt, importAesGcmRawKey } from '@msdis/shield/aead';
+import { randomBytes } from '@msdis/shield/random';
 import {
   canonicalizeVaultStructure,
   decodeBase64Url,

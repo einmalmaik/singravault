@@ -9,7 +9,7 @@
  * caller may unlock the normal vault UI.
  */
 
-import { randomUuid } from '@dis/shield/random';
+import { randomUuid } from '@msdis/shield/random';
 import { supabase } from '@/integrations/supabase/client';
 import type { VaultItemData } from '@/services/cryptoService';
 import { generateDeviceSigningKeyPair } from './operationSigningService';

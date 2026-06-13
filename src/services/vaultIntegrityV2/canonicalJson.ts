@@ -1,4 +1,4 @@
-import { sha256StringBase64 } from '@dis/shield/integrity';
+import { sha256StringBase64 } from '@msdis/shield/integrity';
 
 export function stableStringify(value: unknown): string {
   return JSON.stringify(toStableJson(value));
